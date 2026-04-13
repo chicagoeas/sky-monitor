@@ -6,7 +6,7 @@
     <title>Minute Forecast - Precision View</title>
     <style>
         body {
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: #0b1e2d;
             color: white;
             text-align: center;
@@ -14,8 +14,11 @@
             padding: 20px;
         }
 
+        h1 { margin-bottom: 5px; font-weight: 300; }
+        h5 { margin-top: 0; opacity: 0.6; font-weight: 400; margin-bottom: 30px; }
+
         #dashboard {
-            max-width: 650px;
+            max-width: 700px;
             margin: auto;
             background: rgba(255, 255, 255, 0.05);
             padding: 25px;
@@ -23,11 +26,22 @@
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        /* Y-Axis and Graph Container */
+        /* Stats Row */
+        .stats-row {
+            display: flex;
+            justify-content: space-around;
+            margin: 20px 0;
+        }
+
+        .stat-box { flex: 1; }
+        .stat-label { font-size: 0.8em; opacity: 0.7; margin-bottom: 5px; }
+        .stat-number { font-size: 1.8em; color: #4fc3f7; font-weight: bold; }
+
+        /* Chart Layout */
         .chart-frame {
             display: flex;
             height: 250px;
-            margin-top: 30px;
+            margin-top: 20px;
             position: relative;
         }
 
@@ -39,7 +53,7 @@
             font-size: 0.7em;
             color: #888;
             text-align: right;
-            width: 40px;
+            width: 45px;
         }
 
         #timeline {
@@ -49,53 +63,63 @@
             gap: 2px;
             border-bottom: 2px solid #444;
             border-left: 2px solid #444;
-            padding-bottom: 2px;
         }
 
         .bar {
             flex: 1;
-            border-radius: 2px 2px 0 0;
+            border-radius: 1px 1px 0 0;
             transition: height 0.5s ease;
         }
 
-        /* X-Axis Time Labels */
         .x-axis {
             display: flex;
-            margin-left: 52px; /* Align with graph start */
+            margin-left: 57px;
             justify-content: space-between;
             margin-top: 10px;
             font-size: 0.8em;
             color: #4fc3f7;
+            opacity: 0.8;
         }
 
         .legend {
             display: flex;
             justify-content: center;
             gap: 20px;
-            margin-bottom: 20px;
-            font-size: 0.85em;
+            margin-top: 30px;
+            font-size: 0.8em;
         }
 
         .legend-item { display: flex; align-items: center; gap: 6px; }
         .box { width: 12px; height: 12px; border-radius: 2px; }
 
-        #weatherIcon { width: 80px; height: 80px; border-radius: 8px; margin: 10px 0; }
-        #precipTotal { font-size: 2em; color: #4fc3f7; font-weight: bold; }
-        #stationName { color: #888; font-size: 0.75em; letter-spacing: 1px; }
+        #weatherIcon { width: 70px; height: 70px; border-radius: 8px; margin-bottom: 10px; }
+        #stationName { color: #888; font-size: 0.7em; letter-spacing: 1.5px; margin-bottom: 15px; }
     </style>
 </head>
 <body>
 
+    <h1>Local Minute-by-Minute Precipitation Forecast</h1>
+    <h5>Powered by Dark Sky data.</h5>
+
 <div id="dashboard">
     <div id="stationName">WEATHER STATION SEARCHING...</div>
     <img id="weatherIcon" src="" style="display:none;">
-    <div id="conditionText">Updating...</div>
+    <div id="conditionText">Updating Sky...</div>
 
-    <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 20px 0;">
+    <hr style="border: 0; border-top: 1px solid rgba(255,255,255,0.1); margin: 25px 0;">
 
-    <div style="font-size: 0.9em; opacity: 0.8;">24-Hour Accumulation</div>
-    <div id="precipTotal">0.00"</div>
-    <div id="summary">Calculating minute-cast...</div>
+    <div class="stats-row">
+        <div class="stat-box">
+            <div class="stat-label">Next 60 Min Total</div>
+            <div id="oneHourTotal" class="stat-number">0.00"</div>
+        </div>
+        <div class="stat-box" style="border-left: 1px solid rgba(255,255,255,0.1);">
+            <div class="stat-label">Next 24 Hour Total</div>
+            <div id="twentyFourHourTotal" class="stat-number">0.00"</div>
+        </div>
+    </div>
+
+    <div id="summary" style="font-weight: 300; margin-bottom: 10px;">Calculating minute-cast...</div>
 
     <div class="chart-frame">
         <div class="y-axis">
@@ -115,10 +139,10 @@
         <span>60m</span>
     </div>
 
-    <div class="legend" style="margin-top: 30px;">
-        <div class="legend-item"><div class="box" style="background:#4fc3f7"></div> Light Rain</div>
+    <div class="legend">
+        <div class="legend-item"><div class="box" style="background:#4fc3f7"></div> Light</div>
         <div class="legend-item"><div class="box" style="background:#ffd54f"></div> Moderate</div>
-        <div class="legend-item"><div class="box" style="background:#ff5252"></div> Heavy Rain</div>
+        <div class="legend-item"><div class="box" style="background:#ff5252"></div> Heavy</div>
     </div>
 </div>
 
@@ -128,7 +152,7 @@
 
     async function loadAll() {
         try {
-            // 1. NWS Data
+            // 1. NWS Station Data
             const p = await (await fetch(`https://api.weather.gov/points/${lat},${lon}`)).json();
             const s = await (await fetch(p.properties.observationStations)).json();
             const station = s.features[0];
@@ -139,40 +163,45 @@
             document.getElementById('weatherIcon').src = o.properties.icon;
             document.getElementById('weatherIcon').style.display = 'inline-block';
 
-            // 2. Pirate Weather
+            // 2. Pirate Weather Data
             const res = await fetch(`https://api.pirateweather.net/forecast/${API_KEY}/${lat},${lon}?units=us`);
             const data = await res.json();
             
-            // 24hr Total
-            let total = 0;
-            data.hourly.data.slice(0, 24).forEach(h => total += (h.precipIntensity || 0));
-            document.getElementById('precipTotal').innerText = total.toFixed(2) + '"';
-            document.getElementById('summary').innerText = data.minutely.summary;
+            // --- CALC 24 HOUR TOTAL ---
+            let total24 = 0;
+            data.hourly.data.slice(0, 24).forEach(h => total24 += (h.precipIntensity || 0));
+            document.getElementById('twentyFourHourTotal').innerText = total24.toFixed(2) + '"';
 
-            // Minute Bars
+            // --- CALC 1 HOUR TOTAL & RENDER BARS ---
+            let total1 = 0;
             const container = document.getElementById('timeline');
             container.innerHTML = "";
-            
+            document.getElementById('summary').innerText = data.minutely.summary;
+
             data.minutely.data.forEach(m => {
+                const intensity = m.precipIntensity || 0;
+                // Since intensities are hourly rates, 1-min contribution is intensity / 60
+                total1 += (intensity / 60);
+
                 const bar = document.createElement('div');
                 bar.className = 'bar';
-                const intensity = m.precipIntensity || 0;
                 
-                // Height: Max height in CSS is 250px. 0.5 in/hr is a massive storm.
-                // We map 0.4 in/hr to full height.
                 const h = Math.min(intensity * 600, 240); 
                 bar.style.height = Math.max(h, 2) + "px";
                 
-                // NEW COLOR LOGIC based on Intensity (inches per hour)
-                if (intensity > 0.3) bar.style.background = "#ff5252";      // Heavy
-                else if (intensity > 0.1) bar.style.background = "#ffd54f"; // Moderate
-                else if (intensity > 0) bar.style.background = "#4fc3f7";   // Light
-                else bar.style.background = "rgba(255,255,255,0.1)";         // No Rain
+                if (intensity > 0.3) bar.style.background = "#ff5252";
+                else if (intensity > 0.1) bar.style.background = "#ffd54f";
+                else if (intensity > 0) bar.style.background = "#4fc3f7";
+                else bar.style.background = "rgba(255,255,255,0.1)";
                 
                 container.appendChild(bar);
             });
+            document.getElementById('oneHourTotal').innerText = total1.toFixed(2) + '"';
 
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error(e); 
+            document.getElementById('summary').innerText = "Unable to fetch live forecast data.";
+        }
     }
 
     window.onload = loadAll;
