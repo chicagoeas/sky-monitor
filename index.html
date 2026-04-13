@@ -17,7 +17,7 @@
         h1 { margin-bottom: 5px; font-weight: 300; font-size: 1.8em; }
         h5 { margin-top: 0; opacity: 0.6; font-weight: 400; margin-bottom: 20px; }
 
-        /* Restored Coordinates Panel */
+        /* Updated Coordinates Panel with Find Me button */
         #coords-panel {
             margin-bottom: 25px;
             background: rgba(255, 255, 255, 0.03);
@@ -34,24 +34,26 @@
             color: white;
             padding: 5px;
             width: 80px;
-            margin: 0 10px;
+            margin: 0 5px;
             text-align: center;
             outline: none;
         }
 
-        #coords-panel button {
-            background: #4fc3f7;
+        .btn {
             border: none;
-            color: #0b1e2d;
             padding: 5px 15px;
             border-radius: 20px;
             font-weight: bold;
             cursor: pointer;
-            margin-left: 10px;
             transition: 0.2s;
+            margin-left: 5px;
         }
 
-        #coords-panel button:hover { background: white; }
+        .btn-update { background: #4fc3f7; color: #0b1e2d; }
+        .btn-update:hover { background: white; }
+        
+        .btn-locate { background: rgba(255,255,255,0.1); color: white; border: 1px solid rgba(255,255,255,0.2); }
+        .btn-locate:hover { background: rgba(255,255,255,0.2); }
 
         #dashboard {
             max-width: 700px;
@@ -87,7 +89,7 @@
         .legend-item { display: flex; align-items: center; gap: 6px; }
         .box { width: 12px; height: 12px; border-radius: 2px; }
 
-        #weatherIcon { width: 70px; height: 70px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        #weatherIcon { width: 70px; height: 70px; border-radius: 8px; margin-bottom: 10px; }
         #stationName { color: #888; font-size: 0.7em; letter-spacing: 1.5px; margin-bottom: 15px; }
     </style>
 </head>
@@ -99,11 +101,12 @@
     <div id="coords-panel">
         Lat: <input type="number" id="latInput" value="41.8781" step="0.0001">
         Lon: <input type="number" id="lonInput" value="-87.6298" step="0.0001">
-        <button onclick="updateLocation()">Update</button>
+        <button class="btn btn-update" onclick="updateLocation()">Update</button>
+        <button class="btn btn-locate" onclick="getLocation()">📍 Find Me</button>
     </div>
 
 <div id="dashboard">
-    <div id="stationName">WEATHER STATION SEARCHING...</div>
+    <div id="stationName">STATION SEARCHING...</div>
     <img id="weatherIcon" src="" style="display:none;">
     <div id="conditionText">Updating Sky...</div>
 
@@ -120,7 +123,7 @@
         </div>
     </div>
 
-    <div id="summary" style="font-weight: 300; margin-bottom: 10px; font-size: 0.9em;">Calculating minute-cast...</div>
+    <div id="summary" style="font-weight: 300; margin-bottom: 10px; font-size: 0.9em;">Calculating...</div>
 
     <div class="chart-frame">
         <div class="y-axis">
@@ -149,35 +152,37 @@
 
 <script>
     const API_KEY = "p1eTDIbrnfGjCJlwMahUzarQNqzNPyxI";
-    
-    // Initial variables
     let lat = 41.8781;
     let lon = -87.6298;
 
-    async function updateLocation() {
-        const newLat = parseFloat(document.getElementById('latInput').value);
-        const newLon = parseFloat(document.getElementById('lonInput').value);
-
-        if (isNaN(newLat) || isNaN(newLon)) {
-            alert("Please enter valid numeric coordinates.");
-            return;
+    // --- GEOLOCATION LOGIC ---
+    function getLocation() {
+        if (navigator.geolocation) {
+            document.getElementById('summary').innerText = "Requesting GPS access...";
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    document.getElementById('latInput').value = position.coords.latitude.toFixed(4);
+                    document.getElementById('lonInput').value = position.coords.longitude.toFixed(4);
+                    updateLocation();
+                },
+                (error) => {
+                    alert("Unable to retrieve your location. Check your browser permissions.");
+                    document.getElementById('summary').innerText = "Location access denied.";
+                }
+            );
+        } else {
+            alert("Geolocation is not supported by your browser.");
         }
+    }
 
-        lat = newLat;
-        lon = newLon;
-
-        // Reset UI indicators
-        document.getElementById('stationName').innerText = "LOCATING STATION...";
-        document.getElementById('summary').innerText = "Fetching new data...";
-        document.getElementById('oneHourTotal').innerText = '0.00"';
-        document.getElementById('twentyFourHourTotal').innerText = '0.00"';
-
+    async function updateLocation() {
+        lat = parseFloat(document.getElementById('latInput').value);
+        lon = parseFloat(document.getElementById('lonInput').value);
         loadAll();
     }
 
     async function loadAll() {
         try {
-            // 1. NWS Station Data
             const p = await (await fetch(`https://api.weather.gov/points/${lat},${lon}`)).json();
             const s = await (await fetch(p.properties.observationStations)).json();
             const station = s.features[0];
@@ -188,16 +193,13 @@
             document.getElementById('weatherIcon').src = o.properties.icon;
             document.getElementById('weatherIcon').style.display = 'inline-block';
 
-            // 2. Pirate Weather Data
             const res = await fetch(`https://api.pirateweather.net/forecast/${API_KEY}/${lat},${lon}?units=us`);
             const data = await res.json();
             
-            // 24 Hour Calculation
             let total24 = 0;
             data.hourly.data.slice(0, 24).forEach(h => total24 += (h.precipIntensity || 0));
             document.getElementById('twentyFourHourTotal').innerText = total24.toFixed(2) + '"';
 
-            // 1 Hour Calculation & Bar Rendering
             let total1 = 0;
             const container = document.getElementById('timeline');
             container.innerHTML = "";
@@ -206,27 +208,18 @@
             data.minutely.data.forEach(m => {
                 const intensity = m.precipIntensity || 0;
                 total1 += (intensity / 60);
-
                 const bar = document.createElement('div');
                 bar.className = 'bar';
-                
                 const h = Math.min(intensity * 600, 240); 
                 bar.style.height = Math.max(h, 2) + "px";
-                
                 if (intensity > 0.3) bar.style.background = "#ff5252";
                 else if (intensity > 0.1) bar.style.background = "#ffd54f";
                 else if (intensity > 0) bar.style.background = "#4fc3f7";
                 else bar.style.background = "rgba(255,255,255,0.1)";
-                
                 container.appendChild(bar);
             });
             document.getElementById('oneHourTotal').innerText = total1.toFixed(2) + '"';
-
-        } catch (e) { 
-            console.error(e);
-            document.getElementById('stationName').innerText = "STATION DATA ERROR";
-            document.getElementById('summary').innerText = "Unable to load coordinates. Location may be outside US NWS coverage.";
-        }
+        } catch (e) { console.error(e); }
     }
 
     window.onload = loadAll;
