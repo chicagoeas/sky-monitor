@@ -22,6 +22,18 @@ h1 {
     margin: 20px 0;
 }
 
+#current {
+    margin-top: 20px;
+    padding: 15px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 10px;
+}
+
+#current img {
+    width: 120px;
+    height: auto;
+}
+
 #timeline {
     display: flex;
     justify-content: center;
@@ -42,6 +54,13 @@ h1 {
 <h1>Minute-by-Minute Forecast</h1>
 
 <div id="summary">Loading...</div>
+
+<div id="current">
+    <h2>Current Conditions</h2>
+    <img id="weatherIcon" />
+    <div id="conditionText"></div>
+</div>
+
 <div id="timeline"></div>
 
 <script>
@@ -54,11 +73,71 @@ const lon = -87.6298;
 
 let cachedData = null;
 let lastFetchTime = 0;
-const CACHE_TIME = 120000; // 2 minutes
+const CACHE_TIME = 120000;
 
-// ------------------------------
-// 1. CURRENT CONDITIONS GATE
-// ------------------------------
+// ---------------------------
+// ICON MAPPING FUNCTION
+// ---------------------------
+function getIcon(condition) {
+    const c = condition.toLowerCase();
+
+    // Thunderstorm (highest priority)
+    if (c.includes("thunderstorm")) {
+        return "https://www.weather.gov/images/nws/newicons/tsra.png";
+    }
+
+    // Heavy rain
+    if (c.includes("heavy rain")) {
+        return "https://www.weather.gov/images/nws/newicons/ra.png";
+    }
+
+    // Rain
+    if (c.includes("rain")) {
+        return "https://www.weather.gov/images/nws/newicons/ra.png";
+    }
+
+    // Drizzle / light rain
+    if (c.includes("drizzle") || c.includes("light rain")) {
+        return "https://www.weather.gov/images/nws/newicons/minus_ra.png";
+    }
+
+    // Showers
+    if (c.includes("showers")) {
+        return "https://www.weather.gov/images/nws/newicons/shra.png";
+    }
+
+    // Default fallback
+    return "https://www.weather.gov/images/nws/newicons/bkn.png";
+}
+
+// ---------------------------
+// CURRENT CONDITIONS
+// ---------------------------
+async function loadCurrentConditions() {
+    try {
+        const res = await fetch(
+            "https://api.weather.gov/stations/KORD/observations/latest"
+        );
+        const data = await res.json();
+
+        const props = data.properties;
+
+        const text = props.textDescription || "Unknown";
+
+        document.getElementById("conditionText").innerText = text;
+
+        const icon = getIcon(text);
+
+        document.getElementById("weatherIcon").src = icon;
+
+    } catch (err) {
+        console.error("Current conditions error:", err);
+    }
+}
+
+// ---------------------------
+// PRECIP GATE (simple)
+// ---------------------------
 async function checkPrecipGate() {
     try {
         const res = await fetch(
@@ -76,26 +155,21 @@ async function checkPrecipGate() {
         );
 
     } catch (err) {
-        console.error("Gate check failed:", err);
-        return true; // fail-safe: allow forecast if uncertain
+        return true;
     }
 }
 
-// ------------------------------
-// 2. PIRATE WEATHER FETCH
-// ------------------------------
+// ---------------------------
+// PIRATE WEATHER FETCH
+// ---------------------------
 async function fetchWeather() {
     try {
         const now = Date.now();
 
-        // Use cache if fresh
         if (cachedData && (now - lastFetchTime < CACHE_TIME)) {
-            console.log("Using cached Pirate Weather data");
             render(cachedData);
             return;
         }
-
-        console.log("Fetching Pirate Weather");
 
         const response = await fetch(
             `https://api.pirateweather.net/forecast/${API_KEY}/${lat},${lon}?units=us`
@@ -109,14 +183,14 @@ async function fetchWeather() {
         render(data);
 
     } catch (err) {
-        document.getElementById("summary").innerText = "Error loading data.";
-        console.error(err);
+        document.getElementById("summary").innerText =
+            "Error loading forecast.";
     }
 }
 
-// ------------------------------
-// 3. RENDER FUNCTION
-// ------------------------------
+// ---------------------------
+// RENDER MINUTECast
+// ---------------------------
 function render(data) {
     const minutely = data.minutely;
 
@@ -150,22 +224,24 @@ function render(data) {
     });
 }
 
-// ------------------------------
-// 4. STARTUP LOGIC (THE GATE)
-// ------------------------------
+// ---------------------------
+// STARTUP
+// ---------------------------
 async function start() {
+
+    loadCurrentConditions();
+    setInterval(loadCurrentConditions, 300000);
+
     const hasPrecip = await checkPrecipGate();
 
     if (!hasPrecip) {
         document.getElementById("summary").innerText =
             "No precipitation expected at the moment.";
-
-        document.getElementById("timeline").innerHTML = "";
         return;
     }
 
     fetchWeather();
-    setInterval(fetchWeather, 180000); // every 3 min
+    setInterval(fetchWeather, 180000);
 }
 
 start();
