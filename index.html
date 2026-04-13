@@ -3,96 +3,124 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minute Forecast</title>
+    <title>Minute Forecast Pro</title>
     <style>
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #0b1e2d;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            /* Cool Atmospheric Gradient */
+            background: linear-gradient(180deg, #0b1e2d 0%, #162a3d 100%);
+            background-attachment: fixed;
             color: white;
             text-align: center;
             padding: 20px;
             margin: 0;
+            min-height: 100vh;
         }
 
-        h1 { font-size: 2em; margin-bottom: 10px; }
+        h1 { font-size: 2.2em; margin-bottom: 20px; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+
+        /* Glassmorphism UI */
+        #controls, #current {
+            background: rgba(255, 255, 255, 0.07);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
 
         #controls {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 20px;
-            border-radius: 12px;
+            padding: 15px;
             display: inline-block;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
         }
 
         #controls input {
             padding: 10px;
             margin: 5px;
-            border-radius: 6px;
-            border: 1px solid #29b6f6;
-            background: #162a3d;
+            border-radius: 8px;
+            border: 1px solid rgba(79, 195, 247, 0.5);
+            background: rgba(0, 0, 0, 0.2);
             color: white;
-            width: 120px;
+            width: 110px;
+            outline: none;
         }
 
         #controls button {
             padding: 10px 20px;
-            border-radius: 6px;
+            border-radius: 8px;
             border: none;
             background: #4fc3f7;
             color: #0b1e2d;
             font-weight: bold;
             cursor: pointer;
-            transition: 0.2s;
+            transition: all 0.3s ease;
         }
 
-        #controls button:hover { background: #81d4fa; }
+        #controls button:hover {
+            background: #ffffff;
+            transform: translateY(-2px);
+        }
+
+        #current {
+            margin: 0 auto 30px auto;
+            padding: 25px;
+            max-width: 450px;
+        }
+
+        #stationName {
+            font-size: 0.9em;
+            color: #4fc3f7;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        /* Square NWS Icons as requested */
+        #weatherIcon {
+            width: 120px;
+            height: 120px;
+            border-radius: 8px; /* Slight roundness but definitely square */
+            margin-bottom: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        #conditionText { 
+            font-size: 1.5em; 
+            font-weight: 300;
+        }
 
         #summary {
             font-size: 1.2em;
             margin: 20px auto;
             max-width: 600px;
-            line-height: 1.4;
+            opacity: 0.9;
         }
-
-        #current {
-            margin: 20px auto;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 15px;
-            max-width: 400px;
-        }
-
-        #weatherIcon {
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            margin-bottom: 10px;
-        }
-
-        #conditionText { font-size: 1.3em; font-weight: bold; }
 
         #timeline {
             display: flex;
             align-items: flex-end;
             justify-content: center;
-            height: 220px;
-            margin-top: 30px;
+            height: 200px;
+            margin-top: 40px;
             gap: 2px;
+            padding-bottom: 20px;
         }
 
         .bar {
             width: 6px;
-            background: #4fc3f7;
-            border-top-left-radius: 2px;
-            border-top-right-radius: 2px;
-            transition: height 0.5s ease;
+            border-top-left-radius: 3px;
+            border-top-right-radius: 3px;
+            transition: height 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            /* Neon Glow Effect */
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
         }
     </style>
 </head>
 <body>
 
-    <h1>Local Minute-by-Minute Precipitation Forecast</h1>
-    <h5>Powered by Dark Sky data.</h5>
+    <h1>Minute-by-Minute</h1>
 
     <div id="controls">
         <input type="number" id="latInput" value="41.8781" step="0.0001">
@@ -101,126 +129,108 @@
     </div>
 
     <div id="current">
-        <img id="weatherIcon" src="" alt="">
-        <div id="conditionText">Loading...</div>
+        <div id="stationName">Loading Station...</div>
+        <img id="weatherIcon" src="" alt="" style="display:none;">
+        <div id="conditionText">Checking sky...</div>
     </div>
 
-    <div id="summary">Initializing weather data...</div>
+    <div id="summary">Gathering forecast data...</div>
     <div id="timeline"></div>
 
     <script>
-        // --- CONFIGURATION ---
         const API_KEY = "p1eTDIbrnfGjCJlwMahUzarQNqzNPyxI";
         let lat = 41.8781;
         let lon = -87.6298;
 
-        // --- CORE FUNCTIONS ---
-
         async function updateLocation() {
-            const newLat = parseFloat(document.getElementById('latInput').value);
-            const newLon = parseFloat(document.getElementById('lonInput').value);
-
-            if (isNaN(newLat) || isNaN(newLon)) {
-                alert("Please enter valid coordinates.");
-                return;
-            }
-
-            lat = newLat;
-            lon = newLon;
-
-            document.getElementById('summary').innerText = "Updating forecast...";
-            document.getElementById('conditionText').innerText = "Locating station...";
+            lat = parseFloat(document.getElementById('latInput').value);
+            lon = parseFloat(document.getElementById('lonInput').value);
             
-            // Refresh both APIs
-            await loadNWS();
-            await loadPirate();
+            document.getElementById('summary').innerText = "Updating...";
+            document.getElementById('stationName').innerText = "Locating...";
+            
+            loadNWS();
+            loadPirate();
         }
 
         async function loadNWS() {
             try {
-                // 1. Get metadata for coordinates
-                const pointsUrl = `https://api.weather.gov/points/${lat},${lon}`;
-                const pointsRes = await fetch(pointsUrl);
-                if (!pointsRes.ok) throw new Error("Location outside US coverage");
-                const pointsData = await pointsRes.json();
-
-                // 2. Get the observation stations list
-                const stationsUrl = pointsData.properties.observationStations;
-                const stationsRes = await fetch(stationsUrl);
-                const stationsData = await stationsRes.json();
+                // 1. Get Metadata
+                const pRes = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
+                const pData = await pRes.json();
                 
-                if (!stationsData.features?.length) throw new Error("No stations found");
-                const stationId = stationsData.features[0].properties.stationIdentifier;
+                // 2. Get Station List
+                const sRes = await fetch(pData.properties.observationStations);
+                const sData = await sRes.json();
+                const station = sData.features[0];
+                const stationId = station.properties.stationIdentifier;
+                
+                // --- NEW: Set Airport Name ---
+                document.getElementById('stationName').innerText = "Current Conditions at " + station.properties.name;
 
-                // 3. Get latest observations from the closest station
-                const obsUrl = `https://api.weather.gov/stations/${stationId}/observations/latest`;
-                const obsRes = await fetch(obsUrl);
-                const obsData = await obsRes.json();
-                const props = obsData.properties;
+                // 3. Get Latest Obs
+                const oRes = await fetch(`https://api.weather.gov/stations/${stationId}/observations/latest`);
+                const oData = await oRes.json();
+                const props = oData.properties;
 
-                // Update UI
-                document.getElementById('conditionText').innerText = props.textDescription || "Unknown";
+                document.getElementById('conditionText').innerText = props.textDescription || "Fair";
                 if (props.icon) {
-                    document.getElementById('weatherIcon').src = props.icon;
-                    document.getElementById('weatherIcon').style.display = 'inline-block';
+                    const img = document.getElementById('weatherIcon');
+                    img.src = props.icon;
+                    img.style.display = 'inline-block';
                 }
             } catch (err) {
-                console.error("NWS Error:", err);
-                document.getElementById('conditionText').innerText = "NWS Data Unavailable";
-                document.getElementById('weatherIcon').style.display = 'none';
+                console.error(err);
+                document.getElementById('stationName').innerText = "Station Unavailable";
             }
         }
 
         async function loadPirate() {
             try {
-                const url = `https://api.pirateweather.net/forecast/${API_KEY}/${lat},${lon}?units=us`;
-                const res = await fetch(url);
-                
-                if (!res.ok) {
-                    const errorJson = await res.json();
-                    throw new Error(errorJson.message || "Pirate Weather API Error");
-                }
-
+                const res = await fetch(`https://api.pirateweather.net/forecast/${API_KEY}/${lat},${lon}?units=us`);
                 const data = await res.json();
-                renderMinuteTimeline(data);
+                renderBars(data);
             } catch (err) {
-                console.error("Pirate Error:", err);
-                document.getElementById('summary').innerText = "Forecast Error: " + err.message;
+                document.getElementById('summary').innerText = "Forecast currently unavailable.";
             }
         }
 
-        function renderMinuteTimeline(data) {
+        function renderBars(data) {
             const minutely = data.minutely;
             const container = document.getElementById('timeline');
             container.innerHTML = "";
 
-            if (!minutely || !minutely.data) {
-                document.getElementById('summary').innerText = "Minute-by-minute data not available for this area.";
+            if (!minutely) {
+                document.getElementById('summary').innerText = "No minute-by-minute data available.";
                 return;
             }
 
-            document.getElementById('summary').innerText = minutely.summary || "No precipitation expected.";
+            document.getElementById('summary').innerText = minutely.summary;
 
             minutely.data.forEach(minute => {
                 const bar = document.createElement('div');
                 bar.className = 'bar';
                 
-                // Scale height based on intensity
                 const intensity = minute.precipIntensity || 0;
-                const height = Math.max(intensity * 400, 4); // Min 4px height
+                const height = Math.max(intensity * 450, 4); 
                 bar.style.height = `${height}px`;
 
-                // Color based on probability
                 const prob = minute.precipProbability || 0;
-                if (prob > 0.7) bar.style.background = "#ff5252"; // High chance
-                else if (prob > 0.3) bar.style.background = "#ffd54f"; // Moderate
-                else bar.style.background = "#4fc3f7"; // Low/None
+                if (prob > 0.7) {
+                    bar.style.background = "#ff5252";
+                    bar.style.boxShadow = "0 0 12px rgba(255, 82, 82, 0.4)";
+                } else if (prob > 0.3) {
+                    bar.style.background = "#ffd54f";
+                    bar.style.boxShadow = "0 0 12px rgba(255, 213, 79, 0.4)";
+                } else {
+                    bar.style.background = "#4fc3f7";
+                    bar.style.boxShadow = "0 0 12px rgba(79, 195, 247, 0.4)";
+                }
 
                 container.appendChild(bar);
             });
         }
 
-        // Initialize on load
         window.onload = () => {
             loadNWS();
             loadPirate();
