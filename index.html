@@ -250,9 +250,10 @@
         document.getElementById('spc-link').href = `https://${spcUrl}`;
     }
 
-    async function updateWeatherStory() {
+    async function updateWeatherStory(wfo) {
         const storyImg = document.getElementById('wxstory-img');
-        const storyRawUrl = "www.weather.gov/images/lot/wxstory/Tab1FileL.png";
+        // Now uses the dynamic WFO variable instead of hardcoded 'lot'
+        const storyRawUrl = `www.weather.gov/images/${wfo.toLowerCase()}/wxstory/Tab1FileL.png`;
         storyImg.src = `https://images.weserv.nl/?url=${storyRawUrl}&t=${new Date().getTime()}`;
         document.getElementById('wxstory-link').href = `https://${storyRawUrl}`;
     }
@@ -356,8 +357,11 @@
     async function fetchNWSChain() {
         try {
             const p = await (await fetch(`https://api.weather.gov/points/${lat},${lon}`)).json();
-            const wfo = p.properties.cwa;
+            const wfo = p.properties.cwa; // Grab the local office ID (e.g., LOT, TOP, OKX)
             document.getElementById('wfo-label').innerText = "OFFICE: " + wfo;
+
+            // Trigger the Weather Story update with the correct local office
+            updateWeatherStory(wfo);
 
             const dailyRes = await fetch(p.properties.forecast);
             const dailyData = await dailyRes.json();
@@ -392,7 +396,9 @@
             const afdList = await (await fetch(`https://api.weather.gov/products/types/AFD/locations/${wfo}`)).json();
             const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
             document.getElementById('nws-text').innerText = afd.productText;
-        } catch(e) {}
+        } catch(e) {
+            console.error("NWS Fetch Error:", e);
+        }
     }
 
     function drawOrbit() {
