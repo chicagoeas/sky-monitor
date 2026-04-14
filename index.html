@@ -134,7 +134,7 @@
         </div>
         <div class="x-axis"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-        <div style="text-align:left; font-weight:bold; color:var(--primary); margin: 30px 0 10px 0;">3-HOURLY FORECAST</div>
+        <div style="text-align:left; font-weight:bold; color:var(--primary); margin: 30px 0 10px 0;">3-HOURLY SIMPLIFIED FORECAST (OPENWEATHER)</div>
         <div class="forecast-scroll" id="forecast-container"></div>
 
         <div style="text-align:left; font-weight:bold; color:var(--accent); margin: 20px 0 10px 0; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">DAILY OUTLOOK (NWS)</div>
@@ -165,6 +165,21 @@
     </div>
 
     <div id="details-tab" class="tab-content">
+        <div id="wfo-label" style="text-align:left; font-size:0.7em; color:var(--primary); margin-bottom:5px;">OFFICE: --</div>
+        <div class="nws-discussion" id="nws-text" style="background:rgba(0,0,0,0.4); padding:20px; border-radius:15px; text-align:left; font-family:monospace; font-size:0.85em; color:#aeea00; height:350px; overflow-y:auto; line-height:1.5; margin-bottom:20px;">Syncing Discussion...</div>
+
+        <div style="text-align:left; font-weight:bold; color:var(--primary); margin-bottom:10px;">LOCAL WEATHER STORY</div>
+        <a id="wxstory-link" target="_blank" title="Click to view full size">
+            <div style="background:#111; border-radius:15px; overflow:hidden; border: 1px solid #333; margin-bottom:20px;">
+                <img id="wxstory-img" style="width: 100%; display:block; min-height:200px;">
+            </div>
+        </a>
+
+        <div class="toolkit-box">
+            <div class="toolkit-header"><span>📅 LOCAL CLIMATE REPORT (CLI)</span></div>
+            <div id="cli-text" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:10px; font-family:monospace; font-size:0.75em; color:#aeea00; white-space:pre-wrap; height:250px; overflow-y:auto; text-align:left;">Syncing Climate Data...</div>
+        </div>
+
         <div class="toolkit-box" style="text-align:center;">
             <div class="toolkit-header"><span>CELESTIAL ORBIT</span></div>
             <div id="orbit-container">
@@ -172,14 +187,6 @@
                 <div id="celestial-body"></div>
             </div>
         </div>
-
-        <div class="toolkit-box">
-            <div class="toolkit-header"><span>📅 LOCAL CLIMATE REPORT (CLI)</span></div>
-            <div id="cli-text" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:10px; font-family:monospace; font-size:0.75em; color:#aeea00; white-space:pre-wrap; height:250px; overflow-y:auto; text-align:left;">Syncing Climate Data...</div>
-        </div>
-
-        <div id="wfo-label" style="text-align:left; font-size:0.7em; color:var(--primary); margin-bottom:5px;">OFFICE: --</div>
-        <div class="nws-discussion" id="nws-text" style="background:rgba(0,0,0,0.4); padding:20px; border-radius:15px; text-align:left; font-family:monospace; font-size:0.85em; color:#aeea00; height:350px; overflow-y:auto; line-height:1.5;">Syncing Discussion...</div>
     </div>
 
 </div>
@@ -243,11 +250,20 @@
         document.getElementById('spc-link').href = `https://${spcUrl}`;
     }
 
+    async function updateWeatherStory() {
+        const storyImg = document.getElementById('wxstory-img');
+        const storyRawUrl = "www.weather.gov/images/lot/wxstory/Tab1FileL.png";
+        // Use weserv proxy to ensure bypass of any cache/cors and add timestamp for refresh
+        storyImg.src = `https://images.weserv.nl/?url=${storyRawUrl}&t=${new Date().getTime()}`;
+        document.getElementById('wxstory-link').href = `https://${storyRawUrl}`;
+    }
+
     async function loadAll() {
         const indicator = document.getElementById('sync-indicator');
         indicator.style.opacity = "1";
         document.getElementById('radar-frame').src = `https://www.rainviewer.com/map.html?loc=${lat},${lon},8&oFa=0&oC=1&oU=0&oLL=0&oHu=0&oD=1&oQ=0&oTh=0&color=2&sm=1&sn=1`;
         updateSPCMap();
+        updateWeatherStory();
         fetchAlerts(); fetchPirate(); fetchOpenWeather(); fetchNWSChain();
         setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
     }
@@ -344,7 +360,6 @@
             const wfo = p.properties.cwa;
             document.getElementById('wfo-label').innerText = "OFFICE: " + wfo;
 
-            // NEW: Fetch Daily Extended Forecast
             const dailyRes = await fetch(p.properties.forecast);
             const dailyData = await dailyRes.json();
             const dailyCont = document.getElementById('nws-extended-container');
