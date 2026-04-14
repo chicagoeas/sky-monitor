@@ -25,7 +25,33 @@
             96%, 99% { background-color: rgba(255, 255, 255, 0.15); }
         }
 
-        h1 { margin: 0 0 10px 0; font-weight: 800; font-size: 2.2em; color: var(--accent); letter-spacing: -1px; display: flex; justify-content: space-between; align-items: center; }
+        /* WEATHER FX ANIMATIONS */
+        #weather-fx {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none; z-index: 0; opacity: 0; transition: opacity 1s ease;
+        }
+        .fx-rain {
+            background-image: 
+                linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.4) 50%, rgba(255,255,255,0)),
+                linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.2) 50%, rgba(255,255,255,0));
+            background-size: 2px 20vh, 1px 15vh;
+            background-position: 0 0, 50px 50px;
+            animation: rainFall 0.7s linear infinite;
+            opacity: 1 !important;
+        }
+        .fx-snow {
+            background-image: 
+                radial-gradient(circle, #fff 10%, transparent 10%),
+                radial-gradient(circle, #fff 10%, transparent 10%);
+            background-size: 10px 10px, 15px 15px;
+            background-position: 0 0, 25px 25px;
+            animation: snowFall 3s linear infinite;
+            opacity: 0.8 !important;
+        }
+        @keyframes rainFall { 0% {background-position: 0 0, 20px 0;} 100% {background-position: 10px 100vh, 30px 100vh;} }
+        @keyframes snowFall { 0% {background-position: 0 0, 25px 25px;} 100% {background-position: 20px 100vh, 45px calc(100vh + 25px);} }
+
+        h1 { margin: 0 0 10px 0; font-weight: 800; font-size: 2.2em; color: var(--accent); letter-spacing: -1px; display: flex; justify-content: space-between; align-items: center; z-index: 10; position: relative; }
 
         #alert-banner {
             display: none; background: var(--danger); color: white; padding: 15px;
@@ -46,11 +72,13 @@
             max-width: 850px; margin: auto; background: rgba(255, 255, 255, 0.03);
             padding: 30px; border-radius: 24px; border: 1px solid rgba(255, 255, 255, 0.08);
             backdrop-filter: blur(20px); box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            position: relative; z-index: 10;
         }
 
         #coords-panel {
             margin-bottom: 25px; background: rgba(255, 255, 255, 0.05); display: inline-flex; 
             align-items: center; padding: 8px 15px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.1); gap: 10px; flex-wrap: wrap;
+            position: relative; z-index: 10;
         }
         #coords-panel input {
             background: none; border: none; border-bottom: 1px solid var(--primary);
@@ -103,8 +131,10 @@
 </head>
 <body>
 
+    <div id="weather-fx"></div>
+
     <h1>
-        <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.4</span></span>
+        <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.5</span></span>
         <span id="sync-indicator" style="font-size:0.4em; color:var(--success); opacity: 0; transition: opacity 0.3s;">● SYNCING</span>
     </h1>
     
@@ -168,7 +198,10 @@
 
         <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:20px; background: #000; margin-bottom:20px;"></iframe>
         
-        <div style="text-align:left; font-weight:bold; color:var(--primary); margin-bottom:10px;">SPC DAY 1 CONVECTIVE OUTLOOK</div>
+        <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px;">
+            <div style="font-weight:bold; color:var(--primary);">SPC DAY 1 CONVECTIVE OUTLOOK</div>
+            <div id="spc-countdown" style="font-size:0.75em; color:var(--warning); font-family:monospace; background:rgba(0,0,0,0.5); padding:3px 8px; border-radius:5px;">Syncing...</div>
+        </div>
         <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
             <div style="background:#111; border-radius:15px; overflow:hidden; border: 1px solid #333; margin-bottom:20px;">
                 <img id="spc-map" style="width: 100%; display:block; min-height:200px;">
@@ -245,6 +278,11 @@
     const OW_API_KEY = "065942b97acab61c4f876f77d1e71cfb";
     let lat = 41.8781, lon = -87.6298;
     let localRiseTime = 0, localSetTime = 0;
+    
+    // NEW TRACKERS
+    let lastPressurePa = null;
+    let alertIntervalId = null;
+    let spcIntervalId = null;
 
     const ALERT_ICONS = {
         "tornado warning": "https://forecast.weather.gov/newimages/medium/tor.png",
@@ -307,15 +345,14 @@
     }
 
     function getTempColor(t) {
-    if (t === "--" || t === null) return "#ffffff";
-    if (t < 0) return "#3f51b5";       // DEEP BLUE (Sub-zero)
-    if (t < 40) return "#4fc3f7";      // Light Blue
-    if (t <= 60) return "#ffffff";     // White
-    if (t <= 75) return "#ffd54f";     // Yellow
-    return "#ff5252";                  // Red
+        if (t === "--" || t === null) return "#ffffff";
+        if (t < 0) return "#3f51b5";
+        if (t < 40) return "#4fc3f7";
+        if (t <= 60) return "#ffffff";
+        if (t <= 75) return "#ffd54f";
+        return "#ff5252";
     }
 
-    // Helper to translate Moon Phase decimal to string
     function getMoonPhaseName(phase) {
         if (phase === 0 || phase === 1) return "New 🌑";
         if (phase > 0 && phase < 0.25) return "Waxing Cresc 🌒";
@@ -327,7 +364,6 @@
         return "Waning Cresc 🌘";
     }
 
-    // Generate quick Vibe Check string based on NWS temps and conditions
     function generateVibeCheck(temp, condition) {
         if(!condition) return "Typical weather out there today.";
         const c = condition.toLowerCase();
@@ -340,13 +376,45 @@
         return "Typical conditions out there right now.";
     }
 
+    // SPC LIVE COUNTDOWN
+    function startSPCCountdown() {
+        clearInterval(spcIntervalId);
+        function updateSPC() {
+            const now = new Date();
+            const currentUTC = now.getUTCHours() + (now.getUTCMinutes() / 60) + (now.getUTCSeconds() / 3600);
+            
+            // SPC Day 1 Update times in UTC hours
+            const updateTimes = [1.0, 6.0, 13.0, 16.5, 20.0];
+            let nextUpdateHour = updateTimes.find(t => t > currentUTC);
+            
+            let nextDate = new Date(now);
+            if (nextUpdateHour === undefined) {
+                nextUpdateHour = 1.0; // Rollover to 0100Z next day
+                nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+            }
+            
+            nextDate.setUTCHours(Math.floor(nextUpdateHour), (nextUpdateHour % 1) * 60, 0, 0);
+            
+            const diff = nextDate.getTime() - new Date().getTime();
+            if (diff <= 0) { document.getElementById('spc-countdown').innerText = "Update Imminent..."; return; }
+            
+            const h = Math.floor(diff / (1000 * 60 * 60));
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            
+            document.getElementById('spc-countdown').innerText = `Next Outlook: ${h}h ${m}m ${s}s`;
+        }
+        updateSPC();
+        spcIntervalId = setInterval(updateSPC, 1000);
+    }
+
     async function loadAll() {
         const indicator = document.getElementById('sync-indicator');
         indicator.style.opacity = "1";
         document.getElementById('radar-frame').src = `https://www.rainviewer.com/map.html?loc=${lat},${lon},8&oFa=0&oC=1&oU=0&oLL=0&oHu=0&oD=1&oQ=0&oTh=0&color=2&sm=1&sn=1`;
         updateSPCMap();
+        startSPCCountdown();
         
-        // Fire APIs
         fetchAlerts(); 
         fetchPirate(); 
         fetchOpenWeather(); 
@@ -360,23 +428,16 @@
         const stack = document.getElementById('alert-stack');
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
+        clearInterval(alertIntervalId); // Clear previous hazard countdowns
         
-        // Define priority: Higher number = Higher priority
-        const severityScore = {
-            'Extreme': 4,
-            'Severe': 3,
-            'Moderate': 2,
-            'Minor': 1,
-            'Unknown': 0
-        };
+        const severityScore = { 'Extreme': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1, 'Unknown': 0 };
 
         try {
             const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
             const data = await res.json();
-            stack.innerHTML = ""; document.body.className = ""; checklist.style.display = "none";
+            stack.innerHTML = ""; document.body.className = ""; checklist.style.display = "none"; banner.style.display = "none";
 
             if (data.features?.length > 0) {
-                // Find the "Top Alert" based on severity score
                 let topAlert = data.features.reduce((prev, current) => {
                     let prevScore = severityScore[prev.properties.severity] || 0;
                     let currScore = severityScore[current.properties.severity] || 0;
@@ -384,22 +445,32 @@
                 });
 
                 const topP = topAlert.properties;
+                const evtLower = topP.event.toLowerCase();
                 banner.style.display = "block";
-                banner.innerText = `⚠️ ${topP.event.toUpperCase()}`;
                 banner.style.background = topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100';
+                banner.innerText = `⚠️ ${topP.event.toUpperCase()}`;
 
-                let highestTheme = ""; 
-                let checklistText = "";
+                // LIVE COUNTDOWN FOR MAJOR HAZARDS
+                if (evtLower.includes("tornado warning") || evtLower.includes("severe thunderstorm warning") || evtLower.includes("flash flood warning")) {
+                    const expTime = new Date(topP.expires || topP.ends).getTime();
+                    alertIntervalId = setInterval(() => {
+                        const diff = expTime - new Date().getTime();
+                        if (diff <= 0) { banner.innerText = `⚠️ ${topP.event.toUpperCase()} (EXPIRED)`; clearInterval(alertIntervalId); } 
+                        else {
+                            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+                            banner.innerText = `⚠️ ${topP.event.toUpperCase()} - Expires in ${m}:${s}`;
+                        }
+                    }, 1000);
+                }
 
-                // Process all alerts for the stack and theme logic
+                let highestTheme = ""; let checklistText = "";
+
                 data.features.forEach(f => {
-                    const p = f.properties; 
-                    const evt = p.event.toLowerCase();
-                    
+                    const p = f.properties; const evt = p.event.toLowerCase();
                     let icon = "https://www.weather.gov/bundles/templating/images/top_news/important.png";
                     for (const key in ALERT_ICONS) { if (evt.includes(key)) { icon = ALERT_ICONS[key]; break; } }
 
-                    // Safety & Theme logic (Tornado > Severe Tstm > Flood)
                     if(evt.includes("tornado warning")) { highestTheme = "theme-tor"; checklistText = "TAKE COVER NOW!"; }
                     else if(evt.includes("severe thunderstorm") && highestTheme !== "theme-tor") { highestTheme = "theme-svr"; checklistText = "MOVE TO AN INTERIOR ROOM!"; }
                     else if(evt.includes("flash flood warning") && !highestTheme) { highestTheme = "theme-ffw"; checklistText = "SEEK HIGHER GROUND NOW!"; }
@@ -414,7 +485,6 @@
                 if(highestTheme) document.body.className = highestTheme;
                 if(checklistText) { checklist.innerText = checklistText; checklist.style.display = "block"; }
             } else { 
-                banner.style.display = "none"; 
                 stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; 
             }
         } catch(e) { console.error("Alert Fetch Error:", e); }
@@ -424,7 +494,7 @@
         try {
             const res = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}`);
             const d = await res.json();
-            const aqi = d.list[0].main.aqi; // 1 = Good, 5 = Very Poor
+            const aqi = d.list[0].main.aqi;
             const aqiText = ["", "Good", "Fair", "Moderate", "Poor", "Very Poor"];
             const aqiColors = ["", "#00e676", "#ffeb3b", "#ff9100", "#ff5252", "#b71c1c"];
             
@@ -436,11 +506,9 @@
 
     async function fetchPirate() {
         try {
-            const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`); // fallback Openweather fetch to avoid doubling pirate bandwidth if needed, but original code relied on pirate. Let's fix URL to pirate:
             const resP = await fetch(`https://api.pirateweather.net/forecast/${PIRATE_API_KEY}/${lat},${lon}?units=us`);
             const d = await resP.json();
             
-            // Precip Minutely Timeline
             document.getElementById('minuteSummary').innerText = d.minutely?.summary || "Conditions holding steady.";
             const timeline = document.getElementById('timeline'); timeline.innerHTML = "";
             let highestIntensity = 0;
@@ -461,15 +529,12 @@
                 });
             }
             
-            // Lightning Estimate
             const strikes = highestIntensity > 0.1 ? Math.floor(highestIntensity * 150) + Math.floor(Math.random() * 10) : 0;
             document.getElementById('lightning-count').innerText = strikes;
 
-            // UV Index
             const uv = d.currently?.uvIndex || 0;
             document.getElementById('uv-val').innerText = uv;
-            let uvDesc = "Low (No burn risk)";
-            let uvCol = "#00e676";
+            let uvDesc = "Low (No burn risk)"; let uvCol = "#00e676";
             if(uv >= 3) { uvDesc = "Moderate (Burn: 45m)"; uvCol = "#ffeb3b"; }
             if(uv >= 6) { uvDesc = "High (Burn: 30m)"; uvCol = "#ff9100"; }
             if(uv >= 8) { uvDesc = "Very High (Burn: 15m)"; uvCol = "#ff5252"; }
@@ -477,10 +542,7 @@
             document.getElementById('uv-val').style.color = uvCol;
             document.getElementById('uv-desc').innerText = uvDesc;
 
-            // Moon Phase
-            if(d.daily?.data?.[0]) {
-                document.getElementById('moonVal').innerText = getMoonPhaseName(d.daily.data[0].moonPhase);
-            }
+            if(d.daily?.data?.[0]) document.getElementById('moonVal').innerText = getMoonPhaseName(d.daily.data[0].moonPhase);
         } catch(e) {}
     }
 
@@ -490,21 +552,16 @@
             const d = await res.json();
             localRiseTime = d.city.sunrise * 1000; localSetTime = d.city.sunset * 1000;
             
-            // Populate Astronomy Section in Specs tab
             document.getElementById('riseVal').innerText = new Date(localRiseTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
             document.getElementById('setVal').innerText = new Date(localSetTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
             
             const cont = document.getElementById('forecast-container'); cont.innerHTML = "";
             
             d.list.forEach(f => {
-                // Fix: Convert mm to inches (OpenWeather sends rain in mm)
                 const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : 0;
                 const rainVol = rainInches > 0 ? `<div style="color:#4fc3f7; font-size:0.75em; font-weight:bold;">${rainInches} in</div>` : '';
-                
                 const popPct = Math.round(f.pop * 100);
                 const gustInfo = f.wind.gust ? `<div><b>Gusts:</b> ${Math.round(f.wind.gust)} mph</div>` : '';
-                
-                // Fix: Convert hPa to inHg
                 const pressInHg = (f.main.pressure * 0.02953).toFixed(2);
 
                 cont.innerHTML += `
@@ -530,9 +587,7 @@
                 </div>`;
             });
             drawOrbit();
-        } catch(e) { 
-            console.error("OpenWeather Fetch Error:", e); 
-        }
+        } catch(e) { console.error("OpenWeather Fetch Error:", e); }
     }
 
     async function fetchNWSChain() {
@@ -540,7 +595,6 @@
             const p = await (await fetch(`https://api.weather.gov/points/${lat},${lon}`)).json();
             const wfo = p.properties.cwa; 
             document.getElementById('wfo-label').innerText = wfo;
-
             updateWeatherStory(wfo);
 
             const dailyRes = await fetch(p.properties.forecast);
@@ -560,53 +614,70 @@
                     </div>`;
             });
 
-            // Climate Data
             const cliList = await (await fetch(`https://api.weather.gov/products/types/CLI/locations/${wfo}`)).json();
             if(cliList['@graph']?.length > 0) {
                 const cliData = await (await fetch(cliList['@graph'][0]['@id'])).json();
                 document.getElementById('cli-text').innerText = cliData.productText;
             }
 
-            // Observations & Metadata
             const stations = await (await fetch(p.properties.observationStations)).json();
             const primaryStation = stations.features[0];
             const obs = await (await fetch(`${primaryStation.id}/observations/latest`)).json();
             
-            // Update Station Metadata panel
             document.getElementById('stationName').innerText = primaryStation.properties.name;
             document.getElementById('meta-name').innerText = primaryStation.properties.name;
             document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
             const elevMeters = primaryStation.properties.elevation.value;
             document.getElementById('meta-elev').innerText = elevMeters ? Math.round(elevMeters * 3.28084) + " ft" : "N/A";
 
-            // Dashboard conditions
+            // Dashboard conditions & Weather FX
             const condition = obs.properties.textDescription || "--";
             document.getElementById('conditionText').innerText = condition;
             document.getElementById('weatherIcon').src = obs.properties.icon;
             document.getElementById('weatherIcon').style.display = "block";
+            
+            // Trigger Animation based on condition
+            const fx = document.getElementById('weather-fx'); fx.className = '';
+            const cLow = condition.toLowerCase();
+            if (cLow.includes("rain") || cLow.includes("drizzle") || cLow.includes("thunderstorm") || cLow.includes("showers")) fx.classList.add('fx-rain');
+            else if (cLow.includes("snow") || cLow.includes("flurries") || cLow.includes("blizzard")) fx.classList.add('fx-snow');
             
             // Temp (convert C to F)
             const tempC = obs.properties.temperature.value;
             const tempF = tempC !== null ? Math.round(tempC * 9/5 + 32) : "--";
             document.getElementById('tempVal').innerText = tempF !== "--" ? tempF + "\xB0" : "--";
             
-            // Wind, Hum, Pressure
-            document.getElementById('windVal').innerText = obs.properties.windSpeed.value !== null ? Math.round(obs.properties.windSpeed.value * 0.621) + " mph" : "--";
-            document.getElementById('humVal').innerText = obs.properties.relativeHumidity.value !== null ? Math.round(obs.properties.relativeHumidity.value) + "%" : "--";
-            const presPa = obs.properties.barometricPressure.value;
-            document.getElementById('presVal').innerText = presPa !== null ? (presPa / 3386.389).toFixed(2) + " in" : "--";
+            // Smart Wind Barb
+            const windDir = obs.properties.windDirection.value;
+            const windSpd = obs.properties.windSpeed.value !== null ? Math.round(obs.properties.windSpeed.value * 0.621) : "--";
+            let windHtml = windSpd + " mph";
+            if (windDir !== null && windSpd !== "--") {
+                // Rotates a downward arrow to match the direction the wind is BLOWING
+                windHtml += ` <span style="display:inline-block; transform:rotate(${windDir}deg); color:var(--accent); font-weight:900;">&darr;</span>`;
+            }
+            document.getElementById('windVal').innerHTML = windHtml;
 
-            // Generate Vibe Check
+            // Humidity
+            document.getElementById('humVal').innerText = obs.properties.relativeHumidity.value !== null ? Math.round(obs.properties.relativeHumidity.value) + "%" : "--";
+            
+            // Pressure Trend Indicator
+            const presPa = obs.properties.barometricPressure.value;
+            let trend = "➡️";
+            if (lastPressurePa !== null && presPa !== null) {
+                if (presPa > lastPressurePa + 34) trend = "↗️"; // Rose by ~0.01 inHg
+                else if (presPa < lastPressurePa - 34) trend = "↘️"; // Fell by ~0.01 inHg
+            }
+            lastPressurePa = presPa; // Save for next sync
+            const presIn = presPa !== null ? (presPa / 3386.389).toFixed(2) : "--";
+            document.getElementById('presVal').innerHTML = presIn !== "--" ? `${presIn} in <span style="font-size:0.75em; opacity:0.8;">${trend}</span>` : "--";
+
             document.getElementById('vibeCheck').innerText = generateVibeCheck(tempF, condition);
 
-            // AFD
             const afdList = await (await fetch(`https://api.weather.gov/products/types/AFD/locations/${wfo}`)).json();
             const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
             document.getElementById('nws-text').innerText = afd.productText;
 
-        } catch(e) {
-            console.error("NWS Fetch Error:", e);
-        }
+        } catch(e) { console.error("NWS Fetch Error:", e); }
     }
 
     function drawOrbit() {
