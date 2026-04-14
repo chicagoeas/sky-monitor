@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Waddle Weather</title>
+    <title>Waddle Weather v1.4</title>
     <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/1779/1779927.png">
     <style>
         :root { --primary: #4fc3f7; --accent: #ffd54f; --danger: #ff1744; --warning: #ffeb3b; --success: #00e676; --bg: #07131d; }
@@ -37,7 +37,7 @@
         #safety-checklist {
             display: none; background: #000; color: #fff; border: 2px solid var(--danger);
             padding: 20px; border-radius: 15px; font-size: 1.5em; font-weight: 900; 
-            text-align: center; text-transform: uppercase; margin-top: 20px;
+            text-align: center; text-transform: uppercase; margin-bottom: 20px;
             animation: pulse 1.5s infinite;
         }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(255, 23, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 23, 68, 0); } }
@@ -50,7 +50,7 @@
 
         #coords-panel {
             margin-bottom: 25px; background: rgba(255, 255, 255, 0.05); display: inline-flex; 
-            align-items: center; padding: 8px 15px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.1); gap: 10px;
+            align-items: center; padding: 8px 15px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.1); gap: 10px; flex-wrap: wrap;
         }
         #coords-panel input {
             background: none; border: none; border-bottom: 1px solid var(--primary);
@@ -63,8 +63,11 @@
         .tab-content.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 
+        /* Modified details grid */
         .detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin: 25px 0; }
-        .detail-item { background: rgba(0,0,0,0.2); padding: 15px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.05); }
+        @media(max-width: 500px) { .detail-grid { grid-template-columns: repeat(2, 1fr); } }
+        
+        .detail-item { background: rgba(0,0,0,0.2); padding: 15px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.05); text-align: center;}
         .detail-label { font-size: 0.7em; opacity: 0.5; text-transform: uppercase; margin-bottom: 5px; }
         .detail-val { font-size: 1.2em; font-weight: bold; color: var(--accent); }
 
@@ -76,6 +79,10 @@
 
         .forecast-scroll { display: flex; overflow-x: auto; gap: 15px; padding-bottom: 10px; scrollbar-width: thin; }
         .forecast-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 15px; min-width: 110px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.05); text-align: center; }
+
+        details { background: rgba(0,0,0,0.15); border-radius: 15px; padding: 15px; margin-bottom: 15px; border: 1px solid rgba(255,255,255,0.05); }
+        summary { font-weight: bold; cursor: pointer; outline: none; padding-bottom: 5px; font-size: 0.9em; letter-spacing: 0.5px; }
+        summary::-webkit-details-marker { display: none; }
 
         #alert-stack { display: flex; flex-direction: column; gap: 10px; }
         .alert-card { display: flex; align-items: center; gap: 15px; padding: 15px; border-radius: 12px; text-align: left; text-decoration: none; color: white; transition: 0.2s; }
@@ -97,7 +104,7 @@
 <body>
 
     <h1>
-        <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.3.2</span></span>
+        <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.4</span></span>
         <span id="sync-indicator" style="font-size:0.4em; color:var(--success); opacity: 0; transition: opacity 0.3s;">● SYNCING</span>
     </h1>
     
@@ -113,17 +120,19 @@
     <div id="home-tab" class="tab-content active">
         <div id="alert-banner" onclick="switchTab('severe', document.getElementById('nav-severe'))">⚠️ ALERTS ACTIVE</div>
 
-        <div id="stationName" style="color: #888; font-size: 0.75em; margin-bottom: 10px; letter-spacing: 1px;">INITIALIZING...</div>
+        <div id="stationName" style="color: #888; font-size: 0.75em; margin-bottom: 5px; letter-spacing: 1px;">INITIALIZING...</div>
+        <div id="vibeCheck" style="font-style: italic; color: var(--success); font-size: 0.9em; margin-bottom: 20px;">Gathering intel...</div>
+
         <div style="display: flex; align-items: center; justify-content: center; gap: 25px;">
             <img id="weatherIcon" src="" style="display:none; width: 80px;">
-            <div id="conditionText" style="font-size: 2.5em; font-weight: 300;">--</div>
+            <div id="conditionText" style="font-size: 2.2em; font-weight: 300;">--</div>
         </div>
 
         <div class="detail-grid">
+            <div class="detail-item"><div class="detail-label">Temp</div><div id="tempVal" class="detail-val" style="color: #ff5252;">--</div></div>
             <div class="detail-item"><div class="detail-label">Wind</div><div id="windVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div></div>
-            <div class="detail-item"><div class="detail-label">Sunrise</div><div id="riseVal" class="detail-val">--</div></div>
-            <div class="detail-item"><div class="detail-label">Sunset</div><div id="setVal" class="detail-val">--</div></div>
+            <div class="detail-item"><div class="detail-label">Pressure</div><div id="presVal" class="detail-val">--</div></div>
         </div>
 
         <div style="text-align:left; font-weight:bold; color:var(--primary); margin-bottom:5px;">MINUTE-PRECIP</div>
@@ -132,18 +141,21 @@
             <div class="y-axis"><div>Heavy</div><div>Mod</div><div>Light</div></div>
             <div id="timeline"></div>
         </div>
-        <div class="x-axis"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
+        <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-        <div style="text-align:left; font-weight:bold; color:var(--primary); margin: 30px 0 10px 0;">3-HOURLY SIMPLIFIED FORECAST (OPENWEATHER)</div>
-        <div class="forecast-scroll" id="forecast-container"></div>
+        <details open>
+            <summary style="color:var(--primary);">3-HOURLY SIMPLIFIED FORECAST (OPENWEATHER)</summary>
+            <div class="forecast-scroll" id="forecast-container" style="margin-top:15px;"></div>
+        </details>
 
-        <div style="text-align:left; font-weight:bold; color:var(--accent); margin: 20px 0 10px 0; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">DAILY OUTLOOK (NWS)</div>
-        <div class="forecast-scroll" id="nws-extended-container"></div>
+        <details open>
+            <summary style="color:var(--accent);">DAILY OUTLOOK (NWS)</summary>
+            <div class="forecast-scroll" id="nws-extended-container" style="margin-top:15px;"></div>
+        </details>
     </div>
 
     <div id="severe-tab" class="tab-content">
-        <div id="safety-checklist" style="margin-bottom: 20px;"></div>
-
+        <div id="safety-checklist"></div>
         <div id="alert-stack" style="margin-bottom:20px;"></div>
         
         <div class="toolkit-box">
@@ -164,7 +176,46 @@
         </a>
     </div>
 
-    <div id="details-tab" class="tab-content">
+    <div id="specs-tab" class="tab-content">
+        
+        <div class="toolkit-box">
+            <div class="toolkit-header"><span>📡 STATION INTEL</span></div>
+            <div style="font-family:monospace; font-size:0.85em; color:#ddd; line-height:1.6;">
+                <div><b>Primary Node:</b> <span id="meta-name" style="color:var(--accent);">--</span></div>
+                <div><b>Identifier:</b> <span id="meta-id">--</span></div>
+                <div><b>Elevation:</b> <span id="meta-elev">--</span></div>
+                <div><b>CWA Office:</b> <span id="wfo-label" style="color:var(--primary);">--</span></div>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+            <div class="toolkit-box" style="margin-bottom:0; text-align:center;">
+                <div class="toolkit-header" style="justify-content:center;"><span>AIR QUALITY</span></div>
+                <div id="aqi-val" style="font-size:2em; font-weight:900; margin:10px 0;">--</div>
+                <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Fetching...</div>
+            </div>
+            <div class="toolkit-box" style="margin-bottom:0; text-align:center;">
+                <div class="toolkit-header" style="justify-content:center;"><span>UV INDEX</span></div>
+                <div id="uv-val" style="font-size:2em; font-weight:900; margin:10px 0;">--</div>
+                <div id="uv-desc" style="font-size:0.75em; opacity:0.8;">Fetching...</div>
+            </div>
+        </div>
+
+        <div class="toolkit-box" style="text-align:center;">
+            <div class="toolkit-header" style="justify-content:center; margin-bottom: 15px;"><span>ASTRONOMY & ORBIT</span></div>
+            
+            <div style="display:flex; justify-content:space-around; font-size: 0.85em; font-weight:bold; color: #aaa;">
+                <div>🌅 Sunrise: <br><span id="riseVal" style="color:var(--accent); font-size:1.2em;">--</span></div>
+                <div>🌙 Phase: <br><span id="moonVal" style="color:white; font-size:1.2em;">--</span></div>
+                <div>🌇 Sunset: <br><span id="setVal" style="color:#ff5252; font-size:1.2em;">--</span></div>
+            </div>
+
+            <div id="orbit-container">
+                <div class="orbit-arc"></div>
+                <div id="celestial-body"></div>
+            </div>
+        </div>
+
         <div style="text-align:left; font-weight:bold; color:var(--primary); margin-bottom:10px;">LOCAL WEATHER STORY</div>
         <a id="wxstory-link" target="_blank" title="Click to view full size">
             <div style="background:#111; border-radius:15px; overflow:hidden; border: 1px solid #333; margin-bottom:20px;">
@@ -172,20 +223,12 @@
             </div>
         </a>
 
-        <div id="wfo-label" style="text-align:left; font-size:0.7em; color:var(--primary); margin-bottom:5px;">OFFICE: --</div>
+        <div style="text-align:left; font-weight:bold; color:var(--primary); margin-bottom:5px;">AREA FORECAST DISCUSSION (AFD)</div>
         <div class="nws-discussion" id="nws-text" style="background:rgba(0,0,0,0.4); padding:20px; border-radius:15px; text-align:left; font-family:monospace; font-size:0.85em; color:#aeea00; height:350px; overflow-y:auto; line-height:1.5; margin-bottom:20px;">Syncing Discussion...</div>
 
         <div class="toolkit-box">
             <div class="toolkit-header"><span>📅 LOCAL CLIMATE REPORT (CLI)</span></div>
             <div id="cli-text" style="background:rgba(0,0,0,0.3); padding:15px; border-radius:10px; font-family:monospace; font-size:0.75em; color:#aeea00; white-space:pre-wrap; height:250px; overflow-y:auto; text-align:left;">Syncing Climate Data...</div>
-        </div>
-
-        <div class="toolkit-box" style="text-align:center;">
-            <div class="toolkit-header"><span>CELESTIAL ORBIT</span></div>
-            <div id="orbit-container">
-                <div class="orbit-arc"></div>
-                <div id="celestial-body"></div>
-            </div>
         </div>
     </div>
 
@@ -194,7 +237,7 @@
 <div class="bottom-nav">
     <div class="nav-item active" id="nav-home" onclick="switchTab('home', this)">🏠<span>Home</span></div>
     <div class="nav-item" id="nav-severe" onclick="switchTab('severe', this)">⚠️<span>Severe</span></div>
-    <div class="nav-item" id="nav-details" onclick="switchTab('details', this)">📖<span>Dive</span></div>
+    <div class="nav-item" id="nav-specs" onclick="switchTab('specs', this)">📑<span>Specs</span></div>
 </div>
 
 <script>
@@ -222,7 +265,7 @@
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
-        if(tabId === 'details') drawOrbit();
+        if(tabId === 'specs') drawOrbit();
     }
 
     function saveLoc() { localStorage.setItem('waddle_lat', lat); localStorage.setItem('waddle_lon', lon); }
@@ -252,10 +295,34 @@
 
     async function updateWeatherStory(wfo) {
         const storyImg = document.getElementById('wxstory-img');
-        // Now uses the dynamic WFO variable instead of hardcoded 'lot'
         const storyRawUrl = `www.weather.gov/images/${wfo.toLowerCase()}/wxstory/Tab1FileL.png`;
         storyImg.src = `https://images.weserv.nl/?url=${storyRawUrl}&t=${new Date().getTime()}`;
         document.getElementById('wxstory-link').href = `https://${storyRawUrl}`;
+    }
+
+    // Helper to translate Moon Phase decimal to string
+    function getMoonPhaseName(phase) {
+        if (phase === 0 || phase === 1) return "New 🌑";
+        if (phase > 0 && phase < 0.25) return "Waxing Cresc 🌒";
+        if (phase === 0.25) return "First Qtr 🌓";
+        if (phase > 0.25 && phase < 0.5) return "Waxing Gibb 🌔";
+        if (phase === 0.5) return "Full 🌕";
+        if (phase > 0.5 && phase < 0.75) return "Waning Gibb 🌖";
+        if (phase === 0.75) return "Last Qtr 🌗";
+        return "Waning Cresc 🌘";
+    }
+
+    // Generate quick Vibe Check string based on NWS temps and conditions
+    function generateVibeCheck(temp, condition) {
+        if(!condition) return "Typical weather out there today.";
+        const c = condition.toLowerCase();
+        if (c.includes("rain") || c.includes("showers") || c.includes("storm") || c.includes("drizzle")) return "Grab an umbrella, it's wet out there.";
+        if (c.includes("snow") || c.includes("flurries")) return "Bundle up, snow is falling.";
+        if (temp > 85) return "Stay hydrated! It's a hot one today.";
+        if (temp < 40) return "Chilly outside—grab a heavy coat.";
+        if (c.includes("clear") || c.includes("sun")) return "Beautiful skies—perfect time to be outside!";
+        if (c.includes("fog")) return "Low visibility. Drive safely.";
+        return "Typical conditions out there right now.";
     }
 
     async function loadAll() {
@@ -263,8 +330,14 @@
         indicator.style.opacity = "1";
         document.getElementById('radar-frame').src = `https://www.rainviewer.com/map.html?loc=${lat},${lon},8&oFa=0&oC=1&oU=0&oLL=0&oHu=0&oD=1&oQ=0&oTh=0&color=2&sm=1&sn=1`;
         updateSPCMap();
-        updateWeatherStory();
-        fetchAlerts(); fetchPirate(); fetchOpenWeather(); fetchNWSChain();
+        
+        // Fire APIs
+        fetchAlerts(); 
+        fetchPirate(); 
+        fetchOpenWeather(); 
+        fetchNWSChain();
+        fetchAQI();
+
         setTimeout(() => { indicator.style.opacity = "0"; }, 2000);
     }
 
@@ -307,29 +380,67 @@
         } catch(e) {}
     }
 
+    async function fetchAQI() {
+        try {
+            const res = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}`);
+            const d = await res.json();
+            const aqi = d.list[0].main.aqi; // 1 = Good, 5 = Very Poor
+            const aqiText = ["", "Good", "Fair", "Moderate", "Poor", "Very Poor"];
+            const aqiColors = ["", "#00e676", "#ffeb3b", "#ff9100", "#ff5252", "#b71c1c"];
+            
+            document.getElementById('aqi-val').innerText = aqi;
+            document.getElementById('aqi-val').style.color = aqiColors[aqi];
+            document.getElementById('aqi-desc').innerText = aqiText[aqi];
+        } catch(e) {}
+    }
+
     async function fetchPirate() {
         try {
-            const res = await fetch(`https://api.pirateweather.net/forecast/${PIRATE_API_KEY}/${lat},${lon}?units=us`);
-            const d = await res.json();
+            const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`); // fallback Openweather fetch to avoid doubling pirate bandwidth if needed, but original code relied on pirate. Let's fix URL to pirate:
+            const resP = await fetch(`https://api.pirateweather.net/forecast/${PIRATE_API_KEY}/${lat},${lon}?units=us`);
+            const d = await resP.json();
+            
+            // Precip Minutely Timeline
             document.getElementById('minuteSummary').innerText = d.minutely?.summary || "Conditions holding steady.";
             const timeline = document.getElementById('timeline'); timeline.innerHTML = "";
             let highestIntensity = 0;
 
-            d.minutely?.data.forEach(m => {
-                const bar = document.createElement('div'); bar.className = 'bar';
-                const intensity = m.precipIntensity || 0;
-                if(intensity > highestIntensity) highestIntensity = intensity;
-                let heightPct = Math.min((intensity / 0.4) * 100, 100);
-                bar.style.height = Math.max(heightPct, 2) + "%";
-                if (intensity > 0) {
-                    if (intensity >= 0.3) bar.style.background = "#ff1744"; 
-                    else if (intensity >= 0.1) bar.style.background = "#ffeb3b";
-                    else bar.style.background = "#00e676";
-                }
-                timeline.appendChild(bar);
-            });
+            if(d.minutely) {
+                d.minutely.data.forEach(m => {
+                    const bar = document.createElement('div'); bar.className = 'bar';
+                    const intensity = m.precipIntensity || 0;
+                    if(intensity > highestIntensity) highestIntensity = intensity;
+                    let heightPct = Math.min((intensity / 0.4) * 100, 100);
+                    bar.style.height = Math.max(heightPct, 2) + "%";
+                    if (intensity > 0) {
+                        if (intensity >= 0.3) bar.style.background = "#ff1744"; 
+                        else if (intensity >= 0.1) bar.style.background = "#ffeb3b";
+                        else bar.style.background = "#00e676";
+                    }
+                    timeline.appendChild(bar);
+                });
+            }
+            
+            // Lightning Estimate
             const strikes = highestIntensity > 0.1 ? Math.floor(highestIntensity * 150) + Math.floor(Math.random() * 10) : 0;
             document.getElementById('lightning-count').innerText = strikes;
+
+            // UV Index
+            const uv = d.currently?.uvIndex || 0;
+            document.getElementById('uv-val').innerText = uv;
+            let uvDesc = "Low (No burn risk)";
+            let uvCol = "#00e676";
+            if(uv >= 3) { uvDesc = "Moderate (Burn: 45m)"; uvCol = "#ffeb3b"; }
+            if(uv >= 6) { uvDesc = "High (Burn: 30m)"; uvCol = "#ff9100"; }
+            if(uv >= 8) { uvDesc = "Very High (Burn: 15m)"; uvCol = "#ff5252"; }
+            if(uv >= 11) { uvDesc = "Extreme (Burn: <10m)"; uvCol = "#b71c1c"; }
+            document.getElementById('uv-val').style.color = uvCol;
+            document.getElementById('uv-desc').innerText = uvDesc;
+
+            // Moon Phase
+            if(d.daily?.data?.[0]) {
+                document.getElementById('moonVal').innerText = getMoonPhaseName(d.daily.data[0].moonPhase);
+            }
         } catch(e) {}
     }
 
@@ -338,6 +449,8 @@
             const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
             const d = await res.json();
             localRiseTime = d.city.sunrise * 1000; localSetTime = d.city.sunset * 1000;
+            
+            // Populate Astronomy Section in Specs tab
             document.getElementById('riseVal').innerText = new Date(localRiseTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
             document.getElementById('setVal').innerText = new Date(localSetTime).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
             
@@ -357,10 +470,9 @@
     async function fetchNWSChain() {
         try {
             const p = await (await fetch(`https://api.weather.gov/points/${lat},${lon}`)).json();
-            const wfo = p.properties.cwa; // Grab the local office ID (e.g., LOT, TOP, OKX)
-            document.getElementById('wfo-label').innerText = "OFFICE: " + wfo;
+            const wfo = p.properties.cwa; 
+            document.getElementById('wfo-label').innerText = wfo;
 
-            // Trigger the Weather Story update with the correct local office
             updateWeatherStory(wfo);
 
             const dailyRes = await fetch(p.properties.forecast);
@@ -380,22 +492,50 @@
                     </div>`;
             });
 
+            // Climate Data
             const cliList = await (await fetch(`https://api.weather.gov/products/types/CLI/locations/${wfo}`)).json();
             if(cliList['@graph']?.length > 0) {
                 const cliData = await (await fetch(cliList['@graph'][0]['@id'])).json();
                 document.getElementById('cli-text').innerText = cliData.productText;
             }
+
+            // Observations & Metadata
             const stations = await (await fetch(p.properties.observationStations)).json();
-            const obs = await (await fetch(`${stations.features[0].id}/observations/latest`)).json();
-            document.getElementById('stationName').innerText = stations.features[0].properties.name;
-            document.getElementById('conditionText').innerText = obs.properties.textDescription || "--";
+            const primaryStation = stations.features[0];
+            const obs = await (await fetch(`${primaryStation.id}/observations/latest`)).json();
+            
+            // Update Station Metadata panel
+            document.getElementById('stationName').innerText = primaryStation.properties.name;
+            document.getElementById('meta-name').innerText = primaryStation.properties.name;
+            document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
+            const elevMeters = primaryStation.properties.elevation.value;
+            document.getElementById('meta-elev').innerText = elevMeters ? Math.round(elevMeters * 3.28084) + " ft" : "N/A";
+
+            // Dashboard conditions
+            const condition = obs.properties.textDescription || "--";
+            document.getElementById('conditionText').innerText = condition;
             document.getElementById('weatherIcon').src = obs.properties.icon;
             document.getElementById('weatherIcon').style.display = "block";
-            document.getElementById('windVal').innerText = Math.round(obs.properties.windSpeed.value * 0.621) + " mph";
-            document.getElementById('humVal').innerText = Math.round(obs.properties.relativeHumidity.value) + "%";
+            
+            // Temp (convert C to F)
+            const tempC = obs.properties.temperature.value;
+            const tempF = tempC !== null ? Math.round(tempC * 9/5 + 32) : "--";
+            document.getElementById('tempVal').innerText = tempF !== "--" ? tempF + "\xB0" : "--";
+            
+            // Wind, Hum, Pressure
+            document.getElementById('windVal').innerText = obs.properties.windSpeed.value !== null ? Math.round(obs.properties.windSpeed.value * 0.621) + " mph" : "--";
+            document.getElementById('humVal').innerText = obs.properties.relativeHumidity.value !== null ? Math.round(obs.properties.relativeHumidity.value) + "%" : "--";
+            const presPa = obs.properties.barometricPressure.value;
+            document.getElementById('presVal').innerText = presPa !== null ? (presPa / 3386.389).toFixed(2) + " in" : "--";
+
+            // Generate Vibe Check
+            document.getElementById('vibeCheck').innerText = generateVibeCheck(tempF, condition);
+
+            // AFD
             const afdList = await (await fetch(`https://api.weather.gov/products/types/AFD/locations/${wfo}`)).json();
             const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
             document.getElementById('nws-text').innerText = afd.productText;
+
         } catch(e) {
             console.error("NWS Fetch Error:", e);
         }
