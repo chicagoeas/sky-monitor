@@ -387,55 +387,68 @@
         const stack = document.getElementById('alert-stack');
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
-        clearInterval(alertIntervalId);
         const severityScore = { 'Extreme': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1, 'Unknown': 0 };
 
         try {
             const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
             const data = await res.json();
-            stack.innerHTML = ""; document.body.className = ""; checklist.style.display = "none"; banner.style.display = "none";
+            stack.innerHTML = ""; document.body.className = ""; checklist.style.display = "none";
 
             if (data.features?.length > 0) {
-                let topAlert = data.features.reduce((prev, current) => {
-                    let prevScore = severityScore[prev.properties.severity] || 0;
-                    let currScore = severityScore[current.properties.severity] || 0;
-                    return (currScore > prevScore) ? current : prev;
-                });
-                const topP = topAlert.properties;
-                const evtLower = topP.event.toLowerCase();
+                // Find the highest severity alert for the top banner
+                let topAlert = data.features.reduce((prev, curr) => (severityScore[curr.properties.severity] || 0) > (severityScore[prev.properties.severity] || 0) ? curr : prev);
+
+                // Check if top alert is a PDS
+                const topDesc = topAlert.properties.description ? topAlert.properties.description.toUpperCase() : "";
+                const isTopPDS = topDesc.includes("PARTICULARLY DANGEROUS SITUATION") || topDesc.includes("FLASH FLOOD EMERGENCY");
+
                 banner.style.display = "block";
-                banner.style.background = topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100';
-                banner.innerText = `⚠️ ${topP.event.toUpperCase()}`;
+                banner.innerText = isTopPDS ? `⚠️ PDS ${topAlert.properties.event.toUpperCase()}` : `⚠️ ${topAlert.properties.event.toUpperCase()}`;
+                banner.style.background = (topAlert.properties.severity === 'Extreme' || isTopPDS) ? '#b71c1c' : '#ff9100';
 
-                if (evtLower.includes("tornado warning") || evtLower.includes("severe thunderstorm warning") || evtLower.includes("flash flood warning")) {
-                    const expTime = new Date(topP.expires || topP.ends).getTime();
-                    alertIntervalId = setInterval(() => {
-                        const diff = expTime - new Date().getTime();
-                        if (diff <= 0) { banner.innerText = `⚠️ ${topP.event.toUpperCase()} (EXPIRED)`; clearInterval(alertIntervalId); } 
-                        else {
-                            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
-                            banner.innerText = `⚠️ ${topP.event.toUpperCase()} - Expires in ${m}:${s}`;
-                        }
-                    }, 1000);
-                }
-
-                let highestTheme = ""; let checklistText = "";
+                let highestTheme = ""; 
                 data.features.forEach(f => {
-                    const p = f.properties; const evt = p.event.toLowerCase();
-                    let icon = "https://www.weather.gov/bundles/templating/images/top_news/important.png";
-                    for (const key in ALERT_ICONS) { if (evt.includes(key)) { icon = ALERT_ICONS[key]; break; } }
-                    if(evt.includes("tornado warning")) { highestTheme = "theme-tor"; checklistText = "TAKE COVER NOW!"; }
-                    else if(evt.includes("severe thunderstorm") && highestTheme !== "theme-tor") { highestTheme = "theme-svr"; checklistText = "MOVE TO AN INTERIOR ROOM!"; }
-                    else if(evt.includes("flash flood warning") && !highestTheme) { highestTheme = "theme-ffw"; checklistText = "SEEK HIGHER GROUND NOW!"; }
-                    stack.innerHTML += `<a href="https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}" target="_blank" class="alert-card" style="background:${p.severity==='Extreme'?'#b71c1c':'#e65100'}"><img src="${icon}" style="width:55px; border-radius:5px;"><div><b>${p.event}</b><br><small>${p.headline || ''}</small></div></a>`;
-                });
-                if(highestTheme) document.body.className = highestTheme;
-                if(checklistText) { checklist.innerText = checklistText; checklist.style.display = "block"; }
-            } else { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; }
-        } catch(e) { console.error("Alert Fetch Error:", e); }
-    }
+                    const p = f.properties; 
+                    const evt = p.event.toLowerCase();
+                    const desc = p.description ? p.description.toUpperCase() : "";
+                    
+                    // The PDS Scanner
+                    const isPDS = desc.includes("PARTICULARLY DANGEROUS SITUATION") || desc.includes("FLASH FLOOD EMERGENCY");
 
+                    // Handle the Checklist Text
+                    if(evt.includes("tornado warning")) { 
+                        highestTheme = "theme-tor"; 
+                        checklist.innerText = isPDS ? "PARTICULARLY DANGEROUS SITUATION! TAKE COVER NOW!" : "TAKE COVER NOW!"; 
+                        checklist.style.display = "block"; 
+                    }
+                    else if(evt.includes("severe thunderstorm") && highestTheme !== "theme-tor") { 
+                        highestTheme = "theme-svr"; 
+                        checklist.innerText = isPDS ? "PDS SEVERE THUNDERSTORM! MOVE TO AN INTERIOR ROOM!" : "MOVE TO AN INTERIOR ROOM!"; 
+                        checklist.style.display = "block"; 
+                    }
+                    else if(evt.includes("flash flood warning") && !highestTheme) {
+                        highestTheme = "theme-ffw";
+                        checklist.innerText = isPDS ? "FLASH FLOOD EMERGENCY! SEEK HIGHER GROUND NOW!" : "SEEK HIGHER GROUND!";
+                        checklist.style.display = "block";
+                    }
+
+                    // Render the Alert Stack Card
+                    let displayName = isPDS ? `PDS ${p.event.toUpperCase()}` : p.event;
+                    // Give PDS warnings a deep, menacing magenta/red so they visually override standard extreme warnings
+                    let bgColor = isPDS ? '#880e4f' : (p.severity === 'Extreme' ? '#b71c1c' : '#e65100'); 
+                    
+                    stack.innerHTML += `<div class="alert-card" style="background:${bgColor}; padding: 15px; border-radius: 12px; margin-bottom: 10px; font-weight: bold;">${displayName}</div>`;
+                });
+                
+                if(highestTheme) document.body.className = highestTheme;
+            } else { 
+                banner.style.display = "none"; 
+            }
+        } catch(e) {
+            console.error("Alerts Fetch Error:", e);
+        }
+    }
+    
     async function fetchAQI() {
         try {
             const res = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}`);
