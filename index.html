@@ -255,6 +255,8 @@
     let lastPressurePa = null;
     let alertIntervalId = null;
     let spcIntervalId = null;
+    let fxAnimationId = null;
+    let particles = [];
 
     const ALERT_ICONS = {
         "tornado warning": "https://forecast.weather.gov/newimages/medium/tor.png",
@@ -513,15 +515,22 @@
             const dailyData = await dailyRes.json();
             const dailyCont = document.getElementById('nws-extended-container');
             dailyCont.innerHTML = "";
+            
             dailyData.properties.periods.forEach(per => {
                 const isHigh = per.isDaytime;
                 const tempColor = isHigh ? "#ff5252" : "#4fc3f7";
                 const tempLabel = isHigh ? "High" : "Low";
-                dailyCont.innerHTML += `<div class="forecast-card" style="min-width: 125px;"><div style="font-size:0.8em; font-weight:bold; margin-bottom:5px; color:#fff;">${per.name}</div><img src="${per.icon}" style="width:45px; border-radius:8px; margin-bottom:5px;"><div style="color:${tempColor}; font-weight:bold; font-size:1.1em;">${tempLabel}: ${per.temperature}&deg;</div><div style="font-size:0.65em; opacity:0.7; margin-top:5px; line-height:1.2; text-transform:capitalize;">${per.shortForecast}</div></div>`;
+                dailyCont.innerHTML += `
+                    <div class="forecast-card" style="min-width: 125px;">
+                        <div style="font-size:0.8em; font-weight:bold; margin-bottom:5px; color:#fff;">${per.name}</div>
+                        <img src="${per.icon}" style="width:45px; border-radius:8px; margin-bottom:5px;">
+                        <div style="color:${tempColor}; font-weight:bold; font-size:1.1em;">${tempLabel}: ${per.temperature}&deg;</div>
+                        <div style="font-size:0.65em; opacity:0.7; margin-top:5px; line-height:1.2; text-transform:capitalize;">${per.shortForecast}</div>
+                    </div>`;
             });
 
             const cliList = await (await fetch(`https://api.weather.gov/products/types/CLI/locations/${wfo}`)).json();
-            if(cliList['@graph']?.length > 0) {
+            if (cliList['@graph']?.length > 0) {
                 const cliData = await (await fetch(cliList['@graph'][0]['@id'])).json();
                 document.getElementById('cli-text').innerText = cliData.productText;
             }
@@ -541,8 +550,9 @@
             document.getElementById('weatherIcon').src = obs.properties.icon;
             document.getElementById('weatherIcon').style.display = "block";
             
-            // All weather-fx reference lines have been removed here to prevent crashing
-            
+            // Trigger weather FX
+            startWeatherFX(condition);
+
             const tempC = obs.properties.temperature.value;
             const tempF = tempC !== null ? Math.round(tempC * 9/5 + 32) : "--";
             document.getElementById('tempVal').innerText = tempF !== "--" ? tempF + "\xB0" : "--";
@@ -550,7 +560,9 @@
             const windDir = obs.properties.windDirection.value;
             const windSpd = obs.properties.windSpeed.value !== null ? Math.round(obs.properties.windSpeed.value * 0.621) : "--";
             let windHtml = windSpd + " mph";
-            if (windDir !== null && windSpd !== "--") windHtml += ` <span style="display:inline-block; transform:rotate(${windDir}deg); color:var(--accent); font-weight:900;">&darr;</span>`;
+            if (windDir !== null && windSpd !== "--") {
+                windHtml += ` <span style="display:inline-block; transform:rotate(${windDir}deg); color:var(--accent); font-weight:900;">&darr;</span>`;
+            }
             document.getElementById('windVal').innerHTML = windHtml;
 
             document.getElementById('humVal').innerText = obs.properties.relativeHumidity.value !== null ? Math.round(obs.properties.relativeHumidity.value) + "%" : "--";
@@ -571,7 +583,9 @@
             const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
             document.getElementById('nws-text').innerText = afd.productText;
 
-        } catch(e) { console.error("NWS Fetch Error:", e); }
+        } catch(e) { 
+            console.error("NWS Fetch Error:", e); 
+        }
     }
 
     function drawOrbit() {
@@ -591,41 +605,92 @@
         body.style.left = `${10 + (pct * 80)}%`; body.style.top = `${100 - (Math.sin(pct * Math.PI) * 100)}%`;
     }
 
-    function initRain() {
+    function stopWeatherFX() {
+        if (fxAnimationId) cancelAnimationFrame(fxAnimationId);
+        const canvas = document.getElementById('rainCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        particles = [];
+    }
+
+    function startWeatherFX(condition) {
+        stopWeatherFX();
         const canvas = document.getElementById('rainCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
-        let drops = [];
-        for(let i = 0; i < 100; i++) {
-            drops.push({
+        const text = condition.toLowerCase();
+        let type = 'none';
+
+        if (text.includes('rain') || text.includes('drizzle') || text.includes('storm')) {
+            type = 'rain';
+        } else if (text.includes('snow') || text.includes('flurries') || text.includes('winter')) {
+            type = 'snow';
+        }
+        
+        if (type === 'none') return; 
+
+        for (let i = 0; i < 100; i++) {
+            particles.push({
                 x: Math.random() * canvas.width,
                 y: Math.random() * canvas.height,
-                len: Math.random() * 20 + 10,
-                vel: Math.random() * 10 + 5
+                len: type === 'rain' ? Math.random() * 20 + 10 : Math.random() * 4 + 2,
+                vel: type === 'rain' ? Math.random() * 10 + 5 : Math.random() * 1 + 0.5,
+                drift: Math.random() * 1 - 0.5 
             });
         }
 
-        function draw() {
+        let lastFlash = 0;
+        let flashOpacity = 0;
+
+        function draw(time) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = 'rgba(174, 194, 224, 0.2)';
+            
+            if (text.includes('storm')) {
+                if (time - lastFlash > 8000 + Math.random() * 10000) {
+                    flashOpacity = 0.12; 
+                    lastFlash = time;
+                }
+                if (flashOpacity > 0) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${flashOpacity})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    flashOpacity -= 0.003; 
+                }
+            }
+
             ctx.lineWidth = 1;
             ctx.lineCap = 'round';
-            drops.forEach(d => {
-                ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x, d.y + d.len); ctx.stroke();
-                d.y += d.vel; if(d.y > canvas.height) d.y = -d.len;
+
+            particles.forEach(p => {
+                ctx.beginPath();
+                if (type === 'rain') {
+                    ctx.strokeStyle = 'rgba(174, 194, 224, 0.2)';
+                    ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(p.x, p.y + p.len);
+                } else {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.arc(p.x, p.y, p.len, 0, Math.PI * 2);
+                }
+                ctx.stroke();
+
+                p.y += p.vel;
+                if (type === 'snow') p.x += p.drift;
+
+                if (p.y > canvas.height) {
+                    p.y = -20;
+                    p.x = Math.random() * canvas.width;
+                }
             });
-            requestAnimationFrame(draw);
+            fxAnimationId = requestAnimationFrame(draw);
         }
-        draw();
+        fxAnimationId = requestAnimationFrame(draw);
     }
 
     setInterval(loadAll, 300000);
     window.onload = () => { 
         loadLoc(); 
         loadAll(); 
-        initRain(); // This actually starts the rain effect now
     };
 </script>
 </body>
