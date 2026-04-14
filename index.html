@@ -97,7 +97,7 @@
 <body>
 
     <h1>
-        <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.3.1</span></span>
+        <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.3.2</span></span>
         <span id="sync-indicator" style="font-size:0.4em; color:var(--success); opacity: 0; transition: opacity 0.3s;">● SYNCING</span>
     </h1>
     
@@ -136,6 +136,9 @@
 
         <div style="text-align:left; font-weight:bold; color:var(--primary); margin: 30px 0 10px 0;">3-HOURLY FORECAST</div>
         <div class="forecast-scroll" id="forecast-container"></div>
+
+        <div style="text-align:left; font-weight:bold; color:var(--accent); margin: 20px 0 10px 0; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 20px;">DAILY OUTLOOK (NWS)</div>
+        <div class="forecast-scroll" id="nws-extended-container"></div>
     </div>
 
     <div id="severe-tab" class="tab-content">
@@ -236,7 +239,6 @@
     async function updateSPCMap() {
         const spcImg = document.getElementById('spc-map');
         const spcUrl = "www.spc.noaa.gov/products/outlook/day1otlk.png";
-        // Switched to Weserv Proxy (high reliability for NOAA images)
         spcImg.src = `https://images.weserv.nl/?url=${spcUrl}&t=${new Date().getTime()}`;
         document.getElementById('spc-link').href = `https://${spcUrl}`;
     }
@@ -325,7 +327,6 @@
             
             const cont = document.getElementById('forecast-container'); cont.innerHTML = "";
             d.list.forEach(f => {
-                // RESTORED: Added main condition text back to the cards
                 cont.innerHTML += `<div class="forecast-card">
                     <div style="font-size:0.75em; color:var(--primary); font-weight:bold;">${new Date(f.dt*1000).toLocaleTimeString([], {weekday:'short', hour:'numeric'})}</div>
                     <img src="https://openweathermap.org/img/wn/${f.weather[0].icon}.png" style="width:40px; margin: 2px 0;">
@@ -342,6 +343,25 @@
             const p = await (await fetch(`https://api.weather.gov/points/${lat},${lon}`)).json();
             const wfo = p.properties.cwa;
             document.getElementById('wfo-label').innerText = "OFFICE: " + wfo;
+
+            // NEW: Fetch Daily Extended Forecast
+            const dailyRes = await fetch(p.properties.forecast);
+            const dailyData = await dailyRes.json();
+            const dailyCont = document.getElementById('nws-extended-container');
+            dailyCont.innerHTML = "";
+            dailyData.properties.periods.forEach(per => {
+                const isHigh = per.isDaytime;
+                const tempColor = isHigh ? "#ff5252" : "#4fc3f7";
+                const tempLabel = isHigh ? "High" : "Low";
+                dailyCont.innerHTML += `
+                    <div class="forecast-card" style="min-width: 125px;">
+                        <div style="font-size:0.8em; font-weight:bold; margin-bottom:5px; color:#fff;">${per.name}</div>
+                        <img src="${per.icon}" style="width:45px; border-radius:8px; margin-bottom:5px;">
+                        <div style="color:${tempColor}; font-weight:bold; font-size:1.1em;">${tempLabel}: ${per.temperature}&deg;</div>
+                        <div style="font-size:0.65em; opacity:0.7; margin-top:5px; line-height:1.2; text-transform:capitalize;">${per.shortForecast}</div>
+                    </div>`;
+            });
+
             const cliList = await (await fetch(`https://api.weather.gov/products/types/CLI/locations/${wfo}`)).json();
             if(cliList['@graph']?.length > 0) {
                 const cliData = await (await fetch(cliList['@graph'][0]['@id'])).json();
