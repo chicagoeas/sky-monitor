@@ -51,16 +51,6 @@
             position: relative; z-index: 10;
         }
 
-        .blink-fast {
-            animation: emergency-pulse 0.6s infinite alternate;
-            font-weight: 900;
-        }
-
-        @keyframes emergency-pulse {
-            from { background-color: #ff1744; color: white; }
-            to { background-color: white; color: #ff1744; }
-        }
-
         #coords-panel {
             margin-bottom: 25px; background: rgba(255, 255, 255, 0.05); display: inline-flex; 
             align-items: center; padding: 8px 15px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.1); gap: 10px; flex-wrap: wrap;
@@ -550,49 +540,11 @@
             document.getElementById('wfo-label').innerText = wfo;
             updateWeatherStory(wfo);
 
-            const alertRes = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
-            const alertData = await alertRes.json();
-            const topBanner = document.getElementById('alert-banner');
-            const severeHeader = document.getElementById('severe-status-header');
-            
-            let isEvac = false;
-            let isPDS = false;
-
-            if (alertData.features) {
-                alertData.features.forEach(f => {
-                    const head = (f.properties.headline || "").toUpperCase();
-                    const desc = (f.properties.description || "").toUpperCase();
-                    if (head.includes("EVACUATION") || desc.includes("EVACUATION")) isEvac = true;
-                    if (desc.includes("PARTICULARLY DANGEROUS SITUATION") || head.includes("PDS")) isPDS = true;
-                });
-            }
-
-            if (topBanner) {
-                if (isEvac) {
-                    topBanner.innerText = "🚨 EMERGENCY: EVACUATION IMMEDIATE - LEAVE NOW! 🚨";
-                    topBanner.style.background = "#ff1744";
-                    topBanner.classList.add('blink-fast');
-                    if (severeHeader) severeHeader.innerText = "EVACUATION IMMEDIATE!";
-                } else if (isPDS) {
-                    topBanner.innerText = "⚠️ PARTICULARLY DANGEROUS SITUATION WARNING ⚠️";
-                    topBanner.style.background = "var(--danger)";
-                    topBanner.classList.remove('blink-fast');
-                    if (severeHeader) severeHeader.innerText = "THIS IS A PDS SITUATION!";
-                } else if (alertData.features.length > 0) {
-                    topBanner.innerText = "SEVERE WEATHER ALERT ACTIVE";
-                    topBanner.style.background = "var(--warning)";
-                    topBanner.classList.remove('blink-fast');
-                } else {
-                    topBanner.innerText = "NO ACTIVE ALERTS";
-                    topBanner.style.background = "rgba(255,255,255,0.1)";
-                    topBanner.classList.remove('blink-fast');
-                }
-            }
-
             const dailyRes = await fetch(p.properties.forecast);
             const dailyData = await dailyRes.json();
             const dailyCont = document.getElementById('nws-extended-container');
             dailyCont.innerHTML = "";
+            
             dailyData.properties.periods.forEach(per => {
                 const isHigh = per.isDaytime;
                 const tempColor = isHigh ? "#ff5252" : "#4fc3f7";
@@ -606,29 +558,65 @@
                     </div>`;
             });
 
+            const cliList = await (await fetch(`https://api.weather.gov/products/types/CLI/locations/${wfo}`)).json();
+            if (cliList['@graph']?.length > 0) {
+                const cliData = await (await fetch(cliList['@graph'][0]['@id'])).json();
+                document.getElementById('cli-text').innerText = cliData.productText;
+            }
+
             const stations = await (await fetch(p.properties.observationStations)).json();
             const primaryStation = stations.features[0];
             const obs = await (await fetch(`${primaryStation.id}/observations/latest`)).json();
             
+            document.getElementById('stationName').innerText = primaryStation.properties.name;
+            document.getElementById('meta-name').innerText = primaryStation.properties.name;
+            document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
+            const elevMeters = primaryStation.properties.elevation.value;
+            document.getElementById('meta-elev').innerText = elevMeters ? Math.round(elevMeters * 3.28084) + " ft" : "N/A";
+
             const condition = obs.properties.textDescription || "--";
             document.getElementById('conditionText').innerText = condition;
+            document.getElementById('weatherIcon').src = obs.properties.icon;
+            document.getElementById('weatherIcon').style.display = "block";
+            
+            // Start the Dynamic FX
             startWeatherFX(condition);
 
             const tempC = obs.properties.temperature.value;
             const tempF = tempC !== null ? Math.round(tempC * 9/5 + 32) : "--";
             document.getElementById('tempVal').innerText = tempF !== "--" ? tempF + "\xB0" : "--";
             
-            const vibeElement = document.getElementById('vibeCheck');
-            if (vibeElement) {
-                vibeElement.innerText = generateVibeCheck(tempF, condition, alertData.features);
+            const windDir = obs.properties.windDirection.value;
+            const windSpd = obs.properties.windSpeed.value !== null ? Math.round(obs.properties.windSpeed.value * 0.621) : "--";
+            let windHtml = windSpd + " mph";
+            if (windDir !== null && windSpd !== "--") {
+                windHtml += ` <span style="display:inline-block; transform:rotate(${windDir}deg); color:var(--accent); font-weight:900;">&darr;</span>`;
             }
+            document.getElementById('windVal').innerHTML = windHtml;
+
+            document.getElementById('humVal').innerText = obs.properties.relativeHumidity.value !== null ? Math.round(obs.properties.relativeHumidity.value) + "%" : "--";
+            
+            const presPa = obs.properties.barometricPressure.value;
+            let trend = "➡️";
+            if (lastPressurePa !== null && presPa !== null) {
+                if (presPa > lastPressurePa + 34) trend = "↗️"; 
+                else if (presPa < lastPressurePa - 34) trend = "↘️"; 
+            }
+            lastPressurePa = presPa;
+            const presIn = presPa !== null ? (presPa / 3386.389).toFixed(2) : "--";
+            document.getElementById('presVal').innerHTML = presIn !== "--" ? `${presIn} in <span style="font-size:0.75em; opacity:0.8;">${trend}</span>` : "--";
+
+            document.getElementById('vibeCheck').innerText = generateVibeCheck(tempF, condition);
+
+            const afdList = await (await fetch(`https://api.weather.gov/products/types/AFD/locations/${wfo}`)).json();
+            const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
+            document.getElementById('nws-text').innerText = afd.productText;
 
         } catch(e) { 
-            console.error("NWS Fetch Error:", e);
-            document.getElementById('conditionText').innerText = "ERROR LOADING DATA";
+            console.error("NWS Fetch Error:", e); 
         }
     }
-    
+
     function drawOrbit() {
         if(!localRiseTime || !localSetTime) return;
         const now = new Date().getTime(); const body = document.getElementById('celestial-body');
