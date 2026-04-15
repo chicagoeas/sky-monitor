@@ -550,7 +550,6 @@
             document.getElementById('wfo-label').innerText = wfo;
             updateWeatherStory(wfo);
 
-            // 1. ALERT PARSING FOR TOP BANNER & SEVERE TAB
             const alertRes = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
             const alertData = await alertRes.json();
             const topBanner = document.getElementById('alert-banner');
@@ -559,25 +558,37 @@
             let isEvac = false;
             let isPDS = false;
 
-            alertData.features.forEach(f => {
-                const head = (f.properties.headline || "").toUpperCase();
-                const desc = (f.properties.description || "").toUpperCase();
-                if (head.includes("EVACUATION") || desc.includes("EVACUATION")) isEvac = true;
-                if (desc.includes("PARTICULARLY DANGEROUS SITUATION") || head.includes("PDS")) isPDS = true;
-            });
-
-            if (isEvac) {
-                topBanner.innerText = "🚨 EMERGENCY: EVACUATION IMMEDIATE - LEAVE NOW! 🚨";
-                topBanner.style.background = "var(--danger)";
-                topBanner.classList.add('blink-fast');
-                if (severeHeader) severeHeader.innerText = "EVACUATION IMMEDIATE!";
-            } else if (isPDS) {
-                topBanner.innerText = "⚠️ PARTICULARLY DANGEROUS SITUATION WARNING ⚠️";
-                topBanner.style.background = "var(--danger)";
-                if (severeHeader) severeHeader.innerText = "THIS IS A PDS SITUATION!";
+            if (alertData.features) {
+                alertData.features.forEach(f => {
+                    const head = (f.properties.headline || "").toUpperCase();
+                    const desc = (f.properties.description || "").toUpperCase();
+                    if (head.includes("EVACUATION") || desc.includes("EVACUATION")) isEvac = true;
+                    if (desc.includes("PARTICULARLY DANGEROUS SITUATION") || head.includes("PDS")) isPDS = true;
+                });
             }
 
-            // 2. CONTINUE NORMAL DATA FETCHING
+            if (topBanner) {
+                if (isEvac) {
+                    topBanner.innerText = "🚨 EMERGENCY: EVACUATION IMMEDIATE - LEAVE NOW! 🚨";
+                    topBanner.style.background = "#ff1744";
+                    topBanner.classList.add('blink-fast');
+                    if (severeHeader) severeHeader.innerText = "EVACUATION IMMEDIATE!";
+                } else if (isPDS) {
+                    topBanner.innerText = "⚠️ PARTICULARLY DANGEROUS SITUATION WARNING ⚠️";
+                    topBanner.style.background = "var(--danger)";
+                    topBanner.classList.remove('blink-fast');
+                    if (severeHeader) severeHeader.innerText = "THIS IS A PDS SITUATION!";
+                } else if (alertData.features.length > 0) {
+                    topBanner.innerText = "SEVERE WEATHER ALERT ACTIVE";
+                    topBanner.style.background = "var(--warning)";
+                    topBanner.classList.remove('blink-fast');
+                } else {
+                    topBanner.innerText = "NO ACTIVE ALERTS";
+                    topBanner.style.background = "rgba(255,255,255,0.1)";
+                    topBanner.classList.remove('blink-fast');
+                }
+            }
+
             const dailyRes = await fetch(p.properties.forecast);
             const dailyData = await dailyRes.json();
             const dailyCont = document.getElementById('nws-extended-container');
@@ -607,10 +618,15 @@
             const tempF = tempC !== null ? Math.round(tempC * 9/5 + 32) : "--";
             document.getElementById('tempVal').innerText = tempF !== "--" ? tempF + "\xB0" : "--";
             
-            // Pass alerts to vibe check so it knows about the evacuation
-            document.getElementById('vibeCheck').innerText = generateVibeCheck(tempF, condition, alertData.features);
+            const vibeElement = document.getElementById('vibeCheck');
+            if (vibeElement) {
+                vibeElement.innerText = generateVibeCheck(tempF, condition, alertData.features);
+            }
 
-        } catch(e) { console.error("NWS Fetch Error:", e); }
+        } catch(e) { 
+            console.error("NWS Fetch Error:", e);
+            document.getElementById('conditionText').innerText = "ERROR LOADING DATA";
+        }
     }
     
     function drawOrbit() {
