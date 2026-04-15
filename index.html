@@ -380,6 +380,7 @@
         const indicator = document.getElementById('sync-indicator');
         indicator.style.opacity = "1";
         
+        // Cache-buster to ensure we pull the absolute latest data from NWS
         const cb = `&t=${new Date().getTime()}`;
 
         document.getElementById('radar-frame').src = `https://www.rainviewer.com/map.html?loc=${lat},${lon},8&oFa=0&oC=1&oU=0&oLL=0&oHu=0&oD=1&oQ=0&oTh=0&color=2&sm=1&sn=1${cb}`;
@@ -388,6 +389,7 @@
         startSPCCountdown();
 
         try {
+            // Promise.all ensures all data sources are fetched in parallel
             await Promise.all([
                 fetchAlerts(cb),
                 fetchPirate(cb),
@@ -395,11 +397,6 @@
                 fetchNWSChain(cb),
                 fetchAQI(cb)
             ]);
-            
-            const updateLabel = document.getElementById('last-updated');
-            if (updateLabel) {
-                updateLabel.innerText = `UPDATED: ${new Date().toLocaleTimeString()}`;
-            }
         } catch (e) {
             console.error("Sync failed:", e);
         }
@@ -411,39 +408,36 @@
         const stack = document.getElementById('alert-stack');
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
-        
-        // Ensure we clear any existing countdowns
         if (typeof alertIntervalId !== 'undefined') clearInterval(alertIntervalId);
         
         const getPriority = (event) => {
             const e = event.toLowerCase();
-            // 1. Non-weather / Life-Safety Emergencies
+            // 1. Non-weather / Life-Safety Emergencies (Evacuation, Civil, etc.)
             if (e.includes("civil") || e.includes("evacuation") || e.includes("shelter") || e.includes("emergency")) return 1;
-            // 2. The Big Three
-            if (e.includes("tornado warning")) return 2;
-            if (e.includes("severe thunderstorm warning")) return 3;
-            if (e.includes("flash flood warning")) return 4;
-            // 3. General Hierarchy
-            if (e.includes("warning")) return 5;
-            if (e.includes("watch")) return 6;
-            if (e.includes("advisory")) return 7;
+            // 2. High-Priority Weather Warnings
+            if (e === "tornado warning") return 2;
+            if (e === "severe thunderstorm warning") return 3;
+            if (e === "flash flood warning") return 4;
+            // 3. General Hierarchy by Suffix
+            if (e.endsWith("warning")) return 5;
+            if (e.endsWith("watch")) return 6;
+            if (e.endsWith("advisory")) return 7;
             return 8; // Statements, Outlooks, etc.
         };
 
         const severityScore = { 'Extreme': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1, 'Unknown': 0 };
 
         try {
-            const response = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}${cb}`);
-            const data = await response.json();
+            const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}${cb}`);
+            const data = await res.json();
             
-            // Reset UI
             stack.innerHTML = ""; 
             document.body.className = ""; 
             if (checklist) checklist.style.display = "none"; 
             if (banner) banner.style.display = "none";
 
             if (data.features && data.features.length > 0) {
-                // Sort by the keyword hierarchy first, then by NWS severity score
+                // Sorting based on the priority hierarchy, then by NWS severity score
                 let sortedAlerts = data.features.sort((a, b) => {
                     const aPri = getPriority(a.properties.event);
                     const bPri = getPriority(b.properties.event);
@@ -461,7 +455,6 @@
                 const isTopPDS = topDesc.includes("PARTICULARLY DANGEROUS SITUATION") || topDesc.includes("FLASH FLOOD EMERGENCY");
                 const topEventName = isTopPDS ? `PDS ${topP.event.toUpperCase()}` : topP.event.toUpperCase();
 
-                // Banner Setup
                 if (banner) {
                     banner.style.display = "block";
                     banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
@@ -495,10 +488,7 @@
                     let icon = "https://www.weather.gov/bundles/templating/images/top_news/important.png";
                     if (typeof ALERT_ICONS !== 'undefined') {
                         for (const key in ALERT_ICONS) { 
-                            if (evt.includes(key)) { 
-                                icon = ALERT_ICONS[key]; 
-                                break; 
-                            } 
+                            if (evt.includes(key)) { icon = ALERT_ICONS[key]; break; } 
                         }
                     }
                     
