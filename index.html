@@ -407,44 +407,46 @@
         setTimeout(() => { indicator.style.opacity = "0"; }, 1000);
     }
 
-    async function fetchAlerts(cb) {
+    async function fetchAlerts(cb = '') {
         const stack = document.getElementById('alert-stack');
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
-        clearInterval(alertIntervalId);
+        
+        // Ensure we clear any existing countdowns
+        if (typeof alertIntervalId !== 'undefined') clearInterval(alertIntervalId);
         
         const getPriority = (event) => {
             const e = event.toLowerCase();
-            // 1. Non-Weather / Life-Safety Emergencies
-            if (e.includes("evacuation") || e.includes("civil emergency") || e.includes("civil danger") || e.includes("shelter in place") || e.includes("emergency")) return 1;
-            // 2. Tornado Warning
-            if (e === "tornado warning") return 2;
-            // 3. SVR Warning
-            if (e === "severe thunderstorm warning") return 3;
-            // 4. Flash Flood Warning
-            if (e === "flash flood warning") return 4;
-            // 5. General Hierarchy
-            if (e.endsWith("warning")) return 5;
-            if (e.endsWith("watch")) return 6;
-            if (e.endsWith("advisory")) return 7;
+            // 1. Non-weather / Life-Safety Emergencies
+            if (e.includes("civil") || e.includes("evacuation") || e.includes("shelter") || e.includes("emergency")) return 1;
+            // 2. The Big Three
+            if (e.includes("tornado warning")) return 2;
+            if (e.includes("severe thunderstorm warning")) return 3;
+            if (e.includes("flash flood warning")) return 4;
+            // 3. General Hierarchy
+            if (e.includes("warning")) return 5;
+            if (e.includes("watch")) return 6;
+            if (e.includes("advisory")) return 7;
             return 8; // Statements, Outlooks, etc.
         };
 
         const severityScore = { 'Extreme': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1, 'Unknown': 0 };
 
         try {
-            const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}${cb}`);
-            const data = await res.json();
+            const response = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}${cb}`);
+            const data = await response.json();
+            
+            // Reset UI
             stack.innerHTML = ""; 
             document.body.className = ""; 
-            checklist.style.display = "none"; 
-            banner.style.display = "none";
+            if (checklist) checklist.style.display = "none"; 
+            if (banner) banner.style.display = "none";
 
             if (data.features && data.features.length > 0) {
+                // Sort by the keyword hierarchy first, then by NWS severity score
                 let sortedAlerts = data.features.sort((a, b) => {
                     const aPri = getPriority(a.properties.event);
                     const bPri = getPriority(b.properties.event);
-
                     if (aPri !== bPri) return aPri - bPri;
                     
                     const aSev = severityScore[a.properties.severity] || 0;
@@ -459,23 +461,26 @@
                 const isTopPDS = topDesc.includes("PARTICULARLY DANGEROUS SITUATION") || topDesc.includes("FLASH FLOOD EMERGENCY");
                 const topEventName = isTopPDS ? `PDS ${topP.event.toUpperCase()}` : topP.event.toUpperCase();
 
-                banner.style.display = "block";
-                banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
-                banner.innerText = `⚠️ ${topEventName}`;
+                // Banner Setup
+                if (banner) {
+                    banner.style.display = "block";
+                    banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
+                    banner.innerText = `⚠️ ${topEventName}`;
 
-                if (evtLower.includes("warning")) {
-                    const expTime = new Date(topP.expires || topP.ends).getTime();
-                    alertIntervalId = setInterval(() => {
-                        const diff = expTime - new Date().getTime();
-                        if (diff <= 0) { 
-                            banner.innerText = `⚠️ ${topEventName} (EXPIRED)`; 
-                            clearInterval(alertIntervalId); 
-                        } else {
-                            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
-                            banner.innerText = `⚠️ ${topEventName} - Expires in ${m}:${s}`;
-                        }
-                    }, 1000);
+                    if (evtLower.includes("warning")) {
+                        const expTime = new Date(topP.expires || topP.ends).getTime();
+                        alertIntervalId = setInterval(() => {
+                            const diff = expTime - new Date().getTime();
+                            if (diff <= 0) { 
+                                banner.innerText = `⚠️ ${topEventName} (EXPIRED)`; 
+                                clearInterval(alertIntervalId); 
+                            } else {
+                                const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                                const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+                                banner.innerText = `⚠️ ${topEventName} - Expires in ${m}:${s}`;
+                            }
+                        }, 1000);
+                    }
                 }
 
                 let highestTheme = ""; 
@@ -488,11 +493,13 @@
                     const isPDS = desc.includes("PARTICULARLY DANGEROUS SITUATION") || desc.includes("FLASH FLOOD EMERGENCY");
 
                     let icon = "https://www.weather.gov/bundles/templating/images/top_news/important.png";
-                    for (const key in ALERT_ICONS) { 
-                        if (evt.includes(key)) { 
-                            icon = ALERT_ICONS[key]; 
-                            break; 
-                        } 
+                    if (typeof ALERT_ICONS !== 'undefined') {
+                        for (const key in ALERT_ICONS) { 
+                            if (evt.includes(key)) { 
+                                icon = ALERT_ICONS[key]; 
+                                break; 
+                            } 
+                        }
                     }
                     
                     if (evt.includes("tornado warning")) { 
@@ -517,7 +524,7 @@
                 });
                 
                 if (highestTheme) document.body.className = highestTheme;
-                if (checklistText) { 
+                if (checklist && checklistText) { 
                     checklist.innerText = checklistText; 
                     checklist.style.display = "block"; 
                 }
