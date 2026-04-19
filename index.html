@@ -28,12 +28,19 @@
         h1 { margin: 0 0 10px 0; font-weight: 800; font-size: 2.2em; color: var(--accent); letter-spacing: -1px; display: flex; justify-content: space-between; align-items: center; z-index: 10; position: relative; }
 
         #theme-toggle {
-            position: absolute; right: 0; top: 0; background: rgba(255,255,255,0.1); 
-            border: 1px solid rgba(255,255,255,0.2); color: white; padding: 8px 12px; 
-            border-radius: 20px; cursor: pointer; font-size: 0.6em; font-weight: bold;
+            background: rgba(255,255,255,0.1); 
+            border: 1px solid rgba(255,255,255,0.2); color: white; padding: 6px 12px; 
+            border-radius: 15px; cursor: pointer; font-size: 0.7em; font-weight: bold;
             transition: 0.3s;
         }
         #theme-toggle:hover { background: rgba(255,255,255,0.2); }
+
+        #sync-indicator {
+            position: fixed; top: 20px; right: 20px;
+            font-size: 0.65em; font-weight: 900; color: var(--success);
+            background: rgba(0,0,0,0.5); padding: 6px 12px; border-radius: 20px;
+            backdrop-filter: blur(5px); opacity: 0; transition: opacity 0.3s; z-index: 1100; letter-spacing: 1px;
+        }
 
         #alert-banner {
             display: none; background: var(--danger); color: white; padding: 15px;
@@ -73,7 +80,7 @@
 
         #coords-panel {
             margin-bottom: 25px; background: rgba(255, 255, 255, 0.05); display: inline-flex; 
-            align-items: center; padding: 8px 15px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.1); gap: 10px; flex-wrap: wrap;
+            align-items: center; padding: 10px 20px; border-radius: 50px; border: 1px solid rgba(255,255,255,0.1); gap: 12px; flex-wrap: wrap;
             position: relative; z-index: 10;
         }
         #coords-panel input {
@@ -126,9 +133,10 @@
 <body>
     <canvas id="rainCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-1;"></canvas>
 
+    <span id="sync-indicator">● SYNCING</span>
+
     <h1>
         <span>WaddleWeather <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.6</span></span>
-        <button id="theme-toggle" onclick="toggleThemeMode()">THEME: AUTO</button>
     </h1>
     
     <div id="coords-panel">
@@ -136,7 +144,7 @@
         <input type="number" id="lonInput" value="-87.6298" step="0.0001">
         <button class="btn-action" onclick="updateLocation()">SYNC</button>
         <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
-        <span id="sync-indicator" style="font-size:0.8em; font-weight:bold; color:var(--success); opacity: 0; transition: opacity 0.3s; margin-left: 10px;">● SYNCING</span>
+        <button id="theme-toggle" onclick="toggleThemeMode()">THEME: AUTO</button>
     </div>
 
 <div id="dashboard">
@@ -638,13 +646,26 @@
         try {
             const res = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}`);
             const d = await res.json();
-            const aqi = d.list[0].main.aqi;
-            const aqiText = ["", "Good", "Fair", "Moderate", "Poor", "Very Poor"];
-            const aqiColors = ["", "#00e676", "#ffeb3b", "#ff9100", "#ff5252", "#b71c1c"];
-            document.getElementById('aqi-val').innerText = `AQI ${aqi}`;
-            document.getElementById('aqi-val').style.color = aqiColors[aqi];
-            document.getElementById('aqi-desc').innerText = aqiText[aqi];
-        } catch(e) {}
+            const rawIndex = d.list[0].main.aqi; // The OpenWeather 1-5 index
+            
+            // Map the 1-5 index to typical US EPA AQI numerical ranges
+            const aqiData = {
+                1: { val: 25, label: "Good", color: "#00e676" },          // 0-50 range
+                2: { val: 75, label: "Moderate", color: "#ffeb3b" },      // 51-100 range
+                3: { val: 125, label: "Unhealthy (S)", color: "#ff9100" },// 101-150 range
+                4: { val: 175, label: "Unhealthy", color: "#ff5252" },     // 151-200 range
+                5: { val: 300, label: "Hazardous", color: "#b71c1c" }      // 201-500 range
+            };
+
+            const result = aqiData[rawIndex] || { val: "--", label: "Unknown", color: "#888" };
+
+            const valEl = document.getElementById('aqi-val');
+            valEl.innerText = result.val;
+            valEl.style.color = result.color;
+            document.getElementById('aqi-desc').innerText = result.label;
+        } catch(e) {
+            console.error("AQI Fetch Error:", e);
+        }
     }
 
     async function fetchPirate() {
