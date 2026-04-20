@@ -541,7 +541,7 @@
         updateSPCMap();
         startSPCCountdown();
         
-        await Promise.all([fetchAlerts(), fetchPirate(), fetchOpenWeather(), fetchNWSChain(), fetchComfortIndex()]);
+        await Promise.all([fetchAlerts(), fetchPirate(), fetchOpenWeather(), fetchNWSChain(), fetchSmartComfort()]);
         
         lastSyncTime = new Date();
         updateTimestamp();
@@ -648,73 +648,102 @@
     
     async function fetchSmartComfort() {
             try {
-                const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
-                const data = await res.json();
+                // 1. Primary Fetch: OpenWeather
+                const owRes = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
+                const ow = await owRes.json();
 
-                const T = data.main.temp;
-                const H = data.main.humidity;
-                const W = data.wind.speed;
-                const C = data.clouds.all;
-                const cond = data.weather[0].main.toLowerCase();
+                let T = ow.main?.temp;
+                let H = ow.main?.humidity;
+                let W = ow.wind?.speed;
+                let C = ow.clouds?.all;
+                let cond = ow.weather?.[0]?.main?.toLowerCase() ?? "clear";
+
+                // 2. Redundancy Check: If critical data is missing, ping NWS
+                if (T === undefined || W === undefined || H === undefined) {
+                    try {
+                        // Dynamically find the nearest NWS station based on your lat/lon
+                        const pointsRes = await fetch(`https://api.weather.gov/points/${lat},${lon}`);
+                        const pointsData = await pointsRes.json();
+                        const stationUrl = pointsData.properties.observationStations;
+                        
+                        const stationRes = await fetch(stationUrl);
+                        const stationData = await stationRes.json();
+                        const latestObsRes = await fetch(`${stationData.features[0].id}/observations/latest`);
+                        const obs = await latestObsRes.json();
+                        const p = obs.properties;
+
+                        // Fill in the blanks (NWS uses Celsius/Metric, so we convert)
+                        if (T === undefined) T = (p.temperature.value * 9/5) + 32;
+                        if (H === undefined) H = p.relativeHumidity.value;
+                        if (W === undefined) W = p.windSpeed.value * 0.621371; // km/h to mph
+                    } catch (nwsErr) { console.warn("NWS Fallback failed:", nwsErr); }
+                }
+
+                // 3. Absolute Safety Fallbacks
+                T = T ?? 70;
+                H = H ?? 50;
+                W = W ?? 0;
+                C = C ?? 0;
 
                 let word = "Fair";
                 let color = "#ffffff";
                 let reason = `${Math.round(T)}° / ${H}% Humid`;
 
-                // The Priority Ladder (Checks the most impactful factor first)
-        if (cond.includes("rain") || cond.includes("drizzle")) {
+                // 4. The Priority Logic
+        if (cond.includes("rain") || cond.includes("drizzle") || cond.includes("thunderstorm")) {
             word = "Damp";
             color = "#4fc3f7";
-            reason = "Active Rain Fall";
-        } else if (T < 30) {
+            reason = `Rain / ${H}% Humid`;
+        } else if (T < 32) {
             word = "Frigid";
             color = "#82b1ff";
-            reason = `${Math.round(T)}° Freezing Temp`;
-        } else if (T < 48 && W > 12) {
+            reason = `${Math.round(T)}° / Frozen`;
+        } else if (T < 50 && W > 15) {
             word = "Biting";
             color = "#b0bec5";
-            reason = `${Math.round(W)}mph Wind Chill`;
-        } else if (T > 88 && H > 60) {
+            reason = `${Math.round(W)}mph / Wind Chill`;
+        } else if (T > 90 && H > 65) {
             word = "Heavy";
             color = "#ff5252";
-            reason = "High Heat & Humidity";
-        } else if (H > 80 && T > 70) {
+            reason = `${Math.round(T)}° / Humid`;
+        } else if (H > 80 && T > 72) {
             word = "Muggy";
             color = "#aed581";
-            reason = `${H}% Humidity Level`;
-        } else if (W > 25) {
+            reason = `${H}% Humidity`;
+        } else if (W > 28) {
             word = "Blustery";
             color = "#cfd8dc";
-            reason = `${Math.round(W)}mph Gusts`;
-        } else if (C > 85) {
+            reason = `${Math.round(W)}mph Wind`;
+        } else if (C > 90) {
             word = "Gloomy";
             color = "#90a4ae";
-            reason = "Heavy Cloud Cover";
-        } else if (T >= 68 && T <= 76 && H < 50 && W < 10) {
+            reason = "Cloudy / Low Light";
+        } else if (T >= 68 && T <= 78 && H < 45 && W < 12) {
             word = "Perfect";
             color = "#00e676";
-            reason = "Ideal Conditions";
-        } else if (T < 50) {
+            reason = `${Math.round(T)}° / Calm / Clear`;
+        } else if (T < 52) {
             word = "Chilly";
             color = "#81d4fa";
-            reason = `${Math.round(T)}° Low Temp`;
+            reason = `${Math.round(T)}° / Cool Air`;
         } else {
             word = "Pleasant";
             color = "#b9f6ca";
             reason = "Clear & Balanced";
         }
 
-                // Update UI
+                // 5. Update UI
                 document.getElementById('aqi-val').innerText = word.toUpperCase();
                 document.getElementById('aqi-val').style.color = color;
                 document.getElementById('aqi-desc').innerText = reason;
 
-                // Update Header
-                const aqiHeader = document.querySelector('#specs-tab .toolkit-header span');
-                if (aqiHeader) aqiHeader.innerText = "SMART COMFORT";
+                const header = document.querySelector('#specs-tab .toolkit-header span');
+                if (header) header.innerText = "SMART COMFORT";
 
             } catch(e) { 
-                console.error("Smart Comfort Sync Error:", e); 
+                console.error("Smart Comfort Sync Error:", e);
+                document.getElementById('aqi-val').innerText = "OFFLINE";
+                document.getElementById('aqi-desc').innerText = "Syncing Data...";
             }
         }
     
