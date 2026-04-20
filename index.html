@@ -651,55 +651,40 @@
                 const T = data.main.temp;
                 const H = data.main.humidity;
                 const W = data.wind.speed;
-                
-                // Calculate Dew Point for comfort thresholds
                 const dp = T - ((100 - H) / 5); 
+
+                let score = (T > 70) ? (T + (0.55 * (H / 100) * (T - 58))) : T;
                 
-                let score;
                 let comfortDesc;
                 let comfortCol;
 
-                // Simple Weighted Comfort Logic
-                // Factors: Humidity impact increases as Temp rises
-                if (T > 70) {
-                    // Heat Index focus
-                    score = T + (0.55 * (H / 100) * (T - 58));
-                } else if (T < 45) {
-                    // Wind Chill focus
-                    score = 35.74 + (0.6215 * T) - (35.75 * Math.pow(W, 0.16)) + (0.4275 * T * Math.pow(W, 0.16));
-                } else {
-                    // Mild weather baseline
-                    score = T;
-                }
-
-                // Determine Descriptive Label based on Dew Point & Apparent Temp
                 if (dp > 70 || score > 90) {
                     comfortDesc = "Oppressive";
-                    comfortCol = "#ff1744"; // Danger Red
+                    comfortCol = "#ff1744"; 
                 } else if (dp > 65 || score > 85) {
                     comfortDesc = "Uncomfortable";
-                    comfortCol = "#ff9100"; // Orange
+                    comfortCol = "#ff9100";
                 } else if (dp > 60 || score > 75) {
-                    comfortDesc = "Sticky/Warm";
-                    comfortCol = "#ffeb3b"; // Warning Yellow
-                } else if (dp < 30 && T < 50) {
-                    comfortDesc = "Brisk/Dry";
-                    comfortCol = "#80deea"; // Cyan
+                    comfortDesc = "Sticky";
+                    comfortCol = "#ffeb3b";
+                } else if (T < 45) {
+                    comfortDesc = "Chilly";
+                    comfortCol = "#80deea";
                 } else {
                     comfortDesc = "Pleasant";
-                    comfortCol = "#00e676"; // Success Green
+                    comfortCol = "#00e676";
                 }
 
-                // Update the existing AQI slots in the Specs Tab
-                document.getElementById('aqi-val').innerText = `${Math.round(score)}°`;
+                // Display only the text label
+                document.getElementById('aqi-val').innerText = comfortDesc;
                 document.getElementById('aqi-val').style.color = comfortCol;
-                document.getElementById('aqi-desc').innerText = comfortDesc;
                 
-                // Optional: Update the "AIR QUALITY" header to "COMFORT INDEX"
+                // Clear the sub-description since the main text now handles it
+                document.getElementById('aqi-desc').innerText = "Comfort Level";
+
                 const aqiHeader = document.querySelector('#specs-tab .toolkit-header span');
-                if (aqiHeader && aqiHeader.innerText === "AIR QUALITY") {
-                    aqiHeader.innerText = "COMFORT INDEX";
-                }
+                if (aqiHeader) aqiHeader.innerText = "OUTDOOR COMFORT";
+
             } catch(e) { 
                 console.error("Comfort Index Error:", e); 
             }
