@@ -644,41 +644,39 @@
     }
     
     async function fetchAQI() {
-            try {
-                const res = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}`);
-                const data = await res.json();
-                const rawIndex = data.list[0].main.aqi; 
-                
-                let aqi, aqiDesc, aqiCol;
+        try {
+            // Using the primary weather node's humidity for a "Comfort Index"
+            const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
+            const data = await res.json();
+            
+            const humidity = data.main.humidity;
+            // Simplified dew point calculation for the comfort label
+            const dewPoint = data.main.temp - ((100 - humidity) / 5); 
+            
+            let comfortDesc;
+            let comfortCol;
 
-                // Mapping the 1-5 index to typical US EPA values
-                if (rawIndex === 1) {
-                    aqi = 41; // Matches your "actual" observation
-                    aqiDesc = "Good";
-                    aqiCol = "#00e676";
-                } else if (rawIndex === 2) {
-                    aqi = 82;
-                    aqiDesc = "Moderate";
-                    aqiCol = "#ffeb3b";
-                } else if (rawIndex === 3) {
-                    aqi = 135;
-                    aqiDesc = "Unhealthy (Sensitive)";
-                    aqiCol = "#ff9100";
-                } else if (rawIndex === 4) {
-                    aqi = 175;
-                    aqiDesc = "Unhealthy";
-                    aqiCol = "#ff5252";
-                } else {
-                    aqi = 225;
-                    aqiDesc = "Very Unhealthy";
-                    aqiCol = "#b71c1c";
-                }
+            if (dewPoint < 50) {
+                comfortDesc = "Dry/Pleasant";
+                comfortCol = "#4fc3f7"; // Light Blue
+            } else if (dewPoint < 60) {
+                comfortDesc = "Comfortable";
+                comfortCol = "#00e676"; // Green
+            } else if (dewPoint < 65) {
+                comfortDesc = "Sticky";
+                comfortCol = "#ffd54f"; // Amber
+            } else {
+                comfortDesc = "Muggy/Oppressive";
+                comfortCol = "#ff5252"; // Red
+            }
 
-                document.getElementById('aqi-val').innerText = `AQI ${aqi}`;
-                document.getElementById('aqi-val').style.color = aqiCol;
-                document.getElementById('aqi-desc').innerText = aqiDesc;
-            } catch(e) { console.error("AQI Sync Error:", e); }
+            document.getElementById('aqi-val').innerText = `${humidity}% Humidity`;
+            document.getElementById('aqi-val').style.color = comfortCol;
+            document.getElementById('aqi-desc').innerText = comfortDesc;
+        } catch(e) { 
+            console.error("Comfort Sync Error:", e); 
         }
+    }
     
     async function fetchPirate() {
         try {
