@@ -744,17 +744,27 @@
         } catch(e) { console.error("Alert Fetch Error:", e); }
     }
     
-    async function fetchSmartComfort() {
-        try {
-            // 1. Primary Fetch: OpenWeather
+    async function fetchSmartComfort(weatherData = null) {
+    try {
+        let T, H, W, C, cond;
+
+        // If data is passed from the main loop, use it! No more 7-degree gaps.
+        if (weatherData) {
+            T = weatherData.main?.temp;
+            H = weatherData.main?.humidity;
+            W = weatherData.wind?.speed;
+            C = weatherData.clouds?.all;
+            cond = weatherData.weather?.[0]?.main?.toLowerCase() ?? "clear";
+        } else {
+            // FALLBACK: If no data is passed, keep your original fetch logic
             const owRes = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
             const ow = await owRes.json();
-
-            let T = ow.main?.temp;
-            let H = ow.main?.humidity;
-            let W = ow.wind?.speed;
-            let C = ow.clouds?.all;
-            let cond = ow.weather?.[0]?.main?.toLowerCase() ?? "clear";
+            T = ow.main?.temp;
+            H = ow.main?.humidity;
+            W = ow.wind?.speed;
+            C = ow.clouds?.all;
+            cond = ow.weather?.[0]?.main?.toLowerCase() ?? "clear";
+        }
 
             // 2. Redundancy Check: Use NWS Station if OpenWeather data is missing
             if (T === undefined || W === undefined || H === undefined) {
