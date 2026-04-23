@@ -745,41 +745,36 @@
     }
     
     async function fetchSmartComfort(weatherData = null) {
-    try {
-        let T, H, W, C, cond;
+        try {
+            let T, H, W, C, cond;
 
-        // --- SECTION 1: DATA ACQUISITION ---
-        if (weatherData) {
-            // Use passed data if available
-            T = weatherData.main?.temp;
-            H = weatherData.main?.humidity;
-            W = weatherData.wind?.speed;
-            C = weatherData.clouds?.all;
-            cond = weatherData.weather?.[0]?.main?.toLowerCase() ?? "clear";
-        } else {
-            // THE FIX: If no data passed, scrape the 54° directly from the UI
-            const uiTemp = document.getElementById('tempVal')?.innerText;
-            const uiHum = document.getElementById('humVal')?.innerText;
-            const uiWind = document.getElementById('windVal')?.innerText;
+            // --- SECTION 1: DATA ACQUISITION ---
+            if (weatherData) {
+                // Use passed data if available
+                T = weatherData.main?.temp;
+                H = weatherData.main?.humidity;
+                W = weatherData.wind?.speed;
+                C = weatherData.clouds?.all;
+                cond = weatherData.weather?.[0]?.main?.toLowerCase() ?? "clear";
+            } else {
+                // Scrape the temp directly from the UI
+                const uiTemp = document.getElementById('tempVal')?.innerText;
+                const uiHum = document.getElementById('humVal')?.innerText;
+                const uiWind = document.getElementById('windVal')?.innerText;
 
-            if (uiTemp && uiTemp !== "--") {
+                // THE LOCKDOWN: If the Home page is still loading, DO NOT fetch. 
+                // Just abort and wait for the next sync. No more 61°.
+                if (!uiTemp || uiTemp === "--" || uiTemp === "") {
+                    return; 
+                }
+
                 T = parseFloat(uiTemp.replace('°', ''));
                 H = parseFloat(uiHum?.replace('%', '') || 50);
                 W = parseFloat(uiWind?.replace('mph', '') || 0);
                 C = 0; 
                 cond = "clear"; 
-            } else {
-                // LAST RESORT: If the screen is also empty, do the fetch
-                // This is where that 61° comes from, but it prevents the "Broken" state
-                const owRes = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
-                const ow = await owRes.json();
-                T = ow.main?.temp;
-                H = ow.main?.humidity;
-                W = ow.wind?.speed;
-                C = ow.clouds?.all;
-                cond = ow.weather?.[0]?.main?.toLowerCase() ?? "clear";
             }
-        }
+
             // 2. Redundancy Check: Use NWS Station if OpenWeather data is missing
             if (T === undefined || W === undefined || H === undefined) {
                 try {
