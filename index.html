@@ -363,6 +363,8 @@
     let themeOverride = 'auto';
     let isNightAtStation = false;
     let stationTzOffset = 0;
+    // STORM TRACKING MEMORY
+    let lastStormCall = { time: null, dist: null };
 
     function formatOffsetTime(unixSeconds, offsetSeconds) {
         // Shifting the time by the offset and formatting as UTC perfectly matches the remote timezone
@@ -1018,40 +1020,98 @@
             // --- LIVE STORM TRACKING & RADAR LOGIC ---
             const stormDist = d.currently?.nearestStormDistance;
             const stormBearing = d.currently?.nearestStormBearing;
+            const currentTime = Date.now();
             
-            // Keep your cool randomized lightning math based on live precipitation intensity
+            // Keep your lightning math
             const strikes = highestIntensity > 0.1 ? Math.floor(highestIntensity * 150) + Math.floor(Math.random() * 10) : 0;
-            
-            // 1. Update Distance & Direction
+
+            // 1. Math Engine (Radial Velocity & Relative Motion)
+            let radialSpeed = 0;
+            let relativeMotion = "STATIONARY";
+            let etaText = "CALCULATING..."; // Default until 2nd ping
+            let isApproaching = false;
+
+            if (lastStormCall.time && lastStormCall.dist !== null && stormDist !== undefined) {
+                const timeDeltaHours = (currentTime - lastStormCall.time) / (1000 * 60 * 60);
+                const distDelta = lastStormCall.dist - stormDist; // Positive = got closer
+
+                if (timeDeltaHours > 0) {
+                    radialSpeed = Math.abs(distDelta) / timeDeltaHours;
+
+                    // SANITY CHECK: The "Pop-Up" Problem (Speed > 80mph means it's a new cell)
+                    if (radialSpeed > 80) {
+                        relativeMotion = "NEW CELL DETECTED";
+                    } else {
+                        // 0.5 mile buffer prevents bouncing
+                        if (distDelta > 0.5) {
+                            relativeMotion = "APPROACHING";
+                            isApproaching = true;
+                        } else if (distDelta < -0.5) {
+                            relativeMotion = "MOVING AWAY";
+                        }
+
+                        // Calculate true ETA using actual approach speed (not general wind speed)
+                        if (isApproaching && radialSpeed > 1) {
+                            const etaHours = stormDist / radialSpeed;
+                            const minutesToArrival = Math.round(etaHours * 60);
+                            const arrivalTime = new Date(currentTime + (minutesToArrival * 60000));
+                            const timeStr = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            etaText = `${minutesToArrival}mins (~${timeStr})`;
+                        } else if (isApproaching) {
+                            etaText = "SLOW/STATIONARY";
+                        } else if (relativeMotion === "MOVING AWAY") {
+                            etaText = "RECEDING";
+                        }
+                    }
+                }
+            }
+
+            // Save data for the next minute's API call
+            if (stormDist !== undefined) {
+                lastStormCall = { time: currentTime, dist: stormDist };
+            }
+
+            // 2. Update the UI
+            const dirValEl = document.getElementById('storm-dir-val');
+
             if (stormDist !== undefined && stormDist > 0) {
                 const cardinal = getCompassDirection(stormBearing);
                 document.getElementById('storm-dist-val').innerHTML = `${stormDist} <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-                document.getElementById('storm-dir-val').innerText = `GENERAL STORM MOTION: ${cardinal.toUpperCase()}`;
+                
+                // Set the text
+                if (relativeMotion === "NEW CELL DETECTED") {
+                    dirValEl.innerText = "NEW CELL DETECTED. TRACKING TRAJECTORY...";
+                    dirValEl.style.color = "#fff";
+                } else if (relativeMotion === "STATIONARY") {
+                    dirValEl.innerText = `STATIONARY (BEARING: ${cardinal.toUpperCase()})`;
+                    dirValEl.style.color = "#fff";
+                } else {
+                    dirValEl.innerText = `${relativeMotion} FROM THE ${cardinal.toUpperCase()}`;
+                    // Color dynamics based on threat
+                    dirValEl.style.color = isApproaching ? "var(--danger)" : "var(--success)";
+                }
+
                 document.getElementById('storm-status-tag').innerText = "CELL DETECTED";
                 document.getElementById('storm-status-tag').style.background = "rgba(255, 23, 68, 0.2)";
                 document.getElementById('storm-status-tag').style.color = "var(--danger)";
-                
-                // 2. Calculate TOA based on live wind speed
-                if (liveWindSpd > 2) {
-                    const minutesToArrival = Math.round((stormDist / liveWindSpd) * 60);
-                    const arrivalTime = new Date(new Date().getTime() + minutesToArrival * 60000);
-                    const timeStr = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    
-                    document.getElementById('storm-toa').innerText = `${minutesToArrival}mins (~${timeStr})`;
-                } else {
-                    document.getElementById('storm-toa').innerText = "STATIONARY / SLOW";
-                }
+                document.getElementById('storm-toa').innerText = etaText;
+
             } else if (stormDist === 0) {
                 document.getElementById('storm-dist-val').innerHTML = `0 <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-                document.getElementById('storm-dir-val').innerText = `STORM CELL OVERHEAD`;
+                dirValEl.innerText = `STORM CELL OVERHEAD`;
+                dirValEl.style.color = "var(--danger)";
                 document.getElementById('storm-toa').innerText = "IMMEDIATE";
             } else {
                 document.getElementById('storm-dist-val').innerHTML = `-- <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-                document.getElementById('storm-dir-val').innerText = `NO STORMS IN RANGE`;
+                dirValEl.innerText = `NO STORMS IN RANGE`;
+                dirValEl.style.color = "#fff";
                 document.getElementById('storm-status-tag').innerText = "CLEAR SCAN";
                 document.getElementById('storm-status-tag').style.background = "rgba(0, 230, 118, 0.2)";
                 document.getElementById('storm-status-tag').style.color = "var(--success)";
                 document.getElementById('storm-toa').innerText = "N/A";
+                
+                // Clear memory so a new storm later doesn't trigger a math error
+                lastStormCall = { time: null, dist: null };
             }
 
             // 3. Update Visual Radar & Lightning
