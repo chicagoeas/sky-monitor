@@ -1017,108 +1017,133 @@
                     timeline.appendChild(bar);
                 });
             }
-// --- LIVE STORM TRACKING & RADAR LOGIC ---
+            // --- LIVE STORM TRACKING & RADAR LOGIC ---
             const stormDist = d.currently?.nearestStormDistance;
             const stormBearing = d.currently?.nearestStormBearing;
             const currentTime = Date.now();
-            
-            // 1. Logic Engine
-            let relativeMotion = lastStormCall.motion || "STATIONARY";
-            let etaText = lastStormCall.etaText || "CALCULATING..."; 
-            let isApproaching = lastStormCall.isApproaching || false;
 
-            if (stormDist !== undefined) {
-                // Only update the mathematical baseline if the distance actually changes!
-                if (lastStormCall.dist === null || lastStormCall.dist !== stormDist) {
-                    if (lastStormCall.time !== null && lastStormCall.dist !== null) {
-                        const timeDeltaHours = (currentTime - lastStormCall.time) / (1000 * 60 * 60);
-                        const distDelta = lastStormCall.dist - stormDist; // Positive if getting closer
-                        
-                        if (timeDeltaHours > 0) {
-                            const radialSpeed = Math.abs(distDelta) / timeDeltaHours;
-                            lastStormCall.speed = radialSpeed;
-                            
-                            if (radialSpeed > 80) { // Speed too high, probably a new cell jumped in
-                                relativeMotion = "NEW CELL DETECTED";
-                                etaText = "TRACKING...";
-                                isApproaching = false;
-                            } else if (distDelta > 0) {
-                                relativeMotion = "APPROACHING";
-                                isApproaching = true;
-                            } else if (distDelta < 0) {
-                                relativeMotion = "MOVING AWAY";
-                                etaText = "RECEDING";
-                                isApproaching = false;
-                            } else {
-                                relativeMotion = "STATIONARY";
-                                etaText = "N/A";
-                                isApproaching = false;
-                            }
-                        }
-                    }
-                    
-                    // Save new baseline
-                    lastStormCall.time = currentTime;
-                    lastStormCall.dist = stormDist;
-                    lastStormCall.motion = relativeMotion;
-                    lastStormCall.isApproaching = isApproaching;
-                }
+            // Persistent short-term history (survives refresh)
+            let stormHistory = JSON.parse(localStorage.getItem('waddle_storm_history')) || [];
 
-                // If approaching, actively recalculate ETA based on CURRENT time & distance using stored speed
-                if (isApproaching && lastStormCall.speed > 1) {
-                    const etaHours = stormDist / lastStormCall.speed;
-                    const minutesToArrival = Math.round(etaHours * 60);
-                    const arrivalTime = new Date(currentTime + (minutesToArrival * 60000));
-                    const timeStr = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    etaText = `${minutesToArrival}mins (~${timeStr})`;
-                }
+            // --- HARD DISTANCE FILTER (CRITICAL FIX) ---
+            if (stormDist === undefined || stormDist === null || stormDist > 50) {
+                stormHistory = [];
+                localStorage.setItem('waddle_storm_history', JSON.stringify(stormHistory));
 
-                // Push state to localStorage
-                lastStormCall.etaText = etaText;
-                localStorage.setItem('waddle_storm_mem', JSON.stringify(lastStormCall));
-            }
+                document.getElementById('storm-dist-val').innerHTML = `--`;
+                document.getElementById('storm-dir-val').innerText = `NO STORMS NEARBY`;
+                document.getElementById('storm-dir-val').style.color = "var(--success)";
 
-            // 2. UI UPDATE
-            const dirValEl = document.getElementById('storm-dir-val');
-
-            if (stormDist !== undefined && stormDist > 0) {
-                const cardinal = getCompassDirection(stormBearing);
-                document.getElementById('storm-dist-val').innerHTML = `${stormDist} <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-                
-                if (relativeMotion === "NEW CELL DETECTED") {
-                    dirValEl.innerText = "NEW CELL DETECTED. TRACKING TRAJECTORY...";
-                    dirValEl.style.color = "#fff";
-                } else if (relativeMotion === "STATIONARY") {
-                    dirValEl.innerText = `STATIONARY (BEARING: ${cardinal.toUpperCase()})`;
-                    dirValEl.style.color = "#fff";
-                } else {
-                    dirValEl.innerText = `${relativeMotion} FROM THE ${cardinal.toUpperCase()}`;
-                    dirValEl.style.color = isApproaching ? "var(--danger)" : "var(--success)";
-                }
-
-                document.getElementById('storm-status-tag').innerText = "CELL DETECTED";
-                document.getElementById('storm-status-tag').style.background = "rgba(255, 23, 68, 0.2)";
-                document.getElementById('storm-status-tag').style.color = "var(--danger)";
-                document.getElementById('storm-toa').innerText = etaText;
-
-            } else if (stormDist === 0) {
-                document.getElementById('storm-dist-val').innerHTML = `0 <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-                dirValEl.innerText = `STORM CELL OVERHEAD`;
-                dirValEl.style.color = "var(--danger)";
-                document.getElementById('storm-toa').innerText = "IMMEDIATE";
-            } else {
-                document.getElementById('storm-dist-val').innerHTML = `-- <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-                dirValEl.innerText = `NO STORMS IN RANGE`;
-                dirValEl.style.color = "#fff";
                 document.getElementById('storm-status-tag').innerText = "CLEAR SCAN";
                 document.getElementById('storm-status-tag').style.background = "rgba(0, 230, 118, 0.2)";
                 document.getElementById('storm-status-tag').style.color = "var(--success)";
-                document.getElementById('storm-toa').innerText = "N/A";
-                localStorage.removeItem('waddle_storm_mem'); // Clear memory if skies are clear
-            }
 
-            // Update the radar dot
-            updateRadarUI(stormDist, stormBearing);
+                document.getElementById('storm-toa').innerText = "N/A";
+
+                updateRadarUI(null, null);
+            } else {
+
+                // --- ADD NEW SAMPLE ---
+                stormHistory.push({ time: currentTime, dist: stormDist, bearing: stormBearing });
+
+                // Keep only last 4 samples (~1–2 minutes depending on refresh rate)
+                if (stormHistory.length > 4) stormHistory.shift();
+
+                localStorage.setItem('waddle_storm_history', JSON.stringify(stormHistory));
+
+                const dirValEl = document.getElementById('storm-dir-val');
+                const cardinal = getCompassDirection(stormBearing);
+
+                document.getElementById('storm-dist-val').innerHTML =
+                    `${stormDist} <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
+
+                // --- PHASE 1: NOT ENOUGH DATA (INSTANT RESPONSE) ---
+                if (stormHistory.length < 2) {
+
+                    dirValEl.innerText = `STORM WITHIN 50 MI (${cardinal.toUpperCase()})`;
+                    dirValEl.style.color = "var(--warning)";
+
+                    document.getElementById('storm-status-tag').innerText = "STORM POSSIBLE";
+                    document.getElementById('storm-status-tag').style.background = "rgba(255, 235, 59, 0.2)";
+                    document.getElementById('storm-status-tag').style.color = "var(--warning)";
+
+                    document.getElementById('storm-toa').innerText = "TRACKING...";
+
+                } else {
+
+                    // --- TREND ANALYSIS ---
+                    let decreasing = true;
+                    let increasing = true;
+
+                    for (let i = 1; i < stormHistory.length; i++) {
+                        if (stormHistory[i].dist >= stormHistory[i - 1].dist) decreasing = false;
+                        if (stormHistory[i].dist <= stormHistory[i - 1].dist) increasing = false;
+                    }
+
+                    // Calculate speed using last two points
+                    const last = stormHistory[stormHistory.length - 1];
+                    const prev = stormHistory[stormHistory.length - 2];
+
+                    const timeDeltaHr = (last.time - prev.time) / (1000 * 60 * 60);
+                    let speed = 0;
+
+                    if (timeDeltaHr > 0) {
+                        speed = Math.abs(prev.dist - last.dist) / timeDeltaHr;
+                    }
+
+                    // Reject unrealistic jumps (API switching storms)
+                    const validSpeed = speed >= 2 && speed <= 60;
+
+                    // --- PHASE 2: CONFIRMED APPROACH ---
+                    if (decreasing && validSpeed && stormHistory.length >= 3) {
+
+                        dirValEl.innerText = `APPROACHING FROM THE ${cardinal.toUpperCase()}`;
+                        dirValEl.style.color = "var(--danger)";
+
+                        document.getElementById('storm-status-tag').innerText = "APPROACHING";
+                        document.getElementById('storm-status-tag').style.background = "rgba(255, 23, 68, 0.2)";
+                        document.getElementById('storm-status-tag').style.color = "var(--danger)";
+
+                        // ETA calculation
+                        const etaHours = stormDist / speed;
+                        const etaMinutes = Math.round(etaHours * 60);
+
+                        if (etaMinutes > 0 && etaMinutes < 300) {
+                            const arrivalTime = new Date(currentTime + etaMinutes * 60000);
+                            const timeStr = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            document.getElementById('storm-toa').innerText = `${etaMinutes} mins (~${timeStr})`;
+                        } else {
+                            document.getElementById('storm-toa').innerText = "CALCULATING...";
+                        }
+
+                    // --- PHASE 3: MOVING AWAY ---
+                    } else if (increasing && validSpeed) {
+
+                        dirValEl.innerText = `MOVING AWAY (${cardinal.toUpperCase()})`;
+                        dirValEl.style.color = "var(--success)";
+
+                        document.getElementById('storm-status-tag').innerText = "RECEDING";
+                        document.getElementById('storm-status-tag').style.background = "rgba(0, 230, 118, 0.2)";
+                        document.getElementById('storm-status-tag').style.color = "var(--success)";
+
+                        document.getElementById('storm-toa').innerText = "RECEDING";
+
+                    // --- PHASE 4: UNCERTAIN / TRANSITION ---
+                    } else {
+
+                        dirValEl.innerText = `STORM NEARBY (${cardinal.toUpperCase()})`;
+                        dirValEl.style.color = "var(--warning)";
+
+                        document.getElementById('storm-status-tag').innerText = "MONITORING";
+                        document.getElementById('storm-status-tag').style.background = "rgba(255, 235, 59, 0.2)";
+                        document.getElementById('storm-status-tag').style.color = "var(--warning)";
+
+                        document.getElementById('storm-toa').innerText = "TRACKING...";
+                    }
+                }
+
+                updateRadarUI(stormDist, stormBearing);
+            }
             
             // FIX: Removed the undefined 'strikes' variable that was crashing the script!
             document.getElementById('lightning-count').innerText = "N/A";
