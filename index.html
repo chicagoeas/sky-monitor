@@ -571,17 +571,13 @@
     }
     setInterval(updateTimestamp, 1000);
 
-        function toggleThemeMode() {
+    function toggleThemeMode() {
         if (themeOverride === 'auto') themeOverride = 'dark';
         else if (themeOverride === 'dark') themeOverride = 'light';
         else themeOverride = 'auto';
         
         document.getElementById('theme-toggle').innerText = `THEME: ${themeOverride.toUpperCase()}`;
-
-        // 👇 CRITICAL FIX
-        setTimeout(() => {
-            updateAtmosphereTheme();
-        }, 0);
+        updateAtmosphereTheme();
     }
 
     function toggleSettingsWindow() {
@@ -632,11 +628,14 @@
     }
 
     function triggerThemeCycle() {
-        toggleThemeMode();
-
+        // Your script cycles: auto -> dark -> light
+        // We just call your existing function that handles the canvas/BG
+        toggleThemeMode(); 
+        
+        // Update the button text to show the NEW state
         const btn = document.getElementById('theme-btn-display');
-        if (btn) {
-            btn.innerText = "THEME: " + themeOverride.toUpperCase();
+        if (btn && typeof themeMode !== 'undefined') {
+            btn.innerText = "THEME: " + themeMode.toUpperCase();
         }
     }
     
@@ -645,16 +644,11 @@
         // Do not override emergency themes
         if (body.classList.contains('theme-tor') || body.classList.contains('theme-svr') || body.classList.contains('theme-ffw')) return;
 
-        // Force repaint baseline (prevents delayed visual updates)
-        body.style.transition = "none";
-
         if (themeOverride === 'dark') {
             body.style.background = "linear-gradient(180deg, #04090e 0%, #000000 100%)";
-            body.offsetHeight; // 👈 force repaint
             return;
         } else if (themeOverride === 'light') {
             body.style.background = "linear-gradient(180deg, #4fc3f7 0%, #1e88e5 100%)";
-            body.offsetHeight; // 👈 force repaint
             return;
         }
 
@@ -675,8 +669,6 @@
         } else {
             body.style.background = "linear-gradient(180deg, #07131d 0%, #000000 100%)";
         }
-
-        body.offsetHeight; // 👈 force repaint at end
     }
 
     function switchTab(tabId, element) {
