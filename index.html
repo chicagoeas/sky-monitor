@@ -585,7 +585,6 @@
     async function fetchRiskLevels() {
         const container = document.getElementById('active-risks-container');
         const box = document.getElementById('active-risks-box');
-        renderSPCDetail(r);
         
         if (!container || !box) return;
 
@@ -610,31 +609,34 @@
         const spcUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/1/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&outFields=LABEL&f=json`;
         const spcData = await checkArcGIS(spcUrl);
         
+        let r = null;
+
         if (spcData && spcData.label && spcData.label !== "TSTM" && spcData.label !== "General Thunderstorms") {
-            hasRisk = true;
+                hasRisk = true;
 
-            const r = spcData.label;
-            const full = SPC_LABELS[r] || r;
+                r = spcData.label;
+                const full = SPC_LABELS[r] || r;
 
-            let bg = "#7BB07B"; // Default MRGL
-            if (r === "SLGT") bg = "#F6F67B";
-            else if (r === "ENH") bg = "#E6B87B";
-            else if (r === "MDT") bg = "#E67B7B";
-            else if (r === "HIGH") bg = "#FF7BFF";
-            
-            let textColor = (bg === "#F6F67B") ? "#000" : "#fff";
+                let bg = "#7BB07B";
+                if (r === "SLGT") bg = "#F6F67B";
+                else if (r === "ENH") bg = "#E6B87B";
+                else if (r === "MDT") bg = "#E67B7B";
+                else if (r === "HIGH") bg = "#FF7BFF";
+                
+                let textColor = (bg === "#F6F67B") ? "#000" : "#fff";
 
-            container.innerHTML += `
-                <div style="background: ${bg}; color: ${textColor}; padding: 6px 12px; border-radius: 8px; font-weight: 900; font-size: 0.85em; text-transform: uppercase; letter-spacing: 1px;">
-                    SPC: ${r} RISK
-                </div>
-            `;
+                container.innerHTML += `
+                        <div style="background: ${bg}; color: ${textColor}; padding: 6px 12px; border-radius: 8px; font-weight: 900; font-size: 0.85em; text-transform: uppercase; letter-spacing: 1px;">
+                                SPC: ${r} RISK
+                        </div>
+                `;
 
-            // 🔥 HOMEPAGE BANNER (ENH+ ONLY)
-            if (r === "ENH" || r === "MDT" || r === "HIGH") {
-                renderSPCHomeBanner(r, full);
-            }
+                if (r === "ENH" || r === "MDT" || r === "HIGH") {
+                        renderSPCHomeBanner(r, full);
+                }
         }
+
+        renderSPCDetail(r);
 
         // 2. Active Mesoscale Discussions
         const mdUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/spc_mesoscale_discussion/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&outFields=*&f=json`;
