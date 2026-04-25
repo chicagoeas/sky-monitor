@@ -138,25 +138,116 @@
             border-radius: 50%; border: 2px solid var(--danger);
             animation: radar-pulse 2s infinite;
         }
+        /* --- SETTINGS MODAL & UI --- */
+        #settings-modal {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.9);
+                z-index: 2000;
+                backdrop-filter: blur(10px);
+        }
+
+        .modal-content {
+                background: #0b1e2d;
+                width: 90%;
+                max-width: 420px;
+                margin: 100px auto;
+                padding: 40px;
+                border-radius: 24px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                box-shadow: 0 30px 60px rgba(0, 0, 0, 0.7);
+        }
+
+        .mode-switch {
+                display: flex;
+                background: #05101a;
+                padding: 8px;
+                border-radius: 14px;
+                margin: 24px 0;
+        }
+
+        .mode-btn {
+                flex: 1;
+                padding: 12px;
+                border: none;
+                border-radius: 10px;
+                background: transparent;
+                color: #556677;
+                font-weight: 900;
+                font-size: 0.8em;
+                cursor: pointer;
+                transition: 0.2s;
+        }
+
+        .mode-btn.active {
+                background: var(--primary);
+                color: #000;
+        }
+
+        .settings-input {
+                width: 100%;
+                padding: 16px;
+                background: #05101a;
+                border: 1px solid #1a2a3a;
+                color: white;
+                border-radius: 12px;
+                margin-top: 12px;
+                box-sizing: border-box;
+                outline: none;
+                font-family: inherit;
+        }
+
+        .settings-save-btn {
+                width: 100%;
+                margin-top: 24px;
+                padding: 16px;
+                background: #1a2a3a;
+                color: var(--primary);
+                border: none;
+                border-radius: 12px;
+                font-weight: 900;
+                cursor: pointer;
+                transition: 0.2s;
+        }
     </style>
 </head>
 <body>
-    <canvas id="rainCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-1;"></canvas>
+        <canvas id="rainCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-1;"></canvas>
 
-    <span id="sync-indicator">● UPDATING</span>
+        <span id="sync-indicator">● UPDATING</span>
 
-    <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">BETA</span></span>
-    </h1>
-    
-    <div id="coords-panel">
-        <input type="number" id="latInput" value="41.8781" step="0.0001">
-        <input type="number" id="lonInput" value="-87.6298" step="0.0001">
-        <button class="btn-action" onclick="updateLocation()">SYNC</button>
-        <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
-        <button id="theme-toggle" onclick="toggleThemeMode()">THEME: AUTO</button>
-    </div>
+        <header style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+                <h1 style="margin: 0; font-size: 2em; font-weight: 900; letter-spacing: -1px;">
+                        SKYMONITOR <span style="font-size: 0.4em; color: var(--primary); opacity: 0.8;">V1.6</span>
+                </h1>
+                <button onclick="toggleSettings()" style="background: none; border: none; font-size: 1.6em; cursor: pointer; opacity: 0.5;">⚙️</button>
+        </header>
 
+        <div id="settings-modal">
+                <div class="modal-content">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <h3 style="margin: 0; color: var(--primary); letter-spacing: 1px; font-size: 1.1em;">STATION CONFIG</h3>
+                                <button onclick="toggleSettings()" style="background: none; border: none; color: #445566; cursor: pointer; font-size: 1.4em;">✕</button>
+                        </div>
+
+                        <div class="mode-switch">
+                                <button id="m-auto" class="mode-btn active" onclick="setLocMode('auto')">AUTO</button>
+                                <button id="m-city" class="mode-btn" onclick="setLocMode('city')">CITY</button>
+                                <button id="m-coord" class="mode-btn" onclick="setLocMode('coord')">EXPERT</button>
+                        </div>
+
+                        <div id="settings-zone"></div>
+
+                        <div style="margin-top: 40px; border-top: 1px solid #1a2a3a; padding-top: 24px; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 0.9em; color: #667788;">Atmospheric Theme</span>
+                                <button onclick="toggleThemeMode()" style="background: #1a2a3a; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.7em; font-weight: 900; cursor: pointer;">DYNAMIC</button>
+                        </div>
+                </div>
+        </div>
 <div id="dashboard">
 
     <div id="home-tab" class="tab-content active">
@@ -512,6 +603,68 @@
     function loadLoc() {
         const sLat = localStorage.getItem('waddle_lat');
         if(sLat) { lat = sLat; lon = localStorage.getItem('waddle_lon'); document.getElementById('latInput').value = lat; document.getElementById('lonInput').value = lon; }
+    }
+
+    let currentLocMode = 'auto';
+
+    function toggleSettings() {
+        const modal = document.getElementById('settings-modal');
+        const isVisible = modal.style.display === 'block';
+        modal.style.display = isVisible ? 'none' : 'block';
+        if (!isVisible) setLocMode(currentLocMode);
+    }
+
+    function setLocMode(mode) {
+        currentLocMode = mode;
+        const zone = document.getElementById('settings-zone');
+        document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(`m-${mode}`).classList.add('active');
+
+        if (mode === 'auto') {
+            zone.innerHTML = `
+                <p style="font-size: 0.9em; color: #8899aa; text-align: center; line-height: 1.6;">Using browser geolocation for local tracking.</p>
+                <button class="settings-save-btn" onclick="getLocation(); toggleSettings();">REFRESH GPS</button>
+            `;
+        } else if (mode === 'city') {
+            zone.innerHTML = `
+                <input type="text" id="city-in" class="settings-input" placeholder="Enter City or Zip...">
+                <button class="settings-save-btn" style="background: var(--primary); color: #000;" onclick="runCitySearch()">SEARCH</button>
+            `;
+        } else if (mode === 'coord') {
+            zone.innerHTML = `
+                <div style="display: flex; gap: 12px;">
+                    <input type="number" id="lat-in" class="settings-input" value="${lat}" step="0.0001">
+                    <input type="number" id="lon-in" class="settings-input" value="${lon}" step="0.0001">
+                </div>
+                <button class="settings-save-btn" onclick="applyManualCoords()">SET COORDS</button>
+            `;
+        }
+    }
+
+    async function runCitySearch() {
+        const query = document.getElementById('city-in').value;
+        if (!query) return;
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
+            const data = await res.json();
+            if (data && data.length > 0) {
+                lat = parseFloat(data[0].lat);
+                lon = parseFloat(data[0].lon);
+                localStorage.removeItem('waddle_storm_mem');
+                fetchPirate();
+                fetchNWS();
+                toggleSettings();
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    function applyManualCoords() {
+        lat = parseFloat(document.getElementById('lat-in').value);
+        lon = parseFloat(document.getElementById('lon-in').value);
+        localStorage.removeItem('waddle_storm_mem');
+        fetchPirate();
+        fetchNWS();
+        toggleSettings();
     }
 
     function updateLocation() { 
