@@ -138,7 +138,7 @@
             border-radius: 50%; border: 2px solid var(--danger);
             animation: radar-pulse 2s infinite;
         }
-        /* --- SETTINGS WINDOW --- */
+        /* --- POP-OUT SETTINGS --- */
         #settings-window {
                 display: none;
                 position: fixed;
@@ -150,8 +150,8 @@
                 border-radius: 15px;
                 border: 1px solid #223344;
                 z-index: 3000;
-                box-shadow: 0 0 50px rgba(0,0,0,0.8);
-                min-width: 250px;
+                box-shadow: 0 0 50px rgba(0,0,0,0.9);
+                min-width: 280px;
         }
 
         .settings-row {
@@ -164,6 +164,7 @@
                 text-transform: uppercase;
                 margin-bottom: 8px;
                 display: block;
+                font-weight: 900;
         }
 
         .btn-group {
@@ -201,35 +202,38 @@
         <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">BETA</span></span>
     </h1>
     
-    <div id="coords-panel">
-        <div id="location-input-group" style="display: flex; gap: 5px; margin-bottom: 10px;">
-            <input type="text" id="cityInput" placeholder="City or Zip..." style="flex-grow: 1;">
-            <button class="btn-action" onclick="runCitySearch()">SYNC</button>
-            <button onclick="toggleSettingsWindow()" style="background:none; border:none; cursor:pointer; font-size:1.2em; padding:0 5px;">⚙️</button>
+    <div style="display: flex; align-items: flex-start; gap: 10px;">
+        <div id="coords-panel">
+            <input type="number" id="latInput" value="41.8781" step="0.0001">
+            <input type="number" id="lonInput" value="-87.6298" step="0.0001">
+            <button class="btn-action" onclick="updateLocation()">SYNC</button>
+            <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
+            <button id="theme-toggle" onclick="toggleThemeMode()">THEME: AUTO</button>
         </div>
-        <button class="btn-action btn-gps" onclick="getLocation()" style="width: 100%;">📍 USE GPS LOCATION</button>
+        
+        <button onclick="toggleSettingsWindow()" style="background: none; border: none; cursor: pointer; font-size: 1.5em; opacity: 0.5; padding: 5px;">⚙️</button>
     </div>
 
     <div id="settings-window">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-            <h3 style="margin:0; font-size:0.9em;">STATION SETTINGS</h3>
-            <button onclick="toggleSettingsWindow()" style="background:none; border:none; color:#555; cursor:pointer;">✕</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h3 style="margin: 0; font-size: 0.9em; letter-spacing: 1px;">STATION SETTINGS</h3>
+            <button onclick="toggleSettingsWindow()" style="background: none; border: none; color: #445566; cursor: pointer;">✕</button>
         </div>
 
         <div class="settings-row">
             <span class="settings-label">Input Mode</span>
             <div class="btn-group">
-                <button id="mode-city" class="btn-opt active" onclick="setInputMode('city')">CITY</button>
-                <button id="mode-coord" class="btn-opt" onclick="setInputMode('coord')">COORDS</button>
+                <button id="opt-mode-coord" class="btn-opt active" onclick="setInputView('coord')">COORDS</button>
+                <button id="opt-mode-city" class="btn-opt" onclick="setInputView('city')">CITY</button>
             </div>
         </div>
 
         <div class="settings-row">
-            <span class="settings-label">Appearance</span>
+            <span class="settings-label">Appearance Mode</span>
             <div class="btn-group">
-                <button id="theme-auto" class="btn-opt active" onclick="setTheme('auto')">AUTO</button>
-                <button id="theme-dark" class="btn-opt" onclick="setTheme('dark')">DARK</button>
-                <button id="theme-light" class="btn-opt" onclick="setTheme('light')">LIGHT</button>
+                <button id="opt-theme-auto" class="btn-opt active" onclick="setAppTheme('auto')">AUTO</button>
+                <button id="opt-theme-dark" class="btn-opt" onclick="setAppTheme('dark')">DARK</button>
+                <button id="opt-theme-light" class="btn-opt" onclick="setAppTheme('light')">LIGHT</button>
             </div>
         </div>
     </div>
@@ -545,31 +549,30 @@
         updateAtmosphereTheme();
     }
 
-    let currentInputType = 'city';
-
     function toggleSettingsWindow() {
         const win = document.getElementById('settings-window');
         win.style.display = win.style.display === 'block' ? 'none' : 'block';
     }
 
-    function setInputMode(mode) {
-        currentInputType = mode;
-        const group = document.getElementById('location-input-group');
-        document.getElementById('mode-city').classList.toggle('active', mode === 'city');
-        document.getElementById('mode-coord').classList.toggle('active', mode === 'coord');
+    function setInputView(mode) {
+        const panel = document.getElementById('coords-panel');
+        document.getElementById('opt-mode-coord').classList.toggle('active', mode === 'coord');
+        document.getElementById('opt-mode-city').classList.toggle('active', mode === 'city');
 
-        if (mode === 'city') {
-            group.innerHTML = `
-                <input type="text" id="cityInput" placeholder="City or Zip..." style="flex-grow: 1;">
-                <button class="btn-action" onclick="runCitySearch()">SYNC</button>
-                <button onclick="toggleSettingsWindow()" style="background:none; border:none; cursor:pointer; font-size:1.2em; padding:0 5px;">⚙️</button>
+        if (mode === 'coord') {
+            panel.innerHTML = `
+                <input type="number" id="latInput" value="${lat}" step="0.0001">
+                <input type="number" id="lonInput" value="${lon}" step="0.0001">
+                <button class="btn-action" onclick="updateLocation()">SYNC</button>
+                <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
+                <button id="theme-toggle" onclick="toggleThemeMode()">THEME: AUTO</button>
             `;
         } else {
-            group.innerHTML = `
-                <input type="number" id="latInput" value="${lat}" step="0.0001" style="width: 70px;">
-                <input type="number" id="lonInput" value="${lon}" step="0.0001" style="width: 70px;">
-                <button class="btn-action" onclick="updateLocation()">SYNC</button>
-                <button onclick="toggleSettingsWindow()" style="background:none; border:none; cursor:pointer; font-size:1.2em; padding:0 5px;">⚙️</button>
+            panel.innerHTML = `
+                <input type="text" id="cityInput" placeholder="Enter City or Zip..." style="width: 100%; margin-bottom: 5px;">
+                <button class="btn-action" onclick="runCitySearch()" style="width: 100%; margin-bottom: 5px;">SYNC CITY</button>
+                <button class="btn-action btn-gps" onclick="getLocation()" style="width: 100%; margin-bottom: 5px;">📍 GPS</button>
+                <button id="theme-toggle" onclick="toggleThemeMode()" style="width: 100%;">THEME: AUTO</button>
             `;
         }
     }
@@ -580,12 +583,25 @@
         try {
             const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
             const data = await res.json();
-            if (data.length > 0) {
+            if (data && data.length > 0) {
                 lat = parseFloat(data[0].lat);
                 lon = parseFloat(data[0].lon);
                 updateLocation();
+                console.log("Geocoded to: " + data[0].display_name);
+            } else {
+                alert("Location not found.");
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("Search failed", e); }
+    }
+
+    function setAppTheme(mode) {
+        // Update setting buttons UI
+        ['auto', 'dark', 'light'].forEach(m => {
+            document.getElementById(`opt-theme-${m}`).classList.toggle('active', m === mode);
+        });
+
+        // Here you can add your specific theme logic if it differs from toggleThemeMode()
+        console.log("Theme set to: " + mode);
     }
     
     function updateAtmosphereTheme() {
