@@ -611,10 +611,13 @@
                 <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
             `;
         } else {
-            // Matching your "Amazing" layout exactly
+            // Restore saved city from local storage
+            const savedCity = localStorage.getItem('waddle_city') || '';
+            
+            // Matching your layout exactly
             panel.innerHTML = `
                 <div class="city-mode-container">
-                    <input type="text" id="cityInput" placeholder="Enter City or Zip...">
+                    <input type="text" id="cityInput" placeholder="Enter City or Zip..." value="${savedCity}">
                     <button class="btn-action" onclick="runCitySearch()">SYNC</button>
                     <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
                 </div>
@@ -623,29 +626,32 @@
     }
     
    async function runCitySearch() {
-        const query = document.getElementById('cityInput').value;
+        const cityEl = document.getElementById('cityInput');
+        const query = cityEl ? cityEl.value : '';
         if (!query) return;
+        
         try {
+            document.getElementById('stationName').innerText = "SEARCHING CITY...";
             const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
             const data = await res.json();
+            
             if (data && data.length > 0) {
-                // 1. Convert the API strings to numbers
-                const newLat = parseFloat(data[0].lat);
-                const newLon = parseFloat(data[0].lon);
+                // 1. Convert the API strings to numbers and update globals
+                lat = parseFloat(data[0].lat).toFixed(4);
+                lon = parseFloat(data[0].lon).toFixed(4);
 
-                // 2. Put these numbers into the coordinate boxes so updateLocation can "see" them
-                const latBox = document.getElementById('latInput');
-                const lonBox = document.getElementById('lonInput');
-                
-                if (latBox && lonBox) {
-                    latBox.value = newLat.toFixed(4);
-                    lonBox.value = newLon.toFixed(4);
-                    
-                    // 3. Now that the boxes have the data, this will work perfectly
-                    updateLocation();
-                }
+                // 2. Remember the city name in localStorage
+                localStorage.setItem('waddle_city', query);
+
+                // 3. Trigger the full UI reset and data fetch
+                updateLocation();
+            } else {
+                document.getElementById('stationName').innerText = "CITY NOT FOUND";
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+            console.error(e); 
+            document.getElementById('stationName').innerText = "SEARCH ERROR";
+        }
     }
 
     function triggerThemeCycle() {
@@ -697,15 +703,39 @@
         if(tabId === 'specs') drawOrbit();
     }
 
-    function saveLoc() { localStorage.setItem('waddle_lat', lat); localStorage.setItem('waddle_lon', lon); }
+    function saveLoc() { 
+        localStorage.setItem('waddle_lat', lat); 
+        localStorage.setItem('waddle_lon', lon); 
+        
+        const cityInput = document.getElementById('cityInput');
+        if (cityInput && cityInput.value) {
+            localStorage.setItem('waddle_city', cityInput.value);
+        }
+    }
+
     function loadLoc() {
         const sLat = localStorage.getItem('waddle_lat');
-        if(sLat) { lat = sLat; lon = localStorage.getItem('waddle_lon'); document.getElementById('latInput').value = lat; document.getElementById('lonInput').value = lon; }
+        if(sLat) { 
+            lat = sLat; 
+            lon = localStorage.getItem('waddle_lon'); 
+            
+            const latBox = document.getElementById('latInput');
+            const lonBox = document.getElementById('lonInput');
+            if (latBox) latBox.value = lat; 
+            if (lonBox) lonBox.value = lon; 
+        }
     }
 
     function updateLocation() { 
-        lat = document.getElementById('latInput').value; 
-        lon = document.getElementById('lonInput').value; 
+        const latBox = document.getElementById('latInput');
+        const lonBox = document.getElementById('lonInput');
+        
+        // Only override lat/lon if the boxes currently exist on screen
+        if (latBox && lonBox) {
+            lat = latBox.value; 
+            lon = lonBox.value; 
+        }
+        
         saveLoc(); 
 
         document.getElementById('stationName').innerText = "LOADING LOCATION...";
@@ -727,13 +757,22 @@
     function getLocation() {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(p => {
-                lat = p.coords.latitude.toFixed(4); lon = p.coords.longitude.toFixed(4);
-                document.getElementById('latInput').value = lat; document.getElementById('lonInput').value = lon;
+                lat = p.coords.latitude.toFixed(4); 
+                lon = p.coords.longitude.toFixed(4);
+                
+                const latBox = document.getElementById('latInput');
+                const lonBox = document.getElementById('lonInput');
+                if (latBox) latBox.value = lat; 
+                if (lonBox) lonBox.value = lon;
+                
+                const cityBox = document.getElementById('cityInput');
+                if (cityBox) cityBox.value = ''; // Clear city text since we are using GPS
+                
                 updateLocation();
             }, e => alert("GPS Access Denied"));
         }
     }
-
+    
     async function updateSPCMap() {
         const spcImg = document.getElementById('spc-map');
         const spcUrl = "www.spc.noaa.gov/products/outlook/day1otlk.png";
