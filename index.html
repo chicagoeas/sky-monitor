@@ -138,18 +138,18 @@
             border-radius: 50%; border: 2px solid var(--danger);
             animation: radar-pulse 2s infinite;
         }
-        /* --- CITY MODE CLEANUP AND POP UP SETTINGS --- */
-        .city-input-wrapper {
-                display: flex;
-                flex-direction: column;
+        /* --- CITY MODE GRID FIX --- */
+        #city-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
                 gap: 5px;
                 width: 100%;
         }
 
-        .city-row {
-                display: flex;
-                gap: 5px;
+        #cityInput {
+                grid-column: span 2;
                 width: 100%;
+                box-sizing: border-box;
         }
         
         #settings-window {
@@ -228,7 +228,7 @@
 
     <div id="settings-window">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h3 style="margin: 0; font-size: 0.8em; letter-spacing: 1px; color: #fff;">STATION SETTINGS</h3>
+            <h3 style="margin: 0; font-size: 0.85em; letter-spacing: 1px; color: var(--primary);">STATION CONFIG</h3>
             <button onclick="toggleSettingsWindow()" style="background: none; border: none; color: #445566; cursor: pointer; font-size: 1.2em;">✕</button>
         </div>
 
@@ -243,9 +243,7 @@
         <div class="settings-row">
             <span class="settings-label">Appearance</span>
             <div class="btn-group">
-                <button id="opt-theme-auto" class="btn-opt active" onclick="setAppTheme('auto')">AUTO</button>
-                <button id="opt-theme-dark" class="btn-opt" onclick="setAppTheme('dark')">DARK</button>
-                <button id="opt-theme-light" class="btn-opt" onclick="setAppTheme('light')">LIGHT</button>
+                <button id="theme-btn-display" class="btn-opt" onclick="triggerThemeCycle()" style="flex: 1; color: var(--primary);">THEME: AUTO</button>
             </div>
         </div>
     </div>
@@ -579,14 +577,12 @@
                 <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
             `;
         } else {
-            // This fix prevents the "stretched" look by using a focused column layout
+            // Using the grid to prevent stretching/overlap
             panel.innerHTML = `
-                <div class="city-input-wrapper">
-                    <input type="text" id="cityInput" placeholder="Enter City or Zip..." style="width: 100%; box-sizing: border-box;">
-                    <div class="city-row">
-                        <button class="btn-action" onclick="runCitySearch()" style="flex: 2;">SYNC CITY</button>
-                        <button class="btn-action btn-gps" onclick="getLocation()" style="flex: 1;">📍 GPS</button>
-                    </div>
+                <div id="city-grid">
+                    <input type="text" id="cityInput" placeholder="City or Zip...">
+                    <button class="btn-action" onclick="runCitySearch()">SYNC</button>
+                    <button class="btn-action btn-gps" onclick="getLocation()">📍 GPS</button>
                 </div>
             `;
         }
@@ -602,32 +598,19 @@
                 lat = parseFloat(data[0].lat);
                 lon = parseFloat(data[0].lon);
                 updateLocation();
-                console.log("Geocoded to: " + data[0].display_name);
-            } else {
-                alert("Location not found.");
             }
-        } catch (e) { console.error("Search failed", e); }
+        } catch (e) { console.error(e); }
     }
 
-    function setAppTheme(mode) {
-        // 1. Update the UI buttons in the settings window
-        ['auto', 'dark', 'light'].forEach(m => {
-            const btn = document.getElementById(`opt-theme-${m}`);
-            if (btn) btn.classList.toggle('active', m === mode);
-        });
-
-        // 2. Map these to your existing theme logic
-        // Assuming your existing script uses a global theme state
-        if (mode === 'auto') {
-            themeMode = 'auto'; // Or whatever variable your toggleThemeMode uses
-        } else if (mode === 'dark') {
-            themeMode = 'dark';
-        } else {
-            themeMode = 'light';
-        }
+    // This calls your ORIGINAL theme function to ensure it actually works
+    function triggerThemeCycle() {
+        toggleThemeMode(); // This is the function already in your script
+        const btn = document.getElementById('theme-btn-display');
         
-        // Call your existing function to actually apply the visual change
-        toggleThemeMode(mode); 
+        // Update the text in settings to match whatever the script just changed it to
+        if (typeof themeMode !== 'undefined') {
+            btn.innerText = "THEME: " + themeMode.toUpperCase();
+        }
     }
     
     function updateAtmosphereTheme() {
