@@ -323,7 +323,7 @@
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-        <details open>
+        <details open id="openweather-section">
             <summary style="color:var(--primary);">3-HOURLY FORECAST (OPENWEATHER)</summary>
             <div class="forecast-scroll" id="forecast-container" style="margin-top:15px;"></div>
         </details>
@@ -331,6 +331,14 @@
         <details open>
             <summary style="color:var(--accent);">DAILY OUTLOOK (NWS)</summary>
             <div class="forecast-scroll" id="nws-extended-container" style="margin-top:15px;"></div>
+        </details>
+
+        <details open id="pirate-hourly-section">
+            <summary style="color:var(--primary);">HOURLY FORECAST (PIRATE WEATHER)</summary>
+            
+            <div id="pirate-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
+            
+            <div class="forecast-scroll" id="pirate-hourly-container" style="margin-top:15px;"></div>
         </details>
     </div>
 
@@ -855,6 +863,30 @@
 
         loadAll();
     }
+
+    function updateForecastLayout() {
+        const mode = localStorage.getItem('data_complexity') || 'normal';
+
+        const nwsSection = document.querySelector('#nws-extended-container').parentElement;
+        const pirateSection = document.getElementById('pirate-hourly-section');
+        const owSection = document.getElementById('openweather-section');
+
+        if (!nwsSection || !pirateSection || !owSection) return;
+
+        if (mode === 'normal') {
+            // NWS → Pirate
+            nwsSection.parentNode.insertBefore(nwsSection, pirateSection);
+            pirateSection.parentNode.insertBefore(pirateSection, owSection);
+
+            owSection.style.display = "none";
+        } else {
+            // NWS → Pirate → OpenWeather
+            nwsSection.parentNode.insertBefore(nwsSection, pirateSection);
+            pirateSection.parentNode.insertBefore(pirateSection, owSection);
+
+            owSection.style.display = "block";
+        }
+    }
     
     function updateAtmosphereTheme() {
         const body = document.body;
@@ -1030,6 +1062,7 @@
         await fetchOpenWeather();
         await fetchAlerts();
         await fetchRiskLevels();
+        await updateForecastLayout();
         
         await Promise.all([fetchPirate(), fetchNWSChain()]);
         
@@ -1645,7 +1678,74 @@
             document.getElementById('uv-val').style.color = uvCol;
             document.getElementById('uv-desc').innerText = uvDesc;
             if(d.daily?.data?.[0]) document.getElementById('moonVal').innerText = getMoonPhaseName(d.daily.data[0].moonPhase);
+            if (d.hourly && d.hourly.data) {
+                renderPirateHourly(d.hourly.data.slice(0, 72), d.offset || 0);
+            }
         } catch(e) {}
+    }
+
+    function renderPirateHourly(hourlyData, timezoneOffset) {
+        const dayTabs = document.getElementById('pirate-day-tabs');
+        const container = document.getElementById('pirate-hourly-container');
+
+        if (!dayTabs || !container) return;
+
+        dayTabs.innerHTML = "";
+        container.innerHTML = "";
+
+        const days = {};
+
+        hourlyData.forEach(h => {
+            const date = new Date((h.time + timezoneOffset) * 1000);
+            const key = date.toDateString();
+
+            if (!days[key]) days[key] = [];
+            days[key].push(h);
+        });
+
+        const dayKeys = Object.keys(days);
+
+        function renderDay(key) {
+            container.innerHTML = "";
+
+            days[key].forEach(h => {
+                const date = new Date((h.time + timezoneOffset) * 1000);
+
+                const hour = date.toLocaleTimeString([], { hour: 'numeric' });
+
+                const card = document.createElement('div');
+                card.className = "forecast-card";
+
+                card.innerHTML = `
+                    <div style="font-size:0.7em;">${hour}</div>
+                    <div style="font-size:1.2em; font-weight:bold;">${Math.round(h.temperature)}°</div>
+                    <div style="font-size:0.7em; opacity:0.7;">${h.summary}</div>
+                    <div style="font-size:0.65em; color:var(--primary);">${Math.round(h.precipProbability * 100)}%</div>
+                `;
+
+                container.appendChild(card);
+            });
+        }
+
+        dayKeys.forEach((key, i) => {
+            const btn = document.createElement('button');
+            btn.className = "btn-opt";
+            btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
+
+            if (i === 0) btn.classList.add('active');
+
+            btn.onclick = () => {
+                document.querySelectorAll('#pirate-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                renderDay(key);
+            };
+
+            dayTabs.appendChild(btn);
+        });
+
+        if (dayKeys.length > 0) {
+            renderDay(dayKeys[0]);
+        }
     }
     
     function updateStationClock() {
