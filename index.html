@@ -1104,6 +1104,10 @@
                 
                 const topP = topAlert.properties;
                 const evtLower = topP.event.toLowerCase();
+
+                const params = topP.parameters || {};
+                const tornadoStatus = params.tornadoDetection?.[0];
+                const isConfirmedTornado = evtLower.includes("tornado warning") && tornadoStatus && tornadoStatus.includes("OBSERVED");
                 
                 const topDesc = topP.description ? topP.description.toUpperCase() : "";
                 const isTopTorEmergency = topDesc.includes("TORNADO EMERGENCY");
@@ -1119,11 +1123,19 @@
                 const isEmergency = EMERGENCY_TYPES.some(em => evtLower.includes(em)) || isTopTorEmergency;
                 
                 banner.style.display = "block";
-                let bannerTextPrefix = isEmergency ? `🚨 ${topEventName}` : `⚠️ ${topEventName}`;
+                let bannerTextPrefix;
+
+                if (isConfirmedTornado) {
+                    bannerTextPrefix = "🚨 CONFIRMED TORNADO";
+                } else {
+                    bannerTextPrefix = isEmergency ? `🚨 ${topEventName}` : `⚠️ ${topEventName}`;
+                }
                 
-                if (isEmergency) {
+                if (isConfirmedTornado) {
+                    banner.style.background = "#7f0000"; // darker red
+                } else if (isEmergency) {
                     banner.classList.add("emergency-banner");
-                    banner.style.background = ""; 
+                    banner.style.background = "";
                 } else {
                     banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
                 }
