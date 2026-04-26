@@ -280,14 +280,6 @@
                 <button id="theme-btn-display" class="btn-opt" onclick="triggerThemeCycle()" style="flex: 1; color: var(--primary);">THEME: AUTO</button>
             </div>
         </div>
-
-        <div class="settings-row">
-            <span class="settings-label">Data Complexity</span>
-            <div class="btn-group">
-                <button id="opt-data-normal" class="btn-opt active" onclick="setDataComplexity('normal')">NORMAL</button>
-                <button id="opt-data-specific" class="btn-opt" onclick="setDataComplexity('specific')">SPECIFIC</button>
-            </div>
-        </div>
     </div>
 
 <div id="dashboard">
@@ -848,21 +840,10 @@
         document.getElementById('theme-btn-display').innerText = `THEME: ${themeOverride.toUpperCase()}`;
         updateAtmosphereTheme();
     }
-
-    function setDataComplexity(mode) {
-        localStorage.setItem('data_complexity', mode);
-
-        const normalBtn = document.getElementById('opt-data-normal');
-        const specificBtn = document.getElementById('opt-data-specific');
-
-        if (normalBtn && specificBtn) {
-            normalBtn.classList.toggle('active', mode === 'normal');
-            specificBtn.classList.toggle('active', mode === 'specific');
-        }
-    }
     
     function updateAtmosphereTheme() {
         const body = document.body;
+        // Do not override emergency themes
         if (body.classList.contains('theme-tor') || body.classList.contains('theme-svr') || body.classList.contains('theme-ffw')) return;
 
         if (themeOverride === 'dark') {
@@ -1166,32 +1147,6 @@
 
                 sortedFeatures.forEach(f => {
                     const p = f.properties; 
-                    let extraDetails = "";
-
-                    const complexity = localStorage.getItem('data_complexity') || 'normal';
-
-                    if (complexity === "specific") {
-
-                        const params = p.parameters || {};
-
-                        Object.keys(params).forEach(key => {
-
-                            const value = params[key]?.[0];
-                            if (!value) return;
-
-                            if (
-                                key === "BLOCKCHANNEL" ||
-                                key === "EAS-ORG" ||
-                                key === "eventMotionDescription"
-                            ) return;
-
-                            const label = key
-                                .replace(/([A-Z])/g, ' $1')
-                                .replace(/^./, str => str.toUpperCase());
-
-                            extraDetails += `${label}: ${value} `;
-                        });
-                    }
                     const evt = p.event.toLowerCase();
                     const desc = p.description ? p.description.toUpperCase() : "";
                 
@@ -1292,14 +1247,7 @@
                     else if (evt.includes("watch")) bgColor = '#ffb300';
                     else if (evt.includes("advisory")) bgColor = '#29b6f6';
 
-                    stack.innerHTML += `<a href="https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}" target="_blank" class="alert-card" style="background:${bgColor}">
-                        <img src="${icon}" style="width:55px; border-radius:5px;">
-                        <div>
-                            <b>${displayName}</b><br>
-                            <small>${p.headline || ''}</small>
-                            ${extraDetails ? `<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">${extraDetails}</div>` : ""}
-                        </div>
-                    </a>`;
+                    stack.innerHTML += `<a href="https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}" target="_blank" class="alert-card" style="background:${bgColor}"><img src="${icon}" style="width:55px; border-radius:5px;"><div><b>${displayName}</b><br><small>${p.headline || ''}</small></div></a>`;
                 });
                 
                 if(highestTheme) document.body.className = highestTheme;
@@ -1895,19 +1843,6 @@
     window.addEventListener('DOMContentLoaded', () => {
         const savedMode = localStorage.getItem('input_mode') || 'city';
         setInputView(savedMode);
-
-        const savedComplexity = localStorage.getItem('data_complexity') || 'normal';
-        setDataComplexity(savedComplexity);
-
-        const savedTheme = localStorage.getItem('theme_override') || 'auto';
-        themeOverride = savedTheme;
-
-        const btn = document.getElementById('theme-btn-display');
-        if (btn) {
-            btn.innerText = `THEME: ${themeOverride.toUpperCase()}`;
-        }
-
-        updateAtmosphereTheme();
     });
     
     window.onload = () => { 
