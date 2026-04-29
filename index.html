@@ -1520,150 +1520,41 @@
                     timeline.appendChild(bar);
                 });
             }
-            // --- LIVE STORM TRACKING & RADAR LOGIC ---
-            const stormDist = d.currently?.nearestStormDistance;
-            const stormBearing = d.currently?.nearestStormBearing;
-            const currentTime = Date.now();
 
-            // Persistent short-term history (survives refresh)
-            let stormHistory = JSON.parse(localStorage.getItem('waddle_storm_history')) || [];
+            if (d.hourly && d.hourly.data) {
+                const stormHours = d.hourly.data.slice(0, 24);
 
-            // --- HARD DISTANCE FILTER (CRITICAL FIX) ---
-            if (stormDist === undefined || stormDist === null || stormDist > 50) {
-                stormHistory = [];
-                localStorage.setItem('waddle_storm_history', JSON.stringify(stormHistory));
+                let closest = null;
+                let trend = null;
 
-                document.getElementById('storm-dist-val').innerHTML = `--`;
-                document.getElementById('storm-dir-val').innerText = `NO STORMS NEARBY`;
-                document.getElementById('storm-dir-val').style.color = "var(--success)";
-
-                document.getElementById('storm-status-tag').innerText = "CLEAR SCAN";
-                document.getElementById('storm-status-tag').style.background = "rgba(0, 230, 118, 0.2)";
-                document.getElementById('storm-status-tag').style.color = "var(--success)";
-
-                document.getElementById('storm-toa').innerText = "N/A";
-
-                updateRadarUI(null, null);
-            } else {
-
-                // 🚨 VERY CLOSE STORM CHECK
-                if (stormDist <= 2) {
-
-                    document.getElementById('storm-dist-val').innerHTML =
-                        `${stormDist} <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-
-                    document.getElementById('storm-dir-val').innerText = "STORM OVERHEAD";
-                    document.getElementById('storm-dir-val').style.color = "var(--danger)";
-
-                    document.getElementById('storm-status-tag').innerText = "IMPACT IMMINENT";
-
-                    document.getElementById('storm-toa').innerText = "NOW";
-
-                    updateRadarUI(stormDist, stormBearing);
-
-                    return;
-                }
-
-                // --- ADD NEW SAMPLE ---
-                stormHistory.push({ time: currentTime, dist: stormDist, bearing: stormBearing });
-
-                // Keep only last 4 samples (~1–2 minutes depending on refresh rate)
-                if (stormHistory.length > 4) stormHistory.shift();
-
-                localStorage.setItem('waddle_storm_history', JSON.stringify(stormHistory));
-
-                const dirValEl = document.getElementById('storm-dir-val');
-                const cardinal = getCompassDirection(stormBearing);
-
-                document.getElementById('storm-dist-val').innerHTML =
-                    `${stormDist} <span style="font-size: 0.4em; opacity: 0.6;">mi</span>`;
-
-                // --- PHASE 1: NOT ENOUGH DATA (INSTANT RESPONSE) ---
-                if (stormHistory.length < 2) {
-
-                    dirValEl.innerText = `STORM WITHIN 50 MI, HEADING ${cardinal.toUpperCase()}`;
-                    dirValEl.style.color = "var(--warning)";
-
-                    document.getElementById('storm-status-tag').innerText = "STORM POSSIBLE";
-                    document.getElementById('storm-status-tag').style.background = "rgba(255, 235, 59, 0.2)";
-                    document.getElementById('storm-status-tag').style.color = "var(--warning)";
-
-                    document.getElementById('storm-toa').innerText = "TRACKING...";
-
-                } else {
-
-                    // --- TREND ANALYSIS ---
-                    let decreasing = true;
-                    let increasing = true;
-
-                    for (let i = 1; i < stormHistory.length; i++) {
-                        if (stormHistory[i].dist >= stormHistory[i - 1].dist) decreasing = false;
-                        if (stormHistory[i].dist <= stormHistory[i - 1].dist) increasing = false;
-                    }
-
-                    // Calculate speed using last two points
-                    const last = stormHistory[stormHistory.length - 1];
-                    const prev = stormHistory[stormHistory.length - 2];
-
-                    const timeDeltaHr = (last.time - prev.time) / (1000 * 60 * 60);
-                    let speed = 0;
-
-                    if (timeDeltaHr > 0) {
-                        speed = Math.abs(prev.dist - last.dist) / timeDeltaHr;
-                    }
-
-                    // Reject unrealistic jumps (API switching storms)
-                    const validSpeed = speed >= 2 && speed <= 60;
-
-                    // --- PHASE 2: CONFIRMED APPROACH ---
-                    if (decreasing && stormHistory.length >= 2) {
-
-                        dirValEl.innerText = `GENERAL STORM DIRECTION: ${cardinal.toUpperCase()}`;
-                        dirValEl.style.color = "var(--danger)";
-
-                        document.getElementById('storm-status-tag').innerText = "APPROACHING";
-                        document.getElementById('storm-status-tag').style.background = "rgba(255, 23, 68, 0.2)";
-                        document.getElementById('storm-status-tag').style.color = "var(--danger)";
-
-                        // ETA calculation
-                        const etaHours = stormDist / speed;
-                        const etaMinutes = Math.round(etaHours * 60);
-
-                        if (etaMinutes > 0 && etaMinutes < 300) {
-                            const arrivalTime = new Date(currentTime + etaMinutes * 60000);
-                            const timeStr = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                            document.getElementById('storm-toa').innerText = `${etaMinutes} mins (~${timeStr})`;
-                        } else {
-                            document.getElementById('storm-toa').innerText = "CALCULATING...";
+                stormHours.forEach((h, i) => {
+                    if (h.nearestStormDistance !== undefined) {
+                        if (!closest || h.nearestStormDistance < closest.distance) {
+                            closest = {
+                                distance: h.nearestStormDistance,
+                                hour: i
+                            };
                         }
 
-                    // --- PHASE 3: MOVING AWAY ---
-                    } else if (increasing && validSpeed) {
-
-                        dirValEl.innerText = `MOVING AWAY, HEADING ${cardinal.toUpperCase()}`;
-                        dirValEl.style.color = "var(--success)";
-
-                        document.getElementById('storm-status-tag').innerText = "RECEDING";
-                        document.getElementById('storm-status-tag').style.background = "rgba(0, 230, 118, 0.2)";
-                        document.getElementById('storm-status-tag').style.color = "var(--success)";
-
-                        document.getElementById('storm-toa').innerText = "RECEDING";
-
-                    // --- PHASE 4: UNCERTAIN / TRANSITION ---
-                    } else {
-
-                        dirValEl.innerText = `STORM NEARBY, HEADING ${cardinal.toUpperCase()}`;
-                        dirValEl.style.color = "var(--warning)";
-
-                        document.getElementById('storm-status-tag').innerText = "MONITORING";
-                        document.getElementById('storm-status-tag').style.background = "rgba(255, 235, 59, 0.2)";
-                        document.getElementById('storm-status-tag').style.color = "var(--warning)";
-
-                        document.getElementById('storm-toa').innerText = "TRACKING...";
+                        if (i > 0) {
+                            const prev = stormHours[i - 1].nearestStormDistance;
+                            if (prev !== undefined) {
+                                if (h.nearestStormDistance < prev) trend = "approaching";
+                                else if (h.nearestStormDistance > prev) trend = "moving away";
+                            }
+                        }
                     }
-                }
+                });
 
-                updateRadarUI(stormDist, stormBearing);
+                const statusTag = document.getElementById('storm-status-tag');
+
+                if (closest) {
+                    statusTag.innerText = `${Math.round(closest.distance)}mi • ${trend || "steady"}`;
+                    statusTag.style.color = closest.distance < 20 ? "var(--danger)" : "var(--warning)";
+                } else {
+                    statusTag.innerText = "NO STORMS";
+                    statusTag.style.color = "var(--success)";
+                }
             }
             
             // FIX: Removed the undefined 'strikes' variable that was crashing the script!
@@ -1716,8 +1607,25 @@
                 const card = document.createElement('div');
                 card.className = "forecast-card";
 
+                const iconMap = {
+                    "clear-day": "☀️",
+                    "clear-night": "🌙",
+                    "rain": "🌧️",
+                    "snow": "❄️",
+                    "sleet": "🌨️",
+                    "wind": "💨",
+                    "fog": "🌫️",
+                    "cloudy": "☁️",
+                    "partly-cloudy-day": "⛅",
+                    "partly-cloudy-night": "☁️🌙",
+                    "thunderstorm": "⛈️"
+                };
+
+                const icon = iconMap[h.icon] || "❔";
+
                 card.innerHTML = `
                     <div style="font-size:0.7em;">${hour}</div>
+                    <div style="font-size:1.6em;">${icon}</div>
                     <div style="font-size:1.2em; font-weight:bold;">${Math.round(h.temperature)}°</div>
                     <div style="font-size:0.7em; opacity:0.7;">${h.summary}</div>
                     <div style="font-size:0.65em; color:var(--primary);">${Math.round(h.precipProbability * 100)}%</div>
