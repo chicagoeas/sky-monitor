@@ -1837,19 +1837,71 @@
         
             document.getElementById('riseVal').innerText = formatOffsetTime(d.city.sunrise, stationTzOffset);
             document.getElementById('setVal').innerText = formatOffsetTime(d.city.sunset, stationTzOffset);
-            const cont = document.getElementById('forecast-container'); cont.innerHTML = "";
+            const cont = document.getElementById('forecast-container'); 
+            cont.innerHTML = "";
+
+            const days = {};
+
             d.list.forEach(f => {
-                const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : 0;
-                const rainVol = rainInches > 0 ? `<div style="color:#4fc3f7; font-size:0.75em; font-weight:bold;">${rainInches} in</div>` : '';
-                const popPct = Math.round(f.pop * 100);
-                const gustInfo = f.wind.gust ? `<div><b>Gusts:</b> ${Math.round(f.wind.gust)} mph</div>` : '';
-                const pressInHg = (f.main.pressure * 0.02953).toFixed(2);
-                cont.innerHTML += `<div class="forecast-card" style="min-width: 140px; display: flex; flex-direction: column;"><div style="font-size:0.75em; color:var(--primary); font-weight:bold;">${new Date(f.dt*1000).toLocaleTimeString([], {weekday:'short', hour:'numeric'})}</div><img src="https://openweathermap.org/img/wn/${f.weather[0].icon}.png" style="width:40px; margin: 2px auto;"><div style="font-size:0.7em; opacity:0.8; margin-bottom:5px; text-transform:capitalize;">${f.weather[0].description}</div><div style="font-size:1.2em; font-weight:bold; color:var(--accent);">${Math.round(f.main.temp)}&deg;</div><div style="font-size:0.75em; margin-top:5px; color:#ddd;">💧 ${popPct}% PoP</div>${rainVol}<details style="background:transparent; border:none; padding:5px 0 0 0; margin:10px 0 0 0; border-top:1px solid rgba(255,255,255,0.1); border-radius:0;"><summary style="font-size:0.7em; padding-bottom:0; color:#aaa; font-weight:normal; text-align:center;">More Info</summary><div style="font-size:0.75em; text-align:left; color:#ccc; line-height:1.5; margin-top:8px;"><div><b>Feels Like:</b> ${Math.round(f.main.feels_like)}&deg;</div><div><b>Humidity:</b> ${f.main.humidity}%</div><div><b>Wind:</b> ${Math.round(f.wind.speed)} mph</div>${gustInfo}<div><b>Clouds:</b> ${f.clouds.all}%</div><div><b>Pressure:</b> ${pressInHg} inHg</div></div></details></div>`;
+                const dt = new Date(f.dt * 1000);
+                const key = dt.toDateString();
+
+                if (!days[key]) days[key] = [];
+                days[key].push(f);
             });
-            drawOrbit();
-            updateAtmosphereTheme(); // Call theme update once sun times are known
-        } catch(e) { console.error("OpenWeather Fetch Error:", e); }
-    }
+
+            Object.keys(days).forEach(key => {
+
+                const header = document.createElement('div');
+                header.style.fontSize = "0.75em";
+                header.style.opacity = "0.6";
+                header.style.margin = "10px 0 4px 0";
+                header.style.fontWeight = "bold";
+                header.innerText = new Date(key).toLocaleDateString([], { weekday: 'long' }).toUpperCase();
+
+                cont.appendChild(header);
+
+                days[key].forEach(f => {
+                    const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : 0;
+                    const rainVol = rainInches > 0 ? `<div style="color:#4fc3f7; font-size:0.75em; font-weight:bold;">${rainInches} in</div>` : '';
+                    const popPct = Math.round(f.pop * 100);
+                    const gustInfo = f.wind.gust ? `<div><b>Gusts:</b> ${Math.round(f.wind.gust)} mph</div>` : '';
+                    const pressInHg = (f.main.pressure * 0.02953).toFixed(2);
+
+                    cont.innerHTML += `
+                        <div class="forecast-card" style="min-width: 140px; display: flex; flex-direction: column;">
+                            <div style="font-size:0.75em; color:var(--primary); font-weight:bold;">
+                                ${new Date(f.dt*1000).toLocaleTimeString([], {hour:'numeric'})}
+                            </div>
+                            <img src="https://openweathermap.org/img/wn/${f.weather[0].icon}.png" style="width:40px; margin: 2px auto;">
+                            <div style="font-size:0.7em; opacity:0.8; margin-bottom:5px; text-transform:capitalize;">
+                                ${f.weather[0].description}
+                            </div>
+                            <div style="font-size:1.2em; font-weight:bold; color:var(--accent);">
+                                ${Math.round(f.main.temp)}&deg;
+                            </div>
+                            <div style="font-size:0.75em; margin-top:5px; color:#ddd;">
+                                💧 ${popPct}% PoP
+                            </div>
+                            ${rainVol}
+                            <details style="background:transparent; border:none; padding:5px 0 0 0; margin:10px 0 0 0; border-top:1px solid rgba(255,255,255,0.1); border-radius:0;">
+                                <summary style="font-size:0.7em; padding-bottom:0; color:#aaa; font-weight:normal; text-align:center;">
+                                    More Info
+                                </summary>
+                                <div style="font-size:0.75em; text-align:left; color:#ccc; line-height:1.5; margin-top:8px;">
+                                    <div><b>Feels Like:</b> ${Math.round(f.main.feels_like)}&deg;</div>
+                                    <div><b>Humidity:</b> ${f.main.humidity}%</div>
+                                    <div><b>Wind:</b> ${Math.round(f.wind.speed)} mph</div>
+                                    ${gustInfo}
+                                    <div><b>Clouds:</b> ${f.clouds.all}%</div>
+                                    <div><b>Pressure:</b> ${pressInHg} inHg</div>
+                                </div>
+                            </details>
+                        </div>
+                    `;
+                });
+
+            });
 
     async function fetchNWSChain() {
         try {
