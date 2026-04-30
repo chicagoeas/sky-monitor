@@ -1821,22 +1821,22 @@
 
     // Start the clock immediately and update every second
     setInterval(updateStationClock, 1000);
-    async function fetchOpenWeather() {
+        async function fetchOpenWeather() {
         try {
             const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
             const d = await res.json();
+
             localRiseTime = d.city.sunrise * 1000; 
             localSetTime = d.city.sunset * 1000;
-            
-            // Calculate if it's night for the remote location
+
             const nowSec = Math.floor(Date.now() / 1000);
             isNightAtStation = (nowSec < d.city.sunrise || nowSec > d.city.sunset);
 
-            // Use the station's exact timezone offset
             stationTzOffset = d.city.timezone;
-        
+
             document.getElementById('riseVal').innerText = formatOffsetTime(d.city.sunrise, stationTzOffset);
             document.getElementById('setVal').innerText = formatOffsetTime(d.city.sunset, stationTzOffset);
+
             const cont = document.getElementById('forecast-container'); 
             cont.innerHTML = "";
 
@@ -1851,37 +1851,27 @@
             });
 
             const dayKeys = Object.keys(days);
-
             if (!dayKeys.length) return;
 
-            let activeDay = dayKeys[0];
+            const tabRow = document.createElement('div');
+            tabRow.className = "hourly-tabs";
 
-            const tabBar = document.createElement('div');
-            tabBar.style.display = "flex";
-            tabBar.style.gap = "6px";
-            tabBar.style.marginBottom = "10px";
-            tabBar.style.flexWrap = "nowrap";
-            tabBar.style.overflowX = "auto";
+            const forecastRow = document.createElement('div');
+            forecastRow.className = "hourly-row";
 
-            const cardsContainer = document.createElement('div');
-            cardsContainer.style.display = "flex";
-            cardsContainer.style.gap = "10px";
-            cardsContainer.style.overflowX = "auto";
-
-            cont.appendChild(tabBar);
-            cont.appendChild(cardsContainer);
+            cont.appendChild(tabRow);
+            cont.appendChild(forecastRow);
 
             function renderDay(dayKey) {
                 let html = "";
 
                 days[dayKey].forEach(f => {
-                    const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : 0;
-                    const rainVol = rainInches > 0 ? `<div style="color:#4fc3f7; font-size:0.75em; font-weight:bold;">${rainInches} in</div>` : '';
                     const popPct = Math.round(f.pop * 100);
+                    const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : null;
                     const gustInfo = f.wind.gust ? `<div><b>Gusts:</b> ${Math.round(f.wind.gust)} mph</div>` : '';
                     const pressInHg = (f.main.pressure * 0.02953).toFixed(2);
 
-                    cardsContainer.innerHTML += `
+                    html += `
                         <div class="forecast-card" style="min-width: 140px; display: flex; flex-direction: column;">
                             <div style="font-size:0.75em; color:var(--primary); font-weight:bold;">
                                 ${new Date(f.dt*1000).toLocaleTimeString([], {hour:'numeric'})}
@@ -1896,10 +1886,11 @@
                             <div style="font-size:0.75em; margin-top:5px; color:#ddd;">
                                 💧 ${popPct}% PoP
                             </div>
-                            ${rainVol}
+                            ${rainInches ? `<div style="color:#4fc3f7; font-size:0.75em; font-weight:bold;">${rainInches} in</div>` : ''}
+
                             <details style="background:transparent; border:none; padding:5px 0 0 0; margin:10px 0 0 0; border-top:1px solid rgba(255,255,255,0.1); border-radius:0;">
                                 <summary style="font-size:0.7em; padding-bottom:0; color:#aaa; font-weight:normal; text-align:center;">
-                                    More Info
+                                    ▶ More Info
                                 </summary>
                                 <div style="font-size:0.75em; text-align:left; color:#ccc; line-height:1.5; margin-top:8px;">
                                     <div><b>Feels Like:</b> ${Math.round(f.main.feels_like)}&deg;</div>
@@ -1913,40 +1904,27 @@
                         </div>
                     `;
                 });
+
+                forecastRow.innerHTML = html;
             }
 
-            dayKeys.forEach((key, index) => {
-                const btn = document.createElement('button');
+            dayKeys.forEach((key, i) => {
+                const btn = document.createElement('div');
+                btn.className = "hourly-tab";
                 btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
 
-                btn.style.padding = "6px 12px";
-                btn.style.whiteSpace = "nowrap";
-                btn.style.flex = "0 0 auto";
-                btn.style.borderRadius = "6px";
-                btn.style.border = "none";
-                btn.style.cursor = "pointer";
-                btn.className = index === 0 ? "active-tab" : "inactive-tab";
+                if (i === 0) btn.classList.add("active");
 
                 btn.onclick = () => {
-                    activeDay = key;
-
-                    [...tabBar.children].forEach(b => {
-                        b.style.background = "rgba(255,255,255,0.1)";
-                        b.style.color = "#fff";
-                        b.style.opacity = "0.7";
-                    });
-
-                    btn.style.background = "var(--accent)";
-                    btn.style.color = "#000";
-                    btn.style.opacity = "1";
-
+                    document.querySelectorAll('.hourly-tab').forEach(t => t.classList.remove('active'));
+                    btn.classList.add('active');
                     renderDay(key);
                 };
 
-                tabBar.appendChild(btn);
+                tabRow.appendChild(btn);
             });
 
-            renderDay(activeDay);
+            renderDay(dayKeys[0]);
 
         } catch (e) {
             console.error("OpenWeather error:", e);
