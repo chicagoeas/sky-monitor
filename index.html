@@ -134,6 +134,8 @@
         .nav-item { color: #888; cursor: pointer; display: flex; flex-direction: column; align-items: center; font-size: 1.1em; transition: 0.3s; }
         .nav-item span { font-size: 0.5em; text-transform: uppercase; margin-top: 4px; }
         .nav-item.active { color: var(--primary); }
+        .spc-btn-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0; }
+        
         /* Radar pulse animation for active storms */
         @keyframes radar-pulse {
             0% { transform: scale(1); opacity: 1; }
@@ -404,11 +406,18 @@
                 </div>
         </div>
         
-        <div id="spc-day1-section">
+        <div id="spc-outlook-section"> <!-- ID Renamed for generality -->
 
             <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px;">
-                <div style="font-weight:bold; color:var(--primary);">SPC DAY 1 CONVECTIVE OUTLOOK</div>
+                <div id="spc-title" style="font-weight:bold; color:var(--primary);">SPC DAY 1 CONVECTIVE OUTLOOK</div> <!-- ID added -->
                 <div id="spc-countdown" style="font-size:0.75em; color:var(--warning); font-family:monospace; background:rgba(0,0,0,0.5); padding:3px 8px; border-radius:5px;">Syncing...</div>
+            </div>
+
+            <!-- SPC Day Switching Tabs -->
+            <div class="spc-btn-tabs btn-group">
+                <button class="btn-opt active" onclick="switchSPCDay(1, this)">Day 1</button>
+                <button class="btn-opt" onclick="switchSPCDay(2, this)">Day 2</button>
+                <button class="btn-opt" onclick="switchSPCDay(3, this)">Day 3</button>
             </div>
 
             <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
@@ -527,6 +536,8 @@
     let stationTzOffset = 0;
     // STORM TRACKING MEMORY // Use localStorage so the math survives a page refresh!
     let lastStormCall = JSON.parse(localStorage.getItem('waddle_storm_mem')) || { time: null, dist: null, speed: null, motion: "STATIONARY", isApproaching: false, etaText: "N/A" };
+    // Global variable to track the active SPC Day
+    let activeSPCDay = 1;
     
     function formatOffsetTime(unixSeconds, offsetSeconds) {
         // Shifting the time by the offset and formatting as UTC perfectly matches the remote timezone
@@ -1014,11 +1025,13 @@
         }
     }
     
-    async function updateSPCMap() {
+    async function updateSPCMap(day = 1) { // Parameterized for day
         const spcImg = document.getElementById('spc-map');
-        const spcUrl = "www.spc.noaa.gov/products/outlook/day1otlk.png";
+        const spcUrl = `www.spc.noaa.gov/products/outlook/day${day}otlk.png`; // Dynamic URL construction
         spcImg.src = `https://images.weserv.nl/?url=${spcUrl}&t=${new Date().getTime()}`;
         document.getElementById('spc-link').href = `https://${spcUrl}`;
+        // Dynamic title update
+        document.getElementById('spc-title').innerText = `SPC DAY ${day} CONVECTIVE OUTLOOK`;
     }
 
     async function updateWeatherStory(wfo) {
@@ -1098,22 +1111,28 @@
         return "Typical conditions out there right now.";
     }
 
-    function startSPCCountdown() {
+    function startSPCCountdown(day = 1) { // Parameterized for day
         clearInterval(spcIntervalId);
+        const countdownElem = document.getElementById('spc-countdown');
         function updateSPC() {
             const now = new Date();
             const currentUTC = now.getUTCHours() + (now.getUTCMinutes() / 60) + (now.getUTCSeconds() / 3600);
-            const updateTimes = [1.0, 6.0, 13.0, 16.5, 20.0];
+            
+            // Standard NWS/SPC update times decimal UTC [1.0, 6.0, 13.0, 16.5, 20.0]. prioritized for Day 1 as specified.
+            let updateTimes = [1.0, 6.0, 13.0, 16.5, 20.0]; 
+            if (day === 2) updateTimes = [1.0, 7.0, 17.5]; // Day 2 typical schedule UTC decimal
+            if (day === 3) updateTimes = [2.5, 8.5]; // Day 3 typical schedule UTC decimal
+
             let nextUpdateHour = updateTimes.find(t => t > currentUTC);
             let nextDate = new Date(now);
-            if (nextUpdateHour === undefined) { nextUpdateHour = 1.0; nextDate.setUTCDate(nextDate.getUTCDate() + 1); }
+            if (nextUpdateHour === undefined) { nextUpdateHour = updateTimes[0]; nextDate.setUTCDate(nextDate.getUTCDate() + 1); }
             nextDate.setUTCHours(Math.floor(nextUpdateHour), (nextUpdateHour % 1) * 60, 0, 0);
             const diff = nextDate.getTime() - new Date().getTime();
-            if (diff <= 0) { document.getElementById('spc-countdown').innerText = "Update Imminent..."; return; }
+            if (diff <= 0) { countdownElem.innerText = "Update Imminent..."; return; }
             const h = Math.floor(diff / (1000 * 60 * 60));
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
             const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
-            document.getElementById('spc-countdown').innerText = `Next Outlook: ${h}h ${m}m ${s}s`;
+            countdownElem.innerText = `Next Outlook: ${h}h ${m}m ${s}s`;
         }
         updateSPC();
         spcIntervalId = setInterval(updateSPC, 1000);
@@ -1166,8 +1185,8 @@
         const indicator = document.getElementById('sync-indicator');
         indicator.style.opacity = "1";
         document.getElementById('radar-frame').src = `https://www.rainviewer.com/map.html?loc=${lat},${lon},8&oFa=0&oC=1&oU=0&oLL=0&oHu=0&oD=1&oQ=0&oTh=0&color=2&sm=1&sn=1`;
-        updateSPCMap();
-        startSPCCountdown();
+        updateSPCMap(activeSPCDay);
+        startSPCCountdown(activeSPCDay);
         
         await fetchOpenWeather();
         await fetchAlerts();
@@ -2254,6 +2273,17 @@
             fxAnimationId = requestAnimationFrame(draw);
         }
         fxAnimationId = requestAnimationFrame(draw);
+    }
+
+    // SPC Day Switcher Logic
+    function switchSPCDay(day, element) {
+        activeSPCDay = day;
+        document.querySelectorAll('.spc-btn-tabs .btn-opt').forEach(btn => btn.classList.remove('active'));
+        element.classList.add('active');
+        
+        // Update both the map image and the countdown timer context
+        updateSPCMap(day);
+        startSPCCountdown(day);
     }
     
     // Information updates every 60 seconds, (live updating feel)
