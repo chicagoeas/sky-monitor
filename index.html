@@ -1111,29 +1111,76 @@
         return "Typical conditions out there right now.";
     }
 
-    function startSPCCountdown(day = 1) { // Parameterized for day
+    function startSPCCountdown(day = 1) { 
         clearInterval(spcIntervalId);
         const countdownElem = document.getElementById('spc-countdown');
+        
         function updateSPC() {
             const now = new Date();
+            // Get current UTC decimal time for comparison
             const currentUTC = now.getUTCHours() + (now.getUTCMinutes() / 60) + (now.getUTCSeconds() / 3600);
             
-            // Standard NWS/SPC update times decimal UTC [1.0, 6.0, 13.0, 16.5, 20.0]. prioritized for Day 1 as specified.
-            let updateTimes = [1.0, 6.0, 13.0, 16.5, 20.0]; 
-            if (day === 2) updateTimes = [1.0, 7.0, 17.5]; // Day 2 typical schedule UTC decimal
-            if (day === 3) updateTimes = [2.5, 8.5]; // Day 3 typical schedule UTC decimal
+            let updateTimes = [];
+            
+            if (day === 1) {
+                // Day 1 Schedule (All UTC/Z)
+                updateTimes = [1.0, 6.0, 13.0, 16.5, 20.0];
+            } else if (day === 2) {
+                // Day 2 Schedule: 1:00 AM Central Time and 1730Z
+                // Logic: Calculate what 1:00 AM Central is in UTC right now
+                const d2CST = new Date().toLocaleString("en-US", {timeZone: "America/Chicago"});
+                const centralDate = new Date(d2CST);
+                centralDate.setHours(1, 0, 0, 0);
+                
+                // Get the difference between the local system and Central to find the UTC target
+                const offset = (new Date(d2CST).getTime() - new Date().getTime());
+                const targetInUTC = (centralDate.getTime() - offset);
+                const finalTarget = new Date(targetInUTC);
+                
+                const hourZ = finalTarget.getUTCHours() + (finalTarget.getUTCMinutes() / 60);
+                updateTimes = [hourZ, 17.5].sort((a, b) => a - b);
 
+            } else if (day === 3) {
+                // Day 3 Schedule: 2:30 AM Central Time and 1930Z
+                const d3CST = new Date().toLocaleString("en-US", {timeZone: "America/Chicago"});
+                const centralDate = new Date(d3CST);
+                centralDate.setHours(2, 30, 0, 0);
+                
+                const offset = (new Date(d3CST).getTime() - new Date().getTime());
+                const targetInUTC = (centralDate.getTime() - offset);
+                const finalTarget = new Date(targetInUTC);
+
+                const hourZ = finalTarget.getUTCHours() + (finalTarget.getUTCMinutes() / 60);
+                updateTimes = [hourZ, 19.5].sort((a, b) => a - b);
+            }
+
+            // Find the next upcoming update time in the array
             let nextUpdateHour = updateTimes.find(t => t > currentUTC);
             let nextDate = new Date(now);
-            if (nextUpdateHour === undefined) { nextUpdateHour = updateTimes[0]; nextDate.setUTCDate(nextDate.getUTCDate() + 1); }
+            
+            // If no times are left today, target the first update of the next UTC day
+            if (nextUpdateHour === undefined) { 
+                nextUpdateHour = updateTimes[0]; 
+                nextDate.setUTCDate(nextDate.getUTCDate() + 1); 
+            }
+            
+            // Set the target date/time in UTC
             nextDate.setUTCHours(Math.floor(nextUpdateHour), (nextUpdateHour % 1) * 60, 0, 0);
+            
             const diff = nextDate.getTime() - new Date().getTime();
-            if (diff <= 0) { countdownElem.innerText = "Update Imminent..."; return; }
+            
+            if (diff <= 0) { 
+                countdownElem.innerText = "Update Imminent..."; 
+                return; 
+            }
+            
             const h = Math.floor(diff / (1000 * 60 * 60));
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
             const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            
             countdownElem.innerText = `Next Outlook: ${h}h ${m}m ${s}s`;
         }
+        
         updateSPC();
         spcIntervalId = setInterval(updateSPC, 1000);
     }
