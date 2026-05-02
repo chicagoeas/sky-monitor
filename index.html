@@ -1023,19 +1023,22 @@
         const storyLink = document.getElementById('wxstory-link');
 
         try {
-            const res = await fetch(`https://corsproxy.io/?https://www.weather.gov/${wfo}`);
-            const html = await res.text();
+            const res = await fetch(`https://withered-band-ecbf.skymonitor-account.workers.dev/?wfo=${wfo}`);
+            const data = await res.json();
 
-            const doc = new DOMParser().parseFromString(html, "text/html");
-            const imgs = doc.querySelectorAll('.graphicast .image img');
-
-            const validImages = Array.from(doc.querySelectorAll('.graphicast img'))
-                .map(img => img.getAttribute('data-src') || img.getAttribute('src'))
+            const validImages = (data.images || [])
                 .filter(src =>
                     src &&
                     !src.includes('spacer') &&
                     !src.endsWith('.gif')
-                );
+                )
+                .sort((a, b) => {
+                    const getNum = (url) => {
+                        const match = url.match(/(\d+)\.(png|jpg)$/i);
+                        return match ? parseInt(match[1]) : 0;
+                    };
+                    return getNum(a) - getNum(b);
+                });
 
             if (validImages.length === 0) {
                 throw new Error("No valid images found");
@@ -1044,11 +1047,7 @@
             let index = 0;
 
             function showImage() {
-                const raw = validImages[index];
-
-                const fullUrl = raw.startsWith('http')
-                    ? raw
-                    : `https://www.weather.gov${raw}`;
+                const fullUrl = validImages[index];
 
                 storyImg.src = `https://images.weserv.nl/?url=${fullUrl.replace('https://', '')}&t=${Date.now()}`;
                 storyLink.href = fullUrl;
