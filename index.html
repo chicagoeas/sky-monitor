@@ -1020,9 +1020,51 @@
 
     async function updateWeatherStory(wfo) {
         const storyImg = document.getElementById('wxstory-img');
-        const storyRawUrl = `www.weather.gov/images/${wfo.toLowerCase()}/wxstory/Tab2FileL.png`;
-        storyImg.src = `https://images.weserv.nl/?url=${storyRawUrl}&t=${new Date().getTime()}`;
-        document.getElementById('wxstory-link').href = `https://${storyRawUrl}`;
+        const storyLink = document.getElementById('wxstory-link');
+
+        try {
+            const res = await fetch(`https://api.allorigins.win/raw?url=https://www.weather.gov/${wfo}`);
+            const html = await res.text();
+
+            const doc = new DOMParser().parseFromString(html, "text/html");
+            const imgs = doc.querySelectorAll('.graphicast img');
+
+            const validImages = Array.from(imgs)
+                .map(img => img.getAttribute('src'))
+                .filter(src => src && src.includes('/images/'));
+
+            if (validImages.length === 0) {
+                throw new Error("No valid images found");
+            }
+
+            let index = 0;
+
+            function showImage() {
+                const raw = validImages[index];
+
+                const fullUrl = raw.startsWith('http')
+                    ? raw
+                    : `https://www.weather.gov${raw}`;
+
+                storyImg.src = `https://images.weserv.nl/?url=${fullUrl.replace('https://', '')}&t=${Date.now()}`;
+                storyLink.href = fullUrl;
+            }
+
+            showImage();
+
+            if (window.wxStoryInterval) {
+                clearInterval(window.wxStoryInterval);
+            }
+
+            window.wxStoryInterval = setInterval(() => {
+                index = (index + 1) % validImages.length;
+                showImage();
+            }, 5000);
+
+        } catch (err) {
+            console.error("Weather story failed:", err);
+            storyImg.src = "";
+        }
     }
 
     function getMoonPhaseName(phase) {
