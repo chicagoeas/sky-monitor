@@ -345,6 +345,7 @@
 
         <details open>
             <summary style="color:var(--accent);">DAILY OUTLOOK (NWS)</summary>
+            <div id="nws-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
             <div class="forecast-scroll" id="nws-extended-container" style="margin-top:15px;"></div>
         </details>
 
@@ -1641,16 +1642,16 @@
                 wu.precipTotal !== null &&
                 (wu.precipRate > 0 || wu.precipTotal > 0);
 
-            document.getElementById('precip1h').innerText = `1h: ${precip1h.toFixed(2)}"`;
-            document.getElementById('precip24h').innerText = `24h: ${precip24h.toFixed(2)}"`;
+            document.getElementById('precip1h').innerText = `1h Accum: ${precip1h.toFixed(2)}"`;
+            document.getElementById('precip24h').innerText = `24h Accum: ${precip24h.toFixed(2)}"`;
 
             if (wuPrecipValid) {
                 document.getElementById('precip1h').innerText =
-                    `RR: ${wu.precipRate.toFixed(2)}"/hr  ` +
+                    `Rain Rate: ${wu.precipRate.toFixed(2)}"/hr  ` +
                     document.getElementById('precip1h').innerText;
 
                 document.getElementById('precip24h').innerText =
-                    `Past: ${wu.precipTotal.toFixed(2)}"  ` +
+                    `Accum: ${wu.precipTotal.toFixed(2)}"  ` +
                     document.getElementById('precip24h').innerText;
             }
             
@@ -1827,11 +1828,18 @@
         dayKeys.forEach((key, i) => {
             const btn = document.createElement('button');
             btn.className = "btn-opt";
-            btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
+            
+            // Standardization: Handle "Today" for the first button
+            if (i === 0) {
+                btn.innerText = "Today";
+            } else {
+                btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
+            }
 
             if (i === 0) btn.classList.add('active');
 
             btn.onclick = () => {
+                // Standardization: Correct class name is "active"
                 document.querySelectorAll('#pirate-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 renderDay(key);
@@ -1883,36 +1891,12 @@
             document.getElementById('riseVal').innerText = formatOffsetTime(d.city.sunrise, d.city.timezone);
             document.getElementById('setVal').innerText = formatOffsetTime(d.city.sunset, d.city.timezone);
 
-            const cont = document.getElementById('forecast-container'); 
-            cont.innerHTML = "";
-            // Ensure the main container allows vertical stacking
-            cont.style.display = "flex";
-            cont.style.flexDirection = "column";
-
-            const days = {};
-            d.list.forEach(f => {
-                const date = new Date(f.dt * 1000).toDateString();
-                if (!days[date]) days[date] = [];
-                days[date].push(f);
-            });
-
-            const dayKeys = Object.keys(days);
-
-            // 1. Create the Tab Row (Top)
-            const tabRow = document.createElement('div');
-            tabRow.className = "hourly-tabs";
-            tabRow.style.cssText = `
-                display: flex;
-                gap: 8px;
-                margin-bottom: 15px;
-                overflow-x: auto;
-                padding-bottom: 5px;
-                flex-shrink: 0;
-            `;
-
-            // 2. Create the Forecast Display Area (Bottom)
-            const forecastRow = document.createElement('div');
-            forecastRow.className = "hourly-row";
+            // Standardization: Select elements by ID
+            const tabRow = document.getElementById('ow-day-tabs');
+            const forecastRow = document.getElementById('forecast-container'); 
+            
+            // Set up forecast row for standardized horizontal layout
+            forecastRow.innerHTML = "";
             forecastRow.style.cssText = `
                 display: flex;
                 flex-direction: row;
@@ -1923,9 +1907,18 @@
                 align-items: flex-start;
             `;
 
-            cont.appendChild(tabRow);
-            cont.appendChild(forecastRow);
+            const days = {};
+            d.list.forEach(f => {
+                const date = new Date(f.dt * 1000).toDateString();
+                if (!days[date]) days[date] = [];
+                days[date].push(f);
+            });
 
+            const dayKeys = Object.keys(days);
+            
+            tabRow.innerHTML = ""; // Clear existing tabs
+
+            // Update renderDay function
             function renderDay(dayKey) {
                 forecastRow.innerHTML = "";
                 // Scroll back to start when switching days
@@ -1934,13 +1927,14 @@
                 days[dayKey].forEach(f => {
                     const popPct = Math.round(f.pop * 100);
                     const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : null;
-                    const gustInfo = f.wind.gust ? `<div><b>Gusts:</b> ${Math.round(f.wind.gust)} mph</div>` : '';
+                    const gustInfo = f.wind.gust ? `<div>Gusts: ${Math.round(f.wind.gust)} mph</div>` : '';
                     const pressInHg = (f.main.pressure * 0.02953).toFixed(2);
 
                     const card = document.createElement('div');
                     card.className = "forecast-card";
 
-                    card.innerHTML = `
+                    // Construct card innerHTML
+                    const cardContent = `
                         <div style="font-size:0.75em; color:var(--primary); font-weight:bold;">
                             ${new Date(f.dt*1000).toLocaleTimeString([], {hour:'numeric'})}
                         </div>
@@ -1949,7 +1943,7 @@
                             ${f.weather[0].description}
                         </div>
                         <div style="font-size:1.2em; font-weight:bold; color:var(--accent);">
-                            ${Math.round(f.main.temp)}&deg;
+                            ${Math.round(f.main.temp)}°
                         </div>
                         <div style="font-size:0.75em; margin-top:5px; color:#ddd;">
                             💧 ${popPct}% PoP
@@ -1961,60 +1955,45 @@
                                 More Info
                             </summary>
                             <div style="font-size:0.75em; text-align:left; color:#ccc; line-height:1.5; margin-top:8px;">
-                                <div><b>Feels Like:</b> ${Math.round(f.main.feels_like)}&deg;</div>
-                                <div><b>Humidity:</b> ${f.main.humidity}%</div>
-                                <div><b>Wind:</b> ${Math.round(f.wind.speed)} mph</div>
+                                <div>Feels Like: ${Math.round(f.main.feels_like)}°</div>
+                                <div>Humidity: ${f.main.humidity}%</div>
+                                <div>Wind: ${Math.round(f.wind.speed)} mph</div>
                                 ${gustInfo}
-                                <div><b>Clouds:</b> ${f.clouds.all}%</div>
-                                <div><b>Pressure:</b> ${pressInHg} inHg</div>
+                                <div>Clouds: ${f.clouds.all}%</div>
+                                <div>Pressure: ${pressInHg} inHg</div>
                             </div>
                         </details>
                     `;
+                    card.innerHTML = cardContent;
                     forecastRow.appendChild(card);
                 });
             }
 
-            // Create Tabs
+            // Create Tabs with standardized style and "Today" rule
             dayKeys.forEach((key, i) => {
-                const btn = document.createElement('div');
-                btn.className = "hourly-tab";
-                const dObj = new Date(key);
-                btn.innerText = dObj.toLocaleDateString([], { weekday: 'short' });
-
-                // Base styling
-                Object.assign(btn.style, {
-                    padding: "10px 20px",
-                    borderRadius: "6px",
-                    cursor: "pointer",
-                    background: "rgba(255,255,255,0.05)",
-                    color: "#fff",
-                    textAlign: "center",
-                    flex: "1 1 auto",
-                    minWidth: "60px",
-                    transition: "all 0.2s ease"
-                });
-
+                const btn = document.createElement('button');
+                btn.className = "btn-opt";
+                
+                // Handle "Today" logic
                 if (i === 0) {
-                    btn.style.background = "var(--accent)";
-                    btn.style.color = "#000";
-                    btn.style.fontWeight = "bold";
+                    btn.innerText = "Today";
+                } else {
+                    btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
                 }
 
+                if (i === 0) btn.classList.add('active');
+
                 btn.onclick = () => {
-                    Array.from(tabRow.children).forEach(t => {
-                        t.style.background = "rgba(255,255,255,0.05)";
-                        t.style.color = "#fff";
-                        t.style.fontWeight = "normal";
-                    });
-                    btn.style.background = "var(--accent)";
-                    btn.style.color = "#000";
-                    btn.style.fontWeight = "bold";
+                    // Remove active class from buttons in this section
+                    document.querySelectorAll('#ow-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
                     renderDay(key);
                 };
 
                 tabRow.appendChild(btn);
             });
 
+            // Set initial state
             renderDay(dayKeys[0]);
 
         } catch (e) {
@@ -2031,21 +2010,85 @@
 
             const dailyRes = await fetch(p.properties.forecast);
             const dailyData = await dailyRes.json();
-            const dailyCont = document.getElementById('nws-extended-container');
-            dailyCont.innerHTML = "";
             
+            // NWS Standardization logic
+            const dayTabs = document.getElementById('nws-day-tabs');
+            const dailyCont = document.getElementById('nws-extended-container');
+
+            // Ensure dailyCont is horizontally scrollable and set up for горизонтальный layout
+            dailyCont.innerHTML = "";
+            dailyCont.style.cssText = `
+                display: flex;
+                flex-direction: row;
+                gap: 12px;
+                overflow-x: auto;
+                padding-bottom: 10px;
+                width: 100%;
+                align-items: flex-start;
+            `;
+
+            dayTabs.innerHTML = ""; // Clear existing tabs
+
+            // Group NWS periods by day
+            const days = {};
             dailyData.properties.periods.forEach(per => {
-                const isHigh = per.isDaytime;
-                const tempColor = isHigh ? "#ff5252" : "#4fc3f7";
-                const tempLabel = isHigh ? "High" : "Low";
-                dailyCont.innerHTML += `
-                    <div class="forecast-card" style="min-width: 125px;">
+                const date = new Date(per.startTime).toDateString();
+                if (!days[date]) days[date] = [];
+                days[date].push(per);
+            });
+
+            const dayKeys = Object.keys(days);
+
+            // Function to render cards for a selected day
+            function renderDay(dayKey) {
+                dailyCont.innerHTML = "";
+                dailyCont.scrollLeft = 0; // Scroll to start
+
+                days[dayKey].forEach(per => {
+                    const isHigh = per.isDaytime;
+                    const tempColor = isHigh ? "#ff5252" : "#4fc3f7";
+                    const tempLabel = isHigh ? "High" : "Low";
+                    const card = document.createElement('div');
+                    card.className = "forecast-card";
+                    card.style.minWidth = "125px";
+
+                    const cardContent = `
                         <div style="font-size:0.8em; font-weight:bold; margin-bottom:5px; color:#fff;">${per.name}</div>
                         <img src="${per.icon}" style="width:45px; border-radius:8px; margin-bottom:5px;">
-                        <div style="color:${tempColor}; font-weight:bold; font-size:1.1em;">${tempLabel}: ${per.temperature}&deg;</div>
+                        <div style="color:${tempColor}; font-weight:bold; font-size:1.1em;">${tempLabel}: ${per.temperature}°</div>
                         <div style="font-size:0.65em; opacity:0.7; margin-top:5px; line-height:1.2; text-transform:capitalize;">${per.shortForecast}</div>
-                    </div>`;
+                    `;
+                    card.innerHTML = cardContent;
+                    dailyCont.appendChild(card);
+                });
+            }
+
+            // Create Day Tabs with Pirate style and "Today" rule
+            dayKeys.forEach((key, i) => {
+                const btn = document.createElement('button');
+                btn.className = "btn-opt";
+                
+                // Handle "Today" logic
+                if (i === 0) {
+                    btn.innerText = "Today";
+                } else {
+                    btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
+                }
+
+                if (i === 0) btn.classList.add('active');
+
+                btn.onclick = () => {
+                    // Remove active class from buttons in this section
+                    document.querySelectorAll('#nws-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    renderDay(key);
+                };
+
+                dayTabs.appendChild(btn);
             });
+
+            // Set initial state
+            renderDay(dayKeys[0]);
 
             const cliList = await (await fetch(`https://api.weather.gov/products/types/HWO/locations/${wfo}`)).json();
             if (cliList['@graph']?.length > 0) {
