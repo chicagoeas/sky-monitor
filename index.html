@@ -146,6 +146,133 @@
             border-radius: 50%; border: 2px solid var(--danger);
             animation: radar-pulse 2s infinite;
         }
+
+                .twc-day-card {
+            background: rgba(0,0,0,0.3);
+            border-radius: 18px;
+            padding: 18px;
+            border: 1px solid rgba(255,255,255,0.08);
+            text-align: center;
+            cursor: pointer;
+            transition: 0.25s;
+        }
+
+        .twc-day-card:hover {
+            transform: translateY(-4px);
+            background: rgba(255,255,255,0.05);
+        }
+
+        .twc-day-name {
+            font-size: 0.9em;
+            font-weight: bold;
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+
+        .twc-day-icon {
+            width: 64px;
+            height: 64px;
+            margin-bottom: 10px;
+        }
+
+        .twc-day-temp {
+            font-size: 1.7em;
+            font-weight: 900;
+            color: var(--accent);
+        }
+
+        .twc-day-desc {
+            font-size: 0.75em;
+            opacity: 0.85;
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+
+        #forecast-detail-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.75);
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        #forecast-detail-modal {
+            width: min(1100px, 100%);
+            max-height: 90vh;
+            overflow-y: auto;
+            background: #111;
+            border-radius: 22px;
+            padding: 24px;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+
+        #forecast-detail-close {
+            background: var(--primary);
+            color: black;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .forecast-detail-top {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .forecast-detail-bigicon {
+            width: 96px;
+            height: 96px;
+        }
+
+        .forecast-detail-title {
+            font-size: 2em;
+            font-weight: 900;
+            color: var(--primary);
+        }
+
+        .forecast-detail-narrative {
+            line-height: 1.6;
+            margin-top: 15px;
+            opacity: 0.9;
+        }
+
+        .forecast-extra-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 25px;
+        }
+
+        .forecast-extra-card {
+            background: rgba(255,255,255,0.04);
+            border-radius: 14px;
+            padding: 14px;
+        }
+
+        .forecast-extra-label {
+            font-size: 0.75em;
+            opacity: 0.7;
+            margin-bottom: 5px;
+        }
+
+        .forecast-extra-value {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        
         /* --- CITY MODE 1:1 MATCH --- */
         .city-mode-container {
                 margin-bottom: 24px;
@@ -336,30 +463,21 @@
             <div id="timeline"></div>
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
+        
+        <details open id="twc-forecast-section">
+            <summary style="color:var(--primary);">5-DAY FORECAST</summary>
 
-        <details open id="openweather-section">
-            <summary style="color:var(--primary);">3-HOURLY FORECAST (OPENWEATHER)</summary>
-            
-            <div id="ow-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
-            
-            <div class="forecast-scroll" id="forecast-container" style="margin-top:15px;"></div>
+            <div
+                id="twc-forecast-container"
+                style="
+                    display:grid;
+                    grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
+                    gap:12px;
+                    margin-top:15px;
+                "
+            ></div>
         </details>
-
-        <details open>
-            <summary style="color:var(--accent);">DAILY OUTLOOK (NWS)</summary>
-            <div id="nws-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
-            <div class="forecast-scroll" id="nws-extended-container" style="margin-top:15px;"></div>
-        </details>
-
-        <details open id="pirate-hourly-section">
-            <summary style="color:var(--primary);">HOURLY FORECAST (PIRATE WEATHER)</summary>
-            
-            <div id="pirate-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
-            
-            <div class="forecast-scroll" id="pirate-hourly-container" style="margin-top:15px;"></div>
-        </details>
-    </div>
-
+        
     <div id="severe-tab" class="tab-content">
         <div id="safety-checklist"></div>
         <div id="alert-stack" style="margin-bottom:20px;"></div>
@@ -511,6 +629,17 @@
         Accurate weather, simplified. Powered by NWS, OpenWeather, and PirateWeather APIs.
     </p>
 </footer>
+    <div id="forecast-detail-overlay" class="hidden">
+        <div id="forecast-detail-modal">
+
+            <button id="forecast-detail-close">
+                CLOSE
+            </button>
+
+            <div id="forecast-detail-content"></div>
+
+        </div>
+    </div>
 
 <script>
     const PIRATE_API_KEY = "p1eTDIbrnfGjCJlwMahUzarQNqzNPyxI";
@@ -538,6 +667,7 @@
     let lastStormCall = JSON.parse(localStorage.getItem('waddle_storm_mem')) || { time: null, dist: null, speed: null, motion: "STATIONARY", isApproaching: false, etaText: "N/A" };
     // Global variable to track the active SPC Day
     let activeSPCDay = 1;
+    let twcForecastData = null;
     
     function formatOffsetTime(unixSeconds, offsetSeconds) {
         // Shifting the time by the offset and formatting as UTC perfectly matches the remote timezone
@@ -1228,6 +1358,151 @@
         }
     }
 
+    async function fetchTWCForecast() {
+
+        try {
+
+            const res = await fetch(
+                `https://api.weather.com/v3/wx/forecast/daily/5day?geocode=${lat},${lon}&format=json&units=e&language=en-US&apiKey=c51cf47ac5b04c389cf47ac5b0bc3857`
+            );
+
+            const data = await res.json();
+
+            twcForecastData = data;
+
+            const container = document.getElementById('twc-forecast-container');
+
+            if (!container) return;
+
+            container.innerHTML = "";
+
+            for (let i = 0; i < data.dayOfWeek.length; i++) {
+
+                const card = document.createElement('div');
+
+                card.className = "twc-day-card";
+
+                const iconNum =
+                    data.daypart[0].iconCode[i] || 44;
+
+                card.innerHTML = `
+                    <div class="twc-day-name">
+                        ${data.dayOfWeek[i]}
+                    </div>
+
+                    <img
+                        class="twc-day-icon"
+                        src="https://www.wunderground.com/static/i/c/v4/${iconNum}.svg"
+                    >
+
+                    <div class="twc-day-temp">
+                        ${data.temperatureMax[i]}°
+                    </div>
+
+                    <div class="twc-day-desc">
+                        ${data.daypart[0].shortNarrative[i]}
+                    </div>
+                `;
+
+                card.addEventListener('click', () => {
+                    openForecastDetail(i);
+                });
+
+                container.appendChild(card);
+            }
+
+        } catch (e) {
+
+            console.error("TWC Forecast Error:", e);
+        }
+    }
+
+    function openForecastDetail(dayIndex) {
+
+        if (!twcForecastData) return;
+
+        const overlay =
+            document.getElementById('forecast-detail-overlay');
+
+        const content =
+            document.getElementById('forecast-detail-content');
+
+        const iconNum =
+            twcForecastData.daypart[0].iconCode[dayIndex] || 44;
+
+        content.innerHTML = `
+            <div class="forecast-detail-top">
+
+                <img
+                    class="forecast-detail-bigicon"
+                    src="https://www.wunderground.com/static/i/c/v4/${iconNum}.svg"
+                >
+
+                <div>
+                    <div class="forecast-detail-title">
+                        ${twcForecastData.dayOfWeek[dayIndex]}
+                    </div>
+
+                    <div style="font-size:1.3em; font-weight:bold;">
+                        ${twcForecastData.temperatureMax[dayIndex]}°
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="forecast-detail-narrative">
+                ${twcForecastData.narrative[dayIndex]}
+            </div>
+
+            <div class="forecast-extra-grid">
+
+                <div class="forecast-extra-card">
+                    <div class="forecast-extra-label">
+                        SUNRISE
+                    </div>
+
+                    <div class="forecast-extra-value">
+                        ${twcForecastData.sunriseTimeLocal[dayIndex]}
+                    </div>
+                </div>
+
+                <div class="forecast-extra-card">
+                    <div class="forecast-extra-label">
+                        SUNSET
+                    </div>
+
+                    <div class="forecast-extra-value">
+                        ${twcForecastData.sunsetTimeLocal[dayIndex]}
+                    </div>
+                </div>
+
+                <div class="forecast-extra-card">
+                    <div class="forecast-extra-label">
+                        WIND
+                    </div>
+
+                    <div class="forecast-extra-value">
+                        ${twcForecastData.daypart[0].windDirectionCardinal[dayIndex]}
+                        ${twcForecastData.daypart[0].windSpeed[dayIndex]} mph
+                    </div>
+                </div>
+
+                <div class="forecast-extra-card">
+                    <div class="forecast-extra-label">
+                        PRECIP CHANCE
+                    </div>
+
+                    <div class="forecast-extra-value">
+                        ${twcForecastData.daypart[0].precipChance[dayIndex]}%
+                    </div>
+                </div>
+
+            </div>
+        `;
+
+        overlay.classList.remove('hidden');
+    }
+
     async function loadAll() {
         const indicator = document.getElementById('sync-indicator');
         indicator.style.opacity = "1";
@@ -1241,6 +1516,7 @@
         await updateForecastLayout();
         await fetchPirate();
         await fetchNWSChain();
+        await fetchTWCForecast();
         
         // --- POST-FETCH SYNC ---
         // Now that NWS gave us the text and Pirate gave us the numbers, run the engines
