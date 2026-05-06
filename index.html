@@ -337,15 +337,21 @@
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-    <div id="twc-forecast-container" class="twc-forecast-row" style="display: flex; justify-content: space-between; gap: 10px; margin: 20px 0;"></div>
+    <div id="twc-forecast-container" style="display: flex; justify-content: space-between; gap: 8px; margin: 20px 0; overflow-x: auto; padding-bottom: 10px;"></div>
 
-        <div id="day-detail-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(7, 19, 29, 0.98); z-index: 9999; overflow-y: auto; padding: 20px;">
-            <div style="max-width: 900px; margin: 20px auto; background: #112233; padding: 30px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.1);">
-                <button onclick="closeDayDetails()" style="float: right; background: var(--danger); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">BACK TO HOME</button>
-                <h1 id="detail-day-name" style="color: var(--primary); margin-top: 0;">Forecast Detail</h1>
-                <div id="detail-twc-info" style="font-size: 1.1em; margin-bottom: 30px;"></div>
-                <h3 style="border-bottom: 2px solid var(--primary); padding-bottom: 10px;">HOURLY FORECAST</h3>
-                <div id="detail-pirate-hourly" style="display: flex; gap: 15px; overflow-x: auto; padding: 20px 0;"></div>
+        <div id="day-detail-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #07131d; z-index: 10000; overflow-y: auto;">
+            <div style="max-width: 950px; margin: 0 auto; padding: 20px;">
+                <button onclick="closeDayDetails()" style="background: #223344; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-bottom: 20px;">← BACK TO DASHBOARD</button>
+                <div id="detail-header" style="background: #112233; padding: 20px; border-radius: 10px 10px 0 0; border-bottom: 2px solid var(--primary);">
+                    <h1 id="detail-day-name" style="margin: 0; font-size: 2em;"></h1>
+                    <p id="detail-narrative" style="font-size: 1.2em; margin-top: 15px; color: #ced4da;"></p>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: rgba(255,255,255,0.05); padding: 20px;">
+                    <div id="sun-moon-details"></div>
+                    <div id="precip-details"></div>
+                </div>
+                <h3 style="margin-top: 30px; border-bottom: 1px solid #445566; padding-bottom: 10px;">HOURLY FORECAST</h3>
+                <div id="detail-pirate-hourly" style="display: flex; gap: 10px; overflow-x: auto; padding: 20px 0;"></div>
             </div>
         </div>
         
@@ -2031,84 +2037,8 @@
             const dailyRes = await fetch(p.properties.forecast);
             const dailyData = await dailyRes.json();
             
-            // NWS Standardization logic
-            const dayTabs = document.getElementById('nws-day-tabs');
-            const dailyCont = document.getElementById('nws-extended-container');
-
-            // Ensure dailyCont is horizontally scrollable and set up for горизонтальный layout
-            dailyCont.innerHTML = "";
-            dailyCont.style.cssText = `
-                display: flex;
-                flex-direction: row;
-                gap: 12px;
-                overflow-x: auto;
-                padding-bottom: 10px;
-                width: 100%;
-                align-items: flex-start;
-            `;
-
-            dayTabs.innerHTML = ""; // Clear existing tabs
-
-            // Group NWS periods by day
-            const days = {};
-            dailyData.properties.periods.forEach(per => {
-                const date = new Date(per.startTime).toDateString();
-                if (!days[date]) days[date] = [];
-                days[date].push(per);
-            });
-
-            const dayKeys = Object.keys(days);
-
-            // Function to render cards for a selected day
-            function renderDay(dayKey) {
-                dailyCont.innerHTML = "";
-                dailyCont.scrollLeft = 0; // Scroll to start
-
-                days[dayKey].forEach(per => {
-                    const isHigh = per.isDaytime;
-                    const tempColor = isHigh ? "#ff5252" : "#4fc3f7";
-                    const tempLabel = isHigh ? "High" : "Low";
-                    const card = document.createElement('div');
-                    card.className = "forecast-card";
-                    card.style.minWidth = "125px";
-
-                    const cardContent = `
-                        <div style="font-size:0.8em; font-weight:bold; margin-bottom:5px; color:#fff;">${per.name}</div>
-                        <img src="${per.icon}" style="width:45px; border-radius:8px; margin-bottom:5px;">
-                        <div style="color:${tempColor}; font-weight:bold; font-size:1.1em;">${tempLabel}: ${per.temperature}°</div>
-                        <div style="font-size:0.65em; opacity:0.7; margin-top:5px; line-height:1.2; text-transform:capitalize;">${per.shortForecast}</div>
-                    `;
-                    card.innerHTML = cardContent;
-                    dailyCont.appendChild(card);
-                });
-            }
-
-            // Create Day Tabs with Pirate style and "Today" rule
-            dayKeys.forEach((key, i) => {
-                const btn = document.createElement('button');
-                btn.className = "btn-opt";
-                
-                // Handle "Today" logic
-                if (i === 0) {
-                    btn.innerText = "Today";
-                } else {
-                    btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
-                }
-
-                if (i === 0) btn.classList.add('active');
-
-                btn.onclick = () => {
-                    // Remove active class from buttons in this section
-                    document.querySelectorAll('#nws-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    renderDay(key);
-                };
-
-                dayTabs.appendChild(btn);
-            });
-
-            // Set initial state
-            renderDay(dayKeys[0]);
+            // REMOVED: legacy NWS rendering logic that was causing the "innerHTML of null" error
+            // The TWC Forecast now handles the 5-day display to match your WU reference.
 
             const cliList = await (await fetch(`https://api.weather.gov/products/types/HWO/locations/${wfo}`)).json();
             if (cliList['@graph']?.length > 0) {
