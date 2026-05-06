@@ -337,23 +337,17 @@
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-    <details open id="twc-forecast-container">
-    <summary style="color:var(--accent);">
-        5-DAY FORECAST
-    </summary>
+    <div id="twc-forecast-container" style="display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; margin-top: 20px;"></div>
 
-    <div
-        id="twc-daily-container"
-        style="
-            display:flex;
-            flex-direction:row;
-            gap:16px;
-            overflow-x:auto;
-            padding:16px 0 10px 0;
-            align-items:stretch;
-        "
-    ></div>
-</details>
+        <div id="day-detail-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(7, 19, 29, 0.95); z-index: 1000; overflow-y: auto; padding: 20px;">
+            <div class="modal-content" style="max-width: 800px; margin: 50px auto; padding: 20px; border-radius: 10px; background: #112233; position: relative;">
+                <button onclick="closeDayDetails()" style="position: absolute; top: 15px; right: 15px; cursor: pointer; background: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 5px;">Close</button>
+                <h2 id="detail-day-name" style="margin-top: 0; color: var(--primary);">Day Details</h2>
+                <div id="detail-twc-info" style="margin-bottom: 20px; line-height: 1.6;"></div>
+                <h3 style="color: var(--accent);">Hourly Forecast</h3>
+                <div id="detail-pirate-hourly" style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;"></div>
+            </div>
+        </div>
         
     <div id="severe-tab" class="tab-content">
         <div id="safety-checklist"></div>
@@ -1951,17 +1945,14 @@
         if (!container) return;
         container.innerHTML = '';
 
-        // Loop through the 5 days provided by TWC
         for (let i = 0; i < 5; i++) {
             const dayName = data.dayOfWeek[i];
             const maxTemp = data.temperatureMax[i];
             const minTemp = data.temperatureMin[i];
             
-            // TWC uses dayparts (0 is today, 1 is tonight, 2 is tomorrow, etc.)
             const dayPartIndex = i * 2; 
             let iconCode = data.daypart[0].iconCode[dayPartIndex];
             
-            // If the daytime period has passed, fallback to the night icon
             if (iconCode === null) {
                 iconCode = data.daypart[0].iconCode[dayPartIndex + 1]; 
             }
@@ -1969,14 +1960,19 @@
             const iconUrl = `https://www.wunderground.com/static/i/c/v4/${iconCode}.svg`;
 
             const dayCard = document.createElement('div');
-            dayCard.className = 'forecast-card';
-            dayCard.style.cursor = 'pointer';
+            // Adding styles here to fix the terrible layout
+            dayCard.style.cssText = 'background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 10px; text-align: center; cursor: pointer; flex: 1; min-width: 120px; transition: background 0.3s;';
+            dayCard.onmouseover = () => dayCard.style.background = 'rgba(255, 255, 255, 0.1)';
+            dayCard.onmouseout = () => dayCard.style.background = 'rgba(255, 255, 255, 0.05)';
             dayCard.onclick = () => showDayDetails(i);
+            
             dayCard.innerHTML = `
-                <h4>${dayName}</h4>
-                <img src="${iconUrl}" alt="Weather Icon" style="width: 60px;">
-                <p style="color: var(--danger);">High: ${maxTemp !== null ? maxTemp + '°' : '--'}</p>
-                <p style="color: var(--primary);">Low: ${minTemp !== null ? minTemp + '°' : '--'}</p>
+                <h4 style="margin: 0 0 10px 0; font-size: 1.1em;">${dayName}</h4>
+                <img src="${iconUrl}" alt="Weather Icon" style="width: 60px; height: 60px; object-fit: contain;">
+                <div style="margin-top: 10px; font-weight: bold;">
+                    <span style="color: var(--danger); font-size: 1.2em;">${maxTemp !== null ? maxTemp + '°' : '--'}</span>
+                    <span style="color: var(--primary); margin-left: 10px;">${minTemp !== null ? minTemp + '°' : '--'}</span>
+                </div>
             `;
             container.appendChild(dayCard);
         }
@@ -1993,7 +1989,6 @@
         const dayName = twcForecastData.dayOfWeek[index];
         dayNameElem.innerText = `${dayName} Detailed Forecast`;
 
-        // Build the Narrative and Sun/Moon strings
         const dayPartIndex = index * 2;
         const dayNarrative = twcForecastData.daypart[0].narrative[dayPartIndex] || "No daytime data.";
         const nightNarrative = twcForecastData.daypart[0].narrative[dayPartIndex + 1] || "No nighttime data.";
@@ -2006,10 +2001,8 @@
             <p><strong>Sunset:</strong> ${new Date(twcForecastData.sunsetTimeLocal[index]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
         `;
 
-        // Filter Pirate Hourly for this specific day
         hourlyContainer.innerHTML = '';
         
-        // Replace 'pirateData' with whatever global variable holds your Pirate API response
         if (typeof pirateData !== 'undefined' && pirateData.hourly && pirateData.hourly.data) {
             const now = new Date();
             const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index);
