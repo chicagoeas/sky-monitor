@@ -337,15 +337,15 @@
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-    <div id="twc-forecast-container" style="display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; margin-top: 20px;"></div>
+    <div id="twc-forecast-container" class="twc-forecast-row" style="display: flex; justify-content: space-between; gap: 10px; margin: 20px 0;"></div>
 
-        <div id="day-detail-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(7, 19, 29, 0.95); z-index: 1000; overflow-y: auto; padding: 20px;">
-            <div class="modal-content" style="max-width: 800px; margin: 50px auto; padding: 20px; border-radius: 10px; background: #112233; position: relative;">
-                <button onclick="closeDayDetails()" style="position: absolute; top: 15px; right: 15px; cursor: pointer; background: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 5px;">Close</button>
-                <h2 id="detail-day-name" style="margin-top: 0; color: var(--primary);">Day Details</h2>
-                <div id="detail-twc-info" style="margin-bottom: 20px; line-height: 1.6;"></div>
-                <h3 style="color: var(--accent);">Hourly Forecast</h3>
-                <div id="detail-pirate-hourly" style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;"></div>
+        <div id="day-detail-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(7, 19, 29, 0.98); z-index: 9999; overflow-y: auto; padding: 20px;">
+            <div style="max-width: 900px; margin: 20px auto; background: #112233; padding: 30px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.1);">
+                <button onclick="closeDayDetails()" style="float: right; background: var(--danger); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">BACK TO HOME</button>
+                <h1 id="detail-day-name" style="color: var(--primary); margin-top: 0;">Forecast Detail</h1>
+                <div id="detail-twc-info" style="font-size: 1.1em; margin-bottom: 30px;"></div>
+                <h3 style="border-bottom: 2px solid var(--primary); padding-bottom: 10px;">HOURLY FORECAST</h3>
+                <div id="detail-pirate-hourly" style="display: flex; gap: 15px; overflow-x: auto; padding: 20px 0;"></div>
             </div>
         </div>
         
@@ -523,7 +523,6 @@
     let themeOverride = 'auto';
     let isNightAtStation = false;
     let stationTzOffset = 0;
-    let twcForecastData = null;
     // STORM TRACKING MEMORY // Use localStorage so the math survives a page refresh!
     let lastStormCall = JSON.parse(localStorage.getItem('waddle_storm_mem')) || { time: null, dist: null, speed: null, motion: "STATIONARY", isApproaching: false, etaText: "N/A" };
     // Global variable to track the active SPC Day
@@ -1612,6 +1611,7 @@
             const resP = await fetch(`https://api.pirateweather.net/forecast/${PIRATE_API_KEY}/${lat},${lon}?units=us`);
             const d = await resP.json();
             stationTzOffset = d.offset * 3600;
+            globalPirateData = data; // Add this line to store the data for the detail page!
             const wu = await fetchWUData(lat, lon);
 
             const useWU =
@@ -1928,15 +1928,20 @@
         }
     }
     
+    // Global storage to fix the "unavailable" error
+    let twcForecastData = null;
+    let globalPirateData = null;
+
     async function fetchTWCForecast() {
         try {
             const twcUrl = 'https://api.weather.com/v3/wx/forecast/daily/5day?geocode=41.95,-87.7&format=json&units=e&language=en-US&apiKey=c51cf47ac5b04c389cf47ac5b0bc3857';
             const response = await fetch(twcUrl);
+            if (!response.ok) throw new Error('TWC API Failure');
             const data = await response.json();
             twcForecastData = data;
             renderTWCForecast(data);
         } catch (error) {
-            console.error("Error fetching TWC 5-day:", error);
+            console.error("TWC Error:", error);
         }
     }
 
@@ -1946,86 +1951,67 @@
         container.innerHTML = '';
 
         for (let i = 0; i < 5; i++) {
-            const dayName = data.dayOfWeek[i];
-            const maxTemp = data.temperatureMax[i];
-            const minTemp = data.temperatureMin[i];
-            
-            const dayPartIndex = i * 2; 
-            let iconCode = data.daypart[0].iconCode[dayPartIndex];
-            
-            if (iconCode === null) {
-                iconCode = data.daypart[0].iconCode[dayPartIndex + 1]; 
-            }
-
-            const iconUrl = `https://www.wunderground.com/static/i/c/v4/${iconCode}.svg`;
+            const dayPartIndex = i * 2;
+            let iconCode = data.daypart[0].iconCode[dayPartIndex] || data.daypart[0].iconCode[dayPartIndex + 1];
+            const dayName = i === 0 ? "TODAY" : data.dayOfWeek[i].toUpperCase();
 
             const dayCard = document.createElement('div');
-            // Adding styles here to fix the terrible layout
-            dayCard.style.cssText = 'background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 10px; text-align: center; cursor: pointer; flex: 1; min-width: 120px; transition: background 0.3s;';
-            dayCard.onmouseover = () => dayCard.style.background = 'rgba(255, 255, 255, 0.1)';
-            dayCard.onmouseout = () => dayCard.style.background = 'rgba(255, 255, 255, 0.05)';
+            // Matching the original reference image styles exactly
+            dayCard.style.cssText = 'background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; text-align: center; cursor: pointer; flex: 1; transition: transform 0.2s;';
+            dayCard.onmouseenter = () => dayCard.style.transform = 'scale(1.02)';
+            dayCard.onmouseleave = () => dayCard.style.transform = 'scale(1.0)';
             dayCard.onclick = () => showDayDetails(i);
-            
+
             dayCard.innerHTML = `
-                <h4 style="margin: 0 0 10px 0; font-size: 1.1em;">${dayName}</h4>
-                <img src="${iconUrl}" alt="Weather Icon" style="width: 60px; height: 60px; object-fit: contain;">
-                <div style="margin-top: 10px; font-weight: bold;">
-                    <span style="color: var(--danger); font-size: 1.2em;">${maxTemp !== null ? maxTemp + '°' : '--'}</span>
-                    <span style="color: var(--primary); margin-left: 10px;">${minTemp !== null ? minTemp + '°' : '--'}</span>
-                </div>
+                <div style="font-weight: 800; font-size: 0.9em; color: var(--primary); margin-bottom: 10px;">${dayName}</div>
+                <img src="https://www.wunderground.com/static/i/c/v4/${iconCode}.svg" style="width: 50px; margin: 10px 0;">
+                <div style="font-size: 1.4em; font-weight: bold; margin-top: 5px;">${data.temperatureMax[i]}°</div>
+                <div style="color: rgba(255,255,255,0.5); font-size: 0.9em;">${data.temperatureMin[i]}°</div>
             `;
             container.appendChild(dayCard);
         }
     }
 
-    function showDayDetails(index) {
+    async function showDayDetails(index) {
         const modal = document.getElementById('day-detail-modal');
-        const dayNameElem = document.getElementById('detail-day-name');
-        const twcInfoElem = document.getElementById('detail-twc-info');
-        const hourlyContainer = document.getElementById('detail-pirate-hourly');
-
         if (!twcForecastData) return;
 
-        const dayName = twcForecastData.dayOfWeek[index];
-        dayNameElem.innerText = `${dayName} Detailed Forecast`;
-
-        const dayPartIndex = index * 2;
-        const dayNarrative = twcForecastData.daypart[0].narrative[dayPartIndex] || "No daytime data.";
-        const nightNarrative = twcForecastData.daypart[0].narrative[dayPartIndex + 1] || "No nighttime data.";
+        document.getElementById('detail-day-name').innerText = twcForecastData.dayOfWeek[index] + " Forecast";
         
-        twcInfoElem.innerHTML = `
-            <p><strong>Day:</strong> ${dayNarrative}</p>
-            <p><strong>Night:</strong> ${nightNarrative}</p>
-            <hr style="border: 1px solid rgba(255,255,255,0.1); margin: 15px 0;">
-            <p><strong>Sunrise:</strong> ${new Date(twcForecastData.sunriseTimeLocal[index]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
-            <p><strong>Sunset:</strong> ${new Date(twcForecastData.sunsetTimeLocal[index]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+        const dIdx = index * 2;
+        const narrative = twcForecastData.daypart[0].narrative[dIdx] || twcForecastData.daypart[0].narrative[dIdx + 1];
+        
+        document.getElementById('detail-twc-info').innerHTML = `
+            <p style="background: rgba(255,255,255,0.05); padding: 15px; border-left: 4px solid var(--primary);">${narrative}</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+                <div><strong>SUNRISE:</strong> ${new Date(twcForecastData.sunriseTimeLocal[index]).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                <div><strong>SUNSET:</strong> ${new Date(twcForecastData.sunsetTimeLocal[index]).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+            </div>
         `;
 
+        const hourlyContainer = document.getElementById('detail-pirate-hourly');
         hourlyContainer.innerHTML = '';
-        
-        if (typeof pirateData !== 'undefined' && pirateData.hourly && pirateData.hourly.data) {
-            const now = new Date();
-            const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index);
-            const startOfDay = targetDate.getTime() / 1000;
-            const endOfDay = startOfDay + 86400;
 
-            const daysHourly = pirateData.hourly.data.filter(h => h.time >= startOfDay && h.time < endOfDay);
-            
-            daysHourly.forEach(hour => {
-                const hourTime = new Date(hour.time * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        // FIX: Using globalPirateData which is updated in your main Pirate fetch function
+        if (globalPirateData && globalPirateData.hourly) {
+            const targetDate = new Date();
+            targetDate.setDate(targetDate.getDate() + index);
+            const dateString = targetDate.toDateString();
+
+            const filteredHours = globalPirateData.hourly.data.filter(h => new Date(h.time * 1000).toDateString() === dateString);
+
+            filteredHours.forEach(h => {
+                const time = new Date(h.time * 1000).toLocaleTimeString([], {hour: 'numeric'});
                 hourlyContainer.innerHTML += `
-                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; min-width: 60px; text-align: center;">
-                        <div style="font-size: 0.8em; margin-bottom: 5px;">${hourTime}</div>
-                        <div style="font-weight: bold;">${Math.round(hour.temperature)}°</div>
+                    <div style="text-align: center; min-width: 80px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <div style="font-size: 0.8em; opacity: 0.7;">${time}</div>
+                        <div style="font-size: 1.2em; font-weight: bold; margin: 5px 0;">${Math.round(h.temperature)}°</div>
+                        <div style="font-size: 0.7em; color: var(--primary);">${(h.precipProbability * 100).toFixed(0)}%</div>
                     </div>
                 `;
             });
-            
-            if (daysHourly.length === 0) {
-                hourlyContainer.innerHTML = '<p>No hourly data available for this range.</p>';
-            }
         } else {
-            hourlyContainer.innerHTML = '<p>Hourly data loading or unavailable...</p>';
+            hourlyContainer.innerHTML = "<p>Hourly data is still syncing. Please wait a moment...</p>";
         }
 
         modal.style.display = 'block';
