@@ -337,19 +337,23 @@
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-        <details open id="openweather-section">
-            <summary style="color:var(--primary);">3-HOURLY FORECAST (OPENWEATHER)</summary>
-            
-            <div id="ow-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
-            
-            <div class="forecast-scroll" id="forecast-container" style="margin-top:15px;"></div>
-        </details>
+        <details open id="twc-forecast-section">
+    <summary style="color:var(--accent);">
+        5-DAY FORECAST
+    </summary>
 
-        <details open>
-            <summary style="color:var(--accent);">DAILY OUTLOOK (NWS)</summary>
-            <div id="nws-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
-            <div class="forecast-scroll" id="nws-extended-container" style="margin-top:15px;"></div>
-        </details>
+    <div
+        id="twc-daily-container"
+        style="
+            display:flex;
+            flex-direction:row;
+            gap:16px;
+            overflow-x:auto;
+            padding:16px 0 10px 0;
+            align-items:stretch;
+        "
+    ></div>
+</details>
 
         <details open id="pirate-hourly-section">
             <summary style="color:var(--primary);">HOURLY FORECAST (PIRATE WEATHER)</summary>
@@ -534,6 +538,7 @@
     let themeOverride = 'auto';
     let isNightAtStation = false;
     let stationTzOffset = 0;
+    let twcForecastData = null;
     // STORM TRACKING MEMORY // Use localStorage so the math survives a page refresh!
     let lastStormCall = JSON.parse(localStorage.getItem('waddle_storm_mem')) || { time: null, dist: null, speed: null, motion: "STATIONARY", isApproaching: false, etaText: "N/A" };
     // Global variable to track the active SPC Day
@@ -896,30 +901,6 @@
 
         loadAll();
     }
-
-    function updateForecastLayout() {
-        const mode = localStorage.getItem('data_complexity') || 'normal';
-
-        const nwsSection = document.querySelector('#nws-extended-container').parentElement;
-        const pirateSection = document.getElementById('pirate-hourly-section');
-        const owSection = document.getElementById('openweather-section');
-
-        if (!nwsSection || !pirateSection || !owSection) return;
-
-        if (mode === 'normal') {
-            // NWS → Pirate
-            nwsSection.parentNode.insertBefore(nwsSection, pirateSection);
-            pirateSection.parentNode.insertBefore(pirateSection, owSection);
-
-            owSection.style.display = "none";
-        } else {
-            // NWS → Pirate → OpenWeather
-            nwsSection.parentNode.insertBefore(nwsSection, pirateSection);
-            pirateSection.parentNode.insertBefore(pirateSection, owSection);
-
-            owSection.style.display = "block";
-        }
-    }
     
     function updateAtmosphereTheme() {
         const body = document.body;
@@ -1236,9 +1217,9 @@
         startSPCCountdown(activeSPCDay);
         
         await fetchOpenWeather();
+        await fetchTWCForecast();
         await fetchAlerts();
         await fetchRiskLevels();
-        await updateForecastLayout();
         await fetchPirate();
         await fetchNWSChain();
         
@@ -1946,7 +1927,7 @@
 
     // Start the clock immediately and update every second
     setInterval(updateStationClock, 1000);
-    async function fetchOpenWeather() {
+        async function fetchOpenWeather() {
         try {
             const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&appid=${OW_API_KEY}&units=imperial`);
             const d = await res.json();
@@ -1957,113 +1938,127 @@
             document.getElementById('riseVal').innerText = formatOffsetTime(d.city.sunrise, d.city.timezone);
             document.getElementById('setVal').innerText = formatOffsetTime(d.city.sunset, d.city.timezone);
 
-            // Standardization: Select elements by ID
-            const tabRow = document.getElementById('ow-day-tabs');
-            const forecastRow = document.getElementById('forecast-container'); 
-            
-            // Set up forecast row for standardized horizontal layout
-            forecastRow.innerHTML = "";
-            forecastRow.style.cssText = `
-                display: flex;
-                flex-direction: row;
-                gap: 12px;
-                overflow-x: auto;
-                padding-bottom: 10px;
-                width: 100%;
-                align-items: flex-start;
-            `;
-
-            const days = {};
-            d.list.forEach(f => {
-                const date = new Date(f.dt * 1000).toDateString();
-                if (!days[date]) days[date] = [];
-                days[date].push(f);
-            });
-
-            const dayKeys = Object.keys(days);
-            
-            tabRow.innerHTML = ""; // Clear existing tabs
-
-            // Update renderDay function
-            function renderDay(dayKey) {
-                forecastRow.innerHTML = "";
-                // Scroll back to start when switching days
-                forecastRow.scrollLeft = 0; 
-
-                days[dayKey].forEach(f => {
-                    const popPct = Math.round(f.pop * 100);
-                    const rainInches = f.rain && f.rain['3h'] ? (f.rain['3h'] * 0.0393701).toFixed(2) : null;
-                    const gustInfo = f.wind.gust ? `<div>Gusts: ${Math.round(f.wind.gust)} mph</div>` : '';
-                    const pressInHg = (f.main.pressure * 0.02953).toFixed(2);
-
-                    const card = document.createElement('div');
-                    card.className = "forecast-card";
-
-                    // Construct card innerHTML
-                    const cardContent = `
-                        <div style="font-size:0.75em; color:var(--primary); font-weight:bold;">
-                            ${new Date(f.dt*1000).toLocaleTimeString([], {hour:'numeric'})}
-                        </div>
-                        <img src="https://openweathermap.org/img/wn/${f.weather[0].icon}.png" style="width:40px; margin: 2px auto;">
-                        <div style="font-size:0.7em; opacity:0.8; margin-bottom:5px; text-transform:capitalize;">
-                            ${f.weather[0].description}
-                        </div>
-                        <div style="font-size:1.2em; font-weight:bold; color:var(--accent);">
-                            ${Math.round(f.main.temp)}°
-                        </div>
-                        <div style="font-size:0.75em; margin-top:5px; color:#ddd;">
-                            💧 ${popPct}% PoP
-                        </div>
-                        ${rainInches ? `<div style="color:#4fc3f7; font-size:0.75em; font-weight:bold;">${rainInches} in</div>` : ''}
-
-                        <details style="background:transparent; border:none; padding:5px 0 0 0; margin:10px 0 0 0; border-top:1px solid rgba(255,255,255,0.1); border-radius:0;">
-                            <summary style="font-size:0.7em; padding-bottom:0; color:#aaa; font-weight:normal; text-align:center;">
-                                More Info
-                            </summary>
-                            <div style="font-size:0.75em; text-align:left; color:#ccc; line-height:1.5; margin-top:8px;">
-                                <div>Feels Like: ${Math.round(f.main.feels_like)}°</div>
-                                <div>Humidity: ${f.main.humidity}%</div>
-                                <div>Wind: ${Math.round(f.wind.speed)} mph</div>
-                                ${gustInfo}
-                                <div>Clouds: ${f.clouds.all}%</div>
-                                <div>Pressure: ${pressInHg} inHg</div>
-                            </div>
-                        </details>
-                    `;
-                    card.innerHTML = cardContent;
-                    forecastRow.appendChild(card);
-                });
-            }
-
-            // Create Tabs with standardized style and "Today" rule
-            dayKeys.forEach((key, i) => {
-                const btn = document.createElement('button');
-                btn.className = "btn-opt";
-                
-                // Handle "Today" logic
-                if (i === 0) {
-                    btn.innerText = "Today";
-                } else {
-                    btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
-                }
-
-                if (i === 0) btn.classList.add('active');
-
-                btn.onclick = () => {
-                    // Remove active class from buttons in this section
-                    document.querySelectorAll('#ow-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    renderDay(key);
-                };
-
-                tabRow.appendChild(btn);
-            });
-
-            // Set initial state
-            renderDay(dayKeys[0]);
-
         } catch (e) {
             console.error("OpenWeather error:", e);
+        }
+    }
+
+    async function fetchTWCForecast() {
+        try {
+
+            const res = await fetch(
+                `https://api.weather.com/v3/wx/forecast/daily/5day?geocode=${lat},${lon}&format=json&units=e&language=en-US&apiKey=c51cf47ac5b04c389cf47ac5b0bc3857`
+            );
+
+            const d = await res.json();
+
+            twcForecastData = d;
+
+            const container = document.getElementById('twc-daily-container');
+
+            if (!container) return;
+
+            container.innerHTML = "";
+
+            for (let i = 0; i < d.dayOfWeek.length; i++) {
+
+                const dayName =
+                    i === 0
+                        ? "Today"
+                        : d.dayOfWeek[i];
+
+                const iconCode =
+                    d.daypart[0].iconCode[i];
+
+                const phrase =
+                    d.daypart[0].wxPhraseShort[i];
+
+                const precip =
+                    d.daypart[0].precipChance[i];
+
+                const hi =
+                    d.temperatureMax[i];
+
+                const lo =
+                    d.temperatureMin[i];
+
+                const iconUrl =
+                    `https://www.wunderground.com/static/i/c/v4/${iconCode}.svg`;
+
+                const card = document.createElement('div');
+
+                card.className = "forecast-card";
+
+                card.style.minWidth = "140px";
+                card.style.padding = "14px";
+                card.style.cursor = "pointer";
+
+                card.innerHTML = `
+                    <div style="
+                        font-size:0.92em;
+                        font-weight:bold;
+                        margin-bottom:10px;
+                        color:#fff;
+                    ">
+                        ${dayName}
+                    </div>
+
+                    <img
+                        src="${iconUrl}"
+                        style="
+                            width:54px;
+                            height:54px;
+                            margin-bottom:10px;
+                        "
+                    >
+
+                    <div style="
+                        font-size:1.12em;
+                        font-weight:bold;
+                        color:var(--accent);
+                        margin-bottom:6px;
+                    ">
+                        ${hi}° / ${lo}°
+                    </div>
+
+                    <div style="
+                        font-size:0.74em;
+                        opacity:0.82;
+                        line-height:1.3;
+                        margin-bottom:8px;
+                    ">
+                        ${phrase}
+                    </div>
+
+                    <div style="
+                        font-size:0.74em;
+                        color:var(--primary);
+                        font-weight:bold;
+                    ">
+                        💧 ${precip}%
+                    </div>
+                `;
+
+                card.onclick = () => {
+
+                    localStorage.setItem(
+                        'twc_selected_day',
+                        i
+                    );
+
+                    window.location.href =
+                        `forecast.html?day=${i}`;
+                };
+
+                container.appendChild(card);
+            }
+
+        } catch (e) {
+
+            console.error(
+                "TWC forecast error:",
+                e
+            );
         }
     }
     
