@@ -337,33 +337,18 @@
         </div>
         <div class="x-axis" style="margin-bottom: 30px;"><span>NOW</span><span>15m</span><span>30m</span><span>45m</span><span>60m</span></div>
 
-        <details open id="twc-forecast-section">
-    <summary style="color:var(--accent);">
-        5-DAY FORECAST
-    </summary>
+    <div id="twc-forecast-container" class="forecast-grid"></div>
 
-    <div
-        id="twc-daily-container"
-        style="
-            display:flex;
-            flex-direction:row;
-            gap:16px;
-            overflow-x:auto;
-            padding:16px 0 10px 0;
-            align-items:stretch;
-        "
-    ></div>
-</details>
-
-        <details open id="pirate-hourly-section">
-            <summary style="color:var(--primary);">HOURLY FORECAST (PIRATE WEATHER)</summary>
-            
-            <div id="pirate-day-tabs" style="display:flex; gap:8px; overflow-x:auto; margin:10px 0;"></div>
-            
-            <div class="forecast-scroll" id="pirate-hourly-container" style="margin-top:15px;"></div>
-        </details>
+<div id="day-detail-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(7, 19, 29, 0.95); z-index: 1000; overflow-y: auto; padding: 20px;">
+    <div class="modal-content" style="max-width: 800px; margin: 50px auto; padding: 20px; border-radius: 10px; background: #112233;">
+        <button onclick="closeDayDetails()" style="float: right; cursor: pointer; background: var(--danger); color: white; border: none; padding: 8px 12px; border-radius: 5px;">Close</button>
+        <h2 id="detail-day-name" style="margin-top: 0; color: var(--primary);">Day Details</h2>
+        <div id="detail-twc-info" style="margin-bottom: 20px; line-height: 1.6;"></div>
+        <h3 style="color: var(--accent);">Hourly Forecast</h3>
+        <div id="detail-pirate-hourly" class="hourly-grid" style="display: flex; gap: 10px; overflow-x: auto; padding-bottom: 10px;"></div>
     </div>
-
+</div>
+        
     <div id="severe-tab" class="tab-content">
         <div id="safety-checklist"></div>
         <div id="alert-stack" style="margin-bottom:20px;"></div>
@@ -1942,124 +1927,113 @@
             console.error("OpenWeather error:", e);
         }
     }
-
+    
     async function fetchTWCForecast() {
         try {
+            const twcUrl = 'https://api.weather.com/v3/wx/forecast/daily/5day?geocode=41.95,-87.7&format=json&units=e&language=en-US&apiKey=c51cf47ac5b04c389cf47ac5b0bc3857';
+            const response = await fetch(twcUrl);
+            const data = await response.json();
+            twcForecastData = data;
+            renderTWCForecast(data);
+        } catch (error) {
+            console.error("Error fetching TWC 5-day:", error);
+        }
+    }
 
-            const res = await fetch(
-                `https://api.weather.com/v3/wx/forecast/daily/5day?geocode=${lat},${lon}&format=json&units=e&language=en-US&apiKey=c51cf47ac5b04c389cf47ac5b0bc3857`
-            );
+    function renderTWCForecast(data) {
+        const container = document.getElementById('twc-forecast-container');
+        if (!container) return;
+        container.innerHTML = '';
 
-            const d = await res.json();
-
-            twcForecastData = d;
-
-            const container = document.getElementById('twc-daily-container');
-
-            if (!container) return;
-
-            container.innerHTML = "";
-
-            for (let i = 0; i < d.dayOfWeek.length; i++) {
-
-                const dayName =
-                    i === 0
-                        ? "Today"
-                        : d.dayOfWeek[i];
-
-                const iconCode =
-                    d.daypart[0].iconCode[i];
-
-                const phrase =
-                    d.daypart[0].wxPhraseShort[i];
-
-                const precip =
-                    d.daypart[0].precipChance[i];
-
-                const hi =
-                    d.temperatureMax[i];
-
-                const lo =
-                    d.temperatureMin[i];
-
-                const iconUrl =
-                    `https://www.wunderground.com/static/i/c/v4/${iconCode}.svg`;
-
-                const card = document.createElement('div');
-
-                card.className = "forecast-card";
-
-                card.style.minWidth = "140px";
-                card.style.padding = "14px";
-                card.style.cursor = "pointer";
-
-                card.innerHTML = `
-                    <div style="
-                        font-size:0.92em;
-                        font-weight:bold;
-                        margin-bottom:10px;
-                        color:#fff;
-                    ">
-                        ${dayName}
-                    </div>
-
-                    <img
-                        src="${iconUrl}"
-                        style="
-                            width:54px;
-                            height:54px;
-                            margin-bottom:10px;
-                        "
-                    >
-
-                    <div style="
-                        font-size:1.12em;
-                        font-weight:bold;
-                        color:var(--accent);
-                        margin-bottom:6px;
-                    ">
-                        ${hi}° / ${lo}°
-                    </div>
-
-                    <div style="
-                        font-size:0.74em;
-                        opacity:0.82;
-                        line-height:1.3;
-                        margin-bottom:8px;
-                    ">
-                        ${phrase}
-                    </div>
-
-                    <div style="
-                        font-size:0.74em;
-                        color:var(--primary);
-                        font-weight:bold;
-                    ">
-                        💧 ${precip}%
-                    </div>
-                `;
-
-                card.onclick = () => {
-
-                    localStorage.setItem(
-                        'twc_selected_day',
-                        i
-                    );
-
-                    window.location.href =
-                        `forecast.html?day=${i}`;
-                };
-
-                container.appendChild(card);
+        // Loop through the 5 days provided by TWC
+        for (let i = 0; i < 5; i++) {
+            const dayName = data.dayOfWeek[i];
+            const maxTemp = data.temperatureMax[i];
+            const minTemp = data.temperatureMin[i];
+            
+            // TWC uses dayparts (0 is today, 1 is tonight, 2 is tomorrow, etc.)
+            const dayPartIndex = i * 2; 
+            let iconCode = data.daypart[0].iconCode[dayPartIndex];
+            
+            // If the daytime period has passed, fallback to the night icon
+            if (iconCode === null) {
+                iconCode = data.daypart[0].iconCode[dayPartIndex + 1]; 
             }
 
-        } catch (e) {
+            const iconUrl = `https://www.wunderground.com/static/i/c/v4/${iconCode}.svg`;
 
-            console.error(
-                "TWC forecast error:",
-                e
-            );
+            const dayCard = document.createElement('div');
+            dayCard.className = 'forecast-card';
+            dayCard.style.cursor = 'pointer';
+            dayCard.onclick = () => showDayDetails(i);
+            dayCard.innerHTML = `
+                <h4>${dayName}</h4>
+                <img src="${iconUrl}" alt="Weather Icon" style="width: 60px;">
+                <p style="color: var(--danger);">High: ${maxTemp !== null ? maxTemp + '°' : '--'}</p>
+                <p style="color: var(--primary);">Low: ${minTemp !== null ? minTemp + '°' : '--'}</p>
+            `;
+            container.appendChild(dayCard);
         }
+    }
+
+    function showDayDetails(index) {
+        const modal = document.getElementById('day-detail-modal');
+        const dayNameElem = document.getElementById('detail-day-name');
+        const twcInfoElem = document.getElementById('detail-twc-info');
+        const hourlyContainer = document.getElementById('detail-pirate-hourly');
+
+        if (!twcForecastData) return;
+
+        const dayName = twcForecastData.dayOfWeek[index];
+        dayNameElem.innerText = `${dayName} Detailed Forecast`;
+
+        // Build the Narrative and Sun/Moon strings
+        const dayPartIndex = index * 2;
+        const dayNarrative = twcForecastData.daypart[0].narrative[dayPartIndex] || "No daytime data.";
+        const nightNarrative = twcForecastData.daypart[0].narrative[dayPartIndex + 1] || "No nighttime data.";
+        
+        twcInfoElem.innerHTML = `
+            <p><strong>Day:</strong> ${dayNarrative}</p>
+            <p><strong>Night:</strong> ${nightNarrative}</p>
+            <hr style="border: 1px solid rgba(255,255,255,0.1); margin: 15px 0;">
+            <p><strong>Sunrise:</strong> ${new Date(twcForecastData.sunriseTimeLocal[index]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+            <p><strong>Sunset:</strong> ${new Date(twcForecastData.sunsetTimeLocal[index]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+        `;
+
+        // Filter Pirate Hourly for this specific day
+        hourlyContainer.innerHTML = '';
+        
+        // Replace 'pirateData' with whatever global variable holds your Pirate API response
+        if (typeof pirateData !== 'undefined' && pirateData.hourly && pirateData.hourly.data) {
+            const now = new Date();
+            const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + index);
+            const startOfDay = targetDate.getTime() / 1000;
+            const endOfDay = startOfDay + 86400;
+
+            const daysHourly = pirateData.hourly.data.filter(h => h.time >= startOfDay && h.time < endOfDay);
+            
+            daysHourly.forEach(hour => {
+                const hourTime = new Date(hour.time * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                hourlyContainer.innerHTML += `
+                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; min-width: 60px; text-align: center;">
+                        <div style="font-size: 0.8em; margin-bottom: 5px;">${hourTime}</div>
+                        <div style="font-weight: bold;">${Math.round(hour.temperature)}°</div>
+                    </div>
+                `;
+            });
+            
+            if (daysHourly.length === 0) {
+                hourlyContainer.innerHTML = '<p>No hourly data available for this range.</p>';
+            }
+        } else {
+            hourlyContainer.innerHTML = '<p>Hourly data loading or unavailable...</p>';
+        }
+
+        modal.style.display = 'block';
+    }
+
+    function closeDayDetails() {
+        document.getElementById('day-detail-modal').style.display = 'none';
     }
     
     async function fetchNWSChain() {
