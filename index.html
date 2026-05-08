@@ -1841,7 +1841,8 @@
                 const date = new Date((h.time + (timezoneOffset * 3600)) * 1000);
 
                 const hour = date.toLocaleTimeString([], {
-                    hour: 'numeric'
+                    hour: 'numeric',
+                    timeZone: 'UTC' // This forces the browser to stop double-shifting the time
                 });
 
                 const card = document.createElement('div');
@@ -2291,9 +2292,15 @@
         if (window.pirateHourlyData && typeof renderPirateHourly === "function") {
             const baseDate = data.validTimeLocal?.[dayIdx]?.split("T")[0];
             if (baseDate) {
-                const offset = window.pirateTimezoneOffset || 0;
+                const offsetHours = window.pirateTimezoneOffset || 0;
+                const currentUnix = Math.floor(Date.now() / 1000); // Get current time in seconds
+                
                 const hoursForDay = window.pirateHourlyData.filter(h => {
-                    const jsdate = new Date((h.time + offset) * 1000).toISOString().split("T")[0];
+                    // 1. Hide past hours (allows the current hour to stay by subtracting 3600 seconds)
+                    if (h.time < currentUnix - 3600) return false;
+                    
+                    // 2. Fix the math bug (multiply offset by 3600 to convert hours to seconds)
+                    const jsdate = new Date((h.time + (offsetHours * 3600)) * 1000).toISOString().split("T")[0];
                     return jsdate === baseDate;
                 });
                 const holder = document.getElementById('twc-hourly-placeholder');
