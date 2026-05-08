@@ -2133,8 +2133,14 @@
 
     function renderTWCForecast(data) {
         const cont = document.getElementById('twc-daily-forecast');
-        if (!cont || !data || !data.dayOfWeek) return;
         cont.innerHTML = "";
+
+        // Defensive check for TWC forecast data
+        if (!data || !Array.isArray(data.dayOfWeek) || !data.dayOfWeek.length) {
+            cont.innerHTML = "<div style='opacity:0.7'>Forecast unavailable</div>";
+            console.warn("TWC: missing dayOfWeek or forecast data:", data);
+            return;
+        }
 
         for (let i = 0; i < data.dayOfWeek.length; ++i) {
             const card = document.createElement('div');
@@ -2144,11 +2150,12 @@
 
             card.innerHTML = `
                 <div style="font-size:0.9em; font-weight:bold; color:var(--primary);">${data.dayOfWeek[i]}</div>
-                <img src="https://www.wunderground.com/static/i/c/v4/${data.iconCode[i]}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
+                <img src="https://www.wunderground.com/static/i/c/v4/${data.iconCode?.[i]}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
                 <div style="font-size:1.2em; color:var(--accent); font-weight:bold;">
-                    ${data.calendarDayTemperatureMax[i] ?? "--"}° / <span style="color:white">${data.calendarDayTemperatureMin[i] ?? "--"}°</span>
+                    ${(data.calendarDayTemperatureMax?.[i] ?? "--")}° / 
+                    <span style="color:white">${(data.calendarDayTemperatureMin?.[i] ?? "--")}°</span>
                 </div>
-                <div style="font-size:0.8em;color:#bbb;height:2.1em;">${data.narrative[i]}</div>
+                <div style="font-size:0.8em;color:#bbb;height:2.1em;">${data.narrative?.[i] ?? ""}</div>
             `;
             cont.appendChild(card);
         }
