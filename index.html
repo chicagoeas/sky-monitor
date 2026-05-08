@@ -426,10 +426,11 @@
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-            <div class="toolkit-box" style="margin-bottom:0; text-align:center;">
+            <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; transition:0.2s;" onclick="openComfortModal()" title="Tap for hourly comfort forecast">
                 <div class="toolkit-header" style="justify-content:center;"><span>COMFORT INDEX</span></div>
                 <div id="aqi-val" style="font-size:1.8em; font-weight:900; margin:10px 0;">--</div>
                 <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Fetching...</div>
+                <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
             <div class="toolkit-box" style="margin-bottom:0; text-align:center;">
                 <div class="toolkit-header" style="justify-content:center;"><span>UV INDEX</span></div>
@@ -2223,7 +2224,7 @@
             modal = document.createElement('div');
             modal.id = 'twc-modal';
             modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
-            modal.innerHTML = `<div id="twc-modal-inner" style="background:#082239;color:#fff;border-radius:20px;max-width:350px;width:90vw;padding:28px;position:relative;box-shadow:0 16px 40px #0007"></div>`;
+            modal.innerHTML = `<div id="twc-modal-inner" style="background:#082239;color:#fff;border-radius:20px;max-width:350px;width:90vw;padding:28px;position:relative;box-shadow:0 16px 40px #0007;max-height:85vh;overflow-y:auto;"></div>`;
             document.body.appendChild(modal);
             modal.onclick = (e) => { if (e.target === modal) modal.style.display = "none"; }
         }
@@ -2310,6 +2311,125 @@
         }
     }
     
+    function computeHourComfort(h) {
+        const T = h.temperature ?? 70;
+        const feelsLike = h.apparentTemperature ?? T;
+        const H = (h.humidity ?? 0.5) * 100;
+        const W = h.windSpeed ?? 0;
+        const uv = h.uvIndex ?? 0;
+        const cond = (h.summary ?? h.icon ?? "").toLowerCase();
+
+        let word = "FAIR", color = "#ffffff", reason = "";
+
+        if (uv > 7) {
+            word = "INTENSE"; color = "#ff7043"; reason = `High UV (${uv})`;
+        } else if (feelsLike > 95) {
+            word = "OPPRESSIVE"; color = "#ff5252"; reason = `Heat Index ${Math.round(feelsLike)}°`;
+        } else if (cond.includes("rain") || cond.includes("drizzle") || cond.includes("thunderstorm") || cond.includes("sleet")) {
+            word = "DAMP"; color = "#4fc3f7"; reason = `Rain, ${Math.round(H)}% hum`;
+        } else if (feelsLike < 32) {
+            word = "BITING"; color = "#b0bec5"; reason = `Wind Chill ${Math.round(feelsLike)}°`;
+        } else if (T >= 68 && T <= 78 && H < 60 && W < 30) {
+            word = "PERFECT"; color = "#00e676"; reason = `${Math.round(T)}°, Ideal`;
+        } else if (cond.includes("snow") || cond.includes("flurries")) {
+            word = "SNOWY"; color = "#FFFFFF"; reason = `Snow, ${Math.round(T)}°`;
+        } else if (W > 28) {
+            word = "WINDY"; color = "#cfd8dc"; reason = `${Math.round(W)} mph wind`;
+        } else if (H > 80 && T > 72) {
+            word = "MUGGY"; color = "#aed581"; reason = `${Math.round(H)}% hum, ${Math.round(T)}°`;
+        } else if ((cond.includes("cloud") || cond.includes("overcast")) && T < 55) {
+            word = "GLOOMY"; color = "#90a4ae"; reason = `Cloudy, ${Math.round(T)}°`;
+        } else if (T < 52) {
+            word = "CHILLY"; color = "#81d4fa"; reason = `${Math.round(T)}°`;
+        } else if (T >= 65 && T <= 82) {
+            word = "PLEASANT"; color = "#b9f6ca"; reason = `${Math.round(T)}°, ${Math.round(H)}% hum`;
+        } else {
+            word = "FAIR"; color = "#b9f6ca"; reason = `${Math.round(T)}°, ${Math.round(W)} mph`;
+        }
+
+        return { word, color, reason };
+    }
+
+    function openComfortModal() {
+        if (!window.pirateHourlyData || !window.pirateHourlyData.length) {
+            alert("Hourly comfort data not yet loaded. Please wait a moment and try again.");
+            return;
+        }
+
+        let modal = document.getElementById('comfort-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'comfort-modal';
+            modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = `<div id="comfort-modal-inner" style="background:#082239;color:#fff;border-radius:20px;max-width:380px;width:93vw;padding:24px;position:relative;box-shadow:0 16px 40px #0007;max-height:85vh;overflow-y:auto;"></div>`;
+            document.body.appendChild(modal);
+            modal.onclick = (e) => { if (e.target === modal) modal.style.display = "none"; };
+        }
+        modal.style.display = "flex";
+
+        const offsetHours = window.pirateTimezoneOffset || 0;
+        const currentUnix = Math.floor(Date.now() / 1000);
+
+        // Group into days (up to 3), keeping only future hours
+        const days = {};
+        window.pirateHourlyData.forEach(h => {
+            if (h.time < currentUnix - 3600) return;
+            const key = new Date((h.time + (offsetHours * 3600)) * 1000).toISOString().split("T")[0];
+            if (!days[key]) days[key] = [];
+            days[key].push(h);
+        });
+
+        const dayKeys = Object.keys(days).slice(0, 3);
+
+        function buildDayContent(key) {
+            const hours = days[key];
+            if (!hours || !hours.length) return '<div style="opacity:0.5;padding:10px;">No data for this day.</div>';
+
+            return hours.map(h => {
+                const { word, color, reason } = computeHourComfort(h);
+                const hourLabel = new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+                const temp = Math.round(h.temperature ?? 0);
+                const iconMap = {
+                    "clear-day":"☀️","clear-night":"🌙","rain":"🌧️","snow":"❄️",
+                    "sleet":"🌨️","wind":"💨","fog":"🌫️","cloudy":"☁️",
+                    "partly-cloudy-day":"⛅","partly-cloudy-night":"☁️🌙","thunderstorm":"⛈️"
+                };
+                const icon = iconMap[h.icon] || "🌡️";
+                return `
+                    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
+                        <div style="min-width:42px;font-size:0.75em;color:#aaa;text-align:right;">${hourLabel}</div>
+                        <div style="font-size:1.3em;min-width:24px;text-align:center;">${icon}</div>
+                        <div style="min-width:36px;font-size:0.9em;font-weight:bold;color:var(--accent);">${temp}°</div>
+                        <div style="flex:1;">
+                            <div style="font-weight:900;font-size:0.85em;color:${color};letter-spacing:0.5px;">${word}</div>
+                            <div style="font-size:0.68em;opacity:0.65;">${reason}</div>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        function renderComfortModal(activeKey) {
+            const tabHtml = dayKeys.map((key, i) => {
+                const label = i === 0 ? "Today" : new Date(key + "T12:00:00Z").toLocaleDateString([], { weekday: 'short' });
+                const isActive = key === activeKey;
+                return `<button onclick="(function(){document.querySelectorAll('#comfort-day-tabs .btn-opt').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.getElementById('comfort-hours').innerHTML=window._comfortDayHtml['${key}'];}).call(this)" class="btn-opt${isActive ? ' active' : ''}">${label}</button>`;
+            }).join('');
+
+            window._comfortDayHtml = {};
+            dayKeys.forEach(k => { window._comfortDayHtml[k] = buildDayContent(k); });
+
+            document.getElementById('comfort-modal-inner').innerHTML = `
+                <button onclick="document.getElementById('comfort-modal').style.display='none'" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>
+                <div style="font-size:1em;font-weight:bold;color:var(--primary);letter-spacing:1px;margin-bottom:12px;padding-right:28px;">HOURLY COMFORT INDEX</div>
+                <div id="comfort-day-tabs" class="btn-group spc-btn-tabs" style="margin-bottom:12px;">${tabHtml}</div>
+                <div id="comfort-hours">${window._comfortDayHtml[activeKey]}</div>
+                <div style="font-size:0.6em;opacity:0.4;text-align:center;margin-top:10px;">Powered by PirateWeather</div>
+            `;
+        }
+
+        renderComfortModal(dayKeys[0]);
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
         const savedMode = localStorage.getItem('input_mode') || 'city';
         setInputView(savedMode);
