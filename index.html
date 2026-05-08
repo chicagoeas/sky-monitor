@@ -1798,7 +1798,7 @@
         } catch(e) {}
     }
 
-    function renderPirateHourly(hourlyData, timezoneOffset) {
+    function renderPirateHourly(hourlyData, timezoneOffset, targetCont) {
         const dayTabs = document.getElementById('pirate-day-tabs');
         const container = document.getElementById('pirate-hourly-container');
 
@@ -2149,7 +2149,7 @@
 
             card.innerHTML = `
                 <div style="font-size:0.9em; font-weight:bold; color:var(--primary);">${data.dayOfWeek[i]}</div>
-                <img src="https://www.wunderground.com/static/i/c/v4/${(typeof data.iconCode?.[i] === 'number' || typeof data.iconCode?.[i] === 'string') ? data.iconCode[i] : 'na'}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
+                <img src="https://www.wunderground.com/static/i/c/v4/${String(data.iconCode?.[i] ?? '44')}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
                 <div style="font-size:1.2em; color:var(--accent); font-weight:bold;">
                     ${(data.calendarDayTemperatureMax?.[i] ?? "--")}° / 
                     <span style="color:white">${(data.calendarDayTemperatureMin?.[i] ?? "--")}°</span>
@@ -2194,7 +2194,7 @@
         document.getElementById('twc-modal-inner').innerHTML = `
             <button onclick="document.getElementById('twc-modal').style.display='none'" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>
             <div style="display:flex;align-items:center;gap:16px;">
-                <img src="https://www.wunderground.com/static/i/c/v4/${(typeof iconArr[i] === 'number' || typeof iconArr[i] === 'string') ? iconArr[i] : 'na'}.svg" style="width:64px;height:64px;">
+                <img src="https://www.wunderground.com/static/i/c/v4/${String(iconArr[i] ?? '50')}.svg" style="width:64px;height:64px;">
                 <div>
                     <div style="font-size:1.3em; font-weight:bold;color:${i === 0 ? 'var(--accent)' : '#ffd54f'}">${dayOfWeekArr[i]}</div>
                     <div style="font-size:1em">${narrativeArr[i] ?? '--'}</div>
@@ -2214,29 +2214,28 @@
             <div id="twc-hourly-placeholder"><em>Loading hourly forecast...</em></div>
         `;
 
-        // --- Render PirateWeather hourly for this day ---
-        // Find approximate Midnight date for the day
-        if (window.pirateHourlyData && window.pirateTimezoneOffset !== undefined && typeof renderPirateHourly === "function") {
-            const baseDate = d.validTimeLocal?.[i]?.split("T")[0]; // e.g., "2024-05-14"
+        // Render PirateWeather hourly for modal day
+        if (window.pirateHourlyData && typeof renderPirateHourly === "function") {
+            const baseDate = d.validTimeLocal?.[i]?.split("T")[0];
+            // Some TWC keys: d.validTimeLocal or d.validTimeLocal[i]
             if (baseDate) {
+                // Prepare filtered data just for this date
+                const offset = window.pirateTimezoneOffset || 0;
                 const hoursForDay = window.pirateHourlyData.filter(h => {
-                    const date = new Date((h.time + window.pirateTimezoneOffset) * 1000).toISOString().split("T")[0];
-                    return date === baseDate;
+                    const jsdate = new Date((h.time + offset) * 1000).toISOString().split("T")[0];
+                    return jsdate === baseDate;
                 });
-                // Prepare a temporary container to reuse your UI style
+
+                // Use a brand new container for hourly cards in modal
                 const holder = document.getElementById('twc-hourly-placeholder');
-                const oldCont = document.getElementById('pirate-hourly-container');
-                if (holder && hoursForDay.length) {
-                    // Temporarily hijack your hourly renderer just for our modal
+                if (holder) {
+                    // Temporarily hijack your renderer on a scratch container
                     const tempCont = document.createElement('div');
                     tempCont.className = "forecast-scroll";
-                    renderPirateHourly(hoursForDay, window.pirateTimezoneOffset);
-                    // Copy the generated content in
-                    tempCont.innerHTML = oldCont.innerHTML;
+                    // Call renderer but do NOT attach to DOM
+                    renderPirateHourly(hoursForDay, offset, tempCont);
                     holder.innerHTML = "";
                     holder.appendChild(tempCont);
-                } else {
-                    holder.innerHTML = "<div style='opacity:0.7'>No hourly forecast available.</div>";
                 }
             }
         }
