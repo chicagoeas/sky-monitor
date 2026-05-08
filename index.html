@@ -1793,41 +1793,67 @@
             document.getElementById('uv-desc').innerText = uvDesc;
             if(d.daily?.data?.[0]) document.getElementById('moonVal').innerText = getMoonPhaseName(d.daily.data[0].moonPhase);
             if (d.hourly && d.hourly.data) {
-                renderPirateHourly(d.hourly.data.slice(0, 72), d.offset || 0);
+
+                window.pirateHourlyData = d.hourly.data;
+
+                window.pirateTimezoneOffset = d.offset || 0;
+
+                renderPirateHourly(
+                    d.hourly.data.slice(0, 72),
+                    d.offset || 0
+                );
             }
         } catch(e) {}
     }
 
     function renderPirateHourly(hourlyData, timezoneOffset, targetCont) {
+
+        const usingCustomContainer = !!targetCont;
+
         const dayTabs = document.getElementById('pirate-day-tabs');
-        const container = document.getElementById('pirate-hourly-container');
 
-        if (!dayTabs || !container) return;
+        const container = targetCont || document.getElementById('pirate-hourly-container');
 
-        dayTabs.innerHTML = "";
+        if (!container) return;
+
+        // ONLY clear home page tabs if using home page
+        if (!usingCustomContainer && dayTabs) {
+            dayTabs.innerHTML = "";
+        }
+
         container.innerHTML = "";
 
         const days = {};
 
         hourlyData.forEach(h => {
-            const date = new Date((h.time + timezoneOffset) * 1000);
+
+            const date = new Date((h.time + (timezoneOffset * 3600)) * 1000);
+
             const key = date.toDateString();
 
-            if (!days[key]) days[key] = [];
+            if (!days[key]) {
+                days[key] = [];
+            }
+
             days[key].push(h);
         });
 
         const dayKeys = Object.keys(days);
 
         function renderDay(key) {
+
             container.innerHTML = "";
 
             days[key].forEach(h => {
-                const date = new Date((h.time + timezoneOffset) * 1000);
 
-                const hour = date.toLocaleTimeString([], { hour: 'numeric' });
+                const date = new Date((h.time + (timezoneOffset * 3600)) * 1000);
+
+                const hour = date.toLocaleTimeString([], {
+                    hour: 'numeric'
+                });
 
                 const card = document.createElement('div');
+
                 card.className = "forecast-card";
 
                 const iconMap = {
@@ -1847,39 +1873,66 @@
                 const icon = iconMap[h.icon] || "❔";
 
                 card.innerHTML = `
-                    <div style="font-size:0.7em;">${hour}</div>
-                    <div style="font-size:1.6em;">${icon}</div>
-                    <div style="font-size:1.2em; font-weight:bold;">${Math.round(h.temperature)}°</div>
-                    <div style="font-size:0.7em; opacity:0.7;">${h.summary}</div>
-                    <div style="font-size:0.65em; color:var(--primary);">Precip: ${Math.round(h.precipProbability * 100)}%</div>
+                    <div style="font-size:0.7em;">
+                        ${hour}
+                    </div>
+
+                    <div style="font-size:1.6em;">
+                        ${icon}
+                    </div>
+
+                    <div style="font-size:1.2em; font-weight:bold;">
+                        ${Math.round(h.temperature)}°
+                    </div>
+
+                    <div style="font-size:0.7em; opacity:0.7;">
+                        ${h.summary}
+                    </div>
+
+                    <div style="font-size:0.65em; color:var(--primary);">
+                        Precip: ${Math.round(h.precipProbability * 100)}%
+                    </div>
                 `;
 
                 container.appendChild(card);
             });
         }
 
-        dayKeys.forEach((key, i) => {
-            const btn = document.createElement('button');
-            btn.className = "btn-opt";
-            
-            // Standardization: Handle "Today" for the first button
-            if (i === 0) {
-                btn.innerText = "Today";
-            } else {
-                btn.innerText = new Date(key).toLocaleDateString([], { weekday: 'short' });
-            }
+        // ONLY build tabs on home page
+        if (!usingCustomContainer && dayTabs) {
 
-            if (i === 0) btn.classList.add('active');
+            dayKeys.forEach((key, i) => {
 
-            btn.onclick = () => {
-                // Standardization: Correct class name is "active"
-                document.querySelectorAll('#pirate-day-tabs .btn-opt').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                renderDay(key);
-            };
+                const btn = document.createElement('button');
 
-            dayTabs.appendChild(btn);
-        });
+                btn.className = "btn-opt";
+
+                if (i === 0) {
+                    btn.innerText = "Today";
+                } else {
+                    btn.innerText = new Date(key).toLocaleDateString([], {
+                        weekday: 'short'
+                    });
+                }
+
+                if (i === 0) {
+                    btn.classList.add('active');
+                }
+
+                btn.onclick = () => {
+
+                    document.querySelectorAll('#pirate-day-tabs .btn-opt').forEach(b => {
+                        b.classList.remove('active');
+                    });
+
+                    btn.classList.add('active');
+
+                    renderDay(key);
+                };
+
+                dayTabs.appendChild(btn);
+            });
+        }
 
         if (dayKeys.length > 0) {
             renderDay(dayKeys[0]);
@@ -2143,19 +2196,42 @@
 
         for (let i = 0; i < data.dayOfWeek.length; ++i) {
             const card = document.createElement('div');
+
             card.className = "forecast-card";
             card.style.cursor = "pointer";
-            card.onclick = () => openTWCDetailModal(data, i);
+
+            // FIXED ICON URL
+            const iconCode = String(data.iconCode?.[i] ?? '44');
 
             card.innerHTML = `
-                <div style="font-size:0.9em; font-weight:bold; color:var(--primary);">${data.dayOfWeek[i]}</div>
-                <img src="https://www.wunderground.com/static/i/c/v4/${String(data.iconCode?.[i] ?? '44')}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
-                <div style="font-size:1.2em; color:var(--accent); font-weight:bold;">
-                    ${(data.calendarDayTemperatureMax?.[i] ?? "--")}° / 
-                    <span style="color:white">${(data.calendarDayTemperatureMin?.[i] ?? "--")}°</span>
+                <div style="font-size:0.9em; font-weight:bold; color:var(--primary);">
+                    ${data.dayOfWeek[i]}
                 </div>
-                <div style="font-size:0.8em;color:#bbb;height:2.1em;">${data.narrative?.[i] ?? ""}</div>
+
+                <img
+                    src="https://avatars.wunderground.com/weatherapi/legacy/wuicons/v1/icons/${iconCode}.svg"
+                    alt="icon"
+                    style="width:48px; height:48px; display:block; margin:auto;"
+                    onerror="this.src='https://avatars.wunderground.com/weatherapi/legacy/wuicons/v1/icons/44.svg'"
+                >
+
+                <div style="font-size:1.2em; color:var(--accent); font-weight:bold;">
+                    ${(data.calendarDayTemperatureMax?.[i] ?? "--")}°
+                    /
+                    <span style="color:white">
+                        ${(data.calendarDayTemperatureMin?.[i] ?? "--")}°
+                    </span>
+                </div>
+
+                <div style="font-size:0.8em; color:#bbb; height:2.1em;">
+                    ${data.narrative?.[i] ?? ""}
+                </div>
             `;
+
+            card.onclick = () => {
+                openTWCDetailModal(data, i);
+            };
+
             cont.appendChild(card);
         }
     }
