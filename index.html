@@ -2150,7 +2150,7 @@
 
             card.innerHTML = `
                 <div style="font-size:0.9em; font-weight:bold; color:var(--primary);">${data.dayOfWeek[i]}</div>
-                <img src="https://www.wunderground.com/static/i/c/v4/${data.iconCode?.[i]}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
+                <img src="https://www.wunderground.com/static/i/c/v4/${(Array.isArray(data.iconCode) && data.iconCode[i]) ? data.iconCode[i] : 'na'}.svg" alt="icon" style="width:48px;display:block;margin:auto;">
                 <div style="font-size:1.2em; color:var(--accent); font-weight:bold;">
                     ${(data.calendarDayTemperatureMax?.[i] ?? "--")}° / 
                     <span style="color:white">${(data.calendarDayTemperatureMin?.[i] ?? "--")}°</span>
@@ -2171,25 +2171,51 @@
             document.body.appendChild(modal);
             modal.onclick = (e) => { if (e.target === modal) modal.style.display = "none"; }
         }
+
         modal.style.display = "flex";
         const d = data;
         const i = dayIdx;
+
+        // Defensive checks for all fields
+        const iconArr = Array.isArray(d.iconCode) ? d.iconCode : [];
+        const narrativeArr = Array.isArray(d.narrative) ? d.narrative : [];
+        const dayOfWeekArr = Array.isArray(d.dayOfWeek) ? d.dayOfWeek : [];
+        const maxTempArr = Array.isArray(d.calendarDayTemperatureMax) ? d.calendarDayTemperatureMax : [];
+        const minTempArr = Array.isArray(d.calendarDayTemperatureMin) ? d.calendarDayTemperatureMin : [];
+        const sunriseArr = Array.isArray(d.sunriseTimeLocal) ? d.sunriseTimeLocal : [];
+        const sunsetArr = Array.isArray(d.sunsetTimeLocal) ? d.sunsetTimeLocal : [];
+        const precipChanceArr = Array.isArray(d.precipChance) ? d.precipChance : [];
+        const qpfArr = Array.isArray(d.qpf) ? d.qpf : [];
+
+        // Show warning if arrays too short or index invalid
+        if (
+            i >= iconArr.length ||
+            i >= narrativeArr.length ||
+            i >= dayOfWeekArr.length
+        ) {
+            document.getElementById('twc-modal-inner').innerHTML =
+                `<div style="padding:30px;color:#fff">No detail info available for this day.</div>`;
+            return;
+        }
+
         document.getElementById('twc-modal-inner').innerHTML = `
             <button onclick="document.getElementById('twc-modal').style.display='none'" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>
             <div style="display:flex;align-items:center;gap:16px;">
-                <img src="https://www.wunderground.com/static/i/c/v4/${d.iconCode[i]}.svg" style="width:64px;height:64px;">
+                <img src="https://www.wunderground.com/static/i/c/v4/${iconArr[i] || 'na'}.svg" style="width:64px;height:64px;">
                 <div>
-                    <div style="font-size:1.3em; font-weight:bold;color:${i===0?'var(--accent)':'#ffd54f'}">${d.dayOfWeek[i]}</div>
-                    <div style="font-size:1em">${d.narrative[i]}</div>
-                    <div style="font-size:1.2em;margin-top:4px;color:var(--accent);font-weight:bold;">${d.calendarDayTemperatureMax[i] ?? "--"}° / <span style="color:white">${d.calendarDayTemperatureMin[i] ?? "--"}°</span></div>
+                    <div style="font-size:1.3em; font-weight:bold;color:${i === 0 ? 'var(--accent)' : '#ffd54f'}">${dayOfWeekArr[i]}</div>
+                    <div style="font-size:1em">${narrativeArr[i] ?? '--'}</div>
+                    <div style="font-size:1.2em;margin-top:4px;color:var(--accent);font-weight:bold;">
+                        ${(maxTempArr[i] ?? "--")}° / <span style="color:white">${(minTempArr[i] ?? "--")}°</span>
+                    </div>
                 </div>
             </div>
             <hr style="margin:12px 0 10px 0;border:0;border-top:1px solid #123;">
             <div style="font-size:0.98em;">
-                <strong>Sunrise:</strong> ${(d.sunriseTimeLocal && d.sunriseTimeLocal[i]) ? ("" + d.sunriseTimeLocal[i]).split("T")[1] : "--"} <br>
-                <strong>Sunset:</strong> ${(d.sunsetTimeLocal && d.sunsetTimeLocal[i]) ? ("" + d.sunsetTimeLocal[i]).split("T")[1] : "--"} <br>
-                <strong>Precipitation (chance):</strong> ${d.precipChance ? d.precipChance[i]+"%" : "--"}<br>
-                <strong>Precipitation (amount):</strong> ${d.qpf ? d.qpf[i]+" in" : "--"}
+                <strong>Sunrise:</strong> ${(sunriseArr[i] ? sunriseArr[i].split("T")[1] : "--")}<br>
+                <strong>Sunset:</strong> ${(sunsetArr[i] ? sunsetArr[i].split("T")[1] : "--")}<br>
+                <strong>Precipitation (chance):</strong> ${precipChanceArr[i] ? precipChanceArr[i] + "%" : "--"}<br>
+                <strong>Precipitation (amount):</strong> ${qpfArr[i] ? qpfArr[i] + " in" : "--"}
             </div>
             <div style="margin:14px 0 8px 0;font-weight:bold;">Hourly (PirateWeather):</div>
             <div id="twc-hourly-placeholder"><em>Loading hourly forecast...</em></div>
