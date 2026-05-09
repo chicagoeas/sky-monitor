@@ -248,7 +248,7 @@
     <span id="sync-indicator">● UPDATING</span>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.0.2</span></span>
+        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.0.3</span></span>
     </h1>
     
     <div style="display: flex; align-items: flex-start; gap: 10px;">
@@ -349,7 +349,7 @@
 
         <div class="toolkit-box" style="position: relative; overflow: hidden; padding: 15px;">
             <div class="toolkit-header" style="margin-bottom: 15px;">
-                <span>📡 LIVE STORM PROXIMITY & TRACKING - BETA</span>
+                <span>📡 LIVE STORM PROXIMITY & TRACKING</span>
                 <span id="storm-status-tag" style="position:absolute; top:10px; right:15px; background: rgba(0,0,0,0.4); color: var(--success); padding: 4px 8px; border-radius: 6px; font-size: 0.7em; font-weight:bold;">CLEAR SCAN</span>
             </div>
             
@@ -432,10 +432,11 @@
                 <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Fetching...</div>
                 <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
-            <div class="toolkit-box" style="margin-bottom:0; text-align:center;">
+            <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; transition:0.2s;" onclick="openUVModal()" title="Tap for hourly UV forecast">
                 <div class="toolkit-header" style="justify-content:center;"><span>UV INDEX</span></div>
                 <div id="uv-val" style="font-size:1.8em; font-weight:900; margin:10px 0;">--</div>
                 <div id="uv-desc" style="font-size:0.75em; opacity:0.8;">Fetching...</div>
+                <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
         </div>
 
@@ -486,7 +487,7 @@
     <div style="margin-bottom: 8px;">
         <span style="letter-spacing: 2px; font-weight: 800; color: #aaa;">SkyMonitor</span> 
         <span style="margin: 0 8px; opacity: 0.3;">|</span>
-        ALPHA RELEASE - v1.0.2
+        ALPHA RELEASE - v1.0.3
     </div>
     <p style="margin: 0;">
         Created by <a href="https://youtube.com/@chicagoareaEAS" target="_blank" style="color: var(--accent); text-decoration: none; font-weight: bold;">@chicagoareaEAS</a> on YouTube
@@ -701,6 +702,31 @@
             }
 
             container.innerHTML += `<div style="background: #9c27b0; color: #fff; padding: 6px 12px; border-radius: 8px; font-weight: 900; font-size: 0.85em; text-transform: uppercase; letter-spacing: 1px;">SPC: MD #${mdName}</div>`;
+        }
+
+        // 3. Active NWS Watches (populated by fetchAlerts)
+        (window.activeAlertWatches || []).forEach(watchName => {
+            if (container.innerHTML.includes(watchName)) return; // dedupe
+            hasRisk = true;
+            let wBg = "#e65c00";
+            if (watchName.toLowerCase().includes("tornado")) wBg = "#cc0000";
+            else if (watchName.toLowerCase().includes("flood")) wBg = "#1565c0";
+            container.innerHTML += `<div style="background:${wBg};color:#fff;padding:6px 12px;border-radius:8px;font-weight:900;font-size:0.85em;text-transform:uppercase;letter-spacing:1px;">⚠️ ${watchName}</div>`;
+        });
+
+        // 4. WPC Excessive Rainfall Outlook (ERO)
+        const eroUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/wpc_precip_hazards/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&outFields=*&f=json`;
+        const eroData = await checkArcGIS(eroUrl);
+        if (eroData) {
+            const eroLabel = eroData.label || eroData.risk_label || eroData.LABEL || eroData.RISK || "RISK";
+            if (eroLabel && eroLabel !== "0") {
+                hasRisk = true;
+                let eroBg = "#1565c0";
+                if (eroLabel.toUpperCase().includes("MOD")) eroBg = "#6a1b9a";
+                if (eroLabel.toUpperCase().includes("HIGH")) eroBg = "#b71c1c";
+                if (eroLabel.toUpperCase().includes("EXTREME") || eroLabel.toUpperCase().includes("NEAR") ) eroBg = "#7f0000";
+                container.innerHTML += `<div style="background:${eroBg};color:#fff;padding:6px 12px;border-radius:8px;font-weight:900;font-size:0.85em;text-transform:uppercase;letter-spacing:1px;">💧 WPC ERO: ${eroLabel}</div>`;
+            }
         }
 
         box.style.display = hasRisk ? "block" : "none";
@@ -1258,6 +1284,8 @@
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
         clearInterval(alertIntervalId);
+        window.activeAlertWatches = [];
+        window.activeStormWarning = false;
 
         try {
             const res = await fetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
@@ -1299,7 +1327,10 @@
                 banner.style.display = "block";
                 let bannerTextPrefix;
 
-                if (isConfirmedTornado) {
+                // Priority order: Tornado Emergency > Confirmed Tornado > Destructive SVR > other
+                if (isTopTorEmergency) {
+                    bannerTextPrefix = "🚨 TORNADO EMERGENCY";
+                } else if (isConfirmedTornado) {
                     bannerTextPrefix = "🚨 CONFIRMED TORNADO";
                 } else if (isDestructiveSVR) {
                     bannerTextPrefix = "⚠️ DESTRUCTIVE SEVERE";
@@ -1307,7 +1338,10 @@
                     bannerTextPrefix = isEmergency ? `🚨 ${topEventName}` : `⚠️ ${topEventName}`;
                 }
                 
-                if (isConfirmedTornado) {
+                if (isTopTorEmergency) {
+                    banner.classList.add("emergency-banner");
+                    banner.style.background = "";
+                } else if (isConfirmedTornado) {
                     banner.style.background = "#7f0000"; // dark red
                 } else if (isDestructiveSVR) {
                     banner.style.background = "#cc5500"; // dark orange
@@ -1375,6 +1409,12 @@
                     }
                     const evt = p.event.toLowerCase();
                     const desc = p.description ? p.description.toUpperCase() : "";
+                    if (evt.includes("watch") && !window.activeAlertWatches.includes(p.event)) {
+                        window.activeAlertWatches.push(p.event);
+                    }
+                    if (evt.includes("tornado warning") || evt.includes("severe thunderstorm warning")) {
+                        window.activeStormWarning = true;
+                    }
                 
                     const isTorEmergency = desc.includes("TORNADO EMERGENCY");
                     const isPDS = desc.includes("PARTICULARLY DANGEROUS SITUATION") || desc.includes("FLASH FLOOD EMERGENCY");
@@ -1580,6 +1620,11 @@
         return directions[Math.round(bearing / 45) % 8];
     }
 
+    function getBearingLabel(deg) {
+        const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+        return dirs[Math.round(deg / 22.5) % 16];
+    }
+
     // Calculate Position for the Radar UI
     function updateRadarUI(dist, bearing) {
         const blip = document.getElementById('radar-blip');
@@ -1650,7 +1695,7 @@
             let humidity = (useWU && wu.humidity !== null)
                 ? wu.humidity
                 : curr.humidity * 100;
-            if (useWU && Math.abs(wu.humidity - (curr.humidity * 100)) > 15) {
+            if (useWU && Math.abs(wu.humidity - (curr.humidity * 100)) > 10) {
                 humidity = curr.humidity * 100;
             }
             document.getElementById('humVal').innerText = Math.round(humidity) + "%";
@@ -1664,7 +1709,13 @@
             lastPressureMb = curr.pressure;
             document.getElementById('presVal').innerHTML = `${presIn} in <span style="font-size:0.75em; opacity:0.8;">${trend}</span>`;
             
-            const precip1h = d.currently?.precipAccumulation || 0;
+            // Sum minutely intensity (in/hr ÷ 60 = in/min per minute) for accurate 1h accumulation
+            let precip1h = 0;
+            if (d.minutely?.data?.length) {
+                precip1h = d.minutely.data.reduce((sum, m) => sum + ((m.precipIntensity || 0) / 60), 0);
+            } else {
+                precip1h = d.hourly?.data?.[0]?.precipAccumulation || 0;
+            }
             const precip24h = d.daily?.data?.[0]?.precipAccumulation || 0;
             const wuPrecipValid =
                 useWU &&
@@ -1706,75 +1757,69 @@
                     timeline.appendChild(bar);
                 });
             }
-            if (d.hourly && d.hourly.data) {
-                const stormHours = d.hourly.data.slice(0, 24);
+            // --- STORM PROXIMITY (improved) ---
+            const currentDist = d.currently?.nearestStormDistance;
+            const currentBearing = d.currently?.nearestStormBearing;
 
-                let closest = null;
-                let trend = "STATIONARY";
-
-                stormHours.forEach((h, i) => {
-                    if (h.nearestStormDistance !== undefined) {
-                        if (!closest || h.nearestStormDistance < closest.distance) {
-                            closest = {
-                                distance: h.nearestStormDistance,
-                                hour: i
-                            };
-                        }
-
-                        if (i > 0) {
-                            const prev = stormHours[i - 1].nearestStormDistance;
-                            if (prev !== undefined) {
-                                const diff = prev - h.nearestStormDistance;
-
-                                if (diff > 2) trend = "approaching";
-                                else if (diff < -2) trend = "moving away";
-                            }
-                        }
-                    }
-                });
-
-                const statusTag = document.getElementById('storm-status-tag');
-                const dirVal = document.getElementById('storm-dir-val');
-                const distVal = document.getElementById('storm-dist-val');
-                const toaVal = document.getElementById('storm-toa');
-                const lightningVal = document.getElementById('lightning-count');
-
-                if (closest && closest.distance <= 50) {
-                    statusTag.innerText = "CELL DETECTED";
-                    statusTag.style.color = closest.distance < 20 ? "var(--danger)" : "var(--warning)";
-
-                    dirVal.innerText =
-                        trend === "approaching"
-                        ? "APPROACHING"
-                        : trend === "moving away"
-                        ? "MOVING AWAY"
-                        : "STATIONARY";
-
-                    distVal.innerText = closest.distance + " miles";
-
-                    if (trend === "approaching" && closest.distance > 0) {
-                        let stormSpeedMph = 30; // Fallback speed assumption
-                        let minutesAway = Math.round((closest.distance / stormSpeedMph) * 60);
-
-                        let arrivalTime = new Date();
-                        arrivalTime.setMinutes(arrivalTime.getMinutes() + minutesAway);
-                        toaVal.innerText = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                        lightningVal.innerText = minutesAway + " mins";
-                    } else {
-                        toaVal.innerText = "N/A";
-                        lightningVal.innerText = "0";
-                    }
-
-                } else {
-                    statusTag.innerText = "CLEAR";
-                    dirVal.innerText = "NO CELLS NEARBY";
-                    distVal.innerText = "--";
-                    toaVal.innerText = "N/A";
-                    lightningVal.innerText = "0";
+            // Compute trend using first 6 hourly snapshots
+            let stormTrend = "STATIONARY";
+            let stormSpeedEst = 30;
+            if (d.hourly?.data) {
+                const sh = d.hourly.data.slice(0, 6).filter(h => h.nearestStormDistance !== undefined);
+                if (sh.length >= 2) {
+                    const deltaTotal = sh[0].nearestStormDistance - sh[sh.length - 1].nearestStormDistance;
+                    const hoursSpan = sh.length - 1;
+                    stormSpeedEst = Math.max(10, Math.abs(deltaTotal / hoursSpan));
+                    if (deltaTotal > 3) stormTrend = "approaching";
+                    else if (deltaTotal < -3) stormTrend = "moving away";
                 }
             }
-            
-            document.getElementById('lightning-count').innerText = "N/A";
+
+            const statusTag = document.getElementById('storm-status-tag');
+            const dirVal = document.getElementById('storm-dir-val');
+            const distVal = document.getElementById('storm-dist-val');
+            const toaVal = document.getElementById('storm-toa');
+            const lightningVal = document.getElementById('lightning-count');
+
+            if (currentDist !== undefined && currentDist !== null && currentDist <= 50) {
+                const cardinal = currentBearing !== undefined && currentBearing !== null
+                    ? getBearingLabel(currentBearing) : "";
+                const isNWSConfirmed = window.activeStormWarning || false;
+
+                statusTag.innerText = isNWSConfirmed ? "⚠ NWS CONFIRMED" : "CELL DETECTED";
+                statusTag.style.color = currentDist < 10 ? "var(--danger)" : currentDist < 25 ? "var(--warning)" : "#ffd54f";
+
+                const motionStr = stormTrend === "approaching" ? "APPROACHING" : stormTrend === "moving away" ? "MOVING AWAY" : "NEARBY";
+                dirVal.innerText = cardinal ? `${motionStr} · FROM ${cardinal}` : motionStr;
+                distVal.innerText = Math.round(currentDist) + " mi";
+
+                if (stormTrend === "approaching" && currentDist > 0) {
+                    const minutesAway = Math.round((currentDist / stormSpeedEst) * 60);
+                    const arrivalTime = new Date();
+                    arrivalTime.setMinutes(arrivalTime.getMinutes() + minutesAway);
+                    toaVal.innerText = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    lightningVal.innerText = currentDist < 5 ? "OVERHEAD" : `~${minutesAway} min`;
+                } else if (stormTrend === "moving away") {
+                    toaVal.innerText = "MOVING AWAY";
+                    lightningVal.innerText = currentDist < 10 ? "NEARBY" : "Distant";
+                } else {
+                    toaVal.innerText = "N/A";
+                    lightningVal.innerText = currentDist < 10 ? "NEARBY" : "N/A";
+                }
+            } else {
+                statusTag.innerText = "CLEAR SCAN";
+                statusTag.style.color = "var(--success)";
+                dirVal.innerText = "NO CELLS DETECTED";
+                distVal.innerText = "--";
+                toaVal.innerText = "N/A";
+                lightningVal.innerText = "0";
+            }
+            // Lightning count is proximity-estimated; reset to 0 if no nearby storm
+            if (!(currentDist !== undefined && currentDist !== null && currentDist <= 50)) {
+                document.getElementById('lightning-count').innerText = "0";
+            }
+            // Update radar blip position
+            updateRadarUI(currentDist, currentBearing);
             const uv = d.currently?.uvIndex || 0;
             document.getElementById('uv-val').innerText = uv;
             let uvDesc = "Low (No burn risk)"; let uvCol = "#00e676";
@@ -2195,6 +2240,10 @@
             // Use wxPhraseLong with fallback to night part
             const shortText = daypart.wxPhraseLong?.[baseIdx] ?? daypart.wxPhraseLong?.[baseIdx + 1] ?? "--";
 
+            // Best precip chance: prefer day, fallback night
+            const precipPct = daypart.precipChance?.[baseIdx] ?? daypart.precipChance?.[baseIdx + 1] ?? 0;
+            const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
+
             const card = document.createElement('div');
             card.className = "forecast-card";
             card.style.cursor = "pointer";
@@ -2206,6 +2255,7 @@
                     ${high}° / <span style="color:white">${low}°</span>
                 </div>
                 <div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">${shortText}</div>
+                ${precipPct > 0 ? `<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">💧 ${precipPct}%${precipAmt > 0 ? ` / ${precipAmt.toFixed(2)}"` : ''}</div>` : ''}
             `;
             cont.appendChild(card);
         }
@@ -2239,6 +2289,14 @@
         const lohi = [data.calendarDayTemperatureMax?.[dayIdx] ?? "--", data.calendarDayTemperatureMin?.[dayIdx] ?? "--"];
         const precip = [daypart.precipChance?.[base], daypart.precipChance?.[base + 1]];
         const qpf = [daypart.qpf?.[base], daypart.qpf?.[base + 1]];
+        const windPhrase = [daypart.windPhrase?.[base], daypart.windPhrase?.[base + 1]];
+        const humidity = [daypart.humidity?.[base], daypart.humidity?.[base + 1]];
+        const uvIndex = [daypart.uvIndex?.[base], daypart.uvIndex?.[base + 1]];
+        const uvDesc = [daypart.uvDescription?.[base], daypart.uvDescription?.[base + 1]];
+        const cloudCover = [daypart.cloudCoverPhrase?.[base], daypart.cloudCoverPhrase?.[base + 1]];
+        const snowQpf = [daypart.qpfSnow?.[base], daypart.qpfSnow?.[base + 1]];
+        const precipType = [daypart.precipType?.[base], daypart.precipType?.[base + 1]];
+        const thunderCat = [daypart.thunderCategory?.[base], daypart.thunderCategory?.[base + 1]];
 
         // Only render if day or night part present
         let html = `
@@ -2252,6 +2310,16 @@
 
         for (let part = 0; part < 2; ++part) {
             if (narratives[part] == null) continue;
+            const detailRows = [
+                windPhrase[part] ? `<span style="opacity:0.55">💨 Wind</span><span>${windPhrase[part]}</span>` : null,
+                humidity[part] != null ? `<span style="opacity:0.55">💧 Humidity</span><span>${humidity[part]}%</span>` : null,
+                (uvIndex[part] != null && uvIndex[part] > 0) ? `<span style="opacity:0.55">☀️ UV Index</span><span>${uvIndex[part]}${uvDesc[part] ? ` — ${uvDesc[part]}` : ''}</span>` : null,
+                cloudCover[part] ? `<span style="opacity:0.55">☁️ Sky</span><span>${cloudCover[part]}</span>` : null,
+                (precipType[part] && precipType[part] !== "none") ? `<span style="opacity:0.55">🌧 Precip Type</span><span>${precipType[part]}</span>` : null,
+                (thunderCat[part] && thunderCat[part] !== "No thunderstorms") ? `<span style="opacity:0.55">⛈ Thunder</span><span>${thunderCat[part]}</span>` : null,
+                (snowQpf[part] != null && snowQpf[part] > 0) ? `<span style="opacity:0.55">❄️ Snow</span><span>${snowQpf[part]}"</span>` : null,
+            ].filter(Boolean);
+
             html += `
                 <div style="margin-top:13px; text-align:center;">
                     <div style="font-size:1.15em;font-weight:bold; color:${part === 0 ? '#ffd54f' : '#bbb'}">${titles[part]}</div>
@@ -2260,10 +2328,11 @@
                         ${highs[part] !== undefined ? `${highs[part]}°` : "--"} / ${lohi[part]}°
                     </div>
                     <div style="font-size: 1.05em; margin-bottom:9px;">${narratives[part] ?? "--"}</div>
-                    <div style="font-size:.95em;opacity:.8;">
-                        <strong>Precip Chance:</strong> ${precip[part] !== undefined ? (precip[part] + "%") : "--"}<br>
-                        <strong>Precip Amount:</strong> ${qpf[part] !== undefined ? (qpf[part] + " in") : "--"}
+                    <div style="font-size:.9em;opacity:.85;">
+                        <strong>Precip Chance:</strong> ${precip[part] !== undefined ? (precip[part] + "%") : "--"} &nbsp;·&nbsp;
+                        <strong>Amount:</strong> ${qpf[part] !== undefined ? (qpf[part] + '"') : "--"}
                     </div>
+                    ${detailRows.length ? `<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">${detailRows.join('')}</div>` : ''}
                 </div>
             `;
         }
@@ -2428,6 +2497,87 @@
         }
 
         renderComfortModal(dayKeys[0]);
+    }
+
+    function openUVModal() {
+        if (!window.pirateHourlyData || !window.pirateHourlyData.length) {
+            alert("Hourly UV data not yet loaded. Please wait a moment and try again.");
+            return;
+        }
+
+        let modal = document.getElementById('uv-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'uv-modal';
+            modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = `<div id="uv-modal-inner" style="background:#082239;color:#fff;border-radius:20px;max-width:380px;width:93vw;padding:24px;position:relative;box-shadow:0 16px 40px #0009;max-height:85vh;overflow-y:auto;"></div>`;
+            document.body.appendChild(modal);
+            modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = "none"; });
+        }
+        modal.style.display = "flex";
+
+        const offsetHours = window.pirateTimezoneOffset || 0;
+        const currentUnix = Math.floor(Date.now() / 1000);
+
+        const days = {};
+        window.pirateHourlyData.forEach(h => {
+            if (h.time < currentUnix - 3600) return;
+            const key = new Date((h.time + (offsetHours * 3600)) * 1000).toISOString().split("T")[0];
+            if (!days[key]) days[key] = [];
+            days[key].push(h);
+        });
+
+        const dayKeys = Object.keys(days).slice(0, 3);
+
+        function getUVInfo(uv) {
+            if (!uv || uv <= 0) return { label: "None", color: "#aaa", burn: "" };
+            if (uv <= 2) return { label: "Low", color: "#00e676", burn: "No burn risk" };
+            if (uv <= 5) return { label: "Moderate", color: "#ffeb3b", burn: "Burn ~45 min" };
+            if (uv <= 7) return { label: "High", color: "#ff9100", burn: "Burn ~30 min" };
+            if (uv <= 10) return { label: "Very High", color: "#ff5252", burn: "Burn ~15 min" };
+            return { label: "Extreme", color: "#d500f9", burn: "Burn <10 min" };
+        }
+
+        function buildUVDayContent(key) {
+            const hours = days[key];
+            if (!hours || !hours.length) return `<div style="opacity:0.5;padding:10px;">No data for this day.</div>`;
+            return hours.map(h => {
+                const uv = h.uvIndex ?? 0;
+                const { label, color, burn } = getUVInfo(uv);
+                const hourLabel = new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+                const barPct = Math.min(Math.round((uv / 11) * 100), 100);
+                return `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.07);">
+                    <div style="min-width:44px;font-size:0.75em;color:#aaa;text-align:right;">${hourLabel}</div>
+                    <div style="min-width:28px;font-size:1.15em;font-weight:900;color:${color};text-align:center;">${uv}</div>
+                    <div style="flex:1;">
+                        <div style="background:rgba(255,255,255,0.1);border-radius:4px;height:6px;overflow:hidden;">
+                            <div style="background:${color};width:${barPct}%;height:100%;border-radius:4px;"></div>
+                        </div>
+                        <div style="font-size:0.72em;margin-top:3px;display:flex;justify-content:space-between;">
+                            <span style="font-weight:bold;color:${color};">${label}</span>
+                            <span style="opacity:0.6;">${burn}</span>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        window._uvDayHtml = {};
+        dayKeys.forEach(k => { window._uvDayHtml[k] = buildUVDayContent(k); });
+
+        const tabHtml = dayKeys.map((key, i) => {
+            const lbl = i === 0 ? "Today" : new Date(key + "T12:00:00Z").toLocaleDateString([], { weekday: 'short' });
+            return `<button onclick="(function(){document.querySelectorAll('#uv-day-tabs .btn-opt').forEach(b=>b.classList.remove('active'));this.classList.add('active');document.getElementById('uv-hours').innerHTML=window._uvDayHtml['${key}'];}).call(this)" class="btn-opt${i===0?' active':''}">${lbl}</button>`;
+        }).join('');
+
+        document.getElementById('uv-modal-inner').innerHTML = `
+            <button onclick="document.getElementById('uv-modal').style.display='none'" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>
+            <div style="font-size:1em;font-weight:bold;color:var(--primary);letter-spacing:1px;margin-bottom:12px;padding-right:28px;">☀️ HOURLY UV INDEX</div>
+            <div id="uv-day-tabs" class="btn-group spc-btn-tabs" style="margin-bottom:12px;">${tabHtml}</div>
+            <div id="uv-hours">${window._uvDayHtml[dayKeys[0]]}</div>
+            <div style="font-size:0.6em;opacity:0.4;text-align:center;margin-top:10px;">Powered by PirateWeather</div>
+        `;
     }
 
     window.addEventListener('DOMContentLoaded', () => {
