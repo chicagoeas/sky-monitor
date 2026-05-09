@@ -1178,46 +1178,115 @@
         }
     }
 
-    async function renderWeatherAPIAlerts(stack, banner) {
-        const WAPI_KEY = "d3b562834ca84fa3adb192039260905";
-        try {
-            const res = await fetch(`https://api.weatherapi.com/v1/forecast.json?key=${WAPI_KEY}&q=${lat},${lon}&days=1&aqi=no&alerts=yes`);
-            const data = await res.json();
-            const alerts = data.alerts?.alert || [];
+    async function renderPirateAlerts(stack, banner) {
+        const alerts = window.pirateAlerts || [];
 
-            if (!alerts.length) {
-                stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
-                return;
+        if (!alerts.length) {
+            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+            return;
+        }
+
+        window.alertTranslationCache = window.alertTranslationCache || {};
+
+        banner.style.display = "block";
+        banner.style.background = "#e65100";
+        banner.innerText = `⚠️ ${alerts.length} ACTIVE ALERT${alerts.length > 1 ? 'S' : ''} (PirateWeather)`;
+
+        stack.innerHTML = "";
+
+        for (const alert of alerts) {
+            let title = alert.title || "Weather Alert";
+
+            if (window.alertTranslationCache[title]) {
+
+                title = window.alertTranslationCache[title];
+
+            } else {
+
+                try {
+
+                    const tr = await fetch(
+                        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(title)}`
+                    );
+
+                    const td = await tr.json();
+
+                    console.log("Translation response:", td);
+
+                    if (
+                        td &&
+                        td[0] &&
+                        td[0][0] &&
+                        td[0][0][0]
+                    ) {
+                        window.alertTranslationCache[alert.title] = td[0][0][0];
+                        title = td[0][0][0];
+                    }
+
+                } catch (e) {
+                    console.error("Translation failed:", e);
+                }
+
             }
 
-            banner.style.display = "block";
-            banner.style.background = "#e65100";
-            banner.innerText = `⚠️ ${alerts.length} ACTIVE ALERT${alerts.length > 1 ? 'S' : ''}`;
-            stack.innerHTML = "";
+            const expires = alert.expires
+                ? new Date(alert.expires * 1000).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })
+                : '';
 
-            for (const alert of alerts) {
-                const title = alert.headline || alert.event || "Weather Alert";
-                const expires = alert.expires ? new Date(alert.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-                const desc = alert.desc ? alert.desc.slice(0, 200) + (alert.desc.length > 200 ? '...' : '') : '';
-                const areas = alert.areas || '';
-                let bgColor = '#e65100';
-                if (alert.severity === 'Extreme') bgColor = '#b71c1c';
-                else if (alert.severity === 'Severe') bgColor = '#c62828';
+                        let desc = alert.description || "";
 
-                stack.innerHTML += `
-                    <div class="alert-card" style="background:${bgColor};">
-                        <div style="font-size:1.8em;">⚠️</div>
-                        <div>
-                            <b>${title}</b>
-                            ${areas ? `<br><small style="opacity:0.8;">📍 ${areas}</small>` : ''}
-                            ${desc ? `<br><small>${desc}</small>` : ''}
-                            ${expires ? `<br><small>Expires: ${expires}</small>` : ''}
-                        </div>
+            if (window.alertTranslationCache[desc]) {
+
+                desc = window.alertTranslationCache[desc];
+
+            } else if (desc) {
+
+                try {
+
+                    const tr = await fetch(
+                        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(desc)}`
+                    );
+
+                    const td = await tr.json();
+
+                    console.log("Description translation response:", td);
+
+                    if (
+                        td &&
+                        td[0] &&
+                        td[0][0] &&
+                        td[0][0][0]
+                    ) {
+                        window.alertTranslationCache[desc] = td[0][0][0];
+                        desc = td[0][0][0];
+                    }
+
+                } catch (e) {
+                    console.error("Description translation failed:", e);
+                }
+
+            }
+
+            desc = desc
+                ? desc.slice(0, 140) +
+                  (desc.length > 140 ? '...' : '')
+                : '';
+
+            stack.innerHTML += `
+                <div class="alert-card" style="background:#e65100;">
+                    <div style="font-size:1.8em;">⚠️</div>
+                    <div>
+                        <b>${title}</b><br>
+                        <small>
+                            ${desc}
+                            ${expires ? `<br>Expires: ${expires}` : ''}
+                        </small>
                     </div>
-                `;
-            }
-        } catch(e) {
-            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>Alert data unavailable.</div>";
+                </div>
+            `;
         }
     }
 
@@ -1227,7 +1296,7 @@
         });
         document.getElementById('wfo-label').innerText = 'N/A (Outside US)';
         const tfoot = document.querySelector('#threat-level-box div:last-child');
-        if (tfoot) tfoot.textContent = 'Combines WeatherAPI alerts · storm proximity · wind · pressure trend';
+        if (tfoot) tfoot.textContent = 'Combines PirateWeather alerts · storm proximity · wind · pressure trend';
         if (window.pirateCurrently) {
             const summary = window.pirateCurrently.summary || 'Clear';
             document.getElementById('conditionText').innerText = summary;
@@ -1297,7 +1366,7 @@
 
         if (window.isOutsideUS) {
             stack.innerHTML = ""; checklist.style.display = "none"; banner.style.display = "none"; banner.className = "";
-            await renderWeatherAPIAlerts(stack, banner);
+            await renderPirateAlerts(stack, banner);
             return;
         }
 
@@ -1307,7 +1376,7 @@
                 window.isOutsideUS = true;
                 applyInternationalMode();
                 stack.innerHTML = ""; checklist.style.display = "none"; banner.style.display = "none"; banner.className = "";
-                await renderWeatherAPIAlerts(stack, banner);
+                await renderPirateAlerts(stack, banner);
                 return;
             }
             const data = await res.json();
