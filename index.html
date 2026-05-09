@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SkyMonitor</title>
     <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/1779/1779927.png">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         :root { --primary: #4fc3f7; --accent: #ffd54f; --danger: #ff1744; --warning: #ffeb3b; --success: #00e676; --bg: #07131d; }
         
@@ -413,6 +415,46 @@
 
     </div>
 
+    <div id="radar-tab" class="tab-content">
+        <div class="toolkit-box" style="padding:0; overflow:hidden;">
+            <div style="padding:12px 16px 10px; background:rgba(0,0,0,0.3);">
+                <div class="toolkit-header" style="margin-bottom:8px;"><span>🌀 LIVE DOPPLER RADAR</span></div>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <button id="radar-play-btn" onclick="toggleRadarPlay()" style="background:var(--primary);color:#000;border:none;border-radius:8px;padding:5px 14px;font-weight:900;font-size:0.8em;cursor:pointer;letter-spacing:1px;">▶ PLAY</button>
+                    <button id="radar-latest-btn" onclick="showRadarFrame(radarFrames.length-1)" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:8px;padding:5px 10px;font-size:0.75em;cursor:pointer;">LATEST</button>
+                    <span id="radar-timestamp" style="font-size:0.72em;color:#aaa;flex:1;text-align:right;">Loading radar...</span>
+                </div>
+                <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:0.7em;opacity:0.5;">OPACITY</span>
+                    <input type="range" min="30" max="100" value="80" step="5" id="radar-opacity-slider" oninput="setRadarOpacity(this.value)" style="flex:1;accent-color:var(--primary);">
+                    <span id="radar-opacity-label" style="font-size:0.7em;opacity:0.5;min-width:30px;">80%</span>
+                </div>
+                <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+                    <button onclick="radarMap&&radarMap.zoomIn()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:6px;padding:3px 10px;font-size:0.75em;cursor:pointer;">＋ Zoom In</button>
+                    <button onclick="radarMap&&radarMap.zoomOut()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:6px;padding:3px 10px;font-size:0.75em;cursor:pointer;">－ Zoom Out</button>
+                    <button onclick="radarMap&&radarMap.setView([lat,lon],8)" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:6px;padding:3px 10px;font-size:0.75em;cursor:pointer;">📍 My Location</button>
+                    <span id="radar-frame-counter" style="font-size:0.7em;opacity:0.45;align-self:center;margin-left:auto;"></span>
+                </div>
+            </div>
+            <div id="radar-map" style="width:100%;height:360px;background:#07131d;"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px;">
+            <div style="background:#1a2a3a;border-radius:8px;padding:6px;text-align:center;font-size:0.65em;">
+                <div style="width:14px;height:6px;background:#00e5ff;border-radius:2px;margin:0 auto 4px;"></div>Light
+            </div>
+            <div style="background:#1a2a3a;border-radius:8px;padding:6px;text-align:center;font-size:0.65em;">
+                <div style="width:14px;height:6px;background:#00e676;border-radius:2px;margin:0 auto 4px;"></div>Moderate
+            </div>
+            <div style="background:#1a2a3a;border-radius:8px;padding:6px;text-align:center;font-size:0.65em;">
+                <div style="width:14px;height:6px;background:#ffeb3b;border-radius:2px;margin:0 auto 4px;"></div>Heavy
+            </div>
+            <div style="background:#1a2a3a;border-radius:8px;padding:6px;text-align:center;font-size:0.65em;">
+                <div style="width:14px;height:6px;background:#ff1744;border-radius:2px;margin:0 auto 4px;"></div>Extreme
+            </div>
+        </div>
+        <div style="font-size:0.6em;color:#444;text-align:center;margin-top:6px;">Radar © RainViewer · Map © CartoDB / OpenStreetMap contributors</div>
+    </div>
+
     <div id="specs-tab" class="tab-content">
         
         <div class="toolkit-box">
@@ -480,6 +522,7 @@
 <div class="bottom-nav">
     <div class="nav-item active" id="nav-home" onclick="switchTab('home', this)">🏠<span>Home</span></div>
     <div class="nav-item" id="nav-severe" onclick="switchTab('severe', this)">⚠️<span>Severe</span></div>
+    <div class="nav-item" id="nav-radar" onclick="switchTab('radar', this)">🌀<span>Radar</span></div>
     <div class="nav-item" id="nav-specs" onclick="switchTab('specs', this)">📑<span>Specs</span></div>
 </div>
 
@@ -939,6 +982,7 @@
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
         if(tabId === 'specs') drawOrbit();
+        if(tabId === 'radar') setTimeout(initRadar, 50);
     }
 
     function saveLoc() { 
@@ -1923,6 +1967,9 @@
                     <div style="font-size:0.65em; color:var(--primary);">
                         Precip: ${Math.round(h.precipProbability * 100)}%
                     </div>
+                    <div style="font-size:0.65em; color:#90caf9;">
+                        💨 ${Math.round(h.windSpeed || 0)} mph${h.windBearing != null ? ' ' + getBearingLabel(h.windBearing) : ''}
+                    </div>
                 `;
 
                 container.appendChild(card);
@@ -2097,8 +2144,8 @@
             count = Math.max(50, Math.min(600, livePrecipInt * 2000));
         } else if (text.includes('rain') || text.includes('drizzle') || text.includes('storm')) {
             type = 'rain';
-            count = Math.max(50, Math.min(1000, livePrecipInt * 1500)); 
-            speedMult = 1 + (livePrecipInt * 5); 
+            count = Math.max(25, Math.min(500, livePrecipInt * 750)); 
+            speedMult = 1 + (livePrecipInt * 2.5); 
         } else if (text.includes('fog') || text.includes('mist') || text.includes('haze')) {
             type = 'fog';
             count = 40;
@@ -2116,8 +2163,8 @@
             particles.push({
                 x: Math.random() * canvas.width,
                 y: Math.random() * canvas.height,
-                len: type === 'fog' ? Math.random() * 80 + 40 : (type === 'rain' ? (Math.random() * 20 + 10) * speedMult : Math.random() * 4 + 2),
-                vel: type === 'fog' ? Math.random() * 0.5 + 0.1 : (type === 'rain' ? (Math.random() * 10 + 5) * speedMult : Math.random() * 1 + 0.5),
+                len: type === 'fog' ? Math.random() * 80 + 40 : (type === 'rain' ? (Math.random() * 11 + 6) * speedMult : Math.random() * 4 + 2),
+                vel: type === 'fog' ? Math.random() * 0.5 + 0.1 : (type === 'rain' ? (Math.random() * 5 + 3) * speedMult : Math.random() * 1 + 0.5),
                 drift: type === 'fog' ? Math.random() * 0.5 - 0.25 : windDriftBase + (Math.random() * 1 - 0.5)
             });
         }
@@ -2578,6 +2625,144 @@
             <div id="uv-hours">${window._uvDayHtml[dayKeys[0]]}</div>
             <div style="font-size:0.6em;opacity:0.4;text-align:center;margin-top:10px;">Powered by PirateWeather</div>
         `;
+    }
+
+    // =============================================
+    // LIVE DOPPLER RADAR  (RainViewer + Leaflet)
+    // =============================================
+    let radarMap = null;
+    let radarFrames = [];
+    let radarNowcastCount = 0;
+    let radarCurrentFrame = -1;
+    let radarPlaying = false;
+    let radarIntervalId = null;
+    let radarTileLayer = null;
+    let radarOpacityVal = 0.8;
+
+    async function initRadar() {
+        if (!window.L) return;
+
+        // If map already exists, just re-center and invalidate size
+        if (radarMap) {
+            radarMap.setView([parseFloat(lat), parseFloat(lon)], 8);
+            setTimeout(() => radarMap.invalidateSize(), 100);
+            return;
+        }
+
+        radarMap = L.map('radar-map', {
+            zoomControl: false,
+            attributionControl: false,
+            preferCanvas: true
+        }).setView([parseFloat(lat), parseFloat(lon)], 8);
+
+        // Dark CartoDB basemap
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19, subdomains: 'abcd'
+        }).addTo(radarMap);
+
+        // User location pulse marker
+        const pulseIcon = L.divIcon({
+            className: '',
+            html: `<div style="position:relative;width:16px;height:16px;">
+                     <div style="position:absolute;inset:0;border-radius:50%;background:#4fc3f7;opacity:0.25;animation:radar-pulse 2s infinite;"></div>
+                     <div style="position:absolute;inset:3px;border-radius:50%;background:#4fc3f7;border:2px solid #fff;box-shadow:0 0 8px #4fc3f7;"></div>
+                   </div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        });
+        L.marker([parseFloat(lat), parseFloat(lon)], { icon: pulseIcon })
+            .addTo(radarMap)
+            .bindPopup(`<b style="color:#000">📍 Your Location</b>`);
+
+        L.control.zoom({ position: 'bottomright' }).addTo(radarMap);
+
+        setTimeout(() => radarMap.invalidateSize(), 200);
+        await fetchRadarFrames();
+    }
+
+    async function fetchRadarFrames() {
+        const tsEl = document.getElementById('radar-timestamp');
+        if (tsEl) tsEl.textContent = 'Fetching radar data...';
+        try {
+            const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+            if (!res.ok) throw new Error('RainViewer API error');
+            const data = await res.json();
+
+            const past = data.radar?.past || [];
+            const nowcast = data.radar?.nowcast || [];
+            radarNowcastCount = nowcast.length;
+            radarFrames = [...past, ...nowcast];
+
+            if (radarFrames.length) {
+                showRadarFrame(radarFrames.length - 1 - radarNowcastCount); // latest observed
+                const counter = document.getElementById('radar-frame-counter');
+                if (counter) counter.textContent = `${past.length} observed + ${nowcast.length} forecast frames`;
+            } else {
+                if (tsEl) tsEl.textContent = 'No radar data available.';
+            }
+        } catch(e) {
+            if (tsEl) tsEl.textContent = 'Radar unavailable — check connection.';
+        }
+    }
+
+    function showRadarFrame(idx) {
+        if (!radarFrames.length || !radarMap) return;
+        radarCurrentFrame = Math.max(0, Math.min(idx, radarFrames.length - 1));
+        const frame = radarFrames[radarCurrentFrame];
+
+        if (radarTileLayer) {
+            radarMap.removeLayer(radarTileLayer);
+            radarTileLayer = null;
+        }
+
+        radarTileLayer = L.tileLayer(
+            `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,
+            { opacity: radarOpacityVal, tileSize: 256, zIndex: 10 }
+        ).addTo(radarMap);
+
+        const tsEl = document.getElementById('radar-timestamp');
+        if (tsEl) {
+            const ts = new Date(frame.time * 1000);
+            const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const isNowcast = radarCurrentFrame >= (radarFrames.length - radarNowcastCount) && radarNowcastCount > 0;
+            tsEl.textContent = `${timeStr}${isNowcast ? ' ⚡ NOWCAST' : ' · OBSERVED'}`;
+            tsEl.style.color = isNowcast ? '#ffd54f' : '#aaa';
+        }
+    }
+
+    function toggleRadarPlay() {
+        radarPlaying = !radarPlaying;
+        const btn = document.getElementById('radar-play-btn');
+        if (radarPlaying) {
+            if (btn) btn.textContent = '⏸ PAUSE';
+            radarIntervalId = setInterval(() => {
+                const next = (radarCurrentFrame + 1) % radarFrames.length;
+                // Brief pause at the end of the loop before restarting
+                if (next === 0) {
+                    showRadarFrame(0);
+                    clearInterval(radarIntervalId);
+                    setTimeout(() => {
+                        if (radarPlaying) {
+                            radarIntervalId = setInterval(() => {
+                                showRadarFrame((radarCurrentFrame + 1) % radarFrames.length);
+                            }, 500);
+                        }
+                    }, 1200);
+                } else {
+                    showRadarFrame(next);
+                }
+            }, 500);
+        } else {
+            if (btn) btn.textContent = '▶ PLAY';
+            clearInterval(radarIntervalId);
+        }
+    }
+
+    function setRadarOpacity(val) {
+        radarOpacityVal = val / 100;
+        const label = document.getElementById('radar-opacity-label');
+        if (label) label.textContent = val + '%';
+        if (radarTileLayer) radarTileLayer.setOpacity(radarOpacityVal);
     }
 
     window.addEventListener('DOMContentLoaded', () => {
