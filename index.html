@@ -1893,59 +1893,165 @@
 
         // 1. SPC risk
         const spc = window.spcRisk;
-        const SPC_SCORES = { TSTM: 1, MRGL: 2, SLGT: 3, ENH: 4, MDT: 5, HIGH: 6 };
-        if (spc && SPC_SCORES[spc]) {
+        const SPC_SCORES = {
+            TSTM: 0,
+            MRGL: 1,
+            SLGT: 2,
+            ENH: 3,
+            MDT: 5,
+            HIGH: 7
+        };
+
+        if (spc && SPC_SCORES[spc] !== undefined) {
             score += SPC_SCORES[spc];
-            factorList.push({ label: `SPC ${spc}`, color: spc === 'HIGH' ? '#e040fb' : spc === 'MDT' ? '#ff1744' : spc === 'ENH' ? '#ff9100' : spc === 'SLGT' ? '#ffeb3b' : '#7BB07B' });
+
+            factorList.push({
+                label: `SPC ${spc}`,
+                color:
+                    spc === 'HIGH' ? '#e040fb' :
+                    spc === 'MDT' ? '#ff1744' :
+                    spc === 'ENH' ? '#ff9100' :
+                    spc === 'SLGT' ? '#ffeb3b' :
+                    '#7BB07B'
+            });
         }
 
         // 2. Storm proximity
         const dist = window.currentStormDist;
+
         if (dist !== undefined && dist !== null) {
-            if (dist < 10) { score += 5; factorList.push({ label: `Storm ${Math.round(dist)} mi`, color: '#ff1744' }); }
-            else if (dist < 25) { score += 3; factorList.push({ label: `Storm ${Math.round(dist)} mi`, color: '#ff9100' }); }
-            else if (dist < 50) { score += 1; factorList.push({ label: `Storm ${Math.round(dist)} mi`, color: '#ffeb3b' }); }
+            if (dist < 8) {
+                score += 3;
+                factorList.push({
+                    label: `Storm ${Math.round(dist)} mi`,
+                    color: '#ff9100'
+                });
+            } else if (dist < 20) {
+                score += 2;
+                factorList.push({
+                    label: `Storm ${Math.round(dist)} mi`,
+                    color: '#ffeb3b'
+                });
+            } else if (dist < 40) {
+                score += 1;
+                factorList.push({
+                    label: `Storm ${Math.round(dist)} mi`,
+                    color: '#7BB07B'
+                });
+            }
         }
 
         // 3. NWS alerts
         const hasWarning = window.activeStormWarning || false;
         const hasWatch = (window.activeAlertWatches || []).length > 0;
-        if (hasWarning) { score += 4; factorList.push({ label: 'NWS Warning', color: '#ff1744' }); }
-        else if (hasWatch) { score += 2; factorList.push({ label: 'NWS Watch', color: '#ff9100' }); }
+
+        if (hasWarning) {
+            score += 6;
+
+            factorList.push({
+                label: 'NWS Warning',
+                color: '#ff1744'
+            });
+        } else if (hasWatch) {
+            score += 2;
+
+            factorList.push({
+                label: 'NWS Watch',
+                color: '#ff9100'
+            });
+        }
 
         // 4. Wind
-        if (liveWindSpd > 40) { score += 2; factorList.push({ label: `Wind ${liveWindSpd}mph`, color: '#ff9100' }); }
-        else if (liveWindSpd > 25) { score += 1; factorList.push({ label: `Wind ${liveWindSpd}mph`, color: '#ffeb3b' }); }
+        if (liveWindSpd > 50) {
+            score += 2;
+
+            factorList.push({
+                label: `Wind ${liveWindSpd}mph`,
+                color: '#ff9100'
+            });
+        } else if (liveWindSpd > 35) {
+            score += 1;
+
+            factorList.push({
+                label: `Wind ${liveWindSpd}mph`,
+                color: '#ffeb3b'
+            });
+        }
 
         // 5. Pressure trend
         const presEl = document.getElementById('presVal');
-        if (presEl && presEl.innerHTML.includes('↘️')) { score += 1; factorList.push({ label: 'Falling pressure', color: '#ffeb3b' }); }
+
+        if (presEl && presEl.innerHTML.includes('↘️')) {
+            score += 1;
+
+            factorList.push({
+                label: 'Falling pressure',
+                color: '#ffeb3b'
+            });
+        }
 
         // Determine tier
         let tier, tierClass, emoji, descText;
-        if (score >= 12) {
-            tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life'; emoji = '🟣';
-            descText = 'Extreme weather emergency. Life-threatening hazards are present. Follow all official guidance immediately.';
-        } else if (score >= 8) {
-            tier = 'DANGEROUS'; tierClass = 'threat-tier-danger'; emoji = '🔴';
-            descText = 'Dangerous conditions exist. Active storm warnings or significant storm proximity. Take protective action.';
+
+        if (score >= 14) {
+            tier = 'LIFE THREATENING';
+            tierClass = 'threat-tier-life';
+            emoji = '🟣';
+
+            descText = 'A significant weather emergency is ongoing nearby. Immediate protective action may be required.';
+        } else if (score >= 9) {
+            tier = 'DANGEROUS';
+            tierClass = 'threat-tier-danger';
+            emoji = '🔴';
+
+            descText = 'Hazardous weather conditions are active nearby. Remain alert and be prepared to take action.';
         } else if (score >= 5) {
-            tier = 'ACTIVE WEATHER'; tierClass = 'threat-tier-active'; emoji = '🟠';
-            descText = 'Elevated weather activity. Storms are nearby or conditions are marginal. Stay weather-aware.';
+            tier = 'ACTIVE WEATHER';
+            tierClass = 'threat-tier-active';
+            emoji = '🟠';
+
+            descText = 'Unsettled or stormy weather is affecting the area. Monitor conditions for possible changes.';
         } else if (score >= 2) {
-            tier = 'ELEVATED'; tierClass = 'threat-tier-elev'; emoji = '🟡';
-            descText = 'Slightly elevated risk today. No immediate threat, but monitor conditions.';
+            tier = 'ELEVATED';
+            tierClass = 'threat-tier-elev';
+            emoji = '🟡';
+
+            descText = 'Some weather concerns are present today, but no immediate hazards are indicated.';
         } else {
-            tier = 'LOW'; tierClass = 'threat-tier-low'; emoji = '🟢';
-            descText = 'No significant hazards at this time. Conditions appear favorable.';
+            tier = 'LOW';
+            tierClass = 'threat-tier-low';
+            emoji = '🟢';
+
+            descText = 'Weather conditions are currently calm with no significant hazards detected.';
         }
 
         // Update DOM
         box.className = `toolkit-box threat-box ${tierClass}`;
+
         badge.textContent = `${emoji} ${tier}`;
+
         desc.textContent = descText;
-        factors.innerHTML = factorList.map(f => `<span style="background:${f.color}22; color:${f.color}; border:1px solid ${f.color}44; padding:3px 8px; border-radius:6px; font-size:0.7em; font-weight:bold;">${f.label}</span>`).join('');
-        if (updated) updated.textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+
+        factors.innerHTML = factorList.map(f => `
+            <span style="
+                background:${f.color}22;
+                color:${f.color};
+                border:1px solid ${f.color}44;
+                padding:3px 8px;
+                border-radius:6px;
+                font-size:0.7em;
+                font-weight:bold;
+            ">
+                ${f.label}
+            </span>
+        `).join('');
+
+        if (updated) {
+            updated.textContent = new Date().toLocaleTimeString([], {
+                hour:'2-digit',
+                minute:'2-digit'
+            });
+        }
     }
 
     // =============================================
