@@ -1236,9 +1236,42 @@
                 })
                 : '';
 
-            const desc = alert.description
-                ? alert.description.slice(0, 140) +
-                  (alert.description.length > 140 ? '...' : '')
+            let desc = alert.description || "";
+
+            if (window.alertTranslationCache[desc]) {
+
+                desc = window.alertTranslationCache[desc];
+
+            } else if (desc) {
+
+                try {
+
+                    const tr = await fetch(
+                        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(desc)}&langpair=auto|en`
+                    );
+
+                    const td = await tr.json();
+
+                    console.log("Description translation response:", td);
+
+                    if (
+                        td.responseStatus === 200 &&
+                        td.responseData?.translatedText &&
+                        td.responseData.translatedText !== desc
+                    ) {
+                        window.alertTranslationCache[desc] = td.responseData.translatedText;
+                        desc = td.responseData.translatedText;
+                    }
+
+                } catch (e) {
+                    console.error("Description translation failed:", e);
+                }
+
+            }
+
+            desc = desc
+                ? desc.slice(0, 140) +
+                  (desc.length > 140 ? '...' : '')
                 : '';
 
             stack.innerHTML += `
