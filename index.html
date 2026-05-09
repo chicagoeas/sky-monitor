@@ -371,7 +371,6 @@
                     
                     <div style="display: flex; flex-direction: column; gap: 4px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px;">
                         <div style="font-size: 0.75em; color: #aaa;">EST. ARRIVAL: <span id="storm-toa" style="color: var(--primary); font-weight: bold;">N/A</span></div>
-                        <div style="font-size: 0.75em; color: #aaa;">EST. LIGHTNING: <span id="lightning-count" style="color: var(--warning); font-weight: bold;">0</span> <span style="opacity:0.5;">strikes/15m</span></div>
                     </div>
                 </div>
             </div>
@@ -379,6 +378,25 @@
             <div style="font-size: 0.55em; color: #555; margin-top: 15px; line-height: 1.2; font-style: italic; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px; text-align: center;">
                 Note: Storm data provided by PirateWeather API; do not use in place of actual radar.
             </div>
+        </div>
+
+        <div class="toolkit-box" id="lightning-panel" style="margin-bottom:20px;">
+            <div class="toolkit-header">
+                <span>⚡ LIVE LIGHTNING TRACKER <span id="bz-status" style="font-size:0.75em;font-weight:normal;color:#555;">Connecting...</span></span>
+                <span id="bz-updated" style="font-size:0.68em;font-weight:normal;color:#444;font-family:monospace;"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:110px 1fr;gap:16px;align-items:center;">
+                <canvas id="bz-canvas" width="110" height="110" style="border-radius:50%;display:block;flex-shrink:0;"></canvas>
+                <div>
+                    <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:8px;">
+                        <span id="bz-count" style="font-size:2.8em;font-weight:900;color:var(--warning);line-height:1;">0</span>
+                        <span style="font-size:0.72em;opacity:0.5;line-height:1.3;">strikes / 15 min<br>within 50 mi</span>
+                    </div>
+                    <div style="font-size:0.82em;color:#aaa;margin-bottom:5px;">Closest: <span id="bz-closest"><span style="color:#444;">None within 50 mi</span></span></div>
+                    <div style="font-size:0.75em;color:#777;" id="bz-trend">→ Clear</div>
+                </div>
+            </div>
+            <div style="font-size:0.52em;color:#333;margin-top:10px;border-top:1px solid rgba(255,255,255,0.05);padding-top:7px;text-align:center;">Live data: Blitzortung.org open lightning network · 50-mile radius · 15-min window</div>
         </div>
 
         <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:20px; background: #000; margin-bottom:20px;"></iframe>
@@ -939,6 +957,7 @@
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
         if(tabId === 'specs') drawOrbit();
+        if(tabId === 'severe' && !lightningWS) connectBlitzortung();
     }
 
     function saveLoc() { 
@@ -1779,8 +1798,6 @@
             const dirVal = document.getElementById('storm-dir-val');
             const distVal = document.getElementById('storm-dist-val');
             const toaVal = document.getElementById('storm-toa');
-            const lightningVal = document.getElementById('lightning-count');
-
             if (currentDist !== undefined && currentDist !== null && currentDist <= 50) {
                 const cardinal = currentBearing !== undefined && currentBearing !== null
                     ? getBearingLabel(currentBearing) : "";
@@ -1798,13 +1815,10 @@
                     const arrivalTime = new Date();
                     arrivalTime.setMinutes(arrivalTime.getMinutes() + minutesAway);
                     toaVal.innerText = arrivalTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    lightningVal.innerText = currentDist < 5 ? "OVERHEAD" : `~${minutesAway} min`;
                 } else if (stormTrend === "moving away") {
                     toaVal.innerText = "MOVING AWAY";
-                    lightningVal.innerText = currentDist < 10 ? "NEARBY" : "Distant";
                 } else {
                     toaVal.innerText = "N/A";
-                    lightningVal.innerText = currentDist < 10 ? "NEARBY" : "N/A";
                 }
             } else {
                 statusTag.innerText = "CLEAR SCAN";
@@ -1812,11 +1826,6 @@
                 dirVal.innerText = "NO CELLS DETECTED";
                 distVal.innerText = "--";
                 toaVal.innerText = "N/A";
-                lightningVal.innerText = "0";
-            }
-            // Lightning count is proximity-estimated; reset to 0 if no nearby storm
-            if (!(currentDist !== undefined && currentDist !== null && currentDist <= 50)) {
-                document.getElementById('lightning-count').innerText = "0";
             }
             // Update radar blip position
             updateRadarUI(currentDist, currentBearing);
@@ -2094,11 +2103,11 @@
         // Condition Mapping mapped to real API metrics
         if (text.includes('snow') || text.includes('flurries') || text.includes('winter')) {
             type = 'snow';
-            count = Math.max(50, Math.min(600, livePrecipInt * 2000));
+            count = Math.max(25, Math.min(300, livePrecipInt * 1000));
         } else if (text.includes('rain') || text.includes('drizzle') || text.includes('storm')) {
             type = 'rain';
-            count = Math.max(50, Math.min(1000, livePrecipInt * 1500)); 
-            speedMult = 1 + (livePrecipInt * 5); 
+            count = Math.max(25, Math.min(500, livePrecipInt * 750));
+            speedMult = 1 + (livePrecipInt * 2.5);
         } else if (text.includes('fog') || text.includes('mist') || text.includes('haze')) {
             type = 'fog';
             count = 40;
@@ -2116,8 +2125,8 @@
             particles.push({
                 x: Math.random() * canvas.width,
                 y: Math.random() * canvas.height,
-                len: type === 'fog' ? Math.random() * 80 + 40 : (type === 'rain' ? (Math.random() * 20 + 10) * speedMult : Math.random() * 4 + 2),
-                vel: type === 'fog' ? Math.random() * 0.5 + 0.1 : (type === 'rain' ? (Math.random() * 10 + 5) * speedMult : Math.random() * 1 + 0.5),
+                len: type === 'fog' ? Math.random() * 80 + 40 : (type === 'rain' ? (Math.random() * 11 + 6) * speedMult : Math.random() * 4 + 2),
+                vel: type === 'fog' ? Math.random() * 0.5 + 0.1 : (type === 'rain' ? (Math.random() * 5 + 3) * speedMult : Math.random() * 1 + 0.5),
                 drift: type === 'fog' ? Math.random() * 0.5 - 0.25 : windDriftBase + (Math.random() * 1 - 0.5)
             });
         }
@@ -2579,6 +2588,162 @@
             <div style="font-size:0.6em;opacity:0.4;text-align:center;margin-top:10px;">Powered by PirateWeather</div>
         `;
     }
+
+    // =============================================
+    // LIVE LIGHTNING TRACKER — Blitzortung WebSocket
+    // =============================================
+    let lightningWS = null;
+    let lightningBuffer = [];
+    const LIGHTNING_WINDOW_MS = 15 * 60 * 1000;
+    const LIGHTNING_RADIUS_MI = 50;
+
+    function haversineMi(la1, lo1, la2, lo2) {
+        const R = 3958.8, r = Math.PI / 180;
+        const dLa = (la2 - la1) * r, dLo = (lo2 - lo1) * r;
+        const a = Math.sin(dLa/2)**2 + Math.cos(la1*r)*Math.cos(la2*r)*Math.sin(dLo/2)**2;
+        return R * 2 * Math.asin(Math.sqrt(a));
+    }
+
+    function strikeBearing(la1, lo1, la2, lo2) {
+        const r = Math.PI / 180;
+        const dLo = (lo2 - lo1) * r;
+        const y = Math.sin(dLo) * Math.cos(la2 * r);
+        const x = Math.cos(la1*r)*Math.sin(la2*r) - Math.sin(la1*r)*Math.cos(la2*r)*Math.cos(dLo);
+        return (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
+    }
+
+    function connectBlitzortung() {
+        const statusEl = document.getElementById('bz-status');
+        const servers = ['ws1','ws2','ws3','ws4','ws5','ws6','ws7','ws8'];
+        const srv = servers[Math.floor(Math.random() * servers.length)];
+        try {
+            lightningWS = new WebSocket(`wss://${srv}.blitzortung.org/`);
+        } catch(e) {
+            if (statusEl) { statusEl.textContent = '○ Unavailable'; statusEl.style.color = '#555'; }
+            return;
+        }
+        lightningWS.onopen = () => {
+            if (statusEl) { statusEl.textContent = '● LIVE'; statusEl.style.color = 'var(--success)'; }
+            try { lightningWS.send(JSON.stringify({"subscribe": true})); } catch(e) {}
+        };
+        lightningWS.onmessage = (e) => {
+            try {
+                const d = JSON.parse(e.data);
+                const sLat = d.lat ?? d.lal;
+                const sLon = d.lon;
+                if (sLat == null || sLon == null) return;
+                const uLat = parseFloat(lat), uLon = parseFloat(lon);
+                const dist = haversineMi(uLat, uLon, sLat, sLon);
+                const now = Date.now();
+                lightningBuffer.push({ lat: sLat, lon: sLon, time: now, dist });
+                lightningBuffer = lightningBuffer.filter(s => s.time > now - LIGHTNING_WINDOW_MS);
+                updateLightningUI();
+            } catch(e) {}
+        };
+        lightningWS.onerror = () => {
+            if (statusEl) { statusEl.textContent = '○ Error'; statusEl.style.color = '#ff5252'; }
+        };
+        lightningWS.onclose = () => {
+            if (statusEl) { statusEl.textContent = '↻ Reconnecting...'; statusEl.style.color = '#888'; }
+            lightningWS = null;
+            setTimeout(() => { if (document.getElementById('lightning-panel')) connectBlitzortung(); }, 7000);
+        };
+    }
+
+    function updateLightningUI() {
+        const now = Date.now();
+        lightningBuffer = lightningBuffer.filter(s => s.time > now - LIGHTNING_WINDOW_MS);
+        const nearby = lightningBuffer.filter(s => s.dist <= LIGHTNING_RADIUS_MI);
+
+        const countEl = document.getElementById('bz-count');
+        const closestEl = document.getElementById('bz-closest');
+        const trendEl = document.getElementById('bz-trend');
+        const updEl = document.getElementById('bz-updated');
+
+        if (countEl) {
+            countEl.textContent = nearby.length;
+            countEl.style.color = nearby.length > 20 ? '#ff1744' : nearby.length > 5 ? '#ff9100' : 'var(--warning)';
+        }
+        if (updEl) updEl.textContent = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+
+        if (nearby.length > 0) {
+            const closest = nearby.reduce((a, b) => a.dist < b.dist ? a : b);
+            const dir = getBearingLabel(strikeBearing(parseFloat(lat), parseFloat(lon), closest.lat, closest.lon));
+            if (closestEl) closestEl.innerHTML = `<span style="color:var(--warning);font-weight:bold;">${closest.dist.toFixed(1)} mi ${dir}</span>`;
+            const fiveMinsAgo = now - 5*60*1000;
+            const recentCount = nearby.filter(s => s.time > fiveMinsAgo).length;
+            const prevCount = nearby.filter(s => s.time <= fiveMinsAgo).length;
+            let trend = '→ Steady';
+            if (recentCount > prevCount + 2) trend = '↑ Increasing';
+            else if (prevCount > recentCount + 2) trend = '↓ Decreasing';
+            if (trendEl) { trendEl.textContent = trend; trendEl.style.color = recentCount > prevCount + 2 ? 'var(--warning)' : '#777'; }
+        } else {
+            if (closestEl) closestEl.innerHTML = '<span style="color:#444;">None within 50 mi</span>';
+            if (trendEl) { trendEl.textContent = '→ Clear'; trendEl.style.color = '#777'; }
+        }
+        drawLightningCanvas(nearby);
+    }
+
+    function drawLightningCanvas(nearby) {
+        const canvas = document.getElementById('bz-canvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width, H = canvas.height;
+        const cx = W/2, cy = H/2, R = cx - 3;
+        const uLat = parseFloat(lat), uLon = parseFloat(lon);
+        const now = Date.now();
+
+        ctx.clearRect(0, 0, W, H);
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.clip();
+
+        ctx.fillStyle = '#040d14';
+        ctx.fillRect(0, 0, W, H);
+
+        // Range rings (50mi, 25mi, 10mi)
+        [1, 0.5, 0.2].forEach((r, i) => {
+            ctx.strokeStyle = `rgba(255,235,59,${i === 0 ? 0.2 : 0.08})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.arc(cx, cy, R * r, 0, Math.PI*2); ctx.stroke();
+        });
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cx, 3); ctx.lineTo(cx, H-3); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(3, cy); ctx.lineTo(W-3, cy); ctx.stroke();
+
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.font = '7px monospace'; ctx.textAlign = 'center';
+        ctx.fillText('N', cx, 11);
+
+        nearby.forEach(s => {
+            const dLatMi = (s.lat - uLat) * 68.71;
+            const dLonMi = (s.lon - uLon) * Math.cos(uLat * Math.PI/180) * 69.11;
+            const px = cx + (dLonMi / LIGHTNING_RADIUS_MI) * R;
+            const py = cy - (dLatMi / LIGHTNING_RADIUS_MI) * R;
+            if (px < 0 || px > W || py < 0 || py > H) return;
+            const age = (now - s.time) / LIGHTNING_WINDOW_MS;
+            const alpha = Math.max(0.1, 1 - age * 0.85);
+            const grd = ctx.createRadialGradient(px, py, 0, px, py, 8);
+            grd.addColorStop(0, `rgba(255,235,59,${alpha * 0.55})`);
+            grd.addColorStop(1, 'rgba(255,235,59,0)');
+            ctx.fillStyle = grd;
+            ctx.beginPath(); ctx.arc(px, py, 8, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = `rgba(255,245,100,${alpha})`;
+            ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI*2); ctx.fill();
+        });
+
+        ctx.fillStyle = '#4fc3f7';
+        ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.restore();
+
+        ctx.strokeStyle = '#152535'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.stroke();
+    }
+
+    // Redraw canvas periodically so old strikes fade even without new data
+    setInterval(() => { if (document.getElementById('bz-canvas')) updateLightningUI(); }, 30000);
 
     window.addEventListener('DOMContentLoaded', () => {
         const savedMode = localStorage.getItem('input_mode') || 'city';
