@@ -711,7 +711,7 @@
         container.innerHTML = "";
         let hasRisk = false;
 
-    async function checkArcGIS(url) {
+        async function checkArcGIS(url) {
             try {
                 const res = await fetch(url);
                 if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
@@ -726,24 +726,28 @@
         }
 
         // --- SPC CONVECTIVE OUTLOOK ---
-        const spcUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/1/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&outFields=LABEL&returnGeometry=false&f=json`;
+        // FIX: Added &inSR=4326 to ensure Lat/Lon coordinates are read correctly by NOAA
+        const spcUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/1/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
         const spcData = await checkArcGIS(spcUrl);
+        
         let r = null;
+        // FIX: Safely check for both uppercase and lowercase attribute names
+        const spcLabelRaw = spcData ? (spcData.LABEL || spcData.label || spcData.dn) : null;
 
-        if (spcData && spcData.LABEL && spcData.LABEL !== "TSTM" && spcData.LABEL !== "General Thunderstorms") {
+        if (spcLabelRaw && spcLabelRaw !== "TSTM" && spcLabelRaw !== "General Thunderstorms") {
             hasRisk = true;
-            r = spcData.LABEL;
+            r = spcLabelRaw;
             window.spcRisk = r;
 
             const full = SPC_LABELS[r] || r;
             let bg = "#7BB07B";
             if (r === "MRGL") bg = "#45f925";
-            if (r === "SLGT") bg = "#F6F67B";
+            else if (r === "SLGT") bg = "#F6F67B";
             else if (r === "ENH") bg = "#E6B87B";
             else if (r === "MDT") bg = "#E67B7B";
             else if (r === "HIGH") bg = "#FF7BFF";
 
-            const textColor = (bg === "#F6F67B") ? "#000" : "#fff";
+            const textColor = (bg === "#F6F67B" || bg === "#45f925") ? "#000" : "#fff";
 
             container.innerHTML += `
                 <div style="background:${bg}; color:${textColor}; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">
@@ -754,13 +758,14 @@
                 renderSPCHomeBanner(r, full);
             }
         } else {
-            window.spcRisk = spcData ? (spcData.LABEL || null) : null;
+            window.spcRisk = spcLabelRaw;
         }
 
         if (typeof renderSPCDetail === "function") renderSPCDetail(r);
 
         // --- SPC MESOSCALE DISCUSSION (MD) ---
-        const mdUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/spc_mesoscale_discussion/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
+        // FIX: Added &inSR=4326 here as well
+        const mdUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/spc_mesoscale_discussion/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
         const mdData = await checkArcGIS(mdUrl);
         const mdName = mdData ? (mdData.Name || mdData.name || mdData.MD_NUM) : null;
 
@@ -792,15 +797,22 @@
             const eroLabel = eroData.outlook || eroData.label || eroData.LABEL || eroData.risk || eroData.RISK || null;
             if (eroLabel && eroLabel !== "0") {
                 hasRisk = true;
+                
+                // FIX: Shrink the WPC String to standard abbreviations
+                let shortLabel = eroLabel;
                 let eroBg = "#1565c0";
-                if (eroLabel.toUpperCase().includes("MARGINAL")) eroBg = "#45f925";
-                if (eroLabel.toUpperCase().includes("SLIGHT")) eroBg = "#f9a825";
-                else if (eroLabel.toUpperCase().includes("MODERATE")) eroBg = "#8e24aa";
-                else if (eroLabel.toUpperCase().includes("HIGH")) eroBg = "#c62828";
+                const upperLabel = eroLabel.toUpperCase();
+                
+                if (upperLabel.includes("MARGINAL")) { shortLabel = "MRGL"; eroBg = "#45f925"; }
+                else if (upperLabel.includes("SLIGHT")) { shortLabel = "SLGT"; eroBg = "#f9a825"; }
+                else if (upperLabel.includes("MODERATE")) { shortLabel = "MDT"; eroBg = "#8e24aa"; }
+                else if (upperLabel.includes("HIGH")) { shortLabel = "HIGH"; eroBg = "#c62828"; }
+
+                const eroTextColor = (eroBg === "#45f925") ? "#000" : "#fff";
 
                 container.innerHTML += `
-                    <div style="background:${eroBg}; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">
-                        💧 WPC ERO: ${eroLabel}
+                    <div style="background:${eroBg}; color:${eroTextColor}; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">
+                        💧 WPC ERO: ${shortLabel}
                     </div>`;
             }
         }
