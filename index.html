@@ -253,6 +253,19 @@
             font-size: 0.7em; font-weight: bold; color: var(--primary);
             text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;
         }
+        .alert-expand-btn {
+            background: none; border: none; color: rgba(255,255,255,0.65);
+            font-size: 0.75em; cursor: pointer; padding: 5px 0 2px 0;
+            display: inline-flex; align-items: center; gap: 4px;
+            transition: color 0.2s;
+        }
+        .alert-expand-btn:hover { color: white; }
+        .alert-full-text {
+            display: none; margin-top: 8px; font-size: 0.82em; line-height: 1.6;
+            white-space: pre-wrap; border-top: 1px solid rgba(255,255,255,0.15);
+            padding-top: 8px; max-height: 320px; overflow-y: auto;
+            color: rgba(255,255,255,0.9);
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
@@ -962,11 +975,33 @@
         else body.style.background = "linear-gradient(180deg, #07131d 0%, #000000 100%)";
     }
     
+    function toggleAlertText(id) {
+        const el = document.getElementById('full-' + id);
+        const btn = document.getElementById('btn-' + id);
+        if (!el || !btn) return;
+        const expanded = el.style.display === 'block';
+        el.style.display = expanded ? 'none' : 'block';
+        btn.textContent = expanded ? '▼ Show more' : '▲ Show less';
+    }
+
+    function formatNWSText(raw) {
+        if (!raw) return '';
+        return raw
+            .replace(/\.\.\.\n?/g, '\n\n')
+            .replace(/^\* /gm, '• ')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
     function switchTab(tabId, element) {
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
+        if (tabId !== 'severe') {
+            document.querySelectorAll('.alert-full-text').forEach(el => { el.style.display = 'none'; });
+            document.querySelectorAll('.alert-expand-btn').forEach(btn => { btn.textContent = '▼ Show more'; });
+        }
         if (tabId === 'specs') {
             drawOrbit();
             renderAnalytics();
@@ -1270,20 +1305,21 @@
 
             }
 
-            desc = desc
-                ? desc.slice(0, 140) +
-                  (desc.length > 140 ? '...' : '')
-                : '';
+            const fullDesc = desc;
+            const isTruncated = desc.length > 140;
+            const shortDesc = isTruncated ? desc.slice(0, 140) + '...' : desc;
+            const pwId = 'pw-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
 
             stack.innerHTML += `
-                <div class="alert-card" style="background:#e65100;">
-                    <div style="font-size:1.8em;">⚠️</div>
-                    <div>
+                <div class="alert-card" style="background:#e65100; align-items:flex-start;">
+                    <div style="font-size:1.8em; padding-top:2px;">⚠️</div>
+                    <div style="flex:1; min-width:0;">
                         <b>${title}</b><br>
                         <small>
-                            ${desc}
+                            ${shortDesc}
                             ${expires ? `<br>Expires: ${expires}` : ''}
                         </small>
+                        ${isTruncated ? `<div id="full-${pwId}" class="alert-full-text">${fullDesc}</div><button class="alert-expand-btn" id="btn-${pwId}" onclick="toggleAlertText('${pwId}')">▼ Show more</button>` : ''}
                     </div>
                 </div>
             `;
@@ -1506,9 +1542,11 @@
                     else if (evt.includes("watch")) bgColor = '#ffb300';
                     else if (evt.includes("advisory")) bgColor = '#29b6f6';
 
-                    stack.innerHTML += `<a href="https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}" target="_blank" class="alert-card" style="background:${bgColor}">
-                        <img src="${icon}" style="width:55px; border-radius:5px;">
-                        <div><b>${displayName}</b><br><small>${p.headline || ''}</small>${extraDetails ? `<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">${extraDetails}</div>` : ""}</div>
+                    const nwsFullDesc = formatNWSText(p.description || '');
+                    const nwsId = 'nws-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
+                    stack.innerHTML += `<a href="https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}" target="_blank" class="alert-card" style="background:${bgColor}; align-items:flex-start;">
+                        <img src="${icon}" style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;">
+                        <div style="flex:1; min-width:0;"><b>${displayName}</b><br><small>${p.headline || ''}</small>${extraDetails ? `<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">${extraDetails}</div>` : ""}${nwsFullDesc ? `<div id="full-${nwsId}" class="alert-full-text">${nwsFullDesc}</div><button class="alert-expand-btn" id="btn-${nwsId}" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText('${nwsId}')">▼ Show more</button>` : ""}</div>
                     </a>`;
                 });
                 
