@@ -1180,25 +1180,77 @@
 
     async function renderPirateAlerts(stack, banner) {
         const alerts = window.pirateAlerts || [];
+
         if (!alerts.length) {
             stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             return;
         }
+
+        window.alertTranslationCache = window.alertTranslationCache || {};
+
         banner.style.display = "block";
         banner.style.background = "#e65100";
         banner.innerText = `⚠️ ${alerts.length} ACTIVE ALERT${alerts.length > 1 ? 'S' : ''} (PirateWeather)`;
+
+        stack.innerHTML = "";
+
         for (const alert of alerts) {
             let title = alert.title || "Weather Alert";
-            if (/[àâäéèêëîïôùûüçñöü]/i.test(title) || /avertissement|aviso|warnung|alerte|vigilance/i.test(title)) {
+
+            if (window.alertTranslationCache[title]) {
+
+                title = window.alertTranslationCache[title];
+
+            } else {
+
                 try {
-                    const tr = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(title)}&langpair=auto|en`);
+                    title = decodeURIComponent(escape(title));
+
+                    const tr = await fetch(
+                        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(title)}&langpair=auto|en`
+                    );
+
                     const td = await tr.json();
-                    if (td.responseStatus === 200 && td.responseData?.translatedText) title = td.responseData.translatedText;
-                } catch(e) {}
+
+                    console.log("Translation response:", td);
+
+                    if (
+                        td.responseStatus === 200 &&
+                        td.responseData?.translatedText
+                    ) {
+                        window.alertTranslationCache[alert.title] = td.responseData.translatedText;
+                        title = td.responseData.translatedText;
+                    }
+
+                } catch (e) {
+                    console.error("Translation failed:", e);
+                }
             }
-            const expires = alert.expires ? new Date(alert.expires * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
-            const desc = alert.description ? alert.description.slice(0, 140) + (alert.description.length > 140 ? '...' : '') : '';
-            stack.innerHTML += `<div class="alert-card" style="background:#e65100;"><div style="font-size:1.8em;">⚠️</div><div><b>${title}</b><br><small>${desc}${expires ? `<br>Expires: ${expires}` : ''}</small></div></div>`;
+
+            const expires = alert.expires
+                ? new Date(alert.expires * 1000).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                })
+                : '';
+
+            const desc = alert.description
+                ? alert.description.slice(0, 140) +
+                  (alert.description.length > 140 ? '...' : '')
+                : '';
+
+            stack.innerHTML += `
+                <div class="alert-card" style="background:#e65100;">
+                    <div style="font-size:1.8em;">⚠️</div>
+                    <div>
+                        <b>${title}</b><br>
+                        <small>
+                            ${desc}
+                            ${expires ? `<br>Expires: ${expires}` : ''}
+                        </small>
+                    </div>
+                </div>
+            `;
         }
     }
 
