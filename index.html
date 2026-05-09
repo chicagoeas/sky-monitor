@@ -749,42 +749,73 @@
         // -------------------------
         // WPC ERO (UNCHANGED)
         // -------------------------
-        const eroUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&outFields=*&f=json`;
+        const eroUrl = `https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
         const eroData = await checkArcGIS(eroUrl);
 
         if (eroData) {
-            const eroLabel = eroData.label || eroData.risk_label || eroData.LABEL || eroData.RISK || "RISK";
 
-            if (eroLabel && eroLabel !== "0") {
+            const attrs = eroData?.features?.[0]?.attributes;
+
+            const rawOutlook =
+                attrs?.outlook ||
+                attrs?.OUTLOOK ||
+                attrs?.LABEL ||
+                attrs?.label ||
+                attrs?.RISK;
+
+            let eroLabel = "NONE";
+
+            if (rawOutlook) {
+                const o = rawOutlook.toLowerCase();
+
+                if (o.includes("marginal")) eroLabel = "MRGL";
+                else if (o.includes("slight")) eroLabel = "SLGT";
+                else if (o.includes("moderate")) eroLabel = "MDT";
+                else if (o.includes("high")) eroLabel = "HIGH";
+                else eroLabel = rawOutlook;
+            }
+
+            if (eroLabel && eroLabel !== "0" && eroLabel !== "NONE") {
                 hasRisk = true;
 
                 let eroBg = "#1565c0";
                 if (eroLabel.toUpperCase().includes("MOD")) eroBg = "#6a1b9a";
                 if (eroLabel.toUpperCase().includes("HIGH")) eroBg = "#b71c1c";
-                if (eroLabel.toUpperCase().includes("EXTREME") || eroLabel.toUpperCase().includes("NEAR")) eroBg = "#7f0000";
 
-                container.innerHTML += `<div style="background:${eroBg};color:#fff;padding:6px 12px;border-radius:8px;font-weight:900;font-size:0.85em;text-transform:uppercase;letter-spacing:1px;">💧 WPC ERO: ${eroLabel}</div>`;
+                container.innerHTML += `<div style="background:${eroBg};color:#fff;padding:6px 12px;border-radius:8px;font-weight:900;font-size:0.85em;text-transform:uppercase;letter-spacing:1px;">💧 WPC: ${eroLabel}</div>`;
             }
         }
 
         // -------------------------
-        // WPC METWATCH / MPD (NEW)
+        // WPC METWATCH / MPD (FIXED)
         // -------------------------
         try {
             const mpdRes = await fetch(`https://wpcmetwatch.skymonitor-account.workers.dev/?lat=${lat}&lon=${lon}`);
+
+            if (!mpdRes.ok) {
+                console.warn("METWATCH fetch failed:", mpdRes.status);
+                throw new Error("MPD fetch failed");
+            }
+
             const mpdData = await mpdRes.json();
 
-            if (mpdData && mpdData.mpds && mpdData.mpds.length > 0) {
+            const mpds = mpdData?.mpds || mpdData?.features || mpdData?.data || [];
+
+            if (Array.isArray(mpds) && mpds.length > 0) {
                 hasRisk = true;
 
-                mpdData.mpds.forEach(mpd => {
-                    container.innerHTML += `<div style="background:#7c3aed;color:#fff;padding:6px 12px;border-radius:8px;font-weight:900;font-size:0.85em;text-transform:uppercase;letter-spacing:1px;">🌧️ WPC MPD #${mpd.id}</div>`;
+                mpds.forEach(mpd => {
+                    const id = mpd.id || mpd.MPD || mpd.properties?.id || "UNKNOWN";
+
+                    container.innerHTML += `
+                        <div style="background:#7c3aed;color:#fff;padding:6px 12px;border-radius:8px;font-weight:900;font-size:0.85em;text-transform:uppercase;letter-spacing:1px;">
+                            🌧️ WPC MPD #${id}
+                        </div>`;
                 });
             }
-        } catch(e) {}
-
-        box.style.display = hasRisk ? "block" : "none";
-    }
+        } catch (e) {
+            console.warn("METWATCH error:", e);
+        }
         
     function renderSPCHomeBanner(raw, full) {
         const banner = document.getElementById('spc-banner');
