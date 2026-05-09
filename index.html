@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SkyMonitor</title>
     <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/1779/1779927.png">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         :root { --primary: #4fc3f7; --accent: #ffd54f; --danger: #ff1744; --warning: #ffeb3b; --success: #00e676; --bg: #07131d; }
         
@@ -383,32 +381,7 @@
             </div>
         </div>
 
-        <div class="toolkit-box" style="padding:0; overflow:hidden; margin-bottom:20px;">
-            <div style="padding:12px 16px 10px; background:rgba(0,0,0,0.3);">
-                <div class="toolkit-header" style="margin-bottom:8px;"><span>🌀 LIVE DOPPLER RADAR</span></div>
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <button id="svr-play-btn" onclick="svrRadar.togglePlay()" style="background:var(--primary);color:#000;border:none;border-radius:8px;padding:5px 14px;font-weight:900;font-size:0.8em;cursor:pointer;letter-spacing:1px;">▶ PLAY</button>
-                    <button onclick="svrRadar.jumpLatest()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:8px;padding:5px 10px;font-size:0.75em;cursor:pointer;">LATEST</button>
-                    <span id="svr-radar-ts" style="font-size:0.72em;color:#aaa;flex:1;text-align:right;">Tap Severe tab to load radar</span>
-                </div>
-                <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:0.7em;opacity:0.5;">OPACITY</span>
-                    <input type="range" min="30" max="100" value="80" step="5" id="svr-opacity-slider" oninput="svrRadar.setOpacity(this.value)" style="flex:1;accent-color:var(--primary);">
-                    <span id="svr-opacity-label" style="font-size:0.7em;opacity:0.5;min-width:30px;">80%</span>
-                </div>
-                <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-                    <button onclick="svrRadar.getMap()&&svrRadar.getMap().setView([parseFloat(lat),parseFloat(lon)],8)" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:6px;padding:3px 10px;font-size:0.75em;cursor:pointer;">📍 My Location</button>
-                    <span id="svr-frame-counter" style="font-size:0.7em;opacity:0.45;margin-left:auto;"></span>
-                </div>
-            </div>
-            <div id="svr-radar-map" style="width:100%;height:380px;background:#07131d;"></div>
-            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:8px 12px;">
-                <div style="background:#1a2a3a;border-radius:6px;padding:5px;text-align:center;font-size:0.6em;"><div style="width:14px;height:5px;background:#00e5ff;border-radius:2px;margin:0 auto 3px;"></div>Light</div>
-                <div style="background:#1a2a3a;border-radius:6px;padding:5px;text-align:center;font-size:0.6em;"><div style="width:14px;height:5px;background:#00e676;border-radius:2px;margin:0 auto 3px;"></div>Moderate</div>
-                <div style="background:#1a2a3a;border-radius:6px;padding:5px;text-align:center;font-size:0.6em;"><div style="width:14px;height:5px;background:#ffeb3b;border-radius:2px;margin:0 auto 3px;"></div>Heavy</div>
-                <div style="background:#1a2a3a;border-radius:6px;padding:5px;text-align:center;font-size:0.6em;"><div style="width:14px;height:5px;background:#ff1744;border-radius:2px;margin:0 auto 3px;"></div>Extreme</div>
-            </div>
-        </div>
+        <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:20px; background: #000; margin-bottom:20px;"></iframe>
 
         <div id="active-risks-box" class="toolkit-box" style="display: none; padding: 15px; margin-bottom: 20px; border-color: var(--warning);">
             <div class="toolkit-header" style="color: var(--warning);"><span>⚠️ ACTIVE LOCAL RISKS ⚠️</span></div>
@@ -502,118 +475,12 @@
         </div>
     </div>
 
-    <div id="ctrl-tab" class="tab-content">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
-            <div style="flex:1;">
-                <div style="font-weight:900; font-size:1.1em; color:var(--primary); letter-spacing:1px;">🌐 US CONTROL CENTER</div>
-                <div style="font-size:0.7em; color:#666; margin-top:3px;">Last sync: <span id="ctrl-last-updated" style="color:#aaa;">--</span> &nbsp;·&nbsp; <span id="ctrl-total-alerts" style="color:var(--warning); font-weight:bold;">0</span> active severe/extreme alerts nationwide</div>
-            </div>
-            <button onclick="refreshCtrl()" style="background:var(--primary);color:#000;border:none;border-radius:8px;padding:7px 14px;font-weight:900;font-size:0.78em;cursor:pointer;letter-spacing:1px;">↻ REFRESH</button>
-        </div>
-
-        <div class="toolkit-box" style="padding:0;overflow:hidden;margin-bottom:15px;">
-            <div style="padding:12px 16px 10px; background:rgba(0,0,0,0.3);">
-                <div class="toolkit-header" style="margin-bottom:8px;"><span>🌀 NATIONAL RADAR (CONUS)</span></div>
-                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <button id="ctrl-play-btn" onclick="ctrlRadar.togglePlay()" style="background:var(--primary);color:#000;border:none;border-radius:8px;padding:5px 14px;font-weight:900;font-size:0.8em;cursor:pointer;letter-spacing:1px;">▶ PLAY</button>
-                    <button onclick="ctrlRadar.jumpLatest()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:8px;padding:5px 10px;font-size:0.75em;cursor:pointer;">LATEST</button>
-                    <span id="ctrl-radar-ts" style="font-size:0.72em;color:#aaa;flex:1;text-align:right;">Loading...</span>
-                </div>
-                <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:0.7em;opacity:0.5;">OPACITY</span>
-                    <input type="range" min="30" max="100" value="80" step="5" id="ctrl-opacity-slider" oninput="ctrlRadar.setOpacity(this.value)" style="flex:1;accent-color:var(--primary);">
-                    <span id="ctrl-opacity-label" style="font-size:0.7em;opacity:0.5;min-width:30px;">80%</span>
-                </div>
-                <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
-                    <button onclick="ctrlRadar.getMap()&&ctrlRadar.getMap().setView([39.5,-98.35],4)" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:6px;padding:3px 10px;font-size:0.75em;cursor:pointer;">🗺 CONUS</button>
-                    <button onclick="ctrlRadar.getMap()&&ctrlRadar.getMap().setView([parseFloat(lat),parseFloat(lon)],7)" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid #333;border-radius:6px;padding:3px 10px;font-size:0.75em;cursor:pointer;">📍 Local</button>
-                    <span id="ctrl-frame-counter" style="font-size:0.7em;opacity:0.45;margin-left:auto;"></span>
-                </div>
-            </div>
-            <div id="ctrl-radar-map" style="width:100%;height:340px;background:#07131d;"></div>
-        </div>
-
-        <div class="toolkit-box" style="margin-bottom:15px;">
-            <div class="toolkit-header"><span>⚡ ACTIVE THREAT STATS — US</span></div>
-            <div id="ctrl-alert-stats" style="display:flex;flex-direction:column;gap:7px;margin-top:12px;">
-                <div style="opacity:0.4;text-align:center;font-size:0.8em;padding:12px;">Loading threat data...</div>
-            </div>
-        </div>
-
-        <div class="toolkit-box" style="margin-bottom:15px;">
-            <div class="toolkit-header"><span>📡 LIVE NATIONAL ALERTS FEED</span></div>
-            <div id="ctrl-alerts-list" style="margin-top:10px;max-height:380px;overflow-y:auto;">
-                <div style="opacity:0.4;text-align:center;font-size:0.8em;padding:12px;">Loading alerts...</div>
-            </div>
-        </div>
-
-        <div class="toolkit-box" style="margin-bottom:15px;">
-            <div class="toolkit-header"><span>🗺️ SPC DAY 1 NATIONAL OUTLOOK</span></div>
-            <a href="https://www.spc.noaa.gov/products/outlook/day1otlk.html" target="_blank" style="display:block;margin-top:12px;">
-                <img src="https://www.spc.noaa.gov/products/outlook/day1otlk_1200.gif"
-                     onerror="this.src='https://www.spc.noaa.gov/products/outlook/day1otlk_0600.gif'"
-                     style="width:100%;border-radius:10px;display:block;" alt="SPC Day 1 Outlook">
-            </a>
-            <div style="font-size:0.65em;opacity:0.45;text-align:center;margin-top:6px;">Tap image to view full outlook on SPC · NWS/NOAA</div>
-        </div>
-
-        <div class="toolkit-box" style="margin-bottom:15px;">
-            <div class="toolkit-header"><span>🔬 WEATHER MODELS & ANALYSIS TOOLS</span></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;">
-                <a href="https://mag.ncep.noaa.gov/" target="_blank" style="text-decoration:none;">
-                    <div style="background:#0d1f2d;border:1px solid #1e3a4a;border-radius:10px;padding:12px 10px;text-align:center;">
-                        <div style="font-size:1.3em;margin-bottom:4px;">🌐</div>
-                        <div style="font-size:0.8em;font-weight:bold;color:var(--primary);">GFS / NAM / HRRR</div>
-                        <div style="font-size:0.65em;opacity:0.55;margin-top:3px;">NCEP Model Guidance</div>
-                    </div>
-                </a>
-                <a href="https://www.spc.noaa.gov/exper/mesoanalysis/" target="_blank" style="text-decoration:none;">
-                    <div style="background:#0d1f2d;border:1px solid #1e3a4a;border-radius:10px;padding:12px 10px;text-align:center;">
-                        <div style="font-size:1.3em;margin-bottom:4px;">⛈️</div>
-                        <div style="font-size:0.8em;font-weight:bold;color:var(--primary);">SPC Mesoanalysis</div>
-                        <div style="font-size:0.65em;opacity:0.55;margin-top:3px;">Convective Parameters</div>
-                    </div>
-                </a>
-                <a href="https://www.wpc.ncep.noaa.gov/surface/namussfcweb.php" target="_blank" style="text-decoration:none;">
-                    <div style="background:#0d1f2d;border:1px solid #1e3a4a;border-radius:10px;padding:12px 10px;text-align:center;">
-                        <div style="font-size:1.3em;margin-bottom:4px;">🌀</div>
-                        <div style="font-size:0.8em;font-weight:bold;color:var(--primary);">WPC Surface Analysis</div>
-                        <div style="font-size:0.65em;opacity:0.55;margin-top:3px;">Fronts &amp; Pressure Systems</div>
-                    </div>
-                </a>
-                <a href="https://www.nhc.noaa.gov/" target="_blank" style="text-decoration:none;">
-                    <div style="background:#0d1f2d;border:1px solid #1e3a4a;border-radius:10px;padding:12px 10px;text-align:center;">
-                        <div style="font-size:1.3em;margin-bottom:4px;">🌊</div>
-                        <div style="font-size:0.8em;font-weight:bold;color:var(--primary);">NHC Tropics</div>
-                        <div style="font-size:0.65em;opacity:0.55;margin-top:3px;">Atlantic &amp; Pacific Cyclones</div>
-                    </div>
-                </a>
-                <a href="https://www.star.nesdis.noaa.gov/GOES/" target="_blank" style="text-decoration:none;">
-                    <div style="background:#0d1f2d;border:1px solid #1e3a4a;border-radius:10px;padding:12px 10px;text-align:center;">
-                        <div style="font-size:1.3em;margin-bottom:4px;">🛰️</div>
-                        <div style="font-size:0.8em;font-weight:bold;color:var(--primary);">GOES Satellite</div>
-                        <div style="font-size:0.65em;opacity:0.55;margin-top:3px;">NOAA/NESDIS Live Imagery</div>
-                    </div>
-                </a>
-                <a href="https://www.spc.noaa.gov/products/outlook/" target="_blank" style="text-decoration:none;">
-                    <div style="background:#0d1f2d;border:1px solid #1e3a4a;border-radius:10px;padding:12px 10px;text-align:center;">
-                        <div style="font-size:1.3em;margin-bottom:4px;">🌩️</div>
-                        <div style="font-size:0.8em;font-weight:bold;color:var(--primary);">SPC Outlooks</div>
-                        <div style="font-size:0.65em;opacity:0.55;margin-top:3px;">Day 1–3 Convective Outlooks</div>
-                    </div>
-                </a>
-            </div>
-        </div>
-        <div style="font-size:0.6em;color:#333;text-align:center;margin-bottom:10px;">Data: NWS/NOAA · Radar: RainViewer · Map: CartoDB/OSM</div>
-    </div>
-
 </div>
 
 <div class="bottom-nav">
     <div class="nav-item active" id="nav-home" onclick="switchTab('home', this)">🏠<span>Home</span></div>
     <div class="nav-item" id="nav-severe" onclick="switchTab('severe', this)">⚠️<span>Severe</span></div>
     <div class="nav-item" id="nav-specs" onclick="switchTab('specs', this)">📑<span>Specs</span></div>
-    <div class="nav-item" id="nav-ctrl" onclick="switchTab('ctrl', this)">🌐<span>Control</span></div>
 </div>
 
 <footer style="text-align: center; padding: 60px 0 30px 0; font-family: 'Segoe UI', sans-serif; color: #777; font-size: 0.85em;">
@@ -1072,8 +939,6 @@
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
         if(tabId === 'specs') drawOrbit();
-        if(tabId === 'severe') setTimeout(() => svrRadar.init(), 50);
-        if(tabId === 'ctrl') { setTimeout(() => ctrlRadar.init(), 100); setTimeout(initCtrl, 50); }
     }
 
     function saveLoc() { 
@@ -2058,9 +1923,6 @@
                     <div style="font-size:0.65em; color:var(--primary);">
                         Precip: ${Math.round(h.precipProbability * 100)}%
                     </div>
-                    <div style="font-size:0.65em; color:#90caf9;">
-                        💨 ${Math.round(h.windSpeed || 0)} mph${h.windBearing != null ? ' ' + getBearingLabel(h.windBearing) : ''}
-                    </div>
                 `;
 
                 container.appendChild(card);
@@ -2235,8 +2097,8 @@
             count = Math.max(50, Math.min(600, livePrecipInt * 2000));
         } else if (text.includes('rain') || text.includes('drizzle') || text.includes('storm')) {
             type = 'rain';
-            count = Math.max(25, Math.min(500, livePrecipInt * 750)); 
-            speedMult = 1 + (livePrecipInt * 2.5); 
+            count = Math.max(50, Math.min(1000, livePrecipInt * 1500)); 
+            speedMult = 1 + (livePrecipInt * 5); 
         } else if (text.includes('fog') || text.includes('mist') || text.includes('haze')) {
             type = 'fog';
             count = 40;
@@ -2254,8 +2116,8 @@
             particles.push({
                 x: Math.random() * canvas.width,
                 y: Math.random() * canvas.height,
-                len: type === 'fog' ? Math.random() * 80 + 40 : (type === 'rain' ? (Math.random() * 11 + 6) * speedMult : Math.random() * 4 + 2),
-                vel: type === 'fog' ? Math.random() * 0.5 + 0.1 : (type === 'rain' ? (Math.random() * 5 + 3) * speedMult : Math.random() * 1 + 0.5),
+                len: type === 'fog' ? Math.random() * 80 + 40 : (type === 'rain' ? (Math.random() * 20 + 10) * speedMult : Math.random() * 4 + 2),
+                vel: type === 'fog' ? Math.random() * 0.5 + 0.1 : (type === 'rain' ? (Math.random() * 10 + 5) * speedMult : Math.random() * 1 + 0.5),
                 drift: type === 'fog' ? Math.random() * 0.5 - 0.25 : windDriftBase + (Math.random() * 1 - 0.5)
             });
         }
@@ -2716,233 +2578,6 @@
             <div id="uv-hours">${window._uvDayHtml[dayKeys[0]]}</div>
             <div style="font-size:0.6em;opacity:0.4;text-align:center;margin-top:10px;">Powered by PirateWeather</div>
         `;
-    }
-
-    // =============================================
-    // RADAR MAP FACTORY  (RainViewer + Leaflet)
-    // maxNativeZoom:13 fixes "Zoom Level Not Supported"
-    // =============================================
-    function RadarMap(cfg) {
-        let _map = null, _frames = [], _nowcastCount = 0, _curFrame = -1;
-        let _playing = false, _timer = null, _layer = null, _opacity = 0.8;
-
-        function init() {
-            if (!window.L) return;
-            const cLat = parseFloat(cfg.lat != null ? cfg.lat : lat);
-            const cLon = parseFloat(cfg.lon != null ? cfg.lon : lon);
-            if (_map) {
-                _map.setView([cLat, cLon], cfg.zoom || 8);
-                setTimeout(() => _map.invalidateSize(), 100);
-                return;
-            }
-            _map = L.map(cfg.mapId, {
-                zoomControl: false, attributionControl: false, preferCanvas: true
-            }).setView([cLat, cLon], cfg.zoom || 8);
-
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                maxZoom: 19, subdomains: 'abcd'
-            }).addTo(_map);
-
-            if (cfg.showMarker !== false) {
-                const icon = L.divIcon({
-                    className: '',
-                    html: `<div style="position:relative;width:14px;height:14px;">
-                             <div style="position:absolute;inset:0;border-radius:50%;background:#4fc3f7;opacity:0.25;animation:radar-pulse 2s infinite;"></div>
-                             <div style="position:absolute;inset:3px;border-radius:50%;background:#4fc3f7;border:2px solid #fff;box-shadow:0 0 6px #4fc3f7;"></div>
-                           </div>`,
-                    iconSize: [14, 14], iconAnchor: [7, 7]
-                });
-                L.marker([parseFloat(lat), parseFloat(lon)], { icon })
-                    .addTo(_map)
-                    .bindPopup('<b style="color:#000">📍 Your Location</b>');
-            }
-            L.control.zoom({ position: 'bottomright' }).addTo(_map);
-            setTimeout(() => _map.invalidateSize(), 200);
-            fetchFrames();
-        }
-
-        async function fetchFrames() {
-            const tsEl = document.getElementById(cfg.tsId);
-            if (tsEl) tsEl.textContent = 'Fetching radar data...';
-            try {
-                const res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const data = await res.json();
-                const past = data.radar?.past || [];
-                const nowcast = data.radar?.nowcast || [];
-                _nowcastCount = nowcast.length;
-                _frames = [...past, ...nowcast];
-                if (_frames.length) {
-                    showFrame(_frames.length - 1 - _nowcastCount);
-                    const c = document.getElementById(cfg.counterId);
-                    if (c) c.textContent = `${past.length} obs · ${nowcast.length} fcst`;
-                } else {
-                    if (tsEl) tsEl.textContent = 'No radar data.';
-                }
-            } catch(e) {
-                const tsEl2 = document.getElementById(cfg.tsId);
-                if (tsEl2) tsEl2.textContent = 'Radar unavailable.';
-            }
-        }
-
-        function showFrame(idx) {
-            if (!_frames.length || !_map) return;
-            _curFrame = Math.max(0, Math.min(idx, _frames.length - 1));
-            const frame = _frames[_curFrame];
-            if (_layer) { _map.removeLayer(_layer); _layer = null; }
-            // maxNativeZoom:13 lets basemap zoom freely; radar tiles clamp at zoom 13
-            _layer = L.tileLayer(
-                `https://tilecache.rainviewer.com${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,
-                { opacity: _opacity, tileSize: 256, zIndex: 10, maxNativeZoom: 13 }
-            ).addTo(_map);
-            const tsEl = document.getElementById(cfg.tsId);
-            if (tsEl) {
-                const ts = new Date(frame.time * 1000);
-                const isNowcast = _curFrame >= (_frames.length - _nowcastCount) && _nowcastCount > 0;
-                tsEl.textContent = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
-                    (isNowcast ? ' ⚡ NOWCAST' : ' · OBSERVED');
-                tsEl.style.color = isNowcast ? '#ffd54f' : '#aaa';
-            }
-        }
-
-        function togglePlay() {
-            _playing = !_playing;
-            const btn = document.getElementById(cfg.playBtnId);
-            if (_playing) {
-                if (btn) btn.textContent = '⏸ PAUSE';
-                _timer = setInterval(() => {
-                    const next = (_curFrame + 1) % _frames.length;
-                    if (next === 0) {
-                        showFrame(0);
-                        clearInterval(_timer);
-                        setTimeout(() => {
-                            if (_playing) _timer = setInterval(() => showFrame((_curFrame + 1) % _frames.length), 500);
-                        }, 1200);
-                    } else {
-                        showFrame(next);
-                    }
-                }, 500);
-            } else {
-                if (btn) btn.textContent = '▶ PLAY';
-                clearInterval(_timer);
-            }
-        }
-
-        function setOpacity(val) {
-            _opacity = val / 100;
-            const label = document.getElementById(cfg.opacityLabelId);
-            if (label) label.textContent = val + '%';
-            if (_layer) _layer.setOpacity(_opacity);
-        }
-
-        function jumpLatest() { if (_frames.length) showFrame(_frames.length - 1); }
-        function getMap() { return _map; }
-
-        return { init, togglePlay, setOpacity, jumpLatest, showFrame, getMap };
-    }
-
-    // Severe tab: local view, zoom 8
-    const svrRadar = RadarMap({
-        mapId: 'svr-radar-map', playBtnId: 'svr-play-btn',
-        tsId: 'svr-radar-ts', opacityLabelId: 'svr-opacity-label',
-        counterId: 'svr-frame-counter', zoom: 8, showMarker: true
-    });
-
-    // Control Center: national CONUS view, zoom 4
-    const ctrlRadar = RadarMap({
-        mapId: 'ctrl-radar-map', playBtnId: 'ctrl-play-btn',
-        tsId: 'ctrl-radar-ts', opacityLabelId: 'ctrl-opacity-label',
-        counterId: 'ctrl-frame-counter', zoom: 4, showMarker: true,
-        lat: 39.5, lon: -98.35
-    });
-
-    // =============================================
-    // CONTROL CENTER — National Alerts & Data
-    // =============================================
-    let ctrlInitialized = false;
-
-    async function initCtrl() {
-        if (!ctrlInitialized) {
-            ctrlInitialized = true;
-            await fetchNationalAlerts();
-            setInterval(fetchNationalAlerts, 120000);
-        }
-    }
-
-    async function refreshCtrl() {
-        const m = ctrlRadar.getMap();
-        if (m) { m.invalidateSize(); ctrlRadar.showFrame(0); } else { ctrlRadar.init(); }
-        await fetchNationalAlerts();
-    }
-
-    async function fetchNationalAlerts() {
-        try {
-            const res = await fetch('https://api.weather.gov/alerts/active?status=actual&message_type=alert&severity=Extreme,Severe&limit=100');
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
-            renderNationalAlerts(data.features || []);
-        } catch(e) {
-            const listEl = document.getElementById('ctrl-alerts-list');
-            if (listEl) listEl.innerHTML = '<div style="opacity:0.5;padding:14px;text-align:center;font-size:0.85em;">Unable to fetch national alert data. Check connection.</div>';
-        }
-    }
-
-    function renderNationalAlerts(features) {
-        const sorted = features.sort((a, b) =>
-            getAlertPriority(b.properties.event, b.properties.severity) -
-            getAlertPriority(a.properties.event, a.properties.severity)
-        );
-
-        const counts = {};
-        sorted.forEach(f => { const e = f.properties.event; counts[e] = (counts[e] || 0) + 1; });
-
-        const statsEl = document.getElementById('ctrl-alert-stats');
-        if (statsEl) {
-            const statDefs = [
-                { label: 'Tornado Warnings',            key: 'Tornado Warning',              color: '#ff1744', icon: '🌪️' },
-                { label: 'SVR Thunderstorm Warnings',   key: 'Severe Thunderstorm Warning',   color: '#ff9100', icon: '⛈️' },
-                { label: 'Flash Flood Emergencies',     key: 'Flash Flood Emergency',         color: '#00b0ff', icon: '🌊' },
-                { label: 'Flash Flood Warnings',        key: 'Flash Flood Warning',           color: '#1565c0', icon: '💧' },
-                { label: 'Tornado Watches',             key: 'Tornado Watch',                 color: '#cc0000', icon: '👁️' },
-                { label: 'SVR Thunderstorm Watches',    key: 'Severe Thunderstorm Watch',     color: '#e65c00', icon: '⚠️' },
-            ];
-            const total = Object.values(counts).reduce((a, b) => a + b, 0);
-            statsEl.innerHTML = statDefs.map(s => {
-                const count = counts[s.key] || 0;
-                const active = count > 0;
-                return `<div style="display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;background:${active ? 'rgba(0,0,0,0.3)' : 'rgba(255,255,255,0.03)'};border:1px solid ${active ? s.color + '55' : 'rgba(255,255,255,0.07)'};">
-                    <span style="font-size:1.1em;">${s.icon}</span>
-                    <div style="flex:1;font-size:0.82em;font-weight:bold;${active ? '' : 'color:#444;'}">${s.label}</div>
-                    <div style="font-size:1.6em;font-weight:900;color:${active ? s.color : '#333'};min-width:32px;text-align:right;">${count}</div>
-                    ${active ? `<div style="width:8px;height:8px;border-radius:50%;background:${s.color};animation:pulse 1.5s infinite;flex-shrink:0;"></div>` : ''}
-                </div>`;
-            }).join('') +
-            `<div style="padding:6px 12px;font-size:0.68em;opacity:0.35;text-align:right;">${total} total severe/extreme alerts currently active in the US</div>`;
-        }
-
-        const listEl = document.getElementById('ctrl-alerts-list');
-        if (listEl) {
-            if (sorted.length === 0) {
-                listEl.innerHTML = '<div style="opacity:0.5;padding:20px;text-align:center;font-size:0.85em;">✅ No active severe or extreme alerts across the US right now.</div>';
-            } else {
-                listEl.innerHTML = sorted.slice(0, 30).map(f => {
-                    const p = f.properties;
-                    const isExtreme = p.severity === 'Extreme';
-                    const area = p.areaDesc ? p.areaDesc.split(';').slice(0, 2).join(', ').trim() : 'Unknown Area';
-                    const expTime = p.expires || p.ends;
-                    const expStr = expTime ? 'exp ' + new Date(expTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-                    return `<div style="padding:9px 12px;border-radius:8px;background:${isExtreme ? 'rgba(255,23,68,0.1)' : 'rgba(255,145,0,0.07)'};border-left:3px solid ${isExtreme ? '#ff1744' : '#ff9100'};margin-bottom:6px;">
-                        <div style="font-size:0.82em;font-weight:bold;">${p.event.toUpperCase()}</div>
-                        <div style="font-size:0.7em;opacity:0.6;margin-top:3px;">${area}${expStr ? ' · ' + expStr : ''}</div>
-                    </div>`;
-                }).join('');
-            }
-        }
-
-        const tsEl = document.getElementById('ctrl-last-updated');
-        if (tsEl) tsEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const totalEl = document.getElementById('ctrl-total-alerts');
-        if (totalEl) totalEl.textContent = sorted.length;
     }
 
     window.addEventListener('DOMContentLoaded', () => {
