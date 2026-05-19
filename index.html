@@ -1359,14 +1359,32 @@
         if (upcoming.length < 2) { document.getElementById('outdoor-window-box').style.display = 'none'; return; }
         function scoreHour(h) {
             let score = 100;
-            const pp = (h.precipProbability || 0) * 100;
-            const fl = h.apparentTemperature || h.temperature || 70;
-            const w = h.windSpeed || 0;
+
+            const precip = (h.precipProbability || 0) * 100;
+            const temp = h.apparentTemperature || h.temperature || 70;
+            const wind = h.windSpeed || 0;
             const uv = h.uvIndex || 0;
-            if (pp > 70) score -= 50; else if (pp > 40) score -= 25; else if (pp > 20) score -= 10;
-            if (fl >= 60 && fl <= 82) score += 20; else if (fl >= 50 && fl <= 90) score += 5; else if (fl < 32 || fl > 100) score -= 30;
-            if (w > 25) score -= 20; else if (w > 15) score -= 5;
-            if (uv >= 8) score -= 15; else if (uv >= 6) score -= 5;
+
+            // --- Precipitation (heaviest penalty) ---
+            if (precip > 70) score -= 40;
+            else if (precip > 40) score -= 25;
+            else if (precip > 20) score -= 10;
+
+            // --- Temperature (smooth comfort curve) ---
+            if (temp >= 65 && temp <= 80) score += 25;        // ideal
+            else if (temp >= 55 && temp <= 90) score += 10;   // acceptable
+            else if (temp < 40 || temp > 95) score -= 25;     // uncomfortable extremes
+
+            // --- Wind (moderate penalty) ---
+            if (wind > 25) score -= 20;
+            else if (wind > 15) score -= 10;
+            else if (wind > 8) score -= 3;
+
+            // --- UV (light penalty so daytime isn't always bad) ---
+            if (uv >= 10) score -= 10;
+            else if (uv >= 7) score -= 5;
+            else if (uv >= 5) score -= 2;
+
             return score;
         }
         let bestScore = -Infinity, bestIdx = 0;
