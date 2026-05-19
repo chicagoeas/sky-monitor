@@ -1358,34 +1358,34 @@
         const upcoming = hourlyData.filter(h => h.time >= now && h.time <= now + 12 * 3600).slice(0, 12);
         if (upcoming.length < 2) { document.getElementById('outdoor-window-box').style.display = 'none'; return; }
         function scoreHour(h) {
-            let score = 100;
+                let score = 100;
 
-            const precip = (h.precipProbability || 0) * 100;
-            const temp = h.apparentTemperature || h.temperature || 70;
-            const wind = h.windSpeed || 0;
-            const uv = h.uvIndex || 0;
+                const pp = (h.precipProbability || 0) * 100;
+                const fl = h.apparentTemperature || h.temperature || 70;
+                const w = h.windSpeed || 0;
+                const uv = h.uvIndex || 0;
 
-            // --- Precipitation (heaviest penalty) ---
-            if (precip > 70) score -= 40;
-            else if (precip > 40) score -= 25;
-            else if (precip > 20) score -= 10;
+                // Precipitation (strongest penalty)
+                if (pp > 70) score -= 40;
+                else if (pp > 40) score -= 25;
+                else if (pp > 20) score -= 10;
 
-            // --- Temperature (smooth comfort curve) ---
-            if (temp >= 65 && temp <= 80) score += 25;        // ideal
-            else if (temp >= 55 && temp <= 90) score += 10;   // acceptable
-            else if (temp < 40 || temp > 95) score -= 25;     // uncomfortable extremes
+                // Temperature (more realistic comfort curve)
+                if (fl >= 65 && fl <= 80) score += 25;          // ideal
+                else if (fl >= 55 && fl <= 90) score += 10;     // acceptable
+                else if (fl < 40 || fl > 95) score -= 25;       // uncomfortable extremes
 
-            // --- Wind (moderate penalty) ---
-            if (wind > 25) score -= 20;
-            else if (wind > 15) score -= 10;
-            else if (wind > 8) score -= 3;
+                // Wind (moderate penalty)
+                if (w > 25) score -= 20;
+                else if (w > 15) score -= 10;
+                else if (w > 8) score -= 3;
 
-            // --- UV (light penalty so daytime isn't always bad) ---
-            if (uv >= 10) score -= 10;
-            else if (uv >= 7) score -= 5;
-            else if (uv >= 5) score -= 2;
+                // UV (light penalty so daytime isn't always worst)
+                if (uv >= 10) score -= 10;
+                else if (uv >= 7) score -= 5;
+                else if (uv >= 5) score -= 2;
 
-            return score;
+                return score;
         }
         let bestScore = -Infinity, bestIdx = 0;
         for (let i = 0; i < upcoming.length - 1; i++) {
