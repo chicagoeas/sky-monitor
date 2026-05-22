@@ -501,9 +501,10 @@
         <div class="toolkit-box">
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span>&#128506; LIVE REPORTING MAP</span>
-                <div style="display:flex; gap:6px;">
-                    <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#8635; REFRESH</button>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#8635;</button>
                     <button id="radar-toggle-btn" onclick="toggleReportingRadar()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#128225; Radar ON</button>
+                    <button id="alerts-toggle-btn" onclick="toggleAlertPolygons()" style="background:rgba(255,145,0,0.15); border:1px solid #ff9100; color:#ff9100; padding:4px 10px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#9888;&#65039; Alerts ON</button>
                 </div>
             </div>
 
@@ -523,17 +524,14 @@
 
             <div style="font-weight:bold; color:var(--primary); margin-bottom:10px; font-size:0.9em; text-transform:uppercase; letter-spacing:1px;">&#128221; Submit a Report</div>
             <div style="display:flex; flex-direction:column; gap:10px;">
-                <select id="report-type" class="report-form-input">
-                    <option value="">Select type...</option>
-                    <option value="Hail">&#129354; Hail</option>
-                    <option value="Tornado">&#127786;&#65039; Tornado / Funnel Cloud</option>
-                    <option value="Wind Damage">&#128168; Wind Damage</option>
-                    <option value="Flooding">&#127754; Flooding</option>
-                    <option value="Heavy Snow">&#10052;&#65039; Heavy Snow</option>
-                    <option value="Lightning Strike">&#9889; Lightning Strike</option>
-                    <option value="Other">&#128204; Other</option>
-                </select>
-                <textarea id="report-notes" placeholder="Optional notes (hail size, location description, etc.)" class="report-form-input" style="resize:vertical; min-height:70px;"></textarea>
+                <div id="report-cat-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;"></div>
+                <div id="report-subcat-wrap" style="display:none; background:rgba(255,255,255,0.04); border-radius:10px; padding:10px; border:1px solid rgba(79,195,247,0.25);">
+                    <div id="report-subcat-label" style="font-size:0.75em; color:#aaa; margin-bottom:8px; text-align:center; text-transform:uppercase; letter-spacing:0.5px;"></div>
+                    <div id="report-subcat-grid" style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-bottom:8px;"></div>
+                    <button onclick="clearReportCategory()" style="background:transparent; border:1px solid rgba(255,255,255,0.15); color:#888; padding:3px 12px; border-radius:6px; font-size:0.72em; cursor:pointer; display:block; margin:0 auto;">&#8592; Back</button>
+                </div>
+                <div id="report-type-display" style="display:none; text-align:center; padding:8px 12px; background:rgba(79,195,247,0.08); border-radius:8px; border:1px solid rgba(79,195,247,0.3); font-size:0.85em; color:var(--primary);"></div>
+                <textarea id="report-notes" placeholder="Optional notes (location details, conditions, etc.)" class="report-form-input" style="resize:vertical; min-height:60px;"></textarea>
                 <button onclick="submitUserReport()" style="background:var(--primary); color:#07131d; border:none; padding:10px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:0.9em;">SUBMIT REPORT</button>
                 <div id="report-status" style="font-size:0.8em; color:#888; text-align:center; display:none;"></div>
             </div>
@@ -741,7 +739,7 @@
             if (complexity === 'specific') renderAnalytics();
         }
         if (tabId === 'severe') updateLightningEstimate();
-        if (tabId === 'reporting') setTimeout(initReportingMap, 150);
+        if (tabId === 'reporting') { renderReportCategories(); setTimeout(initReportingMap, 150); }
     }
 
     function saveLoc() {
@@ -2124,8 +2122,119 @@
     let userReportLayer = null;
     let reportingRadarLayer = null;
     let radarVisible = true;
+    let alertsVisible = true;
     let reportLat = null, reportLon = null;
     let reportPinMarker = null;
+    let selectedReportType = '';
+
+    const REPORT_CATEGORIES = [
+        { type: 'Rain', emoji: '\uD83C\uDF27\uFE0F', label: 'Rain' },
+        { type: 'Thunderstorm', emoji: '\u26C8\uFE0F', label: 'Thunderstorm' },
+        { type: 'Wind Damage', emoji: '\uD83D\uDCA8', label: 'Wind Damage' },
+        { type: 'Flooding', emoji: '\uD83C\uDF0A', label: 'Flooding' },
+        { type: 'Hail', emoji: '\uD83E\uDDE0', label: 'Hail', sub: {
+            label: 'Select hail size:',
+            options: [
+                { type: 'Hail \u2014 Pea (\u00BC")', label: 'Pea \u00BC"' },
+                { type: 'Hail \u2014 Dime (\u00BE")', label: 'Dime \u00BE"' },
+                { type: 'Hail \u2014 Quarter (1")', label: 'Quarter 1"' },
+                { type: 'Hail \u2014 Golf Ball (1\u00BE")', label: 'Golf Ball 1\u00BE"' },
+                { type: 'Hail \u2014 Baseball (2\u00BE")', label: 'Baseball 2\u00BE"' },
+                { type: 'Hail \u2014 Softball (4"+)', label: 'Softball 4"+" ' }
+            ]
+        }},
+        { type: 'Tornado / Funnel Cloud', emoji: '\uD83C\uDF2A\uFE0F', label: 'Tornado' },
+        { type: 'Winter Weather', emoji: '\u2744\uFE0F', label: 'Winter Wx', sub: {
+            label: 'Select winter weather type:',
+            options: [
+                { type: 'Heavy Snow', label: '\u2744\uFE0F Heavy Snow' },
+                { type: 'Ice / Freezing Rain', label: '\uD83E\uDDCA Ice / Freezing Rain' },
+                { type: 'Blizzard Conditions', label: '\uD83C\uDF28\uFE0F Blizzard' }
+            ]
+        }},
+        { type: 'Lightning Strike', emoji: '\u26A1', label: 'Lightning' },
+        { type: 'Fog / Low Visibility', emoji: '\uD83C\uDF2B\uFE0F', label: 'Fog / Vis' },
+        { type: 'Other', emoji: '\uD83D\uDCCC', label: 'Other' }
+    ];
+
+    function renderReportCategories() {
+        const grid = document.getElementById('report-cat-grid');
+        if (!grid || grid.children.length > 0) return;
+        REPORT_CATEGORIES.forEach(function(cat) {
+            const btn = document.createElement('button');
+            btn.style.cssText = 'background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);color:#e0e0e0;padding:9px 4px;border-radius:9px;cursor:pointer;font-size:0.77em;display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;transition:border-color 0.15s,background 0.15s;';
+            btn.dataset.catType = cat.type;
+            btn.innerHTML = '<span style="font-size:1.55em;line-height:1;">' + cat.emoji + '</span><span style="text-align:center;line-height:1.2;">' + cat.label + '</span>' + (cat.sub ? '<span style="font-size:0.65em;opacity:0.45;">▼</span>' : '');
+            btn.onclick = function() { selectReportCategory(cat); };
+            grid.appendChild(btn);
+        });
+    }
+
+    function selectReportCategory(cat) {
+        // Clear highlight on all top-level buttons
+        document.querySelectorAll('#report-cat-grid button').forEach(function(b) {
+            b.style.background = 'rgba(255,255,255,0.05)';
+            b.style.borderColor = 'rgba(255,255,255,0.12)';
+            b.style.color = '#e0e0e0';
+        });
+        if (cat.sub) {
+            // Highlight selected top-level
+            const topBtn = document.querySelector('#report-cat-grid button[data-cat-type="' + cat.type + '"]');
+            if (topBtn) { topBtn.style.background = 'rgba(79,195,247,0.12)'; topBtn.style.borderColor = 'var(--primary)'; }
+            // Show sub-menu
+            document.getElementById('report-subcat-label').textContent = cat.sub.label;
+            const subGrid = document.getElementById('report-subcat-grid');
+            subGrid.innerHTML = '';
+            cat.sub.options.forEach(function(opt) {
+                const sbtn = document.createElement('button');
+                sbtn.style.cssText = 'background:rgba(79,195,247,0.08);border:1px solid rgba(79,195,247,0.3);color:var(--primary);padding:6px 11px;border-radius:7px;cursor:pointer;font-size:0.8em;';
+                sbtn.textContent = opt.label;
+                sbtn.onclick = function() { setReportType(opt.type); };
+                subGrid.appendChild(sbtn);
+            });
+            document.getElementById('report-subcat-wrap').style.display = 'block';
+            document.getElementById('report-type-display').style.display = 'none';
+        } else {
+            document.getElementById('report-subcat-wrap').style.display = 'none';
+            setReportType(cat.type);
+            // Highlight selected
+            const topBtn = document.querySelector('#report-cat-grid button[data-cat-type="' + cat.type + '"]');
+            if (topBtn) { topBtn.style.background = 'rgba(79,195,247,0.15)'; topBtn.style.borderColor = 'var(--primary)'; topBtn.style.color = 'var(--primary)'; }
+        }
+    }
+
+    function setReportType(type) {
+        selectedReportType = type;
+        document.getElementById('report-subcat-wrap').style.display = 'none';
+        const display = document.getElementById('report-type-display');
+        display.style.display = 'block';
+        display.textContent = '\u2713 ' + type;
+    }
+
+    function clearReportCategory() {
+        selectedReportType = '';
+        document.getElementById('report-subcat-wrap').style.display = 'none';
+        document.getElementById('report-type-display').style.display = 'none';
+        document.querySelectorAll('#report-cat-grid button').forEach(function(b) {
+            b.style.background = 'rgba(255,255,255,0.05)';
+            b.style.borderColor = 'rgba(255,255,255,0.12)';
+            b.style.color = '#e0e0e0';
+        });
+    }
+
+    function toggleAlertPolygons() {
+        if (!alertPolygonLayer || !reportingMap) return;
+        const btn = document.getElementById('alerts-toggle-btn');
+        if (alertsVisible) {
+            reportingMap.removeLayer(alertPolygonLayer);
+            alertsVisible = false;
+            if (btn) { btn.textContent = '\u26A0\uFE0F Alerts OFF'; btn.style.opacity = '0.45'; }
+        } else {
+            alertPolygonLayer.addTo(reportingMap);
+            alertsVisible = true;
+            if (btn) { btn.textContent = '\u26A0\uFE0F Alerts ON'; btn.style.opacity = '1'; }
+        }
+    }
 
     function updatePinCoordsDisplay() {
         const el = document.getElementById('report-pin-coords');
@@ -2299,11 +2408,25 @@
             if (rRes.ok) {
                 const payload = await rRes.json();
                 const reports = Array.isArray(payload) ? payload : (payload.reports || []);
-                const REPORT_EMOJIS = { 'Hail':'\uD83E\uDDE0', 'Tornado':'\uD83C\uDF2A\uFE0F', 'Wind Damage':'\uD83D\uDCA8', 'Flooding':'\uD83C\uDF0A', 'Heavy Snow':'\u2744\uFE0F', 'Lightning Strike':'\u26A1', 'Other':'\uD83D\uDCCC' };
+                const REPORT_EMOJIS = {
+                    'Rain':'\uD83C\uDF27\uFE0F', 'Thunderstorm':'\u26C8\uFE0F',
+                    'Wind Damage':'\uD83D\uDCA8', 'Flooding':'\uD83C\uDF0A',
+                    'Tornado / Funnel Cloud':'\uD83C\uDF2A\uFE0F',
+                    'Lightning Strike':'\u26A1', 'Lightning':'\u26A1',
+                    'Fog / Low Visibility':'\uD83C\uDF2B\uFE0F',
+                    'Heavy Snow':'\u2744\uFE0F', 'Ice / Freezing Rain':'\uD83E\uDDCA',
+                    'Blizzard Conditions':'\uD83C\uDF28\uFE0F', 'Other':'\uD83D\uDCCC'
+                };
+                function getReportEmoji(type) {
+                    if (!type) return '\uD83D\uDFE2';
+                    if (type.startsWith('Hail')) return '\uD83E\uDDE0';
+                    if (type.startsWith('Winter')) return '\u2744\uFE0F';
+                    return REPORT_EMOJIS[type] || '\uD83D\uDFE2';
+                }
                 reports.forEach(function(r) {
                     if (r.lat == null || r.lon == null) return;
                     const timeStr = r.time ? new Date(r.time).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : '';
-                    const emoji = REPORT_EMOJIS[r.type] || '\uD83D\uDFE2';
+                    const emoji = getReportEmoji(r.type);
                     const icon = L_ref.divIcon({
                         html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.8));">' + emoji + '</div>',
                         className: '',
@@ -2319,7 +2442,7 @@
     }
 
     async function submitUserReport() {
-        const type = document.getElementById('report-type').value;
+        const type = selectedReportType;
         if (!type) { alert('Please select a report type.'); return; }
         const notes = document.getElementById('report-notes').value.trim();
         const btn = document.querySelector('#reporting-tab button[onclick="submitUserReport()"]');
@@ -2333,7 +2456,7 @@
                 body: JSON.stringify({ lat: reportLat != null ? reportLat : parseFloat(lat), lon: reportLon != null ? reportLon : parseFloat(lon), type: type, notes: notes, time: new Date().toISOString() })
             });
             if (res.ok) {
-                document.getElementById('report-type').value = '';
+                clearReportCategory();
                 document.getElementById('report-notes').value = '';
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
