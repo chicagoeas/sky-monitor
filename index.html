@@ -273,6 +273,17 @@
                 <button id="opt-data-specific" class="btn-opt" onclick="setDataComplexity('specific')">ADVANCED</button>
             </div>
         </div>
+        <div class="settings-row">
+            <span class="settings-label">Swipe to Switch Tabs</span>
+            <div class="btn-group">
+                <button id="opt-swipe-on" class="btn-opt active" onclick="setSwipeSetting(true)">ON</button>
+                <button id="opt-swipe-off" class="btn-opt" onclick="setSwipeSetting(false)">OFF</button>
+            </div>
+        </div>
+        <div class="settings-row">
+            <span class="settings-label">Source Code</span>
+            <a href="/index.html" download="SkyMonitor.html" style="display:block; text-align:center; background:rgba(79,195,247,0.12); border:1px solid var(--primary); color:var(--primary); padding:8px 12px; border-radius:8px; font-size:0.78em; font-weight:bold; text-decoration:none; letter-spacing:0.5px;">&#11015;&#65039; Download index.html</a>
+        </div>
     </div>
 
 <div id="dashboard">
@@ -2499,6 +2510,22 @@
     let currentTabIdx = 0;
     let ptr_startY = 0, ptr_pulling = false;
     let swipeLocked = false;
+    let swipeEnabled = localStorage.getItem('skymonitor_swipe') !== 'off';
+
+    function setSwipeSetting(enabled) {
+        swipeEnabled = enabled;
+        localStorage.setItem('skymonitor_swipe', enabled ? 'on' : 'off');
+        document.getElementById('opt-swipe-on').classList.toggle('active', enabled);
+        document.getElementById('opt-swipe-off').classList.toggle('active', !enabled);
+    }
+
+    // Restore swipe setting on load
+    (function() {
+        if (!swipeEnabled) {
+            document.getElementById('opt-swipe-on').classList.remove('active');
+            document.getElementById('opt-swipe-off').classList.add('active');
+        }
+    })();
 
     function isInsideHorizontalScroll(el) {
         while (el && el !== document.body) {
@@ -2520,8 +2547,7 @@
     }, { passive: true });
 
     document.addEventListener('touchend', function(e) {
-        // v1.0.4: Don't switch tabs when a modal is open
-        if (swipeLocked || window._modalOpen) return;
+        if (!swipeEnabled || swipeLocked || window._modalOpen) return;
         const dx = e.changedTouches[0].clientX - touchStartX;
         const dy = e.changedTouches[0].clientY - touchStartY;
         const dt = Date.now() - touchStartTime;
