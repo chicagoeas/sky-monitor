@@ -541,12 +541,6 @@
             </div>
             <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; text-align:center; margin-bottom:8px; min-height:1em;"></div>
 
-            <div style="display:flex; gap:14px; flex-wrap:wrap; font-size:0.75em; margin-bottom:15px; color:#aaa;">
-                <span><span class="report-legend-dot" style="background:#ff9100;"></span>NWS Short-Fused Alert</span>
-                <span><span class="report-legend-dot" style="background:#4fc3f7;"></span>NWS LSR</span>
-                <span><span class="report-legend-dot" style="background:#00e676;"></span>SkyMonitor Report</span>
-                <span><span class="report-legend-dot" style="background:#4fc3f7; border:2px solid white;"></span>Your Location / Report Pin</span>
-            </div>
 
             <div style="font-weight:bold; color:var(--primary); margin-bottom:10px; font-size:0.9em; text-transform:uppercase; letter-spacing:1px;">&#128221; Submit a Report</div>
             <div style="display:flex; flex-direction:column; gap:10px;">
@@ -2498,19 +2492,20 @@
             const lsrRes = await fetch('https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=24&fmt=geojson');
             if (lsrRes.ok) {
                 const lsrData = await lsrRes.json();
-                const LSR_ICONS = { tornado:'\uD83C\uDF2A\uFE0F', hail:'\uD83C\uDF28\uFE0F', tstm:'\uD83D\uDCA8', wind:'\uD83D\uDCA8', flood:'\uD83C\uDF0A', snow:'\u2744\uFE0F', rain:'\uD83C\uDF27\uFE0F', fire:'\uD83D\uDD25', ice:'\uD83E\uDDCA' };
+                const LSR_ICONS = { tornado:'\uD83C\uDF2A\uFE0F', hail:'\uD83C\uDF28\uFE0F', tstm:'\u26A1', wind:'\uD83D\uDCA8', flood:'\uD83C\uDF0A', snow:'\u2744\uFE0F', rain:'\uD83C\uDF27\uFE0F', fire:'\uD83D\uDD25', ice:'\uD83E\uDDCA' };
+                const LSR_COLORS = { tornado:'#ff1744', hail:'#e0f7fa', tstm:'#ffeb3b', wind:'#ff9100', flood:'#00e676', snow:'#b0bec5', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa' };
                 (lsrData.features || []).forEach(function(f) {
                     if (!f.geometry || !f.geometry.coordinates) return;
                     const lo = f.geometry.coordinates[0], la = f.geometry.coordinates[1];
                     const props = f.properties;
                     const typeKey = (props.typetext || props.type || '').toLowerCase();
-                    const emojiKey = Object.keys(LSR_ICONS).find(function(k) { return typeKey.includes(k); });
-                    const emoji = emojiKey ? LSR_ICONS[emojiKey] : '\uD83D\uDCCC';
+                    const matchKey = Object.keys(LSR_ICONS).find(function(k) { return typeKey.includes(k); });
+                    const emoji = matchKey ? LSR_ICONS[matchKey] : '\uD83D\uDCCC';
+                    const dotColor = matchKey ? LSR_COLORS[matchKey] : '#90a4ae';
                     const validStr = formatReportTime(props.valid);
-                    // Fix magnitude duplication: only append magf if it's not a number
                     const magf = props.magf && isNaN(Number(props.magf)) ? ' ' + props.magf : '';
                     const mag = props.magnitude ? ' \u2014 ' + props.magnitude + magf : '';
-                    L_ref.circleMarker([la, lo], { radius: 7, fillColor: '#4fc3f7', color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
+                    L_ref.circleMarker([la, lo], { radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
                         .bindPopup('<b>' + emoji + ' ' + (props.typetext || 'LSR') + mag + '</b><br>' + (props.remark || '(No remark)') + '<br><small style="opacity:0.7;">' + (props.city || '') + (validStr ? ' \u00B7 ' + validStr : '') + '</small>')
                         .addTo(lsrLayer);
                 });
