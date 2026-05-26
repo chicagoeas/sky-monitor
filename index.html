@@ -1130,51 +1130,6 @@
         boxEl.style.display = 'block';
     }
 
-    // v1.0.4: Only show outdoor window 9am–6pm station local time
-    function computeOutdoorWindow(hourlyData, tzOffset) {
-        const now = Math.floor(Date.now() / 1000);
-        // stationTzOffset is in seconds; check local hour at station
-        const stationHour = new Date(Date.now() + stationTzOffset * 1000).getUTCHours();
-        if (stationHour < 9 || stationHour >= 18) {
-            document.getElementById('outdoor-window-box').style.display = 'none';
-            return;
-        }
-        const upcoming = hourlyData.filter(function(h) { return h.time >= now && h.time <= now + 12 * 3600; }).slice(0, 12);
-        if (upcoming.length < 2) { document.getElementById('outdoor-window-box').style.display = 'none'; return; }
-        function scoreHour(h) {
-            let score = 100;
-            const pp = (h.precipProbability || 0) * 100;
-            const fl = h.apparentTemperature || h.temperature || 70;
-            const w = h.windSpeed || 0;
-            const uv = h.uvIndex || 0;
-            if (pp > 70) score -= 40; else if (pp > 40) score -= 25; else if (pp > 20) score -= 10;
-            if (fl >= 65 && fl <= 80) score += 25; else if (fl >= 55 && fl <= 90) score += 10; else if (fl < 40 || fl > 95) score -= 25;
-            if (w > 25) score -= 20; else if (w > 15) score -= 10; else if (w > 8) score -= 3;
-            if (uv >= 10) score -= 10; else if (uv >= 7) score -= 5; else if (uv >= 5) score -= 2;
-            return score;
-        }
-        let bestScore = -Infinity, bestIdx = 0;
-        for (let i = 0; i < upcoming.length - 1; i++) {
-            const s = scoreHour(upcoming[i]) + scoreHour(upcoming[i + 1]);
-            if (s > bestScore) { bestScore = s; bestIdx = i; }
-        }
-        if (bestScore < 60) { document.getElementById('outdoor-window-box').style.display = 'none'; return; }
-        const tzOff = (tzOffset || 0) * 3600;
-        const h = upcoming[bestIdx];
-        const endH = upcoming[Math.min(bestIdx + 1, upcoming.length - 1)];
-        const startTime = new Date((h.time + tzOff) * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-        const endTime = new Date((endH.time + tzOff + 3600) * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-        const temp = Math.round(h.temperature || 70);
-        const feelsLike = Math.round(h.apparentTemperature || temp);
-        const wind = Math.round(h.windSpeed || 0);
-        const pp = Math.round((h.precipProbability || 0) * 100);
-        let desc = startTime + ' \u2013 ' + endTime + ' \u00b7 ' + temp + '\u00b0F';
-        if (feelsLike !== temp) desc += ' (feels ' + feelsLike + '\u00b0)';
-        desc += ', winds ' + wind + ' mph';
-        if (pp > 0) desc += ', ' + pp + '% rain chance';
-        document.getElementById('outdoor-window-text').innerText = desc;
-        document.getElementById('outdoor-window-box').style.display = 'block';
-    }
 
     // v1.0.4: fetchAlerts tracks TOR vs SVR separately
     async function fetchAlerts() {
@@ -1494,7 +1449,6 @@
             if (d.hourly && d.hourly.data) {
                 window.pirateHourlyData = d.hourly.data;
                 window.pirateTimezoneOffset = d.offset || 0;
-                computeOutdoorWindow(d.hourly.data, d.offset || 0);
                 computeOutdoorScore(d.hourly.data);
             }
             updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV);
