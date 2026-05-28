@@ -982,14 +982,19 @@
     async function fetchWUData(latP, lonP) {
         try {
             const locRes = await fetch('https://api.weather.com/v3/location/near?geocode=' + latP + ',' + lonP + '&product=pws&format=json&apiKey=' + TWC_API_KEY);
+            if (!locRes.ok) { console.error('[WU] location/near HTTP', locRes.status, locRes.statusText); return null; }
             const locData = await locRes.json();
-            if (!locData?.location?.stationIdentifier?.length) return null;
+            console.log('[WU] location/near response:', JSON.stringify(locData).slice(0, 300));
+            if (!locData?.location?.stationIdentifier?.length) { console.error('[WU] no stationIdentifier in response'); return null; }
             const stationId = locData.location.stationIdentifier[0];
+            console.log('[WU] nearest station:', stationId);
             const obsRes = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + stationId + '&format=json&units=e&apiKey=' + TWC_API_KEY);
+            if (!obsRes.ok) { console.error('[WU] pws/observations HTTP', obsRes.status, obsRes.statusText); return null; }
             const obsData = await obsRes.json();
+            console.log('[WU] observations response:', JSON.stringify(obsData).slice(0, 400));
             const obs = obsData?.observations?.[0];
-            if (!obs) return null;
-            return {
+            if (!obs) { console.error('[WU] observations array empty'); return null; }
+            const result = {
                 stationId,
                 temp: obs.imperial?.temp ?? null,
                 humidity: obs.humidity ?? null,
@@ -998,7 +1003,9 @@
                 precipRate: obs.imperial?.precipRate ?? null,
                 precipTotal: obs.imperial?.precipTotal ?? null
             };
-        } catch(e) { return null; }
+            console.log('[WU] parsed result:', JSON.stringify(result));
+            return result;
+        } catch(e) { console.error('[WU] fetchWUData exception:', e); return null; }
     }
 
     function getFormattedTime(event, totalMs) {
@@ -1356,6 +1363,7 @@
             const useWU = wu && wu.temp !== null && wu.humidity !== null &&
                 Math.abs(wu.temp - d.currently.temperature) <= 5 &&
                 Math.abs(wu.humidity - (d.currently.humidity * 100)) <= 10;
+            console.log('[WU] useWU:', useWU, '| wu:', wu ? JSON.stringify(wu) : 'null', '| pirateTemp:', d.currently.temperature, '| pirateHum:', (d.currently.humidity * 100).toFixed(1));
             const wuStationEl = document.getElementById('wuStation');
             const wuLinkEl = document.getElementById('wuLink');
             if (useWU && wu.stationId) {
