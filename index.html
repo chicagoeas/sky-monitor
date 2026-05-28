@@ -1173,7 +1173,6 @@
         try {
             const res = await fetch('https://api.weather.gov/alerts/active?point=' + lat + ',' + lon);
             if (!res.ok) {
-                window.isOutsideUS = true; applyInternationalMode();
                 stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
                 await renderPirateAlerts(stack, banner);
                 return;
@@ -1354,7 +1353,9 @@
             const d = await resP.json();
             stationTzOffset = d.offset * 3600;
             const wu = await fetchWUData(lat, lon);
-            const useWU = wu && wu.temp !== null && wu.humidity !== null;
+            const useWU = wu && wu.temp !== null && wu.humidity !== null &&
+                Math.abs(wu.temp - d.currently.temperature) <= 5 &&
+                Math.abs(wu.humidity - (d.currently.humidity * 100)) <= 10;
             const wuStationEl = document.getElementById('wuStation');
             const wuLinkEl = document.getElementById('wuLink');
             if (useWU && wu.stationId) {
