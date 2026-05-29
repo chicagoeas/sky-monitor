@@ -416,13 +416,13 @@
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
             <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; min-width:0; overflow:hidden;" onclick="openComfortModal()" title="Tap for hourly comfort">
                 <div class="toolkit-header" style="justify-content:center;"><span>COMFORT INDEX</span></div>
-                <div id="aqi-val" style="font-size:clamp(0.85em,3.5vw,1.5em); font-weight:900; margin:10px 0;">--</div>
+                <div id="aqi-val" style="font-size:1.4em; font-weight:900; margin:10px 0; word-break:break-word; overflow-wrap:break-word; line-height:1.2;">--</div>
                 <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Loading...</div>
                 <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
             <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; min-width:0; overflow:hidden;" onclick="openUVModal()" title="Tap for hourly UV">
                 <div class="toolkit-header" style="justify-content:center;"><span>UV INDEX</span></div>
-                <div id="uv-val" style="font-size:clamp(1em,4.5vw,1.8em); font-weight:900; margin:10px 0;">--</div>
+                <div id="uv-val" style="font-size:1.8em; font-weight:900; margin:10px 0;">--</div>
                 <div id="uv-desc" style="font-size:0.75em; opacity:0.8;">Loading...</div>
                 <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
@@ -2537,9 +2537,9 @@
         });
         const isMobile = window.matchMedia('(pointer: coarse)').matches;
         const instrEl = document.getElementById('report-pin-instruction');
-        if (instrEl) instrEl.innerText = isMobile ? '\uD83D\uDCCC Hold 2s to pin location' : '\uD83D\uDCCC Drag the pin to set location';
+        if (instrEl) instrEl.innerText = '\uD83D\uDCCC Double-click map to pin location';
 
-        reportPinMarker = L_ref.marker([parseFloat(lat), parseFloat(lon)], { icon: dotIcon, draggable: !isMobile, zIndexOffset: 1000 })
+        reportPinMarker = L_ref.marker([parseFloat(lat), parseFloat(lon)], { icon: dotIcon, draggable: true, zIndexOffset: 1000 })
             .bindTooltip('Report location', { permanent: false })
             .addTo(reportingMap);
         reportPinMarker.on('dragend', function(e) {
@@ -2552,29 +2552,11 @@
         reportLat = parseFloat(lat); reportLon = parseFloat(lon);
         updatePinCoordsDisplay();
 
-        // Mobile: 1-second touch hold to move pin. Desktop: drag only. Single tap does NOT move pin.
-        if (isMobile) {
-            const mapEl = reportingMap.getContainer();
-            let _lpTimer = null;
-            let _lpTouch = null;
-            mapEl.addEventListener('touchstart', function(e) {
-                if (e.touches.length !== 1) { clearTimeout(_lpTimer); _lpTimer = null; return; }
-                e.preventDefault();
-                _lpTouch = e.touches[0];
-                _lpTimer = setTimeout(function() {
-                    _lpTimer = null;
-                    if (!_lpTouch) return;
-                    const rect = mapEl.getBoundingClientRect();
-                    const pt = reportingMap.containerPointToLatLng(
-                        window.L.point(_lpTouch.clientX - rect.left, _lpTouch.clientY - rect.top)
-                    );
-                    setReportPin(parseFloat(pt.lat.toFixed(5)), parseFloat(pt.lng.toFixed(5)));
-                    _lpTouch = null;
-                }, 1000);
-            }, { passive: false });
-            mapEl.addEventListener('touchend', function() { clearTimeout(_lpTimer); _lpTimer = null; _lpTouch = null; }, { passive: true });
-            mapEl.addEventListener('touchmove', function() { clearTimeout(_lpTimer); _lpTimer = null; _lpTouch = null; }, { passive: true });
-        }
+        // Double-click (or double-tap on mobile) to move pin — works on all devices without blocking other interactions
+        reportingMap.doubleClickZoom.disable();
+        reportingMap.on('dblclick', function(e) {
+            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+        });
 
         loadReportingMapData();
     }
