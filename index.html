@@ -99,7 +99,8 @@
             background: none; border: none; border-bottom: 1px solid var(--primary);
             color: white; padding: 5px; width: 80px; text-align: center; outline: none;
         }
-        #coords-panel.city-mode { background: none; border: none; padding: 0; }
+        #coords-panel.city-mode { background: none; border: none; padding: 0; flex: 1; min-width: 0; max-width: 100%; display: flex; }
+        .city-mode-container { display: flex; gap: 8px; width: 100%; min-width: 0; align-items: center; }
 
         .btn-action { background: var(--primary); color: #07131d; border: none; padding: 6px 12px; border-radius: 15px; font-weight: bold; cursor: pointer; }
         .btn-gps { background: rgba(255,255,255,0.1); color: white; }
@@ -162,7 +163,7 @@
         }
         #cityInput {
             background: none; border: none; border-bottom: 1px solid var(--primary);
-            color: white; padding: 4px 8px; width: auto; flex-grow: 1; text-align: center; outline: none;
+            color: white; padding: 4px 8px; width: 0; flex: 1; min-width: 0; text-align: center; outline: none;
         }
 
         #spc-banner {
@@ -244,7 +245,7 @@
         <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.0.4</span></span>
     </h1>
 
-    <div style="display: flex; align-items: flex-start; gap: 10px;">
+    <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
         <div id="coords-panel">
             <input type="number" id="latInput" value="41.8781" step="0.0001">
             <input type="number" id="lonInput" value="-87.6298" step="0.0001">
@@ -415,7 +416,7 @@
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
             <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; min-width:0; overflow:hidden;" onclick="openComfortModal()" title="Tap for hourly comfort">
                 <div class="toolkit-header" style="justify-content:center;"><span>COMFORT INDEX</span></div>
-                <div id="aqi-val" style="font-size:clamp(1em,4.5vw,1.8em); font-weight:900; margin:10px 0; word-break:break-word;">--</div>
+                <div id="aqi-val" style="font-size:clamp(0.85em,3.5vw,1.5em); font-weight:900; margin:10px 0;">--</div>
                 <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Loading...</div>
                 <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
@@ -1612,18 +1613,31 @@
             document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
             const elevMeters = primaryStation.properties.elevation.value;
             document.getElementById('meta-elev').innerText = elevMeters ? Math.round(elevMeters * 3.28084) + ' ft' : 'N/A';
-            const condition = obs.properties.textDescription || '--';
-            currentCondition = condition;
-            document.getElementById('conditionText').innerText = condition;
-            document.getElementById('weatherIcon').src = obs.properties.icon;
-            document.getElementById('weatherIcon').style.display = 'block';
+            const nwsCond = obs.properties.textDescription;
+            const nwsIcon = obs.properties.icon;
+            const PW_ICON_MAP = { 'clear-day':'https://api.weather.gov/icons/land/day/skc?size=medium','clear-night':'https://api.weather.gov/icons/land/night/skc?size=medium','rain':'https://api.weather.gov/icons/land/day/rain?size=medium','snow':'https://api.weather.gov/icons/land/day/snow?size=medium','sleet':'https://api.weather.gov/icons/land/day/sleet?size=medium','wind':'https://api.weather.gov/icons/land/day/wind_bkn?size=medium','fog':'https://api.weather.gov/icons/land/day/fog?size=medium','cloudy':'https://api.weather.gov/icons/land/day/ovc?size=medium','partly-cloudy-day':'https://api.weather.gov/icons/land/day/few?size=medium','partly-cloudy-night':'https://api.weather.gov/icons/land/night/few?size=medium','thunderstorm':'https://api.weather.gov/icons/land/day/tsra?size=medium' };
+            if (!nwsCond || nwsCond.trim() === '' || !nwsIcon) {
+                // NWS observation blank — fall back to PirateWeather current conditions
+                const pw = window.pirateCurrently;
+                const fbCond = (pw && pw.summary) ? pw.summary : '--';
+                const fbIcon = (pw && pw.icon) ? PW_ICON_MAP[pw.icon] : null;
+                currentCondition = fbCond;
+                document.getElementById('conditionText').innerText = fbCond;
+                if (fbIcon) { document.getElementById('weatherIcon').src = fbIcon; document.getElementById('weatherIcon').style.display = 'block'; }
+                else document.getElementById('weatherIcon').style.display = 'none';
+            } else {
+                currentCondition = nwsCond;
+                document.getElementById('conditionText').innerText = nwsCond;
+                document.getElementById('weatherIcon').src = nwsIcon;
+                document.getElementById('weatherIcon').style.display = 'block';
+            }
             try {
                 const afdList = await (await fetch('https://api.weather.gov/products/types/AFD/locations/' + wfo)).json();
                 const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
                 document.getElementById('nws-text').innerText = afd.productText;
             } catch(e) {}
-            startWeatherFX(condition);
-            startSkyFX(condition);
+            startWeatherFX(currentCondition);
+            startSkyFX(currentCondition);
         } catch(e) {}
     }
 
@@ -1849,7 +1863,7 @@
 
         let tier, tierClass, emoji, descText;
         if (score >= 14) { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life'; emoji = '\uD83D\uDFE3'; descText = 'A significant weather emergency is ongoing nearby. Immediate protective action may be required.'; }
-        else if (score >= 9) { tier = 'DANGEROUS'; tierClass = 'threat-tier-danger'; emoji = '\uD83D\uDD34'; descText = 'Hazardous weather conditions are active nearby. Remain alert and be prepared to take action.'; }
+        else if (score >= 7) { tier = 'DANGEROUS'; tierClass = 'threat-tier-danger'; emoji = '\uD83D\uDD34'; descText = 'Hazardous weather conditions are active nearby. Remain alert and be prepared to take action.'; }
         else if (score >= 5) { tier = 'ACTIVE WEATHER'; tierClass = 'threat-tier-active'; emoji = '\uD83D\uDFE0'; descText = 'Unsettled or stormy weather is affecting the area. Monitor conditions for possible changes.'; }
         else if (score >= 2) { tier = 'ELEVATED'; tierClass = 'threat-tier-elev'; emoji = '\uD83D\uDFE1'; descText = 'Some weather concerns are present today, but no immediate hazards are indicated.'; }
         else { tier = 'LOW'; tierClass = 'threat-tier-low'; emoji = '\uD83D\uDFE2'; descText = 'Weather conditions are currently calm with no significant hazards detected.'; }
@@ -2536,18 +2550,28 @@
         reportLat = parseFloat(lat); reportLon = parseFloat(lon);
         updatePinCoordsDisplay();
 
-        // Mobile: 2-second long-press to move pin. Desktop: drag only. Single click does NOT move pin.
+        // Mobile: 1-second touch hold to move pin. Desktop: drag only. Single tap does NOT move pin.
         if (isMobile) {
+            const mapEl = reportingMap.getContainer();
             let _lpTimer = null;
-            reportingMap.on('mousedown', function(e) {
-                clearTimeout(_lpTimer);
+            let _lpTouch = null;
+            mapEl.addEventListener('touchstart', function(e) {
+                if (e.touches.length !== 1) { clearTimeout(_lpTimer); _lpTimer = null; return; }
+                e.preventDefault();
+                _lpTouch = e.touches[0];
                 _lpTimer = setTimeout(function() {
                     _lpTimer = null;
-                    setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-                }, 2000);
-            });
-            reportingMap.on('mouseup', function() { clearTimeout(_lpTimer); _lpTimer = null; });
-            reportingMap.on('mousemove', function() { clearTimeout(_lpTimer); _lpTimer = null; });
+                    if (!_lpTouch) return;
+                    const rect = mapEl.getBoundingClientRect();
+                    const pt = reportingMap.containerPointToLatLng(
+                        window.L.point(_lpTouch.clientX - rect.left, _lpTouch.clientY - rect.top)
+                    );
+                    setReportPin(parseFloat(pt.lat.toFixed(5)), parseFloat(pt.lng.toFixed(5)));
+                    _lpTouch = null;
+                }, 1000);
+            }, { passive: false });
+            mapEl.addEventListener('touchend', function() { clearTimeout(_lpTimer); _lpTimer = null; _lpTouch = null; }, { passive: true });
+            mapEl.addEventListener('touchmove', function() { clearTimeout(_lpTimer); _lpTimer = null; _lpTouch = null; }, { passive: true });
         }
 
         loadReportingMapData();
