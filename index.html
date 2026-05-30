@@ -2976,9 +2976,9 @@
 
     // ——— PUSH NOTIFICATIONS BACKEND URL ———
     // If your HTML is on GitHub Pages, set this to your deployed Replit URL:
-    // var SKYMONITOR_API = 'https://skymonitor-push.skymonitor-account.workers.dev';
+    // var SKYMONITOR_API = 'https://your-app-name.replit.app';
     // If your HTML is served from the same server as the API, leave it as '':
-    var SKYMONITOR_API = 'https://skymonitor-push.skymonitor-account.workers.dev';
+    var SKYMONITOR_API = '';
 
     // ——— PWA SERVICE WORKER + PUSH NOTIFICATIONS (v1.1.0) ———
     var _swReg = null;
@@ -3043,15 +3043,17 @@
                 }).catch(function(e) { alert('Failed to disable notifications: ' + e.message); });
             } else {
                 fetch(SKYMONITOR_API + '/api/push/vapid-public-key').then(function(r) {
-                    if (!r.ok) { alert('Push notifications are not configured on the server.'); return null; }
+                    if (!r.ok) { alert('Step 1 failed: Worker returned ' + r.status + '. Check VAPID_PUBLIC_KEY secret in Cloudflare.'); return null; }
                     return r.json();
                 }).then(function(data) {
                     if (!data) return;
                     return Notification.requestPermission().then(function(perm) {
-                        if (perm !== 'granted') { alert('Notification permission denied.'); return; }
+                        if (perm !== 'granted') { alert('Notification permission was denied. Check iOS Settings → SkyMonitor → Notifications.'); return; }
                         return _swReg.pushManager.subscribe({
                             userVisibleOnly: true,
                             applicationServerKey: _urlB64ToUint8(data.publicKey)
+                        }).catch(function(e) {
+                            alert('Step 2 failed (push subscribe): ' + e.message + '\n\nMake sure you opened SkyMonitor from the Home Screen icon, not Safari.'); throw e;
                         });
                     });
                 }).then(function(sub) {
@@ -3060,8 +3062,10 @@
                         method: 'POST',
                         headers: {'Content-Type':'application/json'},
                         body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon })
+                    }).catch(function(e) {
+                        alert('Step 3 failed (save to server): ' + e.message + '\n\nThe Worker may still have a CORS issue. Check that you re-pasted the updated worker code.'); throw e;
                     }).then(function() { _setNotifBtnState(true); });
-                }).catch(function(e) { alert('Failed to enable notifications: ' + (e.message || e)); });
+                }).catch(function() {});
             }
         });
     }
