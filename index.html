@@ -637,6 +637,18 @@
         }
     }, true);
 
+    function _updateLivePanelCity(cityLat, cityLon) {
+        fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + cityLat + '&lon=' + cityLon)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var city = (d.address && (d.address.city || d.address.town || d.address.village || d.address.county)) || 'Current Location';
+                var livePanel = document.getElementById('coords-panel');
+                if (livePanel && localStorage.getItem('input_mode') === 'live') {
+                    livePanel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px;">📍 ' + city + '</span>';
+                }
+            }).catch(function() {});
+    }
+
     function setInputView(mode) {
         const panel = document.getElementById('coords-panel');
         localStorage.setItem('input_mode', mode);
@@ -655,22 +667,24 @@
         if (mode === 'coord') {
             panel.innerHTML = '<input type="number" id="latInput" value="' + lat + '" step="0.0001"><input type="number" id="lonInput" value="' + lon + '" step="0.0001"><button class="btn-action" onclick="updateLocation()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>';
         } else if (mode === 'live') {
-            panel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px;">📍 TRACKING LOCATION…</span>';
             if (!navigator.geolocation) {
                 panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS not available</span>';
                 return;
             }
+            panel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px;">📍 Locating…</span>';
             var lastLat = null, lastLon = null;
             _liveWatchId = navigator.geolocation.watchPosition(function(p) {
                 var newLat = parseFloat(p.coords.latitude.toFixed(4));
                 var newLon = parseFloat(p.coords.longitude.toFixed(4));
-                // Only reload if moved more than ~100m to avoid constant refreshes
                 var moved = lastLat === null || Math.abs(newLat - lastLat) > 0.001 || Math.abs(newLon - lastLon) > 0.001;
                 lat = newLat; lon = newLon;
                 lastLat = newLat; lastLon = newLon;
-                localStorage.setItem('waddle_lat', lat);
-                localStorage.setItem('waddle_lon', lon);
-                if (moved) loadAll();
+                localStorage.setItem('waddle_lat', String(lat));
+                localStorage.setItem('waddle_lon', String(lon));
+                if (moved) {
+                    _updateLivePanelCity(lat, lon);
+                    loadAll();
+                }
             }, function() {
                 panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS access denied</span>';
             }, { enableHighAccuracy: true, maximumAge: 30000 });
@@ -2916,7 +2930,20 @@
         return Promise.resolve();
     }
 
-    setInterval(loadAll, 60000);
+    function syncPushLocation() {
+        if (!_swReg) return;
+        _swReg.pushManager.getSubscription().then(function(sub) {
+            if (sub && lat && lon) {
+                fetch(SKYMONITOR_API + '/api/push/subscribe', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon })
+                }).catch(function() {});
+            }
+        }).catch(function() {});
+    }
+
+    setInterval(function() { loadAll(); syncPushLocation(); }, 60000);
 
     // ——— v1.0.4: SWIPE TABS + PULL-TO-REFRESH (respects _modalOpen flag) ———
     const tabs = ['home', 'severe', 'specs', 'reporting'];
@@ -3111,7 +3138,7 @@
     });
 
     window.addEventListener('DOMContentLoaded', function() {
-        const savedMode = localStorage.getItem('input_mode') || 'city';
+        const savedMode = localStorage.getItem('input_mode') || 'live';
         // Restore live tracking silently on startup — also re-syncs location to push subscription via window.onload
         setInputView(savedMode);
         const savedComplexity = localStorage.getItem('data_complexity') || 'normal';
@@ -3132,19 +3159,7 @@
 
     window.onload = function() {
         loadLoc();
-        loadAll().then(function() {
-            if (_swReg) {
-                _swReg.pushManager.getSubscription().then(function(sub) {
-                    if (sub && lat && lon) {
-                        fetch(SKYMONITOR_API + '/api/push/subscribe', {
-                            method: 'POST',
-                            headers: {'Content-Type':'application/json'},
-                            body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon })
-                        }).catch(function() {});
-                    }
-                }).catch(function() {});
-            }
-        });
+        loadAll().then(function() { syncPushLocation(); });
     };
 </script>
 </body>
