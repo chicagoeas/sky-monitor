@@ -286,6 +286,7 @@
         <div class="settings-row" id="notif-settings-row">
             <span class="settings-label">Alert Notifications</span>
             <button id="notif-toggle-btn" onclick="togglePushNotifications()" style="width:100%; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; transition:0.2s; background:rgba(255,255,255,0.08); color:white;">&#128276; Enable Notifications</button>
+            <button id="notif-test-btn" onclick="sendTestNotification()" style="display:none; width:100%; margin-top:6px; padding:8px; border:none; border-radius:8px; font-size:0.7em; font-weight:700; cursor:pointer; letter-spacing:1px; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.5);">&#129514; Send Test Notification</button>
         </div>
         <div style="margin-top:20px; padding-top:15px; border-top:1px solid rgba(255,255,255,0.06); text-align:center; font-size:0.65em; color:#445566;">
             Created by <a href="https://youtube.com/@chicagoareaEAS" target="_blank" style="color:#556677; text-decoration:none;">@chicagoareaEAS</a> on YouTube
@@ -3016,6 +3017,35 @@
         btn.textContent = enabled ? '\uD83D\uDD14 Notifications: ON' : '\uD83D\uDD15 Enable Notifications';
         btn.style.background = enabled ? 'var(--success)' : 'rgba(255,255,255,0.08)';
         btn.style.color = enabled ? '#000' : 'white';
+        var testBtn = document.getElementById('notif-test-btn');
+        if (testBtn) testBtn.style.display = enabled ? 'block' : 'none';
+    }
+
+    function sendTestNotification() {
+        var testBtn = document.getElementById('notif-test-btn');
+        if (testBtn) { testBtn.textContent = '⏳ Sending…'; testBtn.disabled = true; }
+        if (!_swReg) { alert('Service worker not ready.'); return; }
+        _swReg.pushManager.getSubscription().then(function(sub) {
+            if (!sub) { alert('Not subscribed — try disabling and re-enabling notifications.'); return; }
+            return fetch(SKYMONITOR_API + '/api/push/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint: sub.endpoint })
+            }).then(function(r) { return r.json(); }).then(function(data) {
+                if (data.success) {
+                    if (testBtn) { testBtn.textContent = '✅ Sent! Check for notification…'; }
+                    setTimeout(function() {
+                        if (testBtn) { testBtn.textContent = '🧪 Send Test Notification'; testBtn.disabled = false; }
+                    }, 4000);
+                } else {
+                    alert('Test failed: ' + (data.error || 'Unknown error'));
+                    if (testBtn) { testBtn.textContent = '🧪 Send Test Notification'; testBtn.disabled = false; }
+                }
+            });
+        }).catch(function(e) {
+            alert('Test failed: ' + e.message);
+            if (testBtn) { testBtn.textContent = '🧪 Send Test Notification'; testBtn.disabled = false; }
+        });
     }
 
     function togglePushNotifications() {
