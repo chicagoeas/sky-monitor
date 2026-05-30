@@ -2705,9 +2705,20 @@
                     if (!f.geometry) return;
                     const color = shortFusedPhenomena[ph];
                     const label = f.properties.eventid || ph;
-                    L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } })
-                        .bindPopup('<b>' + (f.properties.type || ph + ' Warning') + '</b><br><small>Issued by ' + (f.properties.wfo || '') + '<br>Expires: ' + (f.properties.expire ? new Date(f.properties.expire).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '') + '</small>')
-                        .addTo(alertPolygonLayer);
+                    const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
+                    const _popupContent = '<b>' + (f.properties.type || ph + ' Warning') + '</b><br><small>Issued by ' + (f.properties.wfo || '') + '<br>Expires: ' + (f.properties.expire ? new Date(f.properties.expire).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '') + '</small>';
+                    _poly.bindPopup(_popupContent);
+                    _poly.on('click', function(e) {
+                        // Single click: open popup but don't let it reach the map's double-tap timer
+                        L_ref.DomEvent.stopPropagation(e);
+                        _poly.openPopup(e.latlng);
+                    });
+                    _poly.on('dblclick', function(e) {
+                        // Double click: set report pin (stop default map zoom too)
+                        L_ref.DomEvent.stop(e);
+                        setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+                    });
+                    _poly.addTo(alertPolygonLayer);
                 });
             }
         } catch(e) {}
