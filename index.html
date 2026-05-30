@@ -105,6 +105,13 @@
         .btn-action { background: var(--primary); color: #07131d; border: none; padding: 6px 12px; border-radius: 15px; font-weight: bold; cursor: pointer; }
         .btn-gps { background: rgba(255,255,255,0.1); color: white; }
 
+        .ios-toggle { position:relative; display:inline-block; width:51px; height:31px; flex-shrink:0; }
+        .ios-toggle input { opacity:0; width:0; height:0; position:absolute; }
+        .ios-toggle-track { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#3a3a3c; border-radius:31px; transition:.3s; }
+        .ios-toggle-track:before { position:absolute; content:''; height:27px; width:27px; left:2px; bottom:2px; background:white; border-radius:50%; transition:.3s; box-shadow:0 2px 4px rgba(0,0,0,.4); }
+        .ios-toggle input:checked + .ios-toggle-track { background:#34c759; }
+        .ios-toggle input:checked + .ios-toggle-track:before { transform:translateX(20px); }
+
         .tab-content { display: none; animation: fadeIn 0.3s ease-out; }
         .tab-content.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
@@ -286,12 +293,57 @@
         </div>
         <div class="settings-row" id="notif-settings-row">
             <span class="settings-label">Alert Notifications</span>
-            <button id="notif-toggle-btn" onclick="togglePushNotifications()" style="width:100%; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; transition:0.2s; background:rgba(255,255,255,0.08); color:white;">&#128276; Enable Notifications</button>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <button id="notif-toggle-btn" onclick="togglePushNotifications()" style="flex:1; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; transition:0.2s; background:rgba(255,255,255,0.08); color:white;">&#128276; Enable Notifications</button>
+                <button onclick="openNotifPrefs()" title="Notification Settings" style="padding:10px 13px; border:none; border-radius:8px; font-size:1em; cursor:pointer; background:rgba(255,255,255,0.08); color:white;">&#9881;&#65039;</button>
+            </div>
+            <button id="notif-test-btn" onclick="sendTestNotification()" style="display:none; width:100%; margin-top:6px; padding:10px; border:1px solid rgba(255,255,255,0.15); border-radius:8px; font-size:0.7em; font-weight:700; cursor:pointer; letter-spacing:1px; background:rgba(255,255,255,0.08); color:white;">&#129514; Send Test Notification</button>
         </div>
         <div style="margin-top:20px; padding-top:15px; border-top:1px solid rgba(255,255,255,0.06); text-align:center; font-size:0.65em; color:#445566;">
             Created by <a href="https://youtube.com/@chicagoareaEAS" target="_blank" style="color:#556677; text-decoration:none;">@chicagoareaEAS</a> on YouTube
         </div>
     </div>
+
+    <div id="notif-prefs-modal" style="display:none; position:fixed; inset:0; z-index:2000; background:rgba(0,0,0,0.75); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
+    <div style="background:#0f1e2d; border:1px solid rgba(255,255,255,0.12); border-radius:20px; padding:24px; width:90%; max-width:340px; box-shadow:0 20px 60px rgba(0,0,0,0.8);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <span style="font-weight:800; font-size:0.95em; letter-spacing:1px; color:white;">&#128276; NOTIFICATION SETTINGS</span>
+            <button onclick="closeNotifPrefs()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+        </div>
+        <!-- Weather Alerts -->
+        <div style="margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <span style="font-size:0.9em; font-weight:700; color:white;">&#9928;&#65039; Weather Alerts</span>
+                <label class="ios-toggle">
+                    <input type="checkbox" id="pref-alert-enabled" checked onchange="onAlertEnabledChange()">
+                    <span class="ios-toggle-track"></span>
+                </label>
+            </div>
+            <div id="alert-type-row" style="padding:12px; background:rgba(255,255,255,0.04); border-radius:10px; transition:opacity .2s;">
+                <div style="font-size:0.7em; color:#778899; margin-bottom:8px; letter-spacing:1px; font-weight:700;">ALERT TYPE</div>
+                <div class="btn-group" style="width:100%;">
+                    <button id="pref-alert-all" class="btn-opt active" onclick="setAlertType('all')" style="flex:1;">ALL</button>
+                    <button id="pref-alert-important" class="btn-opt" onclick="setAlertType('important')" style="flex:1;">IMPORTANT ONLY</button>
+                </div>
+                <div style="font-size:0.63em; color:#556677; margin-top:8px; line-height:1.4;">Important = tornado, severe thunderstorm, flash flood &amp; other short-fused warnings only</div>
+            </div>
+        </div>
+        <!-- Rain Notifications -->
+        <div style="border-top:1px solid rgba(255,255,255,0.07); padding-top:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div style="font-size:0.9em; font-weight:700; color:white;">&#127783;&#65039; Rain Notifications</div>
+                    <div style="font-size:0.63em; color:#556677; margin-top:3px;">Alert when rain starts within 15 min</div>
+                </div>
+                <label class="ios-toggle">
+                    <input type="checkbox" id="pref-rain-enabled" checked onchange="saveNotifPrefs()">
+                    <span class="ios-toggle-track"></span>
+                </label>
+            </div>
+        </div>
+        <button onclick="saveNotifPrefs(); closeNotifPrefs();" style="width:100%; margin-top:20px; padding:12px; background:#34c759; border:none; border-radius:10px; color:white; font-weight:900; font-size:0.8em; letter-spacing:1px; cursor:pointer;">SAVE</button>
+    </div>
+</div>
 
 <div id="dashboard">
 
@@ -2937,7 +2989,7 @@
                 fetch(SKYMONITOR_API + '/api/push/subscribe', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon })
+                    body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon, prefs: getNotifPrefs() })
                 }).catch(function() {});
             }
         }).catch(function() {});
@@ -3126,6 +3178,52 @@
                 }).catch(function() {});
             }
         });
+    }
+
+    // ── Notification preferences ──────────────────────────────
+    function getNotifPrefs() {
+        return {
+            alertEnabled: localStorage.getItem('pref_alert_enabled') !== 'false',
+            alertType:    localStorage.getItem('pref_alert_type') || 'all',
+            rainEnabled:  localStorage.getItem('pref_rain_enabled') !== 'false',
+        };
+    }
+
+    function saveNotifPrefs() {
+        localStorage.setItem('pref_alert_enabled', document.getElementById('pref-alert-enabled').checked);
+        localStorage.setItem('pref_rain_enabled',  document.getElementById('pref-rain-enabled').checked);
+        syncPushLocation();
+    }
+
+    function setAlertType(type) {
+        localStorage.setItem('pref_alert_type', type);
+        document.getElementById('pref-alert-all').classList.toggle('active', type === 'all');
+        document.getElementById('pref-alert-important').classList.toggle('active', type === 'important');
+        syncPushLocation();
+    }
+
+    function onAlertEnabledChange() {
+        var enabled = document.getElementById('pref-alert-enabled').checked;
+        var row = document.getElementById('alert-type-row');
+        row.style.opacity = enabled ? '1' : '0.35';
+        row.style.pointerEvents = enabled ? '' : 'none';
+        saveNotifPrefs();
+    }
+
+    function openNotifPrefs() {
+        var prefs = getNotifPrefs();
+        document.getElementById('pref-alert-enabled').checked = prefs.alertEnabled;
+        document.getElementById('pref-rain-enabled').checked  = prefs.rainEnabled;
+        document.getElementById('pref-alert-all').classList.toggle('active', prefs.alertType === 'all');
+        document.getElementById('pref-alert-important').classList.toggle('active', prefs.alertType === 'important');
+        var row = document.getElementById('alert-type-row');
+        row.style.opacity = prefs.alertEnabled ? '1' : '0.35';
+        row.style.pointerEvents = prefs.alertEnabled ? '' : 'none';
+        document.getElementById('notif-prefs-modal').style.display = 'flex';
+    }
+
+    function closeNotifPrefs() {
+        document.getElementById('notif-prefs-modal').style.display = 'none';
     }
 
     window.addEventListener('resize', function() {
