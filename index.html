@@ -99,7 +99,7 @@
             background: none; border: none; border-bottom: 1px solid var(--primary);
             color: white; padding: 5px; width: 80px; text-align: center; outline: none;
         }
-        #coords-panel.city-mode { background: none; border: none; padding: 0; flex: 1; min-width: 0; max-width: 100%; display: flex; }
+        #coords-panel.city-mode { background: none; border: none; padding: 0; min-width: 0; display: flex; }
         .city-mode-container { display: flex; gap: 8px; width: 100%; min-width: 0; align-items: center; }
 
         .btn-action { background: var(--primary); color: #07131d; border: none; padding: 6px 12px; border-radius: 15px; font-weight: bold; cursor: pointer; }
@@ -208,6 +208,7 @@
         .alert-expand-btn {
             background: none; border: none; color: rgba(255,255,255,0.65);
             font-size: 0.75em; cursor: pointer; padding: 5px 0 2px 0;
+            margin-left: 12px;
             display: inline-flex; align-items: center; gap: 4px; transition: color 0.2s;
         }
         .alert-expand-btn:hover { color: white; }
@@ -668,6 +669,8 @@
         // v1.0.4: Show/hide analytics section based on mode
         const analyticsSection = document.getElementById('analytics-section');
         if (analyticsSection) analyticsSection.style.display = (mode === 'specific') ? 'block' : 'none';
+        // Render analytics immediately if data already loaded (no need to wait for loadAll)
+        if (mode === 'specific' && window.pirateHourlyData) renderAnalytics();
         // Station Intel: Advanced mode only
         const stationIntelBox = document.getElementById('station-intel-box');
         if (stationIntelBox) stationIntelBox.style.display = (mode === 'specific') ? '' : 'none';
@@ -678,9 +681,9 @@
         const body = document.body;
         if (body.classList.contains('theme-tor') || body.classList.contains('theme-svr') || body.classList.contains('theme-ffw')) return;
         if (!localRiseTime || !localSetTime) { body.style.background = 'linear-gradient(180deg, #07131d 0%, #000000 100%)'; return; }
-        const now = new Date().getTime(); const thirtyMins = 30 * 60 * 1000;
-        const isGoldenHourMorn = now >= localRiseTime - thirtyMins && now <= localRiseTime + thirtyMins;
-        const isGoldenHourEve = now >= localSetTime - thirtyMins && now <= localSetTime + thirtyMins;
+        const now = new Date().getTime(); const fifteenMins = 15 * 60 * 1000;
+        const isGoldenHourMorn = now >= localRiseTime - fifteenMins && now <= localRiseTime + fifteenMins;
+        const isGoldenHourEve = now >= localSetTime - fifteenMins && now <= localSetTime + fifteenMins;
         const isDay = (now > localRiseTime && now < localSetTime);
         if (isGoldenHourMorn || isGoldenHourEve) body.style.background = 'linear-gradient(180deg, #e65100 0%, #07131d 100%)';
         else if (isDay) body.style.background = 'linear-gradient(180deg, #1a3a5a 0%, #07131d 100%)';
@@ -1171,13 +1174,58 @@
         const weightedSum = scores.reduce(function(s, v, i) { return s + v * weights[i]; }, 0);
         const avgScore = Math.round(weightedSum / totalWeight);
         if (scoreEl) scoreEl.innerText = avgScore;
+        // Build personalized description from the actual hourly data
+        const maxPrecipProb = Math.max(...todayHours.map(function(h) { return (h.precipProbability || 0) * 100; }));
+        const hasThunder = todayHours.some(function(h) { return (h.icon || h.summary || '').toLowerCase().includes('thunderstorm'); });
+        const hasRain = maxPrecipProb >= 50;
+        const maxGust = Math.max(...todayHours.map(function(h) { return h.windGust || h.windSpeed || 0; }));
+        const maxFeels = Math.max(...todayHours.map(function(h) { return h.apparentTemperature || h.temperature || 70; }));
+        const minFeels = Math.min(...todayHours.map(function(h) { return h.apparentTemperature || h.temperature || 70; }));
+        // Find earliest rainy hour
+        var rainWindow = '';
+        var rainHour = todayHours.find(function(h) { return (h.precipProbability || 0) >= 0.5; });
+        if (rainHour) {
+            var rh = new Date(rainHour.time * 1000).getHours();
+            var ampm = rh >= 12 ? 'PM' : 'AM';
+            var rh12 = rh > 12 ? rh - 12 : (rh === 0 ? 12 : rh);
+            rainWindow = rh12 + ' ' + ampm;
+        }
         let desc;
-        if (avgScore >= 90) desc = 'Perfect day to be outside!';
-        else if (avgScore >= 75) desc = 'Great conditions overall';
-        else if (avgScore >= 60) desc = 'Decent — some minor discomfort';
-        else if (avgScore >= 45) desc = 'Marginal — notable discomfort expected';
-        else if (avgScore >= 30) desc = 'Poor — significant discomfort or hazard';
-        else desc = 'Not recommended for outdoor activity';
+        if (avgScore >= 90) {
+            desc = minFeels >= 65 && minFeels <= 80 ? 'Nearly perfect — enjoy your time outside!' : 'Excellent conditions for the next 12 hours.';
+        } else if (hasThunder) {
+            desc = avgScore < 30 ? 'Active thunderstorms likely. Stay inside.' : 'Storms possible — watch lightning closely.';
+        } else if (maxFeels >= 103) {
+            desc = 'Dangerous heat ahead. Minimize outdoor exposure and hydrate.';
+        } else if (maxFeels >= 95) {
+            desc = 'Very hot (feels like ' + Math.round(maxFeels) + '\u00b0). Limit activity during peak heat.';
+        } else if (minFeels < 15) {
+            desc = 'Dangerously cold wind chills. Limit time outdoors.';
+        } else if (minFeels < 32) {
+            desc = 'Freezing temperatures. Dress warmly before heading out.';
+        } else if (minFeels < 45) {
+            desc = 'Chilly — jacket required. Otherwise manageable.';
+        } else if (maxPrecipProb >= 80) {
+            desc = 'Heavy rain very likely' + (rainWindow ? ' around ' + rainWindow : '') + '. Best to stay inside.';
+        } else if (avgScore >= 75 && hasRain) {
+            desc = 'Mostly good, but watch for rain' + (rainWindow ? ' around ' + rainWindow : '') + '.';
+        } else if (avgScore >= 75) {
+            desc = 'Great conditions for outdoor activities!';
+        } else if (avgScore >= 60 && hasRain) {
+            desc = 'Decent overall, but expect rain' + (rainWindow ? ' around ' + rainWindow : '') + '. Plan accordingly.';
+        } else if (avgScore >= 60) {
+            desc = 'Decent — some minor discomfort expected.';
+        } else if (hasRain) {
+            desc = 'Rainy periods likely' + (rainWindow ? ' starting around ' + rainWindow : '') + '. Have an umbrella ready.';
+        } else if (maxGust >= 35) {
+            desc = 'Very windy (' + Math.round(maxGust) + ' mph gusts). Outdoor plans may be disrupted.';
+        } else if (avgScore >= 45) {
+            desc = 'Marginal — plan carefully and dress for the conditions.';
+        } else if (avgScore >= 30) {
+            desc = 'Poor conditions — significant discomfort or hazard expected.';
+        } else {
+            desc = 'Not recommended for outdoor activity.';
+        }
         if (descEl) descEl.innerText = desc;
         boxEl.style.display = 'block';
     }
@@ -1354,17 +1402,16 @@
         const len = (elem.textContent || '').length || 1;
         const isMobile = window.innerWidth <= 600;
         if (!isMobile) {
-            // Desktop: boxes are wide — always use a fixed large size.
             elem.style.fontSize = '28px';
         } else {
-            // Mobile: compute max size that fits without clipping.
+            // True content width inside the toolkit-box grid column:
             //   card = innerWidth - 40px body padding
-            //   column = (card - 15px gap) / 2
-            //   text area = column - 40px box padding - 14px safety margin
-            // Bold-900 uppercase chars are ~0.70× font-size wide.
+            //   column = (card - 15px grid gap) / 2
+            //   text area = column - 20px pad each side - 1px border each side = column - 42
+            // Bold-900 uppercase Segoe UI chars measure ~0.75× font-size wide.
             const cardW = window.innerWidth - 40;
-            const avail = Math.max(50, (cardW - 15) / 2 - 40 - 14);
-            const px = Math.max(12, Math.min(18, Math.floor(avail / (len * 0.70))));
+            const avail = Math.max(50, (cardW - 15) / 2 - 42);
+            const px = Math.max(12, Math.min(16, Math.floor(avail / (len * 0.75))));
             elem.style.fontSize = px + 'px';
         }
         elem.style.whiteSpace = 'nowrap';
@@ -1805,8 +1852,8 @@
                     ctx.beginPath(); ctx.arc(moonX + shadowOffset * (moonPhaseVal < 0.5 ? 1 : -1), moonY, moonR, 0, Math.PI * 2); ctx.fill(); ctx.restore();
                 }
             } else {
-                const nowMs = Date.now(), thirtyMins = 30 * 60 * 1000;
-                const isGolden = localRiseTime > 0 && ((nowMs >= localRiseTime - thirtyMins && nowMs <= localRiseTime + thirtyMins) || (nowMs >= localSetTime - thirtyMins && nowMs <= localSetTime + thirtyMins));
+                const nowMs = Date.now(), fifteenMins = 15 * 60 * 1000;
+                const isGolden = localRiseTime > 0 && ((nowMs >= localRiseTime - fifteenMins && nowMs <= localRiseTime + fifteenMins) || (nowMs >= localSetTime - fifteenMins && nowMs <= localSetTime + fifteenMins));
                 if (isGolden) {
                     const grad = ctx.createLinearGradient(0, 0, 0, H * 0.5);
                     grad.addColorStop(0, 'rgba(230,81,0,0.12)'); grad.addColorStop(0.5, 'rgba(255,160,0,0.06)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
@@ -2298,8 +2345,8 @@
     let alertPolygonLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-    let radarVisible = true;
-    let alertsVisible = true;
+    let radarVisible = localStorage.getItem('report_radar_on') !== '0';
+    let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let reportLat = null, reportLon = null;
     let reportPinMarker = null;
     let selectedReportType = '';
@@ -2308,7 +2355,13 @@
         { type: 'Rain', emoji: '\uD83C\uDF27\uFE0F', label: 'Rain' },
         { type: 'Thunderstorm', emoji: '\u26C8\uFE0F', label: 'Thunderstorm' },
         { type: 'Wind Damage', emoji: '\uD83D\uDCA8', label: 'Wind Damage' },
-        { type: 'Flooding', emoji: '\uD83C\uDF0A', label: 'Flooding' },
+        { type: 'Flooding', emoji: '\uD83C\uDF0A', label: 'Flooding', sub: {
+            label: 'Select flood type:',
+            options: [
+                { type: 'Flash Flood', label: '\uD83C\uDF0A Flash Flood' },
+                { type: 'Flooding', label: '\uD83C\uDF0A Flooding' }
+            ]
+        }},
         { type: 'Hail', emoji: '\uD83C\uDF28', label: 'Hail', sub: {
             label: 'Select hail size:',
             options: [
@@ -2392,8 +2445,10 @@
         selectedReportType = type;
         document.getElementById('report-subcat-wrap').style.display = 'none';
         const display = document.getElementById('report-type-display');
-        display.style.display = 'block';
-        display.textContent = '\u2713 ' + type;
+        display.style.display = 'flex';
+        display.style.alignItems = 'center';
+        display.style.justifyContent = 'space-between';
+        display.innerHTML = '<span>\u2713 ' + type + '</span><button onclick="clearReportCategory()" style="background:transparent;border:1px solid rgba(255,255,255,0.2);color:#aaa;padding:2px 10px;border-radius:6px;font-size:0.8em;cursor:pointer;flex-shrink:0;">\u2190 Back</button>';
     }
 
     function clearReportCategory() {
@@ -2418,10 +2473,11 @@
         return timeStr;
     }
 
-    let lsrVisible = true;
+    let lsrVisible = localStorage.getItem('report_lsr_on') !== '0';
     function toggleLSR() {
         if (!lsrLayer || !reportingMap) return;
         lsrVisible = !lsrVisible;
+        localStorage.setItem('report_lsr_on', lsrVisible ? '1' : '0');
         const btn = document.getElementById('lsr-toggle-btn');
         if (lsrVisible) {
             reportingMap.addLayer(lsrLayer);
@@ -2438,10 +2494,12 @@
         if (alertsVisible) {
             reportingMap.removeLayer(alertPolygonLayer);
             alertsVisible = false;
+            localStorage.setItem('report_alerts_on', '0');
             if (btn) { btn.textContent = '\u26A0\uFE0F Alerts OFF'; btn.style.opacity = '0.45'; }
         } else {
             alertPolygonLayer.addTo(reportingMap);
             alertsVisible = true;
+            localStorage.setItem('report_alerts_on', '1');
             if (btn) { btn.textContent = '\u26A0\uFE0F Alerts ON'; btn.style.opacity = '1'; }
         }
     }
@@ -2472,10 +2530,12 @@
         if (radarVisible) {
             reportingMap.removeLayer(reportingRadarLayer);
             radarVisible = false;
+            localStorage.setItem('report_radar_on', '0');
             if (btn) { btn.textContent = '\uD83D\uDCE1 Radar OFF'; btn.style.opacity = '0.5'; }
         } else {
             reportingRadarLayer.addTo(reportingMap);
             radarVisible = true;
+            localStorage.setItem('report_radar_on', '1');
             if (btn) { btn.textContent = '\uD83D\uDCE1 Radar ON'; btn.style.opacity = '1'; }
         }
     }
@@ -2553,6 +2613,23 @@
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
         lsrLayer = L_ref.layerGroup().addTo(reportingMap);
+
+        // Restore saved toggle state
+        if (!radarVisible) {
+            reportingMap.removeLayer(reportingRadarLayer);
+            const rb = document.getElementById('radar-toggle-btn');
+            if (rb) { rb.textContent = '\uD83D\uDCE1 Radar OFF'; rb.style.opacity = '0.5'; }
+        }
+        if (!alertsVisible) {
+            reportingMap.removeLayer(alertPolygonLayer);
+            const ab = document.getElementById('alerts-toggle-btn');
+            if (ab) { ab.textContent = '\u26A0\uFE0F Alerts OFF'; ab.style.opacity = '0.45'; }
+        }
+        if (!lsrVisible) {
+            reportingMap.removeLayer(lsrLayer);
+            const lb = document.getElementById('lsr-toggle-btn');
+            if (lb) { lb.textContent = '\uD83D\uDCCC LSR OFF'; lb.style.opacity = '0.45'; }
+        }
         userReportLayer = L_ref.markerClusterGroup({
             maxClusterRadius: 40,
             iconCreateFunction: function(cluster) {
@@ -2667,15 +2744,18 @@
                 const REPORT_EMOJIS = {
                     'Rain':'\uD83C\uDF27\uFE0F', 'Thunderstorm':'\u26C8\uFE0F',
                     'Wind Damage':'\uD83D\uDCA8', 'Flooding':'\uD83C\uDF0A',
+                    'Flash Flood':'\uD83C\uDF0A',
                     'Tornado / Funnel Cloud':'\uD83C\uDF2A\uFE0F',
                     'Lightning Strike':'\u26A1', 'Lightning':'\u26A1',
                     'Fog / Low Visibility':'\uD83C\uDF2B\uFE0F',
+                    'Fog':'\uD83C\uDF2B\uFE0F', 'Low Visibility':'\uD83D\uDC41\uFE0F',
+                    'Snow Squall':'\uD83C\uDF28\uFE0F', 'Dust Storm':'\uD83C\uDF2A\uFE0F',
                     'Heavy Snow':'\u2744\uFE0F', 'Ice / Freezing Rain':'\uD83E\uDDCA',
                     'Blizzard Conditions':'\uD83C\uDF28\uFE0F', 'Other':'\uD83D\uDCCC'
                 };
                 function getReportEmoji(type) {
                     if (!type) return '\uD83D\uDFE2';
-                    if (type.startsWith('Hail')) return '\uD83E\uDDE0';
+                    if (type.startsWith('Hail \u2014') || type.startsWith('Hail -')) return '\uD83C\uDF28\uFE0F';
                     if (type.startsWith('Winter')) return '\u2744\uFE0F';
                     return REPORT_EMOJIS[type] || '\uD83D\uDFE2';
                 }
