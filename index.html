@@ -595,6 +595,9 @@
     // v1.0.4: Separate TOR vs SVR tracking
     window.activeTornadoWarning = false;
     window.activeSVRWarning = false;
+    window.activeTornadoEmergency = false;
+    window.activePDSTornado = false;
+    window.activeFFE = false;
     // v1.0.4: Modal-open flag disables tab swipe
     window._modalOpen = false;
     function setModalOpen(v) { window._modalOpen = v; document.body.style.overflow = v ? 'hidden' : ''; }
@@ -1248,6 +1251,9 @@
         window.activeStormWarning = false;
         window.activeTornadoWarning = false;
         window.activeSVRWarning = false;
+        window.activeTornadoEmergency = false;
+        window.activePDSTornado = false;
+        window.activeFFE = false;
 
         if (window.isOutsideUS) {
             stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
@@ -1361,15 +1367,16 @@
                         else checklistText = 'CIVIL EMERGENCY! MONITOR LOCAL MEDIA FOR INSTRUCTIONS!';
                     } else if (evt.includes('tornado warning')) {
                         highestTheme = 'theme-tor';
-                        if (isTorEmergency) checklistText = 'TORNADO EMERGENCY!!! EXTREMELY DANGEROUS SITUATION!!! TAKE COVER NOW!';
-                        else if (isPDS) checklistText = 'PARTICULARLY DANGEROUS SITUATION! TAKE COVER NOW!';
+                        if (isTorEmergency) { checklistText = 'TORNADO EMERGENCY!!! EXTREMELY DANGEROUS SITUATION!!! TAKE COVER NOW!'; window.activeTornadoEmergency = true; }
+                        else if (isPDS) { checklistText = 'PARTICULARLY DANGEROUS SITUATION! TAKE COVER NOW!'; window.activePDSTornado = true; }
                         else checklistText = 'TAKE COVER NOW!';
                     } else if (evt.includes('severe thunderstorm warning') && highestTheme !== 'theme-tor') {
                         highestTheme = 'theme-svr';
                         checklistText = isPDS ? 'DESTRUCTIVE SEVERE THUNDERSTORM! TAKE SHELTER!' : 'MOVE TO AN INTERIOR ROOM!';
                     } else if (evt.includes('flash flood warning') && !highestTheme) {
                         highestTheme = 'theme-ffw';
-                        checklistText = isPDS ? 'FLASH FLOOD EMERGENCY! SEEK HIGHER GROUND NOW!' : 'TURN AROUND, DON`T DROWN!';
+                        if (isPDS) { checklistText = 'FLASH FLOOD EMERGENCY! SEEK HIGHER GROUND NOW!'; window.activeFFE = true; }
+                        else checklistText = 'TURN AROUND, DON`T DROWN!';
                     } else if (evt.includes('dust storm warning') && !highestTheme) {
                         highestTheme = 'theme-svr'; checklistText = 'PULL ASIDE STAY ALIVE!';
                     }
@@ -1931,7 +1938,15 @@
         const hasWatch = (window.activeAlertWatches || []).length > 0;
         const hasHighImpactWatch = (window.activeHighImpactWatches || []).length > 0;
         const hasLowImpactWatch = hasWatch && !hasHighImpactWatch;
-        if (hasTorWarning) { score += 10; factorList.push({ label: 'Tornado Warning', color: '#ff1744' }); }
+        // Determine label and color for the tornado factor
+        if (hasTorWarning) {
+            let torLabel, torColor;
+            if (window.activeTornadoEmergency) { torLabel = 'Tornado Emergency'; torColor = '#e040fb'; }
+            else if (window.activePDSTornado)   { torLabel = 'PDS Tornado Warning'; torColor = '#e040fb'; }
+            else                                 { torLabel = 'Tornado Warning'; torColor = '#ff1744'; }
+            score += 10;
+            factorList.push({ label: torLabel, color: torColor });
+        }
         else if (hasSVRWarning) { score += 7; factorList.push({ label: 'SVR Warning', color: '#ff9100' }); }
         else if (hasGenWarning) { score += 4; factorList.push({ label: 'NWS Warning', color: '#ff9100' }); }
         if (hasHighImpactWatch) { score += 3; factorList.push({ label: 'High-Impact Watch', color: '#ff9100' }); }
@@ -1942,6 +1957,9 @@
 
         const presEl = document.getElementById('presVal');
         if (presEl && presEl.innerHTML.includes('\u2198\uFE0F')) { score += 1; factorList.push({ label: 'Falling pressure', color: '#ffeb3b' }); }
+
+        // Tornado Emergency, PDS Tornado Warning, or Flash Flood Emergency → always LIFE THREATENING
+        if (window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE) score = Math.max(score, 16);
 
         let tier, tierClass, emoji, descText;
         if (score >= 16) { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life'; emoji = '\uD83D\uDFE3'; descText = 'A significant weather emergency is ongoing nearby. Immediate protective action may be required.'; }
