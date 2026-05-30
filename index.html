@@ -267,6 +267,7 @@
             <div class="btn-group">
                 <button id="opt-mode-coord" class="btn-opt active" onclick="setInputView('coord')">COORDS</button>
                 <button id="opt-mode-city" class="btn-opt" onclick="setInputView('city')">CITY</button>
+                <button id="opt-mode-live" class="btn-opt" onclick="setInputView('live')">📍 LIVE</button>
             </div>
         </div>
         <div class="settings-row">
@@ -565,6 +566,7 @@
     const REPORTS_WORKER_URL = 'https://skymonitor-reports.skymonitor-account.workers.dev';
 
     let lat = 41.8781, lon = -87.6298;
+    var _liveWatchId = null;
     let localRiseTime = 0, localSetTime = 0;
     let alertIntervalId = null;
     let alertIntervalGen = 0;
@@ -638,11 +640,40 @@
     function setInputView(mode) {
         const panel = document.getElementById('coords-panel');
         localStorage.setItem('input_mode', mode);
+
+        // Stop any active live tracking when switching away
+        if (mode !== 'live' && _liveWatchId !== null) {
+            navigator.geolocation.clearWatch(_liveWatchId);
+            _liveWatchId = null;
+        }
+
         panel.classList.toggle('city-mode', mode === 'city');
         document.getElementById('opt-mode-coord').classList.toggle('active', mode === 'coord');
         document.getElementById('opt-mode-city').classList.toggle('active', mode === 'city');
+        document.getElementById('opt-mode-live').classList.toggle('active', mode === 'live');
+
         if (mode === 'coord') {
             panel.innerHTML = '<input type="number" id="latInput" value="' + lat + '" step="0.0001"><input type="number" id="lonInput" value="' + lon + '" step="0.0001"><button class="btn-action" onclick="updateLocation()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>';
+        } else if (mode === 'live') {
+            panel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px;">📍 TRACKING LOCATION…</span>';
+            if (!navigator.geolocation) {
+                panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS not available</span>';
+                return;
+            }
+            var lastLat = null, lastLon = null;
+            _liveWatchId = navigator.geolocation.watchPosition(function(p) {
+                var newLat = parseFloat(p.coords.latitude.toFixed(4));
+                var newLon = parseFloat(p.coords.longitude.toFixed(4));
+                // Only reload if moved more than ~100m to avoid constant refreshes
+                var moved = lastLat === null || Math.abs(newLat - lastLat) > 0.001 || Math.abs(newLon - lastLon) > 0.001;
+                lat = newLat; lon = newLon;
+                lastLat = newLat; lastLon = newLon;
+                localStorage.setItem('waddle_lat', lat);
+                localStorage.setItem('waddle_lon', lon);
+                if (moved) loadAll();
+            }, function() {
+                panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS access denied</span>';
+            }, { enableHighAccuracy: true, maximumAge: 30000 });
         } else {
             const savedCity = localStorage.getItem('waddle_city') || '';
             panel.innerHTML = '<div class="city-mode-container"><input type="text" id="cityInput" placeholder="Enter City, Zip, Address..." value="' + savedCity + '"><button class="btn-action" onclick="runCitySearch()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button></div>';
@@ -3081,6 +3112,7 @@
 
     window.addEventListener('DOMContentLoaded', function() {
         const savedMode = localStorage.getItem('input_mode') || 'city';
+        // Restore live tracking silently on startup — also re-syncs location to push subscription via window.onload
         setInputView(savedMode);
         const savedComplexity = localStorage.getItem('data_complexity') || 'normal';
         const normalBtn = document.getElementById('opt-data-normal');
