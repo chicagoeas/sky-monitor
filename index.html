@@ -244,7 +244,7 @@
     <span id="sync-indicator">&#9679; UPDATING</span>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.0.4</span></span>
+        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.0.5</span></span>
     </h1>
 
     <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
@@ -547,7 +547,7 @@
     <div style="margin-bottom:8px;">
         <span style="letter-spacing:2px; font-weight:800; color:#aaa;">SkyMonitor</span>
         <span style="margin:0 8px; opacity:0.3;">|</span>
-        ALPHA RELEASE - v1.0.4
+        ALPHA RELEASE - v1.0.5
     </div>
     <p style="font-size:0.85em; margin-top:10px; opacity:0.6; font-weight:600; letter-spacing:0.5px;">Accurate weather, simplified.</p>
     <p style="font-size:0.65em; margin-top:4px; opacity:0.5;">Powered by TWC, PirateWeather, OpenWeather, SPC, NWS, and WU</p>
@@ -1270,6 +1270,10 @@
                 return;
             }
             const data = await res.json();
+            const _expandedAlertIds = new Set();
+            document.querySelectorAll('.alert-full-text').forEach(function(el) {
+                if (el.style.display === 'block' && el.id) _expandedAlertIds.add(el.id.replace('full-', ''));
+            });
             stack.innerHTML = ''; document.body.className = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
 
             if (data.features && data.features.length > 0) {
@@ -1402,10 +1406,16 @@
                         fullContent += '<div style="font-weight:bold;color:var(--accent);margin:8px 0 3px;font-size:0.88em;">PRECAUTIONARY/PREPAREDNESS ACTIONS</div>';
                         fullContent += formatNWSText(p.instruction);
                     }
-                    const nwsId = 'nws-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
+                    const nwsId = 'nws-' + (f.properties.id || (Date.now() + '-' + Math.floor(Math.random() * 9999))).replace(/[^a-zA-Z0-9]/g, '_');
 
                     // v1.0.4: button BEFORE the full-text div
                     stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + displayName + '</b><br><small>' + (p.headline || '') + '</small>' + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
+                });
+
+                _expandedAlertIds.forEach(function(id) {
+                    const el = document.getElementById('full-' + id);
+                    const btn = document.getElementById('btn-' + id);
+                    if (el && btn) { el.style.display = 'block'; btn.textContent = '\u25b2 Show less'; }
                 });
 
                 if (highestTheme) document.body.className = highestTheme;
