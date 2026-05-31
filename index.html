@@ -2167,15 +2167,23 @@
             factorList.push({ label: 'SPC ' + spc, color: SPC_COLORS[spc] || '#7BB07B' });
         }
 
-        // ── 2. Storm Proximity + Approach Vector ──────────────────────────
-        // Approaching storms get an urgency bonus; receding get none.
+        // ── 2. Storm Proximity ────────────────────────────────────────────────
+        // nearestStormDistance=0 from PirateWeather just means "currently in rain" —
+        // NOT necessarily a dangerous cell. Full proximity points only apply when
+        // an active storm WARNING confirms there is a real severe threat nearby.
         const dist = window.currentStormDist;
         const approaching = window.stormApproaching || false;
         if (dist !== undefined && dist !== null) {
             let proxScore = 0, proxColor = '#ffeb3b';
-            if (dist < 5)       { proxScore = 3; proxColor = '#ff1744'; }
-            else if (dist < 12) { proxScore = 2; proxColor = '#ff9100'; }
-            else if (dist < 25) { proxScore = 1; proxColor = '#ffeb3b'; }
+            if (window.activeStormWarning) {
+                // Warning active → proximity matters significantly
+                if (dist < 5)       { proxScore = 3; proxColor = '#ff1744'; }
+                else if (dist < 12) { proxScore = 2; proxColor = '#ff9100'; }
+                else if (dist < 25) { proxScore = 1; proxColor = '#ffeb3b'; }
+            } else {
+                // No warning → being "in rain" adds a minor ambient signal only
+                if (dist < 5) { proxScore = 1; proxColor = '#ffeb3b'; }
+            }
             if (proxScore > 0) {
                 score += proxScore;
                 factorList.push({ label: 'Storm ' + Math.round(dist) + 'mi' + (approaching ? ' \u2197' : ''), color: proxColor });
@@ -2200,11 +2208,11 @@
             ['flash flood watch',           3, 'Flash Flood Watch',       '#4fc3f7', 'flood'],
             ['flash flood statement',       1, 'Flash Flood Statement',   '#4fc3f7', 'flood'],
             // General flood
-            ['flood warning',               4, 'Flood Warning',           '#4fc3f7', 'flood'],
-            ['coastal flood warning',       4, 'Coastal Flood Warning',   '#4fc3f7', 'flood'],
-            ['lakeshore flood warning',     3, 'Lakeshore Flood Warning', '#4fc3f7', 'flood'],
-            ['flood watch',                 2, 'Flood Watch',             '#4fc3f7', 'flood'],
-            ['coastal flood watch',         2, 'Coastal Flood Watch',     '#4fc3f7', 'flood'],
+            ['flood warning',               2, 'Flood Warning',           '#4fc3f7', 'flood'],
+            ['coastal flood warning',       2, 'Coastal Flood Warning',   '#4fc3f7', 'flood'],
+            ['lakeshore flood warning',     2, 'Lakeshore Flood Warning', '#4fc3f7', 'flood'],
+            ['flood watch',                 1, 'Flood Watch',             '#4fc3f7', 'flood'],
+            ['coastal flood watch',         1, 'Coastal Flood Watch',     '#4fc3f7', 'flood'],
             // Winter / ice
             ['blizzard warning',            6, 'Blizzard Warning',        '#64b5f6', 'winter'],
             ['ice storm warning',           6, 'Ice Storm Warning',       '#90caf9', 'winter'],
@@ -2246,7 +2254,7 @@
             ['severe weather statement',    2, 'Severe Wx Statement',     '#ff9100', 'other'],
             // Convective watches
             ['tornado watch',               5, 'Tornado Watch',           '#ff9100', 'convective'],
-            ['severe thunderstorm watch',   3, 'SVR Thunderstorm Watch',  '#ffb300', 'convective'],
+            ['severe thunderstorm watch',   2, 'SVR Thunderstorm Watch',  '#ffb300', 'convective'],
             // Catch-alls (any unmatched alert with these words)
             ['warning',                     3, null, '#ff9100', 'other'],
             ['watch',                       2, null, '#ffb300', 'other'],
@@ -2331,10 +2339,11 @@
         else if (liveWindSpd >= 40) { score += 2; factorList.push({ label: 'Wind ' + liveWindSpd + ' mph', color: '#ff9100' }); }
         else if (liveWindSpd >= 30) { score += 1; factorList.push({ label: 'Wind ' + liveWindSpd + ' mph', color: '#ffeb3b' }); }
 
-        // Precipitation intensity — elevates flood threat when rain is heavy
-        const hasFloodAlert = (window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flood'); });
-        if (livePrecipInt >= 0.3 && hasFloodAlert)      { score += 2; factorList.push({ label: 'Heavy rainfall', color: '#00bcd4' }); }
-        else if (livePrecipInt >= 0.15 && hasFloodAlert) { score += 1; factorList.push({ label: 'Moderate rainfall', color: '#4fc3f7' }); }
+        // Precipitation intensity — only elevates score when a Flash Flood Warning is active
+        // (regular Flood Warnings are river/drainage events, not rain-rate dependent)
+        const hasFlashFloodWarning = (window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flash flood warning'); });
+        if (livePrecipInt >= 0.3 && hasFlashFloodWarning)      { score += 2; factorList.push({ label: 'Heavy rainfall', color: '#00bcd4' }); }
+        else if (livePrecipInt >= 0.15 && hasFlashFloodWarning) { score += 1; factorList.push({ label: 'Mod. rainfall', color: '#4fc3f7' }); }
 
         // Atmospheric extremes (feels-like temperature)
         const feels = liveFeelsLike;
