@@ -407,7 +407,7 @@
         <div class="detail-grid">
             <div class="detail-item"><div class="detail-label">Temp</div><div id="tempVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Wind</div><div id="windVal" class="detail-val">--</div></div>
-            <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div></div>
+            <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div><div class="detail-label" style="margin-top:6px;">Feels Like</div><div id="feelsVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Pressure</div><div id="presVal" class="detail-val">--</div></div>
         </div>
         <div id="wuStation" style="font-size:10px; opacity:0.6; margin-top:-15px; margin-bottom:15px; padding-left:2px; display:none;">
@@ -932,6 +932,7 @@
         document.getElementById('tempVal').innerText = '--';
         document.getElementById('windVal').innerText = '--';
         document.getElementById('humVal').innerText = '--';
+        document.getElementById('feelsVal').innerText = '--';
         document.getElementById('presVal').innerText = '--';
         document.getElementById('weatherIcon').style.display = 'none';
         document.getElementById('minuteSummary').innerText = 'Scanning radar...';
@@ -1735,6 +1736,7 @@
             let humidity = (useWU && wu.humidity !== null) ? wu.humidity : curr.humidity * 100;
             if (useWU && Math.abs(wu.humidity - (curr.humidity * 100)) > 10) humidity = curr.humidity * 100;
             document.getElementById('humVal').innerText = Math.round(humidity) + '%';
+            document.getElementById('feelsVal').innerText = liveFeelsLike ? Math.round(liveFeelsLike) + '\u00b0' : '--';
             const presIn = (curr.pressure * 0.02953).toFixed(2);
             let trend = '\u27A1\uFE0F';
             if (lastPressureMb !== null && curr.pressure !== null) {
@@ -2607,7 +2609,15 @@
         const uvDesc2 = [daypart.uvDescription?.[base], daypart.uvDescription?.[base + 1]];
         const cloudCover = [daypart.cloudCoverPhrase?.[base], daypart.cloudCoverPhrase?.[base + 1]];
         const snowQpf = [daypart.qpfSnow?.[base], daypart.qpfSnow?.[base + 1]];
-        // v1.0.4: Removed windPhrase, precipType, thunderCat from detail rows
+        const heatIdx   = [daypart.temperatureHeatIndex?.[base],  daypart.temperatureHeatIndex?.[base + 1]];
+        const windChill = [daypart.temperatureWindChill?.[base],  daypart.temperatureWindChill?.[base + 1]];
+        // Feels like: prefer heat index when warmer than actual, wind chill when colder, else actual temp
+        const feelsLikeParts = [0, 1].map(function(p) {
+            var t = highs[p]; if (t == null) return null;
+            if (heatIdx[p] != null && heatIdx[p] > t) return heatIdx[p];
+            if (windChill[p] != null && windChill[p] < t) return windChill[p];
+            return t;
+        });
 
         let html = '<button onclick="document.getElementById(\'twc-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button><div style="display:flex; justify-content:space-between; align-items:center;"><button id="twc-prev-btn" style="font-size:2em; background:none; border:none; color:#ffd54f; cursor:pointer;">&#8592;</button><div style="flex:1; text-align:center;"><b>' + data.dayOfWeek[dayIdx] + '</b></div><button id="twc-next-btn" style="font-size:2em; background:none; border:none; color:#ffd54f; cursor:pointer;">&#8594;</button></div>';
 
@@ -2617,6 +2627,7 @@
             const detailRows = [
                 humidity[part] != null ? '<span style="opacity:0.55">\uD83D\uDCA7 Humidity</span><span>' + humidity[part] + '%</span>' : null,
                 (uvIndex[part] != null && uvIndex[part] > 0) ? '<span style="opacity:0.55">\u2600\uFE0F UV Index</span><span>' + uvIndex[part] + (uvDesc2[part] ? ' \u2014 ' + uvDesc2[part] : '') + '</span>' : null,
+                feelsLikeParts[part] != null ? '<span style="opacity:0.55">\uD83C\uDF21\uFE0F Feels Like</span><span>' + feelsLikeParts[part] + '\u00b0</span>' : null,
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + snowQpf[part] + '"</span>' : null
             ].filter(Boolean);
