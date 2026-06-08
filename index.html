@@ -1794,11 +1794,9 @@
             stationTzOffset = d.offset * 3600;
             const wu = await fetchWUData(lat, lon);
             const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
-            const useWU = wuAvailable &&
-                Math.abs(wu.temp - d.currently.temperature) <= 5 &&
-                Math.abs(wu.humidity - (d.currently.humidity * 100)) <= 10;
-            // Track whether WU exists but deviates — fetchNWSChain will re-evaluate against NWS obs
-            window.wuDeviates = wuAvailable && !useWU;
+            // WU is never compared to Pirate. Always use WU if available; Pirate is last-resort only.
+            // fetchNWSChain will validate WU against NWS obs and override temp/humidity if they disagree.
+            const useWU = wuAvailable;
             window.wuData = wu; // stored so fetchNWSChain can compare WU against NWS directly
             const wuStationEl = document.getElementById('wuStation');
             const wuLinkEl = document.getElementById('wuLink');
@@ -1811,12 +1809,12 @@
             window.pirateAlerts = d.alerts || [];
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
-            // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
+            // Use WU if available, Pirate as fallback only when WU data is missing
             let temp = useWU ? wu.temp : curr.temperature;
             window.liveTemp = Math.round(temp);
             document.getElementById('tempVal').innerText = Math.round(temp) + '\u00b0';
             liveUV = curr.uvIndex || 0;
-            const windSpeed = (wuAvailable && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
+            const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
             const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
             liveWindSpd = Math.round(windSpeed);
             let windHtml = liveWindSpd + ' mph';
@@ -2230,8 +2228,8 @@
                     updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, Math.round(nwsObsHumidity), liveWindSpd,
                         _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
                 }
-            } else if (window.wuDeviates && !window.isOutsideUS && nwsCond && nwsHasObs) {
-                // NWS obs valid but WU data unavailable — fall back to Pirate-based deviation flag
+            } else if (!window.isOutsideUS && nwsCond && nwsHasObs) {
+                // NWS obs valid but WU data unavailable — show NWS values
                 window.liveTemp = Math.round(nwsObsTempF);
                 document.getElementById('tempVal').innerText = Math.round(nwsObsTempF) + '\u00b0';
                 document.getElementById('humVal').innerText = Math.round(nwsObsHumidity) + '%';
