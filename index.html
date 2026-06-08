@@ -236,6 +236,23 @@
             padding: 8px 12px; border-radius: 8px; width: 100%; box-sizing: border-box; font-size: 0.9em;
         }
         .report-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+        /* ——— PWA Launch Screen ——— */
+        #launch-screen {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: #07131d; z-index: 99999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+        #launch-screen.hidden { opacity: 0; pointer-events: none; }
+        #launch-screen .ls-icon { width: 88px; height: 88px; margin-bottom: 20px; border-radius: 20px; }
+        #launch-screen .ls-title { font-size: 2.4em; font-weight: 800; color: #ffd54f; letter-spacing: -1px; margin: 0; }
+        #launch-screen .ls-sub { font-size: 0.8em; color: #4fc3f7; margin-top: 10px; opacity: 0.65; letter-spacing: 1px; text-transform: uppercase; }
+        #offline-banner {
+            display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 9000;
+            background: #ff6d00; color: #000; font-size: 0.7em; font-weight: 900;
+            text-align: center; padding: 6px; letter-spacing: 1px; text-transform: uppercase;
+        }
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -244,6 +261,12 @@
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 </head>
 <body>
+    <div id="launch-screen">
+        <img class="ls-icon" src="https://cdn-icons-png.flaticon.com/512/1779/1779927.png" alt="">
+        <div class="ls-title">SkyMonitor</div>
+        <div class="ls-sub">Weather Monitoring</div>
+    </div>
+    <div id="offline-banner">&#9888; Offline &mdash; showing cached data</div>
     <canvas id="skyCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-2;"></canvas>
     <canvas id="rainCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-1;"></canvas>
 
@@ -405,7 +428,7 @@
         </div>
 
         <div class="detail-grid">
-            <div class="detail-item" style="display:flex;gap:18px;justify-content:center;align-items:center;"><div style="text-align:center;"><div class="detail-label">Temp</div><div id="tempVal" class="detail-val">--</div></div><div style="text-align:center;"><div class="detail-label">Feels</div><div id="feelsVal" class="detail-val">--</div></div></div>
+            <div class="detail-item" style="display:flex;gap:18px;justify-content:center;align-items:center;"><div style="text-align:center;"><div class="detail-label">Temp</div><div id="tempVal" class="detail-val">--</div></div><div style="text-align:center;"><div class="detail-label">Feels Like</div><div id="feelsVal" class="detail-val">--</div></div></div>
             <div class="detail-item"><div class="detail-label">Wind</div><div id="windVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Pressure</div><div id="presVal" class="detail-val">--</div></div>
@@ -650,6 +673,62 @@
 </footer>
 
 <script>
+    // ——— SkyDB: IndexedDB wrapper for settings + weather cache ———
+    const SkyDB = (function() {
+        'use strict';
+        var NAME = 'skymonitor', VER = 1;
+        var S = { settings: 'settings', weather: 'weather' };
+        var _db = null;
+        function _open() {
+            return new Promise(function(res, rej) {
+                if (_db) { res(_db); return; }
+                var r = indexedDB.open(NAME, VER);
+                r.onupgradeneeded = function(e) {
+                    var db = e.target.result;
+                    if (!db.objectStoreNames.contains(S.settings)) db.createObjectStore(S.settings);
+                    if (!db.objectStoreNames.contains(S.weather))  db.createObjectStore(S.weather);
+                };
+                r.onsuccess = function(e) { _db = e.target.result; res(_db); };
+                r.onerror   = function()  { rej(r.error); };
+            });
+        }
+        function get(store, key) {
+            return _open().then(function(db) {
+                return new Promise(function(res) {
+                    var tx = db.transaction(store, 'readonly');
+                    var req = tx.objectStore(store).get(key);
+                    req.onsuccess = function() { res(req.result); };
+                    req.onerror   = function() { res(undefined); };
+                });
+            }).catch(function() { return undefined; });
+        }
+        function set(store, key, val) {
+            return _open().then(function(db) {
+                return new Promise(function(res) {
+                    var tx = db.transaction(store, 'readwrite');
+                    tx.objectStore(store).put(val, key);
+                    tx.oncomplete = res; tx.onerror = res;
+                });
+            }).catch(function() {});
+        }
+        // One-time migration: copy all existing localStorage prefs into IndexedDB
+        function migrate() {
+            var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
+                        'skymonitor_swipe','pref_alert_enabled','pref_alert_type','pref_rain_enabled',
+                        'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd',
+                        'report_radar_on','report_alerts_on','report_lsr_on'];
+            get(S.settings, '__migrated_v1').then(function(done) {
+                if (done) return;
+                keys.forEach(function(k) {
+                    var v = localStorage.getItem(k);
+                    if (v !== null) set(S.settings, k, v);
+                });
+                set(S.settings, '__migrated_v1', true);
+            });
+        }
+        return { get: get, set: set, S: S, migrate: migrate };
+    })();
+
     const PIRATE_API_KEY = "lJk66QLMPYrxa7em8BhJIjXGk6MSVVWP";
     const OW_API_KEY = "065942b97acab61c4f876f77d1e71cfb";
     const TWC_API_KEY = "2f966110e6b34535966110e6b3553537";
@@ -757,6 +836,7 @@
     function setInputView(mode) {
         const panel = document.getElementById('coords-panel');
         localStorage.setItem('input_mode', mode);
+        SkyDB.set(SkyDB.S.settings, 'input_mode', mode);
 
         // Stop any active live tracking when switching away
         if (mode !== 'live' && _liveWatchId !== null) {
@@ -820,6 +900,7 @@
 
     function setDataComplexity(mode) {
         localStorage.setItem('data_complexity', mode);
+        SkyDB.set(SkyDB.S.settings, 'data_complexity', mode);
         const normalBtn = document.getElementById('opt-data-normal');
         const specificBtn = document.getElementById('opt-data-specific');
         if (normalBtn) normalBtn.classList.toggle('active', mode === 'normal');
@@ -912,6 +993,8 @@
     function saveLoc() {
         localStorage.setItem('waddle_lat', lat);
         localStorage.setItem('waddle_lon', lon);
+        SkyDB.set(SkyDB.S.settings, 'waddle_lat', String(lat));
+        SkyDB.set(SkyDB.S.settings, 'waddle_lon', String(lon));
     }
 
     function loadLoc() {
@@ -1859,7 +1942,31 @@
                 computeOutdoorScore(d.hourly.data);
             }
             updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability ?? 0) * 100);
-        } catch(e) {}
+            // Save current conditions to IndexedDB for offline restore
+            SkyDB.set(SkyDB.S.weather, 'last_conditions', {
+                ts: Date.now(),
+                temp: Math.round(temp), humidity: Math.round(humidity),
+                feelsLike: Math.round(liveFeelsLike), wind: liveWindSpd,
+                condition: curr.summary || '', uv: liveUV,
+                pressure: curr.pressure ? (curr.pressure * 0.02953).toFixed(2) : null
+            });
+            var ob = document.getElementById('offline-banner');
+            if (ob) ob.style.display = 'none';
+        } catch(e) {
+            // Offline: restore last known conditions from IndexedDB
+            SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
+                if (!c) return;
+                var ageMin = Math.round((Date.now() - c.ts) / 60000);
+                var ageStr = ageMin < 60 ? ageMin + 'm ago' : Math.round(ageMin/60) + 'h ago';
+                document.getElementById('tempVal').innerText = c.temp + '\u00b0';
+                document.getElementById('humVal').innerText  = c.humidity + '%';
+                document.getElementById('feelsVal').innerText = c.feelsLike + '\u00b0';
+                document.getElementById('windVal').innerText  = c.wind + ' mph';
+                if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
+                var ob = document.getElementById('offline-banner');
+                if (ob) { ob.style.display = 'block'; ob.textContent = '\u26A0\uFE0F Offline \u2014 cached data from ' + ageStr; }
+            });
+        }
     }
 
     function renderPirateHourly(hourlyData, timezoneOffset, targetCont) {
@@ -3391,6 +3498,7 @@
     function setSwipeSetting(enabled) {
         swipeEnabled = enabled;
         localStorage.setItem('skymonitor_swipe', enabled ? 'on' : 'off');
+        SkyDB.set(SkyDB.S.settings, 'skymonitor_swipe', enabled ? 'on' : 'off');
         document.getElementById('opt-swipe-on').classList.toggle('active', enabled);
         document.getElementById('opt-swipe-off').classList.toggle('active', !enabled);
     }
@@ -3577,17 +3685,24 @@
     }
 
     function saveNotifPrefs() {
-        localStorage.setItem('pref_alert_enabled', document.getElementById('pref-alert-enabled').checked);
-        localStorage.setItem('pref_rain_enabled',  document.getElementById('pref-rain-enabled').checked);
-        localStorage.setItem('pref_spc_outlook',   document.getElementById('pref-spc-outlook').checked);
-        localStorage.setItem('pref_spc_md',        document.getElementById('pref-spc-md').checked);
-        localStorage.setItem('pref_wpc_outlook',   document.getElementById('pref-wpc-outlook').checked);
-        localStorage.setItem('pref_wpc_mpd',       document.getElementById('pref-wpc-mpd').checked);
+        var prefs = {
+            pref_alert_enabled: String(document.getElementById('pref-alert-enabled').checked),
+            pref_rain_enabled:  String(document.getElementById('pref-rain-enabled').checked),
+            pref_spc_outlook:   String(document.getElementById('pref-spc-outlook').checked),
+            pref_spc_md:        String(document.getElementById('pref-spc-md').checked),
+            pref_wpc_outlook:   String(document.getElementById('pref-wpc-outlook').checked),
+            pref_wpc_mpd:       String(document.getElementById('pref-wpc-mpd').checked)
+        };
+        Object.keys(prefs).forEach(function(k) {
+            localStorage.setItem(k, prefs[k]);
+            SkyDB.set(SkyDB.S.settings, k, prefs[k]);
+        });
         syncPushLocation();
     }
 
     function setAlertType(type) {
         localStorage.setItem('pref_alert_type', type);
+        SkyDB.set(SkyDB.S.settings, 'pref_alert_type', type);
         document.getElementById('pref-alert-all').classList.toggle('active', type === 'all');
         document.getElementById('pref-alert-important').classList.toggle('active', type === 'important');
         syncPushLocation();
@@ -3654,7 +3769,19 @@
 
     window.onload = function() {
         loadLoc();
-        loadAll().then(function() { syncPushLocation(); });
+        SkyDB.migrate();
+        // Dismiss launch screen once data loads, or after 4s max
+        function _dismissLaunch() {
+            var ls = document.getElementById('launch-screen');
+            if (!ls || ls.classList.contains('hidden')) return;
+            ls.classList.add('hidden');
+            setTimeout(function() { ls.style.display = 'none'; }, 550);
+        }
+        setTimeout(_dismissLaunch, 4000);
+        loadAll().then(function() {
+            syncPushLocation();
+            _dismissLaunch();
+        });
     };
 </script>
 </body>
