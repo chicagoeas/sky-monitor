@@ -1658,16 +1658,17 @@
         elem.style.overflow = 'hidden';
     }
 
-    function updateSmartComfort(T, feelsLike, H, W, cond, uv) {
+    function updateSmartComfort(T, feelsLike, H, W, cond, uv, precipProb) {
         try {
             T = (T !== '--' && !isNaN(T)) ? Number(T) : 70;
             H = (H !== '--' && !isNaN(H)) ? Number(H) : 50;
             W = (W !== '--' && !isNaN(W)) ? Number(W) : 0;
+            precipProb = (precipProb !== undefined && !isNaN(precipProb)) ? Number(precipProb) : 0;
             cond = cond ? cond.toLowerCase() : 'clear';
             let word = 'FAIR', color = '#ffffff', reason = '';
             if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + '), Sunscreen Required'; }
             else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + Math.round(feelsLike) + '\u00b0, Stay Hydrated'; }
-            else if (cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm')) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H) + '% humidity'; }
+            else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm')) && precipProb >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H) + '% humidity'; }
             else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + Math.round(feelsLike) + '\u00b0'; }
             else if (T >= 68 && T <= 78 && H < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = Math.round(T) + '\u00b0, Ideal Conditions'; }
             else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + Math.round(T) + '\u00b0'; }
@@ -1828,7 +1829,7 @@
                 window.pirateTimezoneOffset = d.offset || 0;
                 computeOutdoorScore(d.hourly.data);
             }
-            updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV);
+            updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability ?? 0) * 100);
         } catch(e) {}
     }
 
@@ -2619,7 +2620,7 @@
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + snowQpf[part] + '"</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:var(--accent);font-weight:bold;">' + (highs[part] !== undefined ? highs[part] + '\u00b0' : '--') + ' / ' + lohi[part] + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (qpf[part] !== undefined ? qpf[part] + '"' : '--') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:var(--accent);font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (qpf[part] !== undefined ? qpf[part] + '"' : '--') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
@@ -2676,7 +2677,7 @@
         let word = 'FAIR', color = '#ffffff', reason = '';
         if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + ')'; }
         else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + Math.round(feelsLike) + '\u00b0'; }
-        else if (cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm') || cond.includes('sleet')) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H2) + '% hum'; }
+        else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm') || cond.includes('sleet')) && (h.precipProbability ?? 0) * 100 >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H2) + '% hum'; }
         else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + Math.round(feelsLike) + '\u00b0'; }
         else if (T >= 68 && T <= 78 && H2 < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = Math.round(T) + '\u00b0, Ideal'; }
         else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + Math.round(T) + '\u00b0'; }
