@@ -2769,6 +2769,20 @@
                 riskHtml += '<div style="background:' + eroBg + '; color:' + eroTextColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">\uD83D\uDCA7 WPC ERO: ' + shortLabel + '</div>';
             }
         }
+        try {
+            const mpdRes = await fetch('https://wpcmetwatch.skymonitor-account.workers.dev/?lat=' + lat + '&lon=' + lon);
+            if (mpdRes.ok) {
+                const mpdData = await mpdRes.json();
+                const mpds = mpdData.mpds || [];
+                mpds.forEach(function(mpd) {
+                    if (!mpd.id) return;
+                    hasRisk = true;
+                    const mpdId = String(mpd.id).replace(/[^0-9]/g, '');
+                    const mpdUrl = mpd.url || ('https://www.wpc.ncep.noaa.gov/metwatch/mcd' + mpdId.padStart(4, '0') + '.html');
+                    riskHtml += '<a href="' + mpdUrl + '" target="_blank" style="text-decoration:none;"><div style="background:#0277bd; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">&#128167; WPC MPD #' + mpdId + '</div></a>';
+                });
+            }
+        } catch(e) {}
         // Set DOM once — prevents interleaving when two loadAll() calls race on first load
         container.innerHTML = riskHtml;
         box.style.display = hasRisk ? 'block' : 'none';
