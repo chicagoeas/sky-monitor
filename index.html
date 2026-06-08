@@ -761,6 +761,7 @@
     window.isOutsideUS = false;
     window.pirateCurrently = null;
     window.pirateAlerts = [];
+    window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
     window.activeStormWarning = false;
@@ -1791,9 +1792,12 @@
             const d = await resP.json();
             stationTzOffset = d.offset * 3600;
             const wu = await fetchWUData(lat, lon);
-            const useWU = wu && wu.temp !== null && wu.humidity !== null &&
+            const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
+            const useWU = wuAvailable &&
                 Math.abs(wu.temp - d.currently.temperature) <= 5 &&
                 Math.abs(wu.humidity - (d.currently.humidity * 100)) <= 10;
+            // Track whether WU exists but deviates — fetchNWSChain will override with NWS obs if in US
+            window.wuDeviates = wuAvailable && !useWU;
             const wuStationEl = document.getElementById('wuStation');
             const wuLinkEl = document.getElementById('wuLink');
             if (useWU && wu.stationId) {
@@ -1805,8 +1809,8 @@
             window.pirateAlerts = d.alerts || [];
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
-            let temp = (useWU && wu.temp !== null) ? wu.temp : curr.temperature;
-            if (useWU && Math.abs(wu.temp - curr.temperature) > 5) temp = curr.temperature;
+            // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
+            let temp = useWU ? wu.temp : curr.temperature;
             window.liveTemp = Math.round(temp);
             document.getElementById('tempVal').innerText = Math.round(temp) + '\u00b0';
             liveUV = curr.uvIndex || 0;
@@ -1816,8 +1820,7 @@
             let windHtml = liveWindSpd + ' mph';
             if (windDir !== null && liveWindSpd > 0) windHtml += ' <span style="display:inline-block; transform:rotate(' + windDir + 'deg); color:var(--accent); font-weight:900;">&darr;</span>';
             document.getElementById('windVal').innerHTML = windHtml;
-            let humidity = (useWU && wu.humidity !== null) ? wu.humidity : curr.humidity * 100;
-            if (useWU && Math.abs(wu.humidity - (curr.humidity * 100)) > 10) humidity = curr.humidity * 100;
+            let humidity = useWU ? wu.humidity : curr.humidity * 100;
             document.getElementById('humVal').innerText = Math.round(humidity) + '%';
             // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
             (function() {
@@ -2080,6 +2083,10 @@
             const PW_ICON_TO_TEXT = { 'clear-day':'Clear','clear-night':'Clear','rain':'Rain','snow':'Snow','sleet':'Sleet','wind':'Windy','fog':'Fog','cloudy':'Cloudy','partly-cloudy-day':'Partly Cloudy','partly-cloudy-night':'Partly Cloudy','thunderstorm':'Thunderstorm' };
             let nwsCond = '';
             let nwsIcon = null;
+            let nwsObsTempF = null;
+            let nwsObsHumidity = null;
+            let nwsObsWindMph = null;
+            let nwsObsWindDir = null;
             try {
                 const obsRes = await fetch(primaryStation.id + '/observations/latest');
                 const obs = obsRes.ok ? await obsRes.json() : null;
@@ -2092,6 +2099,15 @@
                     if (wx.length) nwsCond = wx.join(', ');
                 }
                 nwsIcon = op.icon || null;
+                // Extract numeric obs values for WU-deviation fallback
+                const _tmpC = op.temperature?.value;
+                const _tmpH = op.relativeHumidity?.value;
+                const _tmpW = op.windSpeed?.value;
+                const _tmpWD = op.windDirection?.value;
+                if (_tmpC != null) nwsObsTempF = _tmpC * 9 / 5 + 32;
+                if (_tmpH != null) nwsObsHumidity = _tmpH;
+                if (_tmpW != null) nwsObsWindMph = _tmpW * 0.621371;
+                if (_tmpWD != null) nwsObsWindDir = _tmpWD;
             } catch(obsErr) { /* observation fetch failed — will fall back below */ }
             if (!nwsCond) {
                 // Truly no NWS conditions — fall back to PirateWeather
@@ -2114,6 +2130,49 @@
                 document.getElementById('conditionText').innerText = nwsCond;
                 if (nwsIcon) { document.getElementById('weatherIcon').src = nwsIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                 else document.getElementById('weatherIcon').style.display = 'none';
+            }
+            // If WU PWS deviated from Pirate AND we're in the US AND the NWS obs station has
+            // valid data, override the displayed temp/humidity/wind with NWS values instead of
+            // using Pirate as the fallback. If nwsCond was empty (glitched station) we skip
+            // this so the existing Pirate fallback behaviour is preserved unchanged.
+            if (window.wuDeviates && !window.isOutsideUS && nwsCond && nwsObsTempF !== null && nwsObsHumidity !== null) {
+                window.liveTemp = Math.round(nwsObsTempF);
+                document.getElementById('tempVal').innerText = Math.round(nwsObsTempF) + '\u00b0';
+                document.getElementById('humVal').innerText = Math.round(nwsObsHumidity) + '%';
+                document.getElementById('wuStation').style.display = 'none';
+                if (nwsObsWindMph !== null) {
+                    liveWindSpd = Math.round(nwsObsWindMph);
+                    var nwsWindHtml = liveWindSpd + ' mph';
+                    if (nwsObsWindDir !== null && liveWindSpd > 0) nwsWindHtml += ' <span style="display:inline-block; transform:rotate(' + nwsObsWindDir + 'deg); color:var(--accent); font-weight:900;">&darr;</span>';
+                    document.getElementById('windVal').innerHTML = nwsWindHtml;
+                }
+                // Recalculate feels-like with NWS values using the same NWS formulae
+                (function() {
+                    var T = nwsObsTempF, W = liveWindSpd, RH = nwsObsHumidity, fl = T;
+                    if (T <= 50 && W >= 3) {
+                        fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
+                    } else if (T >= 70) {
+                        var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
+                        if (hiSimple >= 80) {
+                            var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH
+                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
+                               + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
+                               - 0.00000199*T*T*RH*RH;
+                            if (RH < 13 && T >= 80 && T <= 112)
+                                hiRoth -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
+                            if (RH > 85 && T >= 80 && T <= 87)
+                                hiRoth += (RH - 85) / 10 * (87 - T) / 5;
+                            fl = (T + hiRoth) / 2;
+                        } else {
+                            fl = hiSimple;
+                        }
+                    }
+                    liveFeelsLike = fl;
+                })();
+                document.getElementById('feelsVal').innerText = Math.round(liveFeelsLike) + '\u00b0';
+                var _pw = window.pirateCurrently;
+                updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, Math.round(nwsObsHumidity), liveWindSpd,
+                    _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
             }
             try {
                 const afdList = await (await fetch('https://api.weather.gov/products/types/AFD/locations/' + wfo)).json();
