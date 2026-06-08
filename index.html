@@ -1726,7 +1726,7 @@
             if (useWU && Math.abs(wu.temp - curr.temperature) > 5) temp = curr.temperature;
             window.liveTemp = Math.round(temp);
             document.getElementById('tempVal').innerText = Math.round(temp) + '\u00b0';
-            liveFeelsLike = curr.apparentTemperature; liveUV = curr.uvIndex || 0;
+            liveUV = curr.uvIndex || 0;
             const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
             const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
             liveWindSpd = Math.round(windSpeed);
@@ -1736,7 +1736,34 @@
             let humidity = (useWU && wu.humidity !== null) ? wu.humidity : curr.humidity * 100;
             if (useWU && Math.abs(wu.humidity - (curr.humidity * 100)) > 10) humidity = curr.humidity * 100;
             document.getElementById('humVal').innerText = Math.round(humidity) + '%';
-            document.getElementById('feelsVal').innerText = liveFeelsLike ? Math.round(liveFeelsLike) + '\u00b0' : '--';
+            // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
+            (function() {
+                var T = temp, W = liveWindSpd, RH = humidity, fl = T;
+                if (T <= 50 && W >= 3) {
+                    // NWS Wind Chill formula
+                    fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
+                } else if (T >= 70) {
+                    // NWS Heat Index — simplified screening first
+                    var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
+                    if (hiSimple >= 80) {
+                        // Full Rothfusz polynomial (valid ≥80°F)
+                        fl = -42.379 + 2.04901523*T + 10.14333127*RH
+                           - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
+                           + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
+                           - 0.00000199*T*T*RH*RH;
+                        // NWS adjustment: low humidity correction
+                        if (RH < 13 && T >= 80 && T <= 112)
+                            fl -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
+                        // NWS adjustment: high humidity / mild temp correction
+                        if (RH > 85 && T >= 80 && T <= 87)
+                            fl += (RH - 85) / 10 * (87 - T) / 5;
+                    } else {
+                        fl = hiSimple;
+                    }
+                }
+                liveFeelsLike = fl;
+            })();
+            document.getElementById('feelsVal').innerText = Math.round(liveFeelsLike) + '\u00b0';
             const presIn = (curr.pressure * 0.02953).toFixed(2);
             let trend = '\u27A1\uFE0F';
             if (lastPressureMb !== null && curr.pressure !== null) {
