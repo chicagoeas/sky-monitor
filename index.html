@@ -1830,16 +1830,19 @@
                     var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
                     if (hiSimple >= 80) {
                         // Full Rothfusz polynomial (valid ≥80°F)
-                        fl = -42.379 + 2.04901523*T + 10.14333127*RH
+                        var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH
                            - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
                            + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
                            - 0.00000199*T*T*RH*RH;
                         // NWS adjustment: low humidity correction
                         if (RH < 13 && T >= 80 && T <= 112)
-                            fl -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
+                            hiRoth -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
                         // NWS adjustment: high humidity / mild temp correction
                         if (RH > 85 && T >= 80 && T <= 87)
-                            fl += (RH - 85) / 10 * (87 - T) / 5;
+                            hiRoth += (RH - 85) / 10 * (87 - T) / 5;
+                        // Rothfusz overestimates vs. the Steadman chart in the 80-90°F range.
+                        // Average T and the polynomial result to match NWS table / TWC values.
+                        fl = (T + hiRoth) / 2;
                     } else {
                         fl = hiSimple;
                     }
