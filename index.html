@@ -2650,7 +2650,8 @@
         const banner = document.getElementById('spc-banner');
         if (banner) { banner.style.display = 'none'; banner.onclick = null; }
         if (!container || !box) return;
-        container.innerHTML = ''; let hasRisk = false;
+        // Build HTML locally — never append to container mid-flight so concurrent calls can't interleave
+        let riskHtml = ''; let hasRisk = false;
         async function checkArcGIS(url) {
             try {
                 const res = await fetch(url); if (!res.ok) return null;
@@ -2668,7 +2669,7 @@
             let bg = '#7BB07B';
             if (spcLabelRaw === 'MRGL') bg = '#45f925'; else if (spcLabelRaw === 'SLGT') bg = '#F6F67B'; else if (spcLabelRaw === 'ENH') bg = '#E6B87B'; else if (spcLabelRaw === 'MDT') bg = '#E67B7B'; else if (spcLabelRaw === 'HIGH') bg = '#FF7BFF';
             const textColor = (bg === '#F6F67B' || bg === '#45f925') ? '#000' : '#fff';
-            container.innerHTML += '<div style="background:' + bg + '; color:' + textColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">SPC: ' + spcLabelRaw + ' RISK</div>';
+            riskHtml += '<div style="background:' + bg + '; color:' + textColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">SPC: ' + spcLabelRaw + ' RISK</div>';
             if (['ENH','MDT','HIGH'].includes(spcLabelRaw) && banner) {
                 banner.style.display = 'block'; banner.innerText = '\u26A0\uFE0F SPC ' + full;
                 if (spcLabelRaw === 'ENH') banner.style.background = '#b45309';
@@ -2687,7 +2688,7 @@
             const cleanMD = String(mdName).replace(/[^0-9]/g, ''); const paddedMD = cleanMD.padStart(4, '0');
             const url = 'https://www.spc.noaa.gov/products/md/md' + paddedMD + '.html';
             if (banner && banner.style.display === 'none') { banner.style.display = 'block'; banner.innerText = '\u26A0\uFE0F SPC MD #' + cleanMD + ' ACTIVE'; banner.style.background = '#7c3aed'; banner.style.color = '#fff'; banner.onclick = function() { window.open(url, '_blank'); }; }
-            container.innerHTML += '<div style="background:#9c27b0; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">SPC: MD #' + cleanMD + '</div>';
+            riskHtml += '<div style="background:#9c27b0; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">SPC: MD #' + cleanMD + '</div>';
         }
 
         const eroUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
@@ -2703,9 +2704,11 @@
                 else if (ul.includes('MODERATE')) { shortLabel = 'MDT'; eroBg = '#8e24aa'; }
                 else if (ul.includes('HIGH')) { shortLabel = 'HIGH'; eroBg = '#c62828'; }
                 const eroTextColor = (eroBg === '#45f925') ? '#000' : '#fff';
-                container.innerHTML += '<div style="background:' + eroBg + '; color:' + eroTextColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">\uD83D\uDCA7 WPC ERO: ' + shortLabel + '</div>';
+                riskHtml += '<div style="background:' + eroBg + '; color:' + eroTextColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">\uD83D\uDCA7 WPC ERO: ' + shortLabel + '</div>';
             }
         }
+        // Set DOM once — prevents interleaving when two loadAll() calls race on first load
+        container.innerHTML = riskHtml;
         box.style.display = hasRisk ? 'block' : 'none';
     }
 
