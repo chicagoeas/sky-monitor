@@ -1168,17 +1168,48 @@
     const SEVERITY_SCORE = { 'Extreme': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1, 'Unknown': 0 };
     const SPC_LABELS = { TSTM:"General Thunderstorms", MRGL:"Marginal Risk", SLGT:"Slight Risk", ENH:"Enhanced Risk", MDT:"Moderate Risk", HIGH:"High Risk" };
 
-    function getAlertPriority(eventStr, severityStr) {
-        const e = eventStr.toLowerCase();
-        let baseScore = 0;
-        if (EMERGENCY_TYPES.some(em => e.includes(em))) baseScore = 10000;
-        else if (e.includes('warning')) baseScore = 8000;
-        else if (e.includes('watch')) baseScore = 6000;
-        else if (e.includes('advisory')) baseScore = 4000;
-        else if (e.includes('statement')) baseScore = 2000;
-        else if (e.includes('outlook')) baseScore = 1500;
-        else baseScore = 1000;
-        return baseScore + (SEVERITY_SCORE[severityStr] || 0);
+    // Full-feature alert scorer — reads description & parameters so FFE, Tor Emergency,
+    // PDS, Destructive SVR, and confirmed tornado all sort at their true danger level.
+    function getAlertScore(feature) {
+        var p   = feature.properties;
+        var evt = (p.event || '').toLowerCase();
+        var desc = (p.description || '').toUpperCase();
+        var ap  = p.parameters || {};
+        var torDet  = ((ap.tornadoDetection          && ap.tornadoDetection[0])          || '').toUpperCase();
+        var dmgThr  = ((ap.thunderstormDamageThreat  && ap.thunderstormDamageThreat[0])  || '').toUpperCase();
+        var torPoss = ((ap.tornadoPossible            && ap.tornadoPossible[0])            || '').toUpperCase();
+        var sevBonus = { 'Extreme': 40, 'Severe': 30, 'Moderate': 20, 'Minor': 10 }[p.severity] || 0;
+
+        // ── TIER 1: Life-threatening emergencies ─────────────────────────
+        // Civil/authority emergencies are the absolute top — issued by officials for imminent threats
+        if (EMERGENCY_TYPES.some(function(em) { return evt.includes(em); }))                   return 16000;
+        if (evt.includes('tornado warning')  && desc.includes('TORNADO EMERGENCY'))            return 15000;
+        if (evt.includes('flash flood')      && desc.includes('FLASH FLOOD EMERGENCY'))        return 14000;
+        if (evt.includes('tornado warning')  && desc.includes('PARTICULARLY DANGEROUS SITUATION')) return 13000;
+
+        // ── TIER 2: Imminent-threat warnings ─────────────────────────────
+        if (evt.includes('tornado warning')  && torDet.includes('OBSERVED'))                   return 12000;
+        if (evt.includes('tornado warning'))                                                    return 11000;
+        if (evt.includes('severe thunderstorm warning') && dmgThr.includes('DESTRUCTIVE'))     return 10000;
+        if (evt.includes('severe thunderstorm warning') && desc.includes('PARTICULARLY DANGEROUS SITUATION')) return 9500;
+        if (evt.includes('severe thunderstorm warning') && (torPoss === 'YES' || desc.includes('TORNADO POSSIBLE'))) return 9000;
+        if (evt.includes('severe thunderstorm warning'))                                        return 8500;
+
+        // ── TIER 3: Other significant warnings ───────────────────────────
+        if (evt.includes('flash flood warning'))                                                return 8000;
+        if (evt.includes('warning'))   return 7000 + sevBonus;
+
+        // ── TIER 4: Watches ───────────────────────────────────────────────
+        if (evt.includes('flash flood watch'))          return 4500 + sevBonus;
+        if (evt.includes('tornado watch'))              return 4400 + sevBonus;
+        if (evt.includes('severe thunderstorm watch'))  return 4300 + sevBonus;
+        if (evt.includes('watch'))                      return 4000 + sevBonus;
+
+        // ── TIER 5+: Advisories, statements, outlooks ────────────────────
+        if (evt.includes('advisory'))  return 3000 + sevBonus;
+        if (evt.includes('statement')) return 2000 + sevBonus;
+        if (evt.includes('outlook'))   return 1500 + sevBonus;
+        return 1000 + sevBonus;
     }
 
     // v1.0.4: SPC countdown shows exact UTC time + "Tomorrow" if applicable
@@ -1544,7 +1575,7 @@
 
             if (data.features && data.features.length > 0) {
                 let topAlert = data.features.reduce(function(prev, current) {
-                    return getAlertPriority(current.properties.event, current.properties.severity) > getAlertPriority(prev.properties.event, prev.properties.severity) ? current : prev;
+                    return getAlertScore(current) > getAlertScore(prev) ? current : prev;
                 });
                 const topP = topAlert.properties;
                 const evtLowerTop = topP.event.toLowerCase();
@@ -1590,7 +1621,7 @@
 
                 let highestTheme = '', checklistText = '';
                 const sortedFeatures = data.features.sort(function(a, b) {
-                    return getAlertPriority(b.properties.event, b.properties.severity) - getAlertPriority(a.properties.event, a.properties.severity);
+                    return getAlertScore(b) - getAlertScore(a);
                 });
 
                 sortedFeatures.forEach(function(f) {
