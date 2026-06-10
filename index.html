@@ -641,7 +641,13 @@
             </div>
 
             <div id="reporting-map"></div>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; margin-bottom:4px;">
+            <div style="margin-top:6px; margin-bottom:2px;">
+                <label style="font-size:0.68em; color:#666; display:flex; align-items:center; gap:5px; cursor:pointer; user-select:none;">
+                    <input type="checkbox" id="show-older-reports" style="margin:0;" onchange="loadMapReports()">
+                    Show reports up to 48h old (older ones shown grayed out)
+                </label>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; margin-bottom:4px;">
                 <div id="report-pin-instruction" style="font-size:0.72em; color:#aaa;">&#128204; Tap map to pin location</div>
                 <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     <button onclick="findMeReporting()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.72em; cursor:pointer;">&#128205; Find Me</button>
@@ -1278,7 +1284,7 @@
         var torPoss = ((ap.tornadoPossible            && ap.tornadoPossible[0])            || '').toUpperCase();
         var sevBonus = { 'Extreme': 40, 'Severe': 30, 'Moderate': 20, 'Minor': 10 }[p.severity] || 0;
 
-        // ── TIER 1: Life-threatening emergencies ─────────────────────────
+        // ── TIER 1: Life-threatening emergencies ─────────────L �───────────
         // Civil/authority emergencies are the absolute top — issued by officials for imminent threats
         if (EMERGENCY_TYPES.some(function(em) { return evt.includes(em); }))                   return 16000;
         if (evt.includes('tornado warning')  && desc.includes('TORNADO EMERGENCY'))            return 15000;
@@ -2952,9 +2958,15 @@
             const shortText = daypart.wxPhraseLong?.[baseIdx] ?? daypart.wxPhraseLong?.[baseIdx + 1] ?? '--';
             const precipPct = daypart.precipChance?.[baseIdx] ?? daypart.precipChance?.[baseIdx + 1] ?? 0;
             const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
-            const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer';
+            const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer'; card.style.position = 'relative';
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
             card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + high + '\u00b0 / <span style="color:white">' + low + '\u00b0</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + shortText + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + precipAmt.toFixed(2) + '"' : '') + '</div>' : '');
+            const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
+            const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
+            const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
+            if (severeKeywords.some(function(kw) { return dayNarr.includes(kw) || nightNarr.includes(kw); })) {
+                card.insertAdjacentHTML('beforeend', '<div style="position:absolute;top:6px;right:8px;color:#ff1744;font-size:1.1em;font-weight:900;line-height:1;" title="Severe weather possible">!</div>');
+            }
             cont.appendChild(card);
         }
     }
@@ -3594,10 +3606,20 @@
             }
         } catch(e) {}
 
-        // NWS Local Storm Reports via IEM MESONET (CORS-friendly, last 24 hours)
+        await loadMapReports();
+    }
+
+    async function loadMapReports() {
+        if (!lsrLayer || !userReportLayer) return;
+        const showOlder = !!document.getElementById('show-older-reports')?.checked;
+        const lsrHours = showOlder ? 48 : 5;
+        const FRESH_MS = 5 * 3600 * 1000;
+        const now = Date.now();
+
+        // NWS Local Storm Reports via IEM MESONET
         try {
             lsrLayer.clearLayers();
-            const lsrRes = await fetch('https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=24&fmt=geojson');
+            const lsrRes = await fetch('https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=' + lsrHours + '&fmt=geojson');
             if (lsrRes.ok) {
                 const lsrData = await lsrRes.json();
                 const LSR_ICONS = { tornado:'\uD83C\uDF2A\uFE0F', hail:'\uD83C\uDF28\uFE0F', tstm:'\u26A1', wind:'\uD83D\uDCA8', flood:'\uD83C\uDF0A', snow:'\u2744\uFE0F', rain:'\uD83C\uDF27\uFE0F', fire:'\uD83D\uDD25', ice:'\uD83E\uDDCA' };
@@ -3609,12 +3631,14 @@
                     const typeKey = (props.typetext || props.type || '').toLowerCase();
                     const matchKey = Object.keys(LSR_ICONS).find(function(k) { return typeKey.includes(k); });
                     const emoji = matchKey ? LSR_ICONS[matchKey] : '\uD83D\uDCCC';
-                    const dotColor = matchKey ? LSR_COLORS[matchKey] : '#90a4ae';
+                    const ageMs = now - new Date(props.valid).getTime();
+                    const isOld = showOlder && ageMs > FRESH_MS;
+                    const dotColor = isOld ? '#555' : (matchKey ? LSR_COLORS[matchKey] : '#90a4ae');
                     const validStr = formatReportTime(props.valid);
                     const magf = props.magf && isNaN(Number(props.magf)) ? ' ' + props.magf : '';
                     const mag = props.magnitude ? ' \u2014 ' + props.magnitude + magf : '';
-                    L_ref.circleMarker([la, lo], { radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
-                        .bindPopup('<b>' + emoji + ' ' + (props.typetext || 'LSR') + mag + '</b><br>' + (props.remark || '(No remark)') + '<br><small style="opacity:0.7;">' + (props.city || '') + (validStr ? ' \u00B7 ' + validStr : '') + '</small>')
+                    L_ref.circleMarker([la, lo], { radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: isOld ? 0.4 : 1, fillOpacity: isOld ? 0.35 : 0.9 })
+                        .bindPopup('<b>' + emoji + ' ' + (props.typetext || 'LSR') + mag + '</b><br>' + (props.remark || '(No remark)') + '<br><small style="opacity:0.7;">' + (props.city || '') + (validStr ? ' \u00B7 ' + validStr : '') + (isOld ? ' &middot; <i>older report</i>' : '') + '</small>')
                         .addTo(lsrLayer);
                 });
             }
@@ -3645,18 +3669,22 @@
                     if (type.startsWith('Winter')) return '\u2744\uFE0F';
                     return REPORT_EMOJIS[type] || '\uD83D\uDFE2';
                 }
+                const maxAgeMs = showOlder ? 48 * 3600 * 1000 : FRESH_MS;
                 reports.forEach(function(r) {
                     if (r.lat == null || r.lon == null) return;
+                    const ageMs = now - new Date(r.time).getTime();
+                    if (isNaN(ageMs) || ageMs > maxAgeMs) return;
+                    const isOld = showOlder && ageMs > FRESH_MS;
                     const timeStr = formatReportTime(r.time);
                     const emoji = getReportEmoji(r.type);
                     const icon = L_ref.divIcon({
-                        html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.8));">' + emoji + '</div>',
+                        html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.8));opacity:' + (isOld ? 0.4 : 1) + ';">' + emoji + '</div>',
                         className: '',
                         iconSize: [24, 24],
                         iconAnchor: [12, 12]
                     });
                     L_ref.marker([r.lat, r.lon], { icon: icon })
-                        .bindPopup('<b>' + emoji + ' ' + (r.type || 'User Report') + '</b>' + (r.notes ? '<br>' + r.notes : '') + '<br><small style="opacity:0.7;">' + timeStr + '</small>')
+                        .bindPopup('<b>' + emoji + ' ' + (r.type || 'User Report') + '</b>' + (r.notes ? '<br>' + r.notes : '') + '<br><small style="opacity:0.7;">' + timeStr + (isOld ? ' &middot; <i>older report</i>' : '') + '</small>')
                         .addTo(userReportLayer);
                 });
             }
