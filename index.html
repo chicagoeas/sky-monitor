@@ -318,9 +318,30 @@
                 <button id="notif-prefs-btn" onclick="openNotifPrefs()" title="Notification Settings" style="display:none; padding:10px 13px; border:none; border-radius:8px; font-size:1em; cursor:pointer; background:rgba(255,255,255,0.08); color:white;">&#9881;&#65039;</button>
             </div>
         </div>
+        <div class="settings-row" style="margin-bottom:0;">
+            <span class="settings-label">Advanced</span>
+            <button onclick="openAdvancedSettings()" style="width:100%; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; background:rgba(255,255,255,0.08); color:white;">&#9881;&#65039; ADVANCED SETTINGS</button>
+        </div>
         <div style="margin-top:20px; padding-top:15px; border-top:1px solid rgba(255,255,255,0.06); text-align:center; font-size:0.65em; color:#445566;">
             Created by <a href="https://youtube.com/@chicagoareaEAS" target="_blank" style="color:#556677; text-decoration:none;">@chicagoareaEAS</a> on YouTube
         </div>
+    </div>
+
+    <div id="advanced-settings-modal" onclick="if(event.target===this)closeAdvancedSettings()"
+         style="display:none; position:fixed; inset:0; z-index:3500; background:rgba(0,0,0,0.75); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
+    <div style="background:#0b1e2d; border:1px solid #223344; border-radius:15px; padding:25px; width:90%; max-width:320px; box-shadow:0 0 50px rgba(0,0,0,1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <h3 style="margin:0; font-size:0.85em; letter-spacing:1px; color:var(--primary);">ADVANCED SETTINGS</h3>
+            <button onclick="closeAdvancedSettings()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+        </div>
+        <div class="settings-row" style="margin-bottom:0;">
+            <span class="settings-label">Wind Direction Mode</span>
+            <div class="btn-group">
+                <button id="opt-wind-compass" class="btn-opt active" onclick="setWindDirMode('compass')">COMPASS</button>
+                <button id="opt-wind-text" class="btn-opt" onclick="setWindDirMode('text')">TEXT</button>
+            </div>
+        </div>
+    </div>
     </div>
 
     <div id="notif-prefs-modal" onclick="if(event.target===this)closeNotifPrefs()" style="display:none; position:fixed; inset:0; z-index:2000; background:rgba(0,0,0,0.75); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
@@ -446,6 +467,7 @@
                     </g>
                     <circle cx="28" cy="28" r="3" fill="rgba(79,195,247,0.55)" stroke="rgba(79,195,247,0.25)" stroke-width="1"/>
                 </svg>
+                <span id="windDirText" style="display:none; font-size:1em; font-weight:900; color:rgba(79,195,247,0.85); letter-spacing:1px; flex-shrink:0;"></span>
                 </div>
             </div>
             <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div></div>
@@ -971,30 +993,76 @@
         return 'rgb(183,28,28)';
     }
     var _compassDeg = 0;
+    function degToCardinal(deg) {
+        var dirs = ['N','NE','E','SE','S','SW','W','NW'];
+        return dirs[Math.round(((deg % 360) + 360) % 360 / 45) % 8];
+    }
+
     function setWindCompass(deg) {
-        var needle = document.getElementById('compassNeedle');
+        var needle  = document.getElementById('compassNeedle');
         var compass = document.getElementById('windCompass');
+        var txtEl   = document.getElementById('windDirText');
         if (!needle || !compass) return;
+        var useText = localStorage.getItem('wind_dir_mode') === 'text';
         if (deg === null || deg === undefined) {
             compass.style.display = 'none';
+            if (txtEl) txtEl.style.display = 'none';
             _compassDeg = 0;
             needle.style.transition = 'none';
             needle.style.transform = 'rotate(0deg)';
             return;
         }
-        var wasHidden = compass.style.display === 'none';
-        compass.style.display = '';
-        if (wasHidden) {
-            needle.style.transition = 'none';
-            needle.style.transform = 'rotate(' + deg + 'deg)';
-            _compassDeg = deg;
-            needle.getBoundingClientRect();
-            needle.style.transition = '';
+        if (useText) {
+            compass.style.display = 'none';
+            if (txtEl) { txtEl.style.display = ''; txtEl.textContent = degToCardinal(deg); }
         } else {
-            var delta = ((deg - (_compassDeg % 360)) % 360 + 540) % 360 - 180;
-            _compassDeg += delta;
-            needle.style.transform = 'rotate(' + _compassDeg + 'deg)';
+            if (txtEl) txtEl.style.display = 'none';
+            var wasHidden = compass.style.display === 'none';
+            compass.style.display = '';
+            if (wasHidden) {
+                needle.style.transition = 'none';
+                needle.style.transform = 'rotate(' + deg + 'deg)';
+                _compassDeg = deg;
+                needle.getBoundingClientRect();
+                needle.style.transition = '';
+            } else {
+                var delta = ((deg - (_compassDeg % 360)) % 360 + 540) % 360 - 180;
+                _compassDeg += delta;
+                needle.style.transform = 'rotate(' + _compassDeg + 'deg)';
+            }
         }
+    }
+
+    function setWindDirMode(mode) {
+        localStorage.setItem('wind_dir_mode', mode);
+        var compassBtn = document.getElementById('opt-wind-compass');
+        var textBtn    = document.getElementById('opt-wind-text');
+        if (compassBtn) compassBtn.classList.toggle('active', mode === 'compass');
+        if (textBtn)    textBtn.classList.toggle('active', mode === 'text');
+        // Re-render wind display immediately using last known rotation angle
+        var needle  = document.getElementById('compassNeedle');
+        var compass = document.getElementById('windCompass');
+        var txtEl   = document.getElementById('windDirText');
+        var isShowing = compass && compass.style.display !== 'none' ||
+                        txtEl   && txtEl.style.display   !== 'none';
+        if (needle && isShowing) {
+            var m = (needle.style.transform || '').match(/rotate\(([\d.\-]+)deg\)/);
+            if (m) setWindCompass(parseFloat(m[1]));
+        }
+    }
+
+    function openAdvancedSettings() {
+        var modal = document.getElementById('advanced-settings-modal');
+        if (!modal) return;
+        var mode = localStorage.getItem('wind_dir_mode') || 'compass';
+        document.getElementById('opt-wind-compass')?.classList.toggle('active', mode === 'compass');
+        document.getElementById('opt-wind-text')?.classList.toggle('active', mode === 'text');
+        modal.style.display = 'flex';
+    }
+
+    function closeAdvancedSettings() {
+        var modal = document.getElementById('advanced-settings-modal');
+        if (modal) modal.style.display = 'none';
     }
 
     function setDataComplexity(mode) {
@@ -4064,6 +4132,9 @@
             document.getElementById('opt-swipe-on')?.classList.remove('active');
             document.getElementById('opt-swipe-off')?.classList.add('active');
         }
+        const savedWindMode = localStorage.getItem('wind_dir_mode') || 'compass';
+        document.getElementById('opt-wind-compass')?.classList.toggle('active', savedWindMode === 'compass');
+        document.getElementById('opt-wind-text')?.classList.toggle('active', savedWindMode === 'text');
     });
 
     window.onload = function() {
