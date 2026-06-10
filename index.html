@@ -1564,7 +1564,7 @@
             let score = 100;
             const pp = (h.precipProbability || 0) * 100;
             const temp = h.temperature || 70;
-            const fl = (twcMaxFeelsLike != null ? twcMaxFeelsLike : (h.apparentTemperature || temp));
+            const fl = h.apparentTemperature || temp; // per-hour feels-like; daily max must not override each hour
             const w = h.windSpeed || 0;
             const wg = h.windGust || w;
             const uv = h.uvIndex || 0;
@@ -1661,15 +1661,18 @@
                 rainWindow = rh12 + ' ' + ampm;
             }
         }
+        // Use TWC's daily max feels-like for heat thresholds when available;
+        // fall back to Pirate hourly max only when TWC hasn't loaded yet.
+        const peakFeels = (twcMaxFeelsLike != null) ? twcMaxFeelsLike : maxFeels;
         let desc;
         if (avgScore >= 90) {
             desc = minFeels >= 65 && minFeels <= 80 ? 'Nearly perfect — enjoy your time outside!' : 'Excellent conditions for the next 12 hours.';
         } else if (hasThunder) {
             desc = avgScore < 30 ? 'Active thunderstorms likely. Stay inside.' : 'Storms possible — watch lightning closely.';
-        } else if (maxFeels >= 103) {
+        } else if (peakFeels >= 103) {
             desc = 'Dangerous heat ahead. Minimize outdoor exposure and hydrate.';
-        } else if (maxFeels >= 95) {
-            desc = 'Very hot (feels like ' + Math.round(maxFeels) + '\u00b0). Limit activity during peak heat.';
+        } else if (peakFeels >= 95) {
+            desc = 'Very hot (feels like ' + Math.round(peakFeels) + '\u00b0). Limit activity during peak heat.';
         } else if (minFeels < 15) {
             desc = 'Dangerously cold wind chills. Limit time outdoors.';
         } else if (minFeels < 32) {
