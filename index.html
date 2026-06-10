@@ -830,7 +830,7 @@
                 var city = (d.address && (d.address.city || d.address.town || d.address.village || d.address.county)) || 'Current Location';
                 var livePanel = document.getElementById('coords-panel');
                 if (livePanel && localStorage.getItem('input_mode') === 'live') {
-                    livePanel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px;">📍 ' + city + '</span>';
+                    livePanel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px; cursor:pointer;" onclick="setInputView(\'city\')">📍 ' + city + '</span>';
                 }
             }).catch(function() {});
     }
@@ -900,6 +900,25 @@
         } catch(e) { document.getElementById('stationName').innerText = 'SEARCH ERROR'; }
     }
 
+    function colorHumidity(val) {
+        var pct = Math.max(0, Math.min(100, val));
+        // 0% = dark red, 50% = orange-ish, 100% = bright green
+        var r, g, b;
+        if (pct <= 50) {
+            // red (#cc2200) -> yellow (#ffcc00)
+            var t = pct / 50;
+            r = Math.round(204 + (255 - 204) * t);
+            g = Math.round(34  + (204 - 34)  * t);
+            b = 0;
+        } else {
+            // yellow (#ffcc00) -> green (#00e676)
+            var t = (pct - 50) / 50;
+            r = Math.round(255 + (0   - 255) * t);
+            g = Math.round(204 + (230 - 204) * t);
+            b = Math.round(0   + (118 - 0)   * t);
+        }
+        return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
     function setDataComplexity(mode) {
         localStorage.setItem('data_complexity', mode);
         SkyDB.set(SkyDB.S.settings, 'data_complexity', mode);
@@ -915,6 +934,15 @@
         // Station Intel: Advanced mode only
         const stationIntelBox = document.getElementById('station-intel-box');
         if (stationIntelBox) stationIntelBox.style.display = (mode === 'specific') ? '' : 'none';
+        // AFD / HWO / SPC countdown / Threat factors: Advanced mode only
+        const afdSection = document.getElementById('afd-section');
+        if (afdSection) afdSection.style.display = (mode === 'specific') ? '' : 'none';
+        const hwoSection = document.getElementById('hwo-section');
+        if (hwoSection) hwoSection.style.display = (mode === 'specific') ? '' : 'none';
+        const spcCountdown = document.getElementById('spc-countdown');
+        if (spcCountdown) spcCountdown.style.display = (mode === 'specific') ? '' : 'none';
+        const threatFactors = document.getElementById('threat-factors');
+        if (threatFactors) threatFactors.style.display = (mode === 'specific') ? '' : 'none';
         loadAll();
     }
 
@@ -1016,7 +1044,7 @@
         document.getElementById('conditionText').innerText = '--';
         document.getElementById('tempVal').innerText = '--';
         document.getElementById('windVal').innerText = '--';
-        document.getElementById('humVal').innerText = '--';
+        document.getElementById('humVal').innerText = '--'; document.getElementById('humVal').style.color = '';
         document.getElementById('feelsVal').innerText = '--';
         document.getElementById('presVal').innerText = '--';
         document.getElementById('weatherIcon').style.display = 'none';
@@ -1064,11 +1092,11 @@
             if (validImages.length === 0) throw new Error('No valid images');
             window._wxStoryImages = validImages;
             window._wxStoryIndex = 0;
-            window._wxPaused = false;
+            window._wxPaused = (window._wxPaused === true);
             const ctrlsDiv = document.getElementById('wxstory-controls');
             if (ctrlsDiv) ctrlsDiv.style.display = validImages.length > 1 ? 'flex' : 'none';
             const ppBtn = document.getElementById('wxstory-playpause');
-            if (ppBtn) ppBtn.innerHTML = '&#9646;&#9646;';
+            if (ppBtn) ppBtn.innerHTML = window._wxPaused ? '&#9654;' : '&#9646;&#9646;';
             function showImage() {
                 const fullUrl = validImages[window._wxStoryIndex];
                 storyImg.src = 'https://images.weserv.nl/?url=' + fullUrl.replace('https://', '') + '&t=' + Date.now();
@@ -1365,9 +1393,12 @@
     }
 
     function applyUSMode() {
-        ['spc-outlook-section','wxstory-section','afd-section'].forEach(function(id) {
+        ['spc-outlook-section','wxstory-section'].forEach(function(id) {
             const el = document.getElementById(id); if (el) el.style.display = '';
         });
+        if (localStorage.getItem('data_complexity') === 'specific') {
+            const afd = document.getElementById('afd-section'); if (afd) afd.style.display = '';
+        }
     }
 
     function computeOutdoorScore(hourlyData) {
@@ -1853,7 +1884,7 @@
             if (windDir !== null && liveWindSpd > 0) windHtml += ' <span style="display:inline-block; transform:rotate(' + windDir + 'deg); color:var(--accent); font-weight:900;">&darr;</span>';
             document.getElementById('windVal').innerHTML = windHtml;
             let humidity = useWU ? wu.humidity : curr.humidity * 100;
-            document.getElementById('humVal').innerText = Math.round(humidity) + '%';
+            (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })()
             // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
             (function() {
                 var T = temp, W = liveWindSpd, RH = humidity, fl = T;
@@ -1996,7 +2027,7 @@
             SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
                 if (!c) return;
                 document.getElementById('tempVal').innerText = c.temp + '\u00b0';
-                document.getElementById('humVal').innerText  = c.humidity + '%';
+                (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                 document.getElementById('feelsVal').innerText = c.feelsLike + '\u00b0';
                 document.getElementById('windVal').innerText  = c.wind + ' mph';
                 if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
@@ -2101,7 +2132,7 @@
                 if (hwoList['@graph'] && hwoList['@graph'].length > 0) {
                     const hwoData = await (await fetch(hwoList['@graph'][0]['@id'])).json();
                     const text = (hwoData.productText || '').trim();
-                    if (text) { document.getElementById('cli-text').innerText = text; document.getElementById('hwo-section').style.display = 'block'; }
+                    if (text) { document.getElementById('cli-text').innerText = text; document.getElementById('hwo-section').style.display = localStorage.getItem('data_complexity') === 'specific' ? 'block' : 'none'; }
                     else document.getElementById('hwo-section').style.display = 'none';
                 } else document.getElementById('hwo-section').style.display = 'none';
             } catch(e) { document.getElementById('hwo-section').style.display = 'none'; }
@@ -2171,7 +2202,7 @@
             if (window.wuDeviates && !window.isOutsideUS && nwsCond && nwsObsTempF !== null && nwsObsHumidity !== null) {
                 window.liveTemp = Math.round(nwsObsTempF);
                 document.getElementById('tempVal').innerText = Math.round(nwsObsTempF) + '\u00b0';
-                document.getElementById('humVal').innerText = Math.round(nwsObsHumidity) + '%';
+                (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })()
                 document.getElementById('wuStation').style.display = 'none';
                 if (nwsObsWindMph !== null) {
                     liveWindSpd = Math.round(nwsObsWindMph);
@@ -2376,7 +2407,7 @@
                 if (moonPhaseVal > 0.05 && moonPhaseVal < 0.95) {
                     ctx.save(); ctx.globalCompositeOperation = 'source-atop'; ctx.fillStyle = 'rgba(10,20,35,0.85)';
                     const shadowOffset = (moonPhaseVal < 0.5) ? (1 - moonPhaseVal * 2) * moonR : (moonPhaseVal * 2 - 1) * moonR;
-                    ctx.beginPath(); ctx.arc(moonX + shadowOffset * (moonPhaseVal < 0.5 ? 1 : -1), moonY, moonR, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+                    ctx.beginPath(); ctx.arc(moonX + shadowOffset * (moonPhaseVal < 0.5 ? -1 : 1), moonY, moonR, 0, Math.PI * 2); ctx.fill(); ctx.restore();
                 }
             } else {
                 const nowMs = Date.now(), fifteenMins = 15 * 60 * 1000;
@@ -2907,7 +2938,7 @@
             return t;
         });
 
-        let html = '<button onclick="document.getElementById(\'twc-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button><div style="display:flex; justify-content:space-between; align-items:center;"><button id="twc-prev-btn" style="font-size:2em; background:none; border:none; color:#ffd54f; cursor:pointer;">&#8592;</button><div style="flex:1; text-align:center;"><b>' + data.dayOfWeek[dayIdx] + '</b></div><button id="twc-next-btn" style="font-size:2em; background:none; border:none; color:#ffd54f; cursor:pointer;">&#8594;</button></div>';
+        let html = '<button onclick="document.getElementById(\'twc-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button><div style="display:flex; justify-content:space-between; align-items:center;"><button id="twc-prev-btn" style="font-size:2em; background:none; border:none; color:#ffd54f; cursor:pointer;">&#8592;</button><div style="flex:1; text-align:center;"><b>' + (dayIdx === 0 ? 'Today' : data.dayOfWeek[dayIdx]) + '</b></div><button id="twc-next-btn" style="font-size:2em; background:none; border:none; color:#ffd54f; cursor:pointer;">&#8594;</button></div>';
 
         for (let part = 0; part < 2; ++part) {
             if (narratives[part] == null) continue;
@@ -2919,7 +2950,7 @@
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + snowQpf[part] + '"</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:var(--accent);font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (qpf[part] !== undefined ? qpf[part] + '"' : '--') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (qpf[part] != null && qpf[part] > 0 ? qpf[part] + '"' : '--') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
@@ -3914,6 +3945,14 @@
         if (analyticsSection) analyticsSection.style.display = (savedComplexity === 'specific') ? 'block' : 'none';
         const stationIntelBox = document.getElementById('station-intel-box');
         if (stationIntelBox) stationIntelBox.style.display = (savedComplexity === 'specific') ? '' : 'none';
+        const afdSection2 = document.getElementById('afd-section');
+        if (afdSection2) afdSection2.style.display = (savedComplexity === 'specific') ? '' : 'none';
+        const hwoSection2 = document.getElementById('hwo-section');
+        if (hwoSection2) hwoSection2.style.display = (savedComplexity === 'specific') ? '' : 'none';
+        const spcCountdown2 = document.getElementById('spc-countdown');
+        if (spcCountdown2) spcCountdown2.style.display = (savedComplexity === 'specific') ? '' : 'none';
+        const threatFactors2 = document.getElementById('threat-factors');
+        if (threatFactors2) threatFactors2.style.display = (savedComplexity === 'specific') ? '' : 'none';
         const savedSwipe = localStorage.getItem('skymonitor_swipe');
         if (savedSwipe === 'off') {
             document.getElementById('opt-swipe-on')?.classList.remove('active');
