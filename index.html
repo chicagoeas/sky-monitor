@@ -426,8 +426,9 @@
             <div class="detail-item" style="display:flex;gap:18px;justify-content:center;align-items:center;"><div style="text-align:center;"><div class="detail-label">Temp</div><div id="tempVal" class="detail-val">--</div></div><div style="text-align:center;"><div class="detail-label">Feels</div><div id="feelsVal" class="detail-val">--</div></div></div>
             <div class="detail-item" style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
                 <div class="detail-label">Wind</div>
+                <div style="display:flex;align-items:center;gap:8px;justify-content:center;">
                 <div id="windVal" class="detail-val">--</div>
-                <svg id="windCompass" width="56" height="56" viewBox="0 0 56 56" style="margin-top:6px;display:none;overflow:visible;">
+                <svg id="windCompass" width="38" height="38" viewBox="0 0 56 56" style="display:none;flex-shrink:0;overflow:visible;">
                     <circle cx="28" cy="28" r="26" fill="rgba(0,0,0,0.4)" stroke="rgba(79,195,247,0.18)" stroke-width="1.5"/>
                     <line x1="28" y1="4" x2="28" y2="9" stroke="rgba(79,195,247,0.35)" stroke-width="1.2"/>
                     <line x1="52" y1="28" x2="47" y2="28" stroke="rgba(79,195,247,0.18)" stroke-width="1"/>
@@ -443,6 +444,7 @@
                     </g>
                     <circle cx="28" cy="28" r="3" fill="rgba(79,195,247,0.55)" stroke="rgba(79,195,247,0.25)" stroke-width="1"/>
                 </svg>
+                </div>
             </div>
             <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Pressure</div><div id="presVal" class="detail-val">--</div></div>
@@ -960,13 +962,31 @@
         }
         return 'rgb(183,28,28)';
     }
+    var _compassDeg = 0;
     function setWindCompass(deg) {
         var needle = document.getElementById('compassNeedle');
         var compass = document.getElementById('windCompass');
         if (!needle || !compass) return;
-        if (deg === null || deg === undefined) { compass.style.display = 'none'; return; }
+        if (deg === null || deg === undefined) {
+            compass.style.display = 'none';
+            _compassDeg = 0;
+            needle.style.transition = 'none';
+            needle.style.transform = 'rotate(0deg)';
+            return;
+        }
+        var wasHidden = compass.style.display === 'none';
         compass.style.display = '';
-        needle.style.transform = 'rotate(' + deg + 'deg)';
+        if (wasHidden) {
+            needle.style.transition = 'none';
+            needle.style.transform = 'rotate(' + deg + 'deg)';
+            _compassDeg = deg;
+            needle.getBoundingClientRect();
+            needle.style.transition = '';
+        } else {
+            var delta = ((deg - (_compassDeg % 360)) % 360 + 540) % 360 - 180;
+            _compassDeg += delta;
+            needle.style.transform = 'rotate(' + _compassDeg + 'deg)';
+        }
     }
 
     function setDataComplexity(mode) {
@@ -2070,7 +2090,7 @@
                 (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                 (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                 (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-                document.getElementById('windVal').innerText  = c.wind + ' mph';
+                document.getElementById('windVal').innerText  = c.wind + ' mph'; setWindCompass(null);
                 if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
                 document.getElementById('uv-val').innerText = c.uv || '--';
             });
