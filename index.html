@@ -424,7 +424,26 @@
 
         <div class="detail-grid">
             <div class="detail-item" style="display:flex;gap:18px;justify-content:center;align-items:center;"><div style="text-align:center;"><div class="detail-label">Temp</div><div id="tempVal" class="detail-val">--</div></div><div style="text-align:center;"><div class="detail-label">Feels</div><div id="feelsVal" class="detail-val">--</div></div></div>
-            <div class="detail-item"><div class="detail-label">Wind</div><div id="windVal" class="detail-val">--</div></div>
+            <div class="detail-item" style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                <div class="detail-label">Wind</div>
+                <div id="windVal" class="detail-val">--</div>
+                <svg id="windCompass" width="56" height="56" viewBox="0 0 56 56" style="margin-top:6px;display:none;overflow:visible;">
+                    <circle cx="28" cy="28" r="26" fill="rgba(0,0,0,0.4)" stroke="rgba(79,195,247,0.18)" stroke-width="1.5"/>
+                    <line x1="28" y1="4" x2="28" y2="9" stroke="rgba(79,195,247,0.35)" stroke-width="1.2"/>
+                    <line x1="52" y1="28" x2="47" y2="28" stroke="rgba(79,195,247,0.18)" stroke-width="1"/>
+                    <line x1="28" y1="52" x2="28" y2="47" stroke="rgba(79,195,247,0.18)" stroke-width="1"/>
+                    <line x1="4" y1="28" x2="9" y2="28" stroke="rgba(79,195,247,0.18)" stroke-width="1"/>
+                    <text x="28" y="8" text-anchor="middle" dominant-baseline="middle" fill="rgba(79,195,247,0.75)" font-size="7.5" font-weight="900" font-family="system-ui,sans-serif">N</text>
+                    <text x="49" y="30" text-anchor="middle" dominant-baseline="middle" fill="rgba(79,195,247,0.32)" font-size="6.5" font-family="system-ui,sans-serif">E</text>
+                    <text x="28" y="51" text-anchor="middle" dominant-baseline="middle" fill="rgba(79,195,247,0.32)" font-size="6.5" font-family="system-ui,sans-serif">S</text>
+                    <text x="7" y="30" text-anchor="middle" dominant-baseline="middle" fill="rgba(79,195,247,0.32)" font-size="6.5" font-family="system-ui,sans-serif">W</text>
+                    <g id="compassNeedle" style="transform-origin:28px 28px;transition:transform 0.9s cubic-bezier(0.34,1.56,0.64,1);">
+                        <polygon points="28,12 25,28 28,25 31,28" fill="rgba(255,255,255,0.15)"/>
+                        <polygon points="28,44 25,28 28,31 31,28" fill="#ffd54f" opacity="0.9"/>
+                    </g>
+                    <circle cx="28" cy="28" r="3" fill="rgba(79,195,247,0.55)" stroke="rgba(79,195,247,0.25)" stroke-width="1"/>
+                </svg>
+            </div>
             <div class="detail-item"><div class="detail-label">Humidity</div><div id="humVal" class="detail-val">--</div></div>
             <div class="detail-item"><div class="detail-label">Pressure</div><div id="presVal" class="detail-val">--</div></div>
         </div>
@@ -941,6 +960,15 @@
         }
         return 'rgb(183,28,28)';
     }
+    function setWindCompass(deg) {
+        var needle = document.getElementById('compassNeedle');
+        var compass = document.getElementById('windCompass');
+        if (!needle || !compass) return;
+        if (deg === null || deg === undefined) { compass.style.display = 'none'; return; }
+        compass.style.display = '';
+        needle.style.transform = 'rotate(' + deg + 'deg)';
+    }
+
     function setDataComplexity(mode) {
         localStorage.setItem('data_complexity', mode);
         SkyDB.set(SkyDB.S.settings, 'data_complexity', mode);
@@ -1065,7 +1093,7 @@
         document.getElementById('stationName').innerText = 'LOADING LOCATION...';
         document.getElementById('conditionText').innerText = '--';
         document.getElementById('tempVal').innerText = '--';
-        document.getElementById('windVal').innerText = '--';
+        document.getElementById('windVal').innerText = '--'; setWindCompass(null);
         document.getElementById('humVal').innerText = '--'; document.getElementById('humVal').style.color = '';
         document.getElementById('feelsVal').innerText = '--'; document.getElementById('feelsVal').style.color = '';
         document.getElementById('presVal').innerText = '--';
@@ -1902,9 +1930,8 @@
             const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
             const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
             liveWindSpd = Math.round(windSpeed);
-            let windHtml = liveWindSpd + ' mph';
-            if (windDir !== null && liveWindSpd > 0) windHtml += ' <span style="display:inline-block; transform:rotate(' + windDir + 'deg); color:var(--accent); font-weight:900;">&darr;</span>';
-            document.getElementById('windVal').innerHTML = windHtml;
+            document.getElementById('windVal').innerText = liveWindSpd + ' mph';
+            setWindCompass(liveWindSpd > 0 && windDir !== null ? windDir : null);
             let humidity = useWU ? wu.humidity : curr.humidity * 100;
             (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
             // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
@@ -2220,9 +2247,8 @@
                 document.getElementById('wuStation').style.display = 'none';
                 if (nwsObsWindMph !== null) {
                     liveWindSpd = Math.round(nwsObsWindMph);
-                    var nwsWindHtml = liveWindSpd + ' mph';
-                    if (nwsObsWindDir !== null && liveWindSpd > 0) nwsWindHtml += ' <span style="display:inline-block; transform:rotate(' + nwsObsWindDir + 'deg); color:var(--accent); font-weight:900;">&darr;</span>';
-                    document.getElementById('windVal').innerHTML = nwsWindHtml;
+                    document.getElementById('windVal').innerText = liveWindSpd + ' mph';
+                    setWindCompass(liveWindSpd > 0 && nwsObsWindDir !== null ? nwsObsWindDir : null);
                 }
                 // Recalculate feels-like with NWS values using the same NWS formulae
                 (function() {
