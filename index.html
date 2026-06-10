@@ -776,7 +776,7 @@
 
     const PIRATE_API_KEY = "lJk66QLMPYrxa7em8BhJIjXGk6MSVVWP";
     const OW_API_KEY = "065942b97acab61c4f876f77d1e71cfb";
-    const TWC_API_KEY = "77211cbbfe6841d6a11cbbfe6811d69a";
+    const TWC_API_KEY = "2f966110e6b34535966110e6b3553537";
     // CloudFlare worker URL for weather reporting (v1.0.4)
     const REPORTS_WORKER_URL = 'https://skymonitor-reports.skymonitor-account.workers.dev';
 
@@ -2963,7 +2963,13 @@
                 if (spcLabelRaw === 'MDT') banner.style.background = '#b91c1c';
                 if (spcLabelRaw === 'HIGH') banner.style.background = '#7f1d1d';
                 banner.style.color = '#fff';
-                banner.onclick = function() { switchTab('severe', document.getElementById('nav-severe')); };
+                banner.onclick = function() {
+                    switchTab('severe', document.getElementById('nav-severe'));
+                    setTimeout(function() {
+                        var el = document.getElementById('active-risks-box');
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 80);
+                };
             }
         } else { window.spcRisk = spcLabelRaw; }
 
@@ -3055,6 +3061,10 @@
                 else twcMaxFeelsLike = t;
             }
         })();
+        // Re-run outdoor score now that twcMaxFeelsLike is set — fetchPirate() ran first
+        // so the initial computeOutdoorScore call had twcMaxFeelsLike = null and fell back
+        // to Pirate's (potentially lagged) hourly apparentTemperature for the description.
+        if (window.pirateHourlyData) computeOutdoorScore(window.pirateHourlyData);
         for (let i = 0; i < data.dayOfWeek.length; ++i) {
             const baseIdx = i * 2;
             const iconNum = daypart.iconCode?.[baseIdx] ?? daypart.iconCode?.[baseIdx + 1];
