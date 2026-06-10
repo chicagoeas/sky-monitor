@@ -84,6 +84,7 @@
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,23,68,0.7); } 70% { box-shadow: 0 0 0 15px rgba(255,23,68,0); } 100% { box-shadow: 0 0 0 0 rgba(255,23,68,0); } }
         @keyframes severePulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 
+
         #dashboard {
             max-width: 850px; margin: auto; background: rgba(255,255,255,0.03);
             padding: 30px; border-radius: 24px; border: 1px solid rgba(255,255,255,0.08);
@@ -1495,7 +1496,7 @@
             let score = 100;
             const pp = (h.precipProbability || 0) * 100;
             const temp = h.temperature || 70;
-            const fl = h.apparentTemperature || temp;
+            const fl = (twcMaxFeelsLike != null ? twcMaxFeelsLike : (h.apparentTemperature || temp));
             const w = h.windSpeed || 0;
             const wg = h.windGust || w;
             const uv = h.uvIndex || 0;
@@ -2944,12 +2945,25 @@
         }
     }
 
+    let twcMaxFeelsLike = null;
+
     function renderTWCForecast(data) {
         const cont = document.getElementById('twc-daily-forecast'); cont.innerHTML = '';
         if (!data || !Array.isArray(data.dayOfWeek) || !data.dayOfWeek.length || !data.daypart || !Array.isArray(data.daypart[0].iconCode)) {
             cont.innerHTML = "<div style='opacity:0.7'>Forecast unavailable</div>"; return;
         }
         const daypart = data.daypart[0];
+        // Store today's daytime max feels-like for use in Outdoor Score
+        (function() {
+            var t = data.calendarDayTemperatureMax?.[0];
+            if (t != null) {
+                var hi = daypart.temperatureHeatIndex?.[0];
+                var wc = daypart.temperatureWindChill?.[0];
+                if (hi != null && hi > t) twcMaxFeelsLike = hi;
+                else if (wc != null && wc < t) twcMaxFeelsLike = wc;
+                else twcMaxFeelsLike = t;
+            }
+        })();
         for (let i = 0; i < data.dayOfWeek.length; ++i) {
             const baseIdx = i * 2;
             const iconNum = daypart.iconCode?.[baseIdx] ?? daypart.iconCode?.[baseIdx + 1];
@@ -2966,7 +2980,7 @@
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
             if (severeKeywords.some(function(kw) { return dayNarr.includes(kw) || nightNarr.includes(kw); })) {
-                card.insertAdjacentHTML('beforeend', '<div style="position:absolute;top:6px;right:8px;color:#ff1744;font-size:1.1em;font-weight:900;line-height:1;animation:severePulse 1.4s ease-in-out infinite;" title="Severe weather possible">!</div>');
+                card.insertAdjacentHTML('beforeend', '<div style="position:absolute;top:6px;right:8px;color:#ff1744;font-size:1.1em;font-weight:900;line-height:1;animation:severePulse 2.8s ease-in-out infinite;" title="Severe weather possible">!</div>');
             }
             cont.appendChild(card);
         }
@@ -3685,7 +3699,7 @@
                         iconAnchor: [12, 12]
                     });
                     L_ref.marker([r.lat, r.lon], { icon: icon })
-                        .bindPopup('<b>' + emoji + ' ' + (r.type || 'User Report') + '</b>' + (r.notes ? '<br>' + r.notes : '') + '<br><small style="opacity:0.7;">' + timeStr + (isOld ? ' &middot; <i>older report</i>' : '') + '</small>')
+                        .bindPopup('<b>' + emoji + ' ' + (r.type || 'User Report') + '</b>' + (r.notes ? '<br>' + r.notes : '') + '<br><small style="opacity:0.7;">' + timeStr + '</small>')
                         .addTo(userReportLayer);
                 });
             }
