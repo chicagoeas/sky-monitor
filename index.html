@@ -919,6 +919,29 @@
         }
         return 'rgb(' + r + ',' + g + ',' + b + ')';
     }
+    function colorFeelsLike(f) {
+        // icy blue ≤10 … neutral white ~68 … hot red ≥100
+        var stops = [
+            [-20, [100, 200, 255]],
+            [32,  [79,  195, 247]],
+            [55,  [178, 235, 242]],
+            [68,  [255, 255, 255]],
+            [85,  [255, 213, 79]],
+            [95,  [255, 82,  82]],
+            [115, [183, 28,  28]]
+        ];
+        for (var i = 0; i < stops.length - 1; i++) {
+            var lo = stops[i], hi = stops[i + 1];
+            if (f <= hi[0]) {
+                var t = (f - lo[0]) / (hi[0] - lo[0]);
+                var r = Math.round(lo[1][0] + (hi[1][0] - lo[1][0]) * t);
+                var g = Math.round(lo[1][1] + (hi[1][1] - lo[1][1]) * t);
+                var b = Math.round(lo[1][2] + (hi[1][2] - lo[1][2]) * t);
+                return 'rgb(' + r + ',' + g + ',' + b + ')';
+            }
+        }
+        return 'rgb(183,28,28)';
+    }
     function setDataComplexity(mode) {
         localStorage.setItem('data_complexity', mode);
         SkyDB.set(SkyDB.S.settings, 'data_complexity', mode);
@@ -1045,7 +1068,7 @@
         document.getElementById('tempVal').innerText = '--';
         document.getElementById('windVal').innerText = '--';
         document.getElementById('humVal').innerText = '--'; document.getElementById('humVal').style.color = '';
-        document.getElementById('feelsVal').innerText = '--';
+        document.getElementById('feelsVal').innerText = '--'; document.getElementById('feelsVal').style.color = '';
         document.getElementById('presVal').innerText = '--';
         document.getElementById('weatherIcon').style.display = 'none';
         document.getElementById('minuteSummary').innerText = 'Scanning radar...';
@@ -1915,7 +1938,7 @@
                 }
                 liveFeelsLike = fl;
             })();
-            document.getElementById('feelsVal').innerText = Math.round(liveFeelsLike) + '\u00b0';
+            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
             const presIn = (curr.pressure * 0.02953).toFixed(2);
             let trend = '\u27A1\uFE0F';
             if (lastPressureMb !== null && curr.pressure !== null) {
@@ -2028,7 +2051,7 @@
                 if (!c) return;
                 document.getElementById('tempVal').innerText = c.temp + '\u00b0';
                 (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                document.getElementById('feelsVal').innerText = c.feelsLike + '\u00b0';
+                (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                 document.getElementById('windVal').innerText  = c.wind + ' mph';
                 if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
                 document.getElementById('uv-val').innerText = c.uv || '--';
@@ -2233,7 +2256,7 @@
                     }
                     liveFeelsLike = fl;
                 })();
-                document.getElementById('feelsVal').innerText = Math.round(liveFeelsLike) + '\u00b0';
+                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                 var _pw = window.pirateCurrently;
                 updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, Math.round(nwsObsHumidity), liveWindSpd,
                     _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
@@ -2950,7 +2973,7 @@
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + snowQpf[part] + '"</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (qpf[part] != null && qpf[part] > 0 ? qpf[part] + '"' : '--') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + qpf[part] + '"' : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
