@@ -2002,11 +2002,12 @@
             stationTzOffset = d.offset * 3600;
             const wu = await fetchWUData(lat, lon);
             const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
-            const useWU = wuAvailable &&
-                Math.abs(wu.temp - d.currently.temperature) <= 5 &&
-                Math.abs(wu.humidity - (d.currently.humidity * 100)) <= 10;
-            // Track whether WU exists but deviates — fetchNWSChain will override with NWS obs if in US
-            window.wuDeviates = wuAvailable && !useWU;
+            // WU PWS is always the primary source. fetchNWSChain compares WU vs NWS obs
+            // and overrides the display if they diverge by >5°F / >10% humidity.
+            // Never compare WU against PirateWeather — Pirate can be significantly lagged.
+            const useWU = wuAvailable;
+            window.wuData = wu || null;
+            window.wuDeviates = false; // reset; fetchNWSChain sets this after WU vs NWS comparison
             const wuStationEl = document.getElementById('wuStation');
             const wuLinkEl = document.getElementById('wuLink');
             if (useWU && wu.stationId) {
@@ -2332,11 +2333,20 @@
                 if (nwsIcon) { document.getElementById('weatherIcon').src = nwsIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                 else document.getElementById('weatherIcon').style.display = 'none';
             }
-            // If WU PWS deviated from Pirate AND we're in the US AND the NWS obs station has
-            // valid data, override the displayed temp/humidity/wind with NWS values instead of
-            // using Pirate as the fallback. If nwsCond was empty (glitched station) we skip
-            // this so the existing Pirate fallback behaviour is preserved unchanged.
-            if (window.wuDeviates && !window.isOutsideUS && nwsCond && nwsObsTempF !== null && nwsObsHumidity !== null) {
+            // Compare WU PWS against NWS obs to decide if WU is trustworthy.
+            // Override with NWS obs if:
+            //   (a) WU deviates from NWS by >5°F temp OR >10% humidity, OR
+            //   (b) WU is completely unavailable
+            // PirateWeather is only used when NWS obs is also unavailable (or outside US).
+            const _wu = window.wuData;
+            const _wuAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
+            if (_wuAvail && nwsObsTempF !== null) {
+                const _tDiff = Math.abs(_wu.temp - nwsObsTempF);
+                const _hDiff = (nwsObsHumidity !== null) ? Math.abs(_wu.humidity - nwsObsHumidity) : 0;
+                window.wuDeviates = (_tDiff > 5) || (nwsObsHumidity !== null && _hDiff > 10);
+            }
+            const _nwsNeedsOverride = window.wuDeviates || !_wuAvail;
+            if (_nwsNeedsOverride && !window.isOutsideUS && nwsObsTempF !== null && nwsObsHumidity !== null) {
                 window.liveTemp = Math.round(nwsObsTempF);
                 (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                 (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
