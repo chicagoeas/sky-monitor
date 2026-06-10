@@ -2349,10 +2349,15 @@
                 window.wuDeviates = (_tDiff > 5) || (nwsObsHumidity !== null && _hDiff > 10);
             }
             const _nwsNeedsOverride = window.wuDeviates || !_wuAvail;
-            if (_nwsNeedsOverride && !window.isOutsideUS && nwsObsTempF !== null && nwsObsHumidity !== null) {
+            // Only temperature is required — NWS ASOS stations (e.g. O'Hare) often return
+            // null for relativeHumidity (calculated field). A null humidity must NOT block
+            // the entire NWS override; update each field only when it is available.
+            if (_nwsNeedsOverride && !window.isOutsideUS && nwsObsTempF !== null) {
                 window.liveTemp = Math.round(nwsObsTempF);
                 (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
-                (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+                if (nwsObsHumidity !== null) {
+                    (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+                }
                 document.getElementById('wuStation').style.display = 'none';
                 if (nwsObsWindMph !== null) {
                     liveWindSpd = Math.round(nwsObsWindMph);
@@ -2361,14 +2366,18 @@
                 }
                 // Recalculate feels-like with NWS values using the same NWS formulae
                 (function() {
-                    var T = nwsObsTempF, W = liveWindSpd, RH = nwsObsHumidity, fl = T;
+                    var T = nwsObsTempF, W = liveWindSpd, fl = T;
+                    // Fall back to current displayed humidity if NWS didn't provide it
+                    var _humEl = document.getElementById('humVal');
+                    var _humFallback = (_humEl && _humEl.innerText) ? parseInt(_humEl.innerText) : 50;
+                    var RH = (nwsObsHumidity !== null) ? nwsObsHumidity : _humFallback;
                     if (T <= 50 && W >= 3) {
                         fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
                     } else if (T >= 70) {
                         var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
                         if (hiSimple >= 80) {
                             var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH
-                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
+                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391517*RH*RH
                                + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
                                - 0.00000199*T*T*RH*RH;
                             if (RH < 13 && T >= 80 && T <= 112)
@@ -2384,7 +2393,8 @@
                 })();
                 (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                 var _pw = window.pirateCurrently;
-                updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, Math.round(nwsObsHumidity), liveWindSpd,
+                var _rhForComfort = (nwsObsHumidity !== null) ? Math.round(nwsObsHumidity) : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
+                updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, _rhForComfort, liveWindSpd,
                     _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
             }
             try {
