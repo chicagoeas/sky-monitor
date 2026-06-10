@@ -82,6 +82,7 @@
             animation: pulse 1.5s infinite;
         }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,23,68,0.7); } 70% { box-shadow: 0 0 0 15px rgba(255,23,68,0); } 100% { box-shadow: 0 0 0 0 rgba(255,23,68,0); } }
+        @keyframes severePulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 
         #dashboard {
             max-width: 850px; margin: auto; background: rgba(255,255,255,0.03);
@@ -1284,7 +1285,7 @@
         var torPoss = ((ap.tornadoPossible            && ap.tornadoPossible[0])            || '').toUpperCase();
         var sevBonus = { 'Extreme': 40, 'Severe': 30, 'Moderate': 20, 'Minor': 10 }[p.severity] || 0;
 
-        // ── TIER 1: Life-threatening emergencies ─────────────L �───────────
+        // ── TIER 1: Life-threatening emergencies ─────────────────────────
         // Civil/authority emergencies are the absolute top — issued by officials for imminent threats
         if (EMERGENCY_TYPES.some(function(em) { return evt.includes(em); }))                   return 16000;
         if (evt.includes('tornado warning')  && desc.includes('TORNADO EMERGENCY'))            return 15000;
@@ -2965,7 +2966,7 @@
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
             if (severeKeywords.some(function(kw) { return dayNarr.includes(kw) || nightNarr.includes(kw); })) {
-                card.insertAdjacentHTML('beforeend', '<div style="position:absolute;top:6px;right:8px;color:#ff1744;font-size:1.1em;font-weight:900;line-height:1;" title="Severe weather possible">!</div>');
+                card.insertAdjacentHTML('beforeend', '<div style="position:absolute;top:6px;right:8px;color:#ff1744;font-size:1.1em;font-weight:900;line-height:1;animation:severePulse 1.4s ease-in-out infinite;" title="Severe weather possible">!</div>');
             }
             cont.appendChild(card);
         }
@@ -3673,7 +3674,7 @@
                 reports.forEach(function(r) {
                     if (r.lat == null || r.lon == null) return;
                     const ageMs = now - new Date(r.time).getTime();
-                    if (isNaN(ageMs) || ageMs > maxAgeMs) return;
+                    if (!isNaN(ageMs) && ageMs > maxAgeMs) return;
                     const isOld = showOlder && ageMs > FRESH_MS;
                     const timeStr = formatReportTime(r.time);
                     const emoji = getReportEmoji(r.type);
@@ -3690,6 +3691,7 @@
             }
         } catch(e) {}
     }
+    window.loadMapReports = loadMapReports;
 
     async function submitUserReport() {
         const type = selectedReportType;
