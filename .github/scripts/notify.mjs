@@ -564,14 +564,21 @@ for (const row of rows) {
   if (prefs.alertEnabled !== false) {
     let alerts = [];
     try {
-      const res = await fetch(
+      const nwsRes = await fetch(
         `https://api.weather.gov/alerts/active?point=${row.lat},${row.lon}`,
         { headers: { "User-Agent": "SkyMonitor/1.1" }, signal: AbortSignal.timeout(8000) }
       );
-      if (res.ok) alerts = (await res.json()).features ?? [];
-    } catch {}
+      console.log(`[SkyMonitor] NWS API → HTTP ${nwsRes.status} for (${row.lat},${row.lon})`);
+      if (nwsRes.ok) {
+        alerts = (await nwsRes.json()).features ?? [];
+        console.log(`[SkyMonitor] ${alerts.length} active alert(s): ${alerts.map(a => a.properties?.event).join(", ") || "none"}`);
+      }
+    } catch (err) {
+      console.warn(`[SkyMonitor] NWS fetch error: ${err.message}`);
+    }
 
     const currentIds    = alerts.map(a => a.id);
+    console.log(`[SkyMonitor] known IDs: ${knownIds.length}, current IDs: ${currentIds.length}`);
     const importantTypes = [
       "tornado warning","tornado watch","severe thunderstorm warning","severe thunderstorm watch",
       "flash flood warning","flash flood emergency","flash flood watch","extreme wind",
@@ -585,6 +592,7 @@ for (const row of rows) {
     const filteredAlerts = (prefs.alertType === "important")
       ? newAlerts.filter(a => importantTypes.some(t => (a.properties?.event || "").toLowerCase().includes(t)))
       : newAlerts;
+    console.log(`[SkyMonitor] new alerts: ${newAlerts.length}, after filter: ${filteredAlerts.length}`);
 
     let subDeleted = false;
     const sentAlertIds = new Set();
@@ -600,7 +608,8 @@ for (const row of rows) {
       try {
         const req = await buildPushRequest(JSON.parse(row.subscription), payload, vapid, VAPID_EMAIL);
         const res = await fetch(req.url, req.init);
-        console.log(`[SkyMonitor] alert push "${alert.properties?.event}" → HTTP ${res.status}`);
+        const resBody = res.ok ? "" : ` — ${await res.text().catch(() => "")}`;
+        console.log(`[SkyMonitor] alert push "${alert.properties?.event}" → HTTP ${res.status}${resBody}`);
         if (res.status === 410 || res.status === 404) {
           await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
           subDeleted = true; break;
