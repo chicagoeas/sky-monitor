@@ -148,6 +148,8 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   const jwt      = `${jwtHead}.${jwtBody}.${bytesToB64Url(sig)}`;
   const vapidPub = bytesToB64Url(vapid.publicKeyBytes);
 
+  console.log(`[SkyMonitor] push aud="${audience}" k="${vapidPub.slice(0,20)}..."`);
+
   return {
     url:  subscription.endpoint,
     init: {
