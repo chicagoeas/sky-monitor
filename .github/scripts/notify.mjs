@@ -76,31 +76,19 @@ async function hkdf(salt, ikm, info, length) {
   return Buffer.from(bits);
 }
 
-function buildP256Pkcs8(dBytes) {
-  // Wraps 32 raw private-key bytes in a minimal PKCS#8 DER envelope.
-  // This avoids the JWK x/y mismatch problem and works on Node ≥ 18.
-  const header = Buffer.from([
-    0x30, 0x41,
-    0x02, 0x01, 0x00,
-    0x30, 0x13,
-      0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01,
-      0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07,
-    0x04, 0x27,
-      0x30, 0x25,
-        0x02, 0x01, 0x01,
-        0x04, 0x20,
-  ]);
-  return Buffer.concat([header, dBytes]);
-}
-
 async function importVapidKeys(publicKeyB64, privateKeyB64) {
   const pubBytes = b64UrlToBytes(publicKeyB64);
-  const dNorm    = (privateKeyB64 || "").trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  // Normalise to strict base64url (no padding, - and _ not + and /)
+  const dNorm = (privateKeyB64 || "").trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   console.log(`[SkyMonitor] VAPID private key length after normalise: ${dNorm.length} chars (expect 43)`);
-  const dBytes   = b64UrlToBytes(dNorm);
-  const pkcs8    = buildP256Pkcs8(dBytes);
+  // Derive x/y directly from the public key bytes (uncompressed point: 0x04 || x || y)
+  const x = bytesToB64Url(pubBytes.slice(1, 33));
+  const y = bytesToB64Url(pubBytes.slice(33, 65));
+  // Use JWK import — identical to the Cloudflare Worker approach.
+  // Node.js validates d ↔ (x,y) during import; if they mismatch it throws DataError.
   const privateKey = await subtle.importKey(
-    "pkcs8", pkcs8,
+    "jwk",
+    { kty: "EC", crv: "P-256", d: dNorm, x, y },
     { name: "ECDSA", namedCurve: "P-256" },
     false, ["sign"]
   );
@@ -602,16 +590,20 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 
 const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 
-// Verify the private key matches the public key by deriving the public point
+// Verify the private key matches the public key by importing as ECDH (extractable)
+// and comparing the derived public point against VAPID_PUBLIC_KEY.
 {
   const pubBytes = b64UrlToBytes(VAPID_PUB);
   const dNorm    = VAPID_PRIV.trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  // Import as ECDH (extractable) so we can export and compare the public key
+  const x = bytesToB64Url(pubBytes.slice(1, 33));
+  const y = bytesToB64Url(pubBytes.slice(33, 65));
+  // Import d+x+y as ECDH (extractable) — Node.js validates d↔(x,y) here too
   const ecdhKey  = await subtle.importKey(
-    "pkcs8", buildP256Pkcs8(b64UrlToBytes(dNorm)),
-    { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]
+    "jwk",
+    { kty: "EC", crv: "P-256", d: dNorm, x, y },
+    { name: "ECDH", namedCurve: "P-256" }, true, []
   );
-  // Export as JWK to read x, y, then reconstruct uncompressed public key (0x04 || x || y)
+  // Export and reconstruct uncompressed public point (0x04 || x || y)
   const jwk        = await subtle.exportKey("jwk", ecdhKey);
   const derivedPub = new Uint8Array([0x04, ...b64UrlToBytes(jwk.x), ...b64UrlToBytes(jwk.y)]);
   const match = derivedPub.length === pubBytes.length && derivedPub.every((b, i) => b === pubBytes[i]);
