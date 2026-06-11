@@ -601,7 +601,7 @@ const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
   const ecdhKey  = await subtle.importKey(
     "jwk",
     { kty: "EC", crv: "P-256", d: dNorm, x, y },
-    { name: "ECDH", namedCurve: "P-256" }, true, []
+    { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]
   );
   // Export and reconstruct uncompressed public point (0x04 || x || y)
   const jwk        = await subtle.exportKey("jwk", ecdhKey);
