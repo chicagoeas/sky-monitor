@@ -54,7 +54,8 @@ function b64UrlToBytes(s) {
   const clean   = (s || "").trim().replace(/\s+/g, "");
   const padding = "=".repeat((4 - (clean.length % 4)) % 4);
   const b64     = (clean + padding).replace(/-/g, "+").replace(/_/g, "/");
-  return Buffer.from(b64, "base64");
+  // new Uint8Array(...) copies bytes into its own ArrayBuffer so .buffer is pool-safe in Node.js
+  return new Uint8Array(Buffer.from(b64, "base64"));
 }
 
 function bytesToB64Url(bytes) {
@@ -62,10 +63,15 @@ function bytesToB64Url(bytes) {
     .replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
+// Return a correctly-sliced ArrayBuffer from any Buffer/Uint8Array (Node.js pool-safe)
+function toAB(buf) {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
 async function hkdf(salt, ikm, info, length) {
-  const key  = await subtle.importKey("raw", ikm.buffer, "HKDF", false, ["deriveBits"]);
+  const key  = await subtle.importKey("raw", toAB(ikm), "HKDF", false, ["deriveBits"]);
   const bits = await subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: salt.buffer, info: info.buffer }, key, length * 8
+    { name: "HKDF", hash: "SHA-256", salt: toAB(salt), info: toAB(info) }, key, length * 8
   );
   return Buffer.from(bits);
 }
@@ -110,18 +116,18 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   const ephemKP  = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
   const asPublic = Buffer.from(await subtle.exportKey("raw", ephemKP.publicKey));
 
-  const uaKey      = await subtle.importKey("raw", uaPublic.buffer, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const uaKey      = await subtle.importKey("raw", toAB(uaPublic), { name: "ECDH", namedCurve: "P-256" }, false, []);
   const ecdhShared = Buffer.from(await subtle.deriveBits({ name: "ECDH", public: uaKey }, ephemKP.privateKey, 256));
 
   const keyInfo = Buffer.concat([Buffer.from(enc.encode("WebPush: info\x00")), uaPublic, asPublic]);
-  const ikm     = await hkdf(authSecret, ecdhShared, keyInfo, 32);
-  const cek     = await hkdf(salt, ikm, Buffer.from(enc.encode("Content-Encoding: aes128gcm\x00")), 16);
-  const nonce   = await hkdf(salt, ikm, Buffer.from(enc.encode("Content-Encoding: nonce\x00")), 12);
+  const ikm     = await hkdf(authSecret, ecdhShared, new Uint8Array(keyInfo), 32);
+  const cek     = await hkdf(salt, ikm, new Uint8Array(enc.encode("Content-Encoding: aes128gcm\x00")), 16);
+  const nonce   = await hkdf(salt, ikm, new Uint8Array(enc.encode("Content-Encoding: nonce\x00")), 12);
 
-  const cekKey    = await subtle.importKey("raw", cek.buffer, "AES-GCM", false, ["encrypt"]);
-  const plaintext = Buffer.concat([Buffer.from(enc.encode(payload)), Buffer.from([0x02])]);
+  const cekKey    = await subtle.importKey("raw", toAB(cek), "AES-GCM", false, ["encrypt"]);
+  const plaintext = new Uint8Array([...enc.encode(payload), 0x02]);
   const encrypted = Buffer.from(await subtle.encrypt(
-    { name: "AES-GCM", iv: nonce.buffer, tagLength: 128 }, cekKey, plaintext.buffer
+    { name: "AES-GCM", iv: toAB(nonce), tagLength: 128 }, cekKey, toAB(plaintext)
   ));
 
   const record = Buffer.alloc(16 + 4 + 1 + 65 + encrypted.length);
@@ -137,7 +143,7 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   const jwtBody  = bytesToB64Url(Buffer.from(enc.encode(JSON.stringify({ aud: audience, exp, sub: contactEmail }))));
   const sig      = Buffer.from(await subtle.sign(
     { name: "ECDSA", hash: "SHA-256" }, vapid.privateKey,
-    Buffer.from(enc.encode(`${jwtHead}.${jwtBody}`)).buffer
+    new Uint8Array(enc.encode(`${jwtHead}.${jwtBody}`))
   ));
   const jwt      = `${jwtHead}.${jwtBody}.${bytesToB64Url(sig)}`;
   const vapidPub = bytesToB64Url(vapid.publicKeyBytes);
