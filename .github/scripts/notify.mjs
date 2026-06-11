@@ -330,8 +330,10 @@ async function fetchArcGIS(url) {
 // ── Precipitation check ───────────────────────────────────────
 
 async function checkPrecipitation(row, vapid) {
-  if (!PIRATE_WEATHER) return;
-  if (row.precip_notified_until && new Date(row.precip_notified_until) > new Date()) return;
+  if (!PIRATE_WEATHER) { console.log("[SkyMonitor] rain: skipped (PIRATE_WEATHER_KEY not set)"); return; }
+  if (row.precip_notified_until && new Date(row.precip_notified_until) > new Date()) {
+    console.log(`[SkyMonitor] rain: on cooldown until ${row.precip_notified_until}`); return;
+  }
 
   let minutely = [], hourly = [], timezone = "UTC";
   try {
@@ -359,7 +361,7 @@ async function checkPrecipitation(row, vapid) {
   const lookahead      = minutely.slice(1, LOOKAHEAD_MINS + 1);
   const threshold      = isThunderstorm ? THUNDER_THRESHOLD : TRIGGER_THRESHOLD;
   const startIndex     = lookahead.findIndex(m => (m.precipIntensity ?? 0) >= threshold);
-  if (startIndex === -1) return;
+  if (startIndex === -1) { console.log("[SkyMonitor] rain: no precipitation expected in next 15 min"); return; }
 
   const fullStartIdx = startIndex + 1;
   const startEntry   = minutely[fullStartIdx];
@@ -429,11 +431,12 @@ async function checkPrecipitation(row, vapid) {
     tag: "precip-alert", url: "/sky-monitor/",
   });
 
+  console.log(`[SkyMonitor] rain: ${precipType} starting in ~${startIndex + 1} min, sending push`);
   try {
     const req     = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
     const res     = await fetch(req.url, req.init);
-    const rawBody = res.ok ? "" : await res.text().catch(() => "");
-    if (rawBody) console.log(`[SkyMonitor] precip push → HTTP ${res.status} — ${rawBody}`);
+    const rawBody = await res.text().catch(() => "");
+    console.log(`[SkyMonitor] rain push → HTTP ${res.status}${rawBody ? ` — ${rawBody}` : ""}`);
     if (isDeadSubscription(res.status, rawBody)) {
       if (res.status === 403) console.warn("[SkyMonitor] ⚠️  VAPID key mismatch (Apple) — subscription registered with a different key. Deleting; user must re-subscribe.");
       await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
@@ -446,14 +449,16 @@ async function checkPrecipitation(row, vapid) {
         [cooldownUntil, row.endpoint]
       );
     }
-  } catch {}
+  } catch (e) { console.warn(`[SkyMonitor] rain push error: ${e.message}`); }
 }
 
 // ── SPC/WPC check ─────────────────────────────────────────────
 
 async function checkSPCAndWPC(row, vapid) {
   const prefs = row.prefs ? JSON.parse(row.prefs) : {};
-  if (!prefs.spcOutlookEnabled && !prefs.spcMdEnabled && !prefs.wpcOutlookEnabled && !prefs.wpcMpdEnabled) return;
+  if (!prefs.spcOutlookEnabled && !prefs.spcMdEnabled && !prefs.wpcOutlookEnabled && !prefs.wpcMpdEnabled) {
+    console.log("[SkyMonitor] SPC/WPC: skipped (all disabled in subscriber prefs)"); return;
+  }
 
   const subscription = JSON.parse(row.subscription);
   const geo  = `geometry=${row.lon},${row.lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
@@ -472,6 +477,7 @@ async function checkSPCAndWPC(row, vapid) {
     const lastIdx    = stored.label ? SPC_RISK_ORDER.indexOf(stored.label) : -1;
     const effectiveLastIdx = (stored.notifiedAt > 0 && hoursSince > 20) ? -1 : lastIdx;
     const shouldNotify = current && (currentIdx > effectiveLastIdx || (current === stored.label && hoursSince > 8));
+    console.log(`[SkyMonitor] SPC outlook: current=${current ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
 
     if (shouldNotify) {
       notifs.push({ ...buildSPCOutlookNotif(current), tag: `spc-outlook-${current}` });
@@ -485,6 +491,7 @@ async function checkSPCAndWPC(row, vapid) {
     const attrs  = await fetchArcGIS(`${BASE}/outlooks/spc_mesoscale_discussion/MapServer/0/query?${geo}`);
     const mdName = attrs ? (attrs.Name || attrs.name || attrs.MD_NUM) : null;
     const mdNum  = mdName ? String(mdName).replace(/[^0-9]/g, "") : null;
+    console.log(`[SkyMonitor] SPC MD: current=${mdNum ?? "none"}, last=${row.last_spc_md ?? "none"}`);
     if (mdNum && mdNum !== row.last_spc_md) {
       notifs.push({ ...buildSPCMDNotif(mdNum), tag: `spc-md-${mdNum}`, _updateKey: "last_spc_md", _updateVal: mdNum });
     } else if (mdNum !== null) {
@@ -502,6 +509,7 @@ async function checkSPCAndWPC(row, vapid) {
     const lastIdx    = stored.label ? ERO_RISK_ORDER.indexOf(stored.label) : -1;
     const effectiveLastIdx = (stored.notifiedAt > 0 && hoursW > 20) ? -1 : lastIdx;
     const shouldNotify = eroLabel && (currentIdx > effectiveLastIdx || (eroLabel === stored.label && hoursW > 8));
+    console.log(`[SkyMonitor] WPC outlook: current=${eroLabel ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
 
     if (shouldNotify) {
       notifs.push({ ...buildWPCOutlookNotif(eroLabel), tag: `wpc-ero-${eroLabel}` });
@@ -522,9 +530,10 @@ async function checkSPCAndWPC(row, vapid) {
         const mpdData = await mpdRes.json();
         currentMpdNums = (mpdData.mpds || []).map(m => String(m.id).replace(/[^0-9]/g, "")).filter(Boolean);
       }
-    } catch {}
+    } catch (e) { console.warn(`[SkyMonitor] WPC MPD fetch error: ${e.message}`); }
 
     const lastKnown = row.last_wpc_mpd ? String(row.last_wpc_mpd).split(",").filter(Boolean) : [];
+    console.log(`[SkyMonitor] WPC MPD: current=[${currentMpdNums.join(",")}], last=[${lastKnown.join(",")}]`);
     for (const mpdNum of currentMpdNums) {
       if (!lastKnown.includes(mpdNum))
         notifs.push({ ...buildWPCMPDNotif(mpdNum), tag: `wpc-mpd-${mpdNum}`, _updateKey: "_mpd", _updateVal: mpdNum });
@@ -703,11 +712,15 @@ for (const row of rows) {
 
   // ── Rain (every run — GH Actions is already every 5 min) ──
   if (prefs.rainEnabled !== false) {
-    try { await checkPrecipitation(row, vapid); } catch {}
+    try { await checkPrecipitation(row, vapid); }
+    catch (e) { console.warn(`[SkyMonitor] rain check error: ${e.message}`); }
+  } else {
+    console.log("[SkyMonitor] rain: disabled in subscriber prefs");
   }
 
   // ── SPC/WPC nerd-mode ─────────────────────────────────────
-  try { await checkSPCAndWPC(row, vapid); } catch {}
+  try { await checkSPCAndWPC(row, vapid); }
+  catch (e) { console.warn(`[SkyMonitor] SPC/WPC check error: ${e.message}`); }
 }
 
 console.log("[SkyMonitor] Done.");
