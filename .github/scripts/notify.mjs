@@ -161,7 +161,8 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
         "TTL":              "86400",
         "Urgency":          "high",
       },
-      body: record,
+      body:   record,
+      signal: AbortSignal.timeout(20000),
     },
   };
 }
@@ -627,6 +628,14 @@ console.log(`[SkyMonitor] ${rows.length} subscriber(s)`);
 for (const row of rows) {
   const knownIds = JSON.parse(row.known_alert_ids || "[]");
   const prefs    = row.prefs ? JSON.parse(row.prefs) : {};
+
+  // Diagnostic: show subscription fingerprint so we can verify a re-subscribe landed
+  try {
+    const sub = JSON.parse(row.subscription);
+    const p256 = (sub?.keys?.p256dh || "").slice(-12);
+    const auth = (sub?.keys?.auth   || "").slice(-8);
+    console.log(`[SkyMonitor] subscriber endpoint=...${row.endpoint.slice(-30)}  p256dh=...${p256}  auth=...${auth}`);
+  } catch {}
 
   // ── NWS alerts ────────────────────────────────────────────
   if (prefs.alertEnabled !== false) {
