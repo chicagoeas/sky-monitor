@@ -584,7 +584,7 @@ const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
   // Import as ECDH (extractable) so we can export and compare the public key
   const ecdhKey  = await subtle.importKey(
     "pkcs8", buildP256Pkcs8(b64UrlToBytes(dNorm)),
-    { name: "ECDH", namedCurve: "P-256" }, true, []
+    { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]
   );
   const derivedPub = new Uint8Array(await subtle.exportKey("raw", ecdhKey));
   const match = derivedPub.length === pubBytes.length && derivedPub.every((b, i) => b === pubBytes[i]);
