@@ -166,6 +166,23 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   };
 }
 
+// ── Dead-subscription detector ────────────────────────────────
+// Returns true when a push response means the subscription can never
+// be used again with the current VAPID key and should be deleted.
+//   410 / 404 — browser unsubscribed or endpoint gone
+//   403 BadJwtToken / ExpiredJwtToken — Apple (and some others) reject
+//     when the VAPID key in k= doesn't match the key used at subscribe-time.
+//     Re-subscribing the user with the current VAPID key is the only fix.
+
+function isDeadSubscription(status, bodyText) {
+  if (status === 410 || status === 404) return true;
+  if (status === 403) {
+    const lc = (bodyText || "").toLowerCase();
+    if (lc.includes("badjwttoken") || lc.includes("expiredjwttoken") || lc.includes("invalidjwt")) return true;
+  }
+  return false;
+}
+
 // ── Notification builders ─────────────────────────────────────
 
 function buildAlertNotification(properties) {
@@ -424,9 +441,12 @@ async function checkPrecipitation(row, vapid) {
   });
 
   try {
-    const req = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
-    const res = await fetch(req.url, req.init);
-    if (res.status === 410 || res.status === 404) {
+    const req     = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
+    const res     = await fetch(req.url, req.init);
+    const rawBody = res.ok ? "" : await res.text().catch(() => "");
+    if (rawBody) console.log(`[SkyMonitor] precip push → HTTP ${res.status} — ${rawBody}`);
+    if (isDeadSubscription(res.status, rawBody)) {
+      if (res.status === 403) console.warn("[SkyMonitor] ⚠️  VAPID key mismatch (Apple) — subscription registered with a different key. Deleting; user must re-subscribe.");
       await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
       return;
     }
@@ -541,9 +561,11 @@ async function checkSPCAndWPC(row, vapid) {
       tag: notif.tag, url: "/sky-monitor/",
     });
     try {
-      const req = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
-      const res = await fetch(req.url, req.init);
-      if (res.status === 410 || res.status === 404) {
+      const req     = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
+      const res     = await fetch(req.url, req.init);
+      const rawBody = res.ok ? "" : await res.text().catch(() => "");
+      if (isDeadSubscription(res.status, rawBody)) {
+        if (res.status === 403) console.warn("[SkyMonitor] ⚠️  VAPID key mismatch (Apple) — subscription registered with a different key. Deleting; user must re-subscribe.");
         await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
         return;
       }
@@ -652,11 +674,12 @@ for (const row of rows) {
         tag: alert.id, url: "/sky-monitor/",
       });
       try {
-        const req = await buildPushRequest(JSON.parse(row.subscription), payload, vapid, VAPID_EMAIL);
-        const res = await fetch(req.url, req.init);
-        const resBody = res.ok ? "" : ` — ${await res.text().catch(() => "")}`;
-        console.log(`[SkyMonitor] alert push "${alert.properties?.event}" → HTTP ${res.status}${resBody}`);
-        if (res.status === 410 || res.status === 404) {
+        const req     = await buildPushRequest(JSON.parse(row.subscription), payload, vapid, VAPID_EMAIL);
+        const res     = await fetch(req.url, req.init);
+        const rawBody = res.ok ? "" : await res.text().catch(() => "");
+        console.log(`[SkyMonitor] alert push "${alert.properties?.event}" → HTTP ${res.status}${rawBody ? ` — ${rawBody}` : ""}`);
+        if (isDeadSubscription(res.status, rawBody)) {
+          if (res.status === 403) console.warn("[SkyMonitor] ⚠️  VAPID key mismatch (Apple) — subscription registered with a different key. Deleting; user must re-subscribe with the current VAPID key.");
           await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
           subDeleted = true; break;
         }
