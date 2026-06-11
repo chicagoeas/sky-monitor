@@ -72,14 +72,15 @@ async function hkdf(salt, ikm, info, length) {
 
 async function importVapidKeys(publicKeyB64, privateKeyB64) {
   const pubBytes = b64UrlToBytes(publicKeyB64);
-  const x        = bytesToB64Url(pubBytes.slice(1, 33));
-  const y        = bytesToB64Url(pubBytes.slice(33, 65));
   // Normalise to base64url: strip whitespace, remove padding, swap standard-base64 chars
   const dNorm    = (privateKeyB64 || "").trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   console.log(`[SkyMonitor] VAPID private key length after normalise: ${dNorm.length} chars`);
+  // Import private key WITHOUT x/y — those are the public key components and cause
+  // "Invalid keyData" when the public/private keys were generated at different times.
+  // pubBytes is still used separately for the VAPID Authorization header.
   const privateKey = await subtle.importKey(
     "jwk",
-    { kty: "EC", crv: "P-256", d: dNorm, x, y },
+    { kty: "EC", crv: "P-256", d: dNorm },
     { name: "ECDSA", namedCurve: "P-256" },
     false, ["sign"]
   );
