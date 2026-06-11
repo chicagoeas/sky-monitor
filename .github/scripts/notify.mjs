@@ -138,6 +138,18 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   const jwt      = `${jwtHead}.${jwtBody}.${bytesToB64Url(sig)}`;
   const vapidPub = bytesToB64Url(vapid.publicKeyBytes);
 
+  // Decode the JWT body (base64url → JSON) — these are NOT secrets, just plain JSON
+  try {
+    const pad = s => s + "=".repeat((4 - s.length % 4) % 4);
+    const claims = JSON.parse(Buffer.from(pad(jwtBody), "base64").toString());
+    const subOk  = (claims.sub || "").startsWith("mailto:") || (claims.sub || "").startsWith("https://");
+    const expSec = claims.exp - Math.floor(Date.now() / 1000);
+    console.log(`[SkyMonitor] JWT claims — aud="${claims.aud}" sub_valid=${subOk} sub_prefix="${(claims.sub||"").slice(0,8)}" exp_in=${expSec}s`);
+  } catch (e) { console.warn("[SkyMonitor] JWT claims decode failed:", e.message); }
+
+  // Log first byte of public key (must be 0x04 for uncompressed P-256) and byte length
+  const pkByte0 = vapid.publicKeyBytes[0];
+  console.log(`[SkyMonitor] pubkey byte[0]=0x${pkByte0.toString(16).padStart(2,"0")} (expect 0x04), length=${vapid.publicKeyBytes.length} bytes (expect 65)`);
   console.log(`[SkyMonitor] push aud="${audience}" k="${vapidPub}" (full key, ${vapidPub.length} chars)`);
 
   return {
@@ -665,6 +677,7 @@ for (const row of rows) {
   } catch {}
 
   // ── NWS alerts ────────────────────────────────────────────
+  let subDeleted = false;
   if (prefs.alertEnabled !== false) {
     let alerts = [];
     try {
@@ -698,7 +711,6 @@ for (const row of rows) {
       : newAlerts;
     console.log(`[SkyMonitor] new alerts: ${newAlerts.length}, after filter: ${filteredAlerts.length}`);
 
-    let subDeleted = false;
     const sentAlertIds = new Set();
 
     for (const alert of filteredAlerts) {
