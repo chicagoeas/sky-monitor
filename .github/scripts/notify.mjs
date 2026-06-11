@@ -577,6 +577,24 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 
 const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 
+// Verify the private key matches the public key by deriving the public point
+{
+  const pubBytes = b64UrlToBytes(VAPID_PUB);
+  const dNorm    = VAPID_PRIV.trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  // Import as ECDH (extractable) so we can export and compare the public key
+  const ecdhKey  = await subtle.importKey(
+    "pkcs8", buildP256Pkcs8(b64UrlToBytes(dNorm)),
+    { name: "ECDH", namedCurve: "P-256" }, true, []
+  );
+  const derivedPub = new Uint8Array(await subtle.exportKey("raw", ecdhKey));
+  const match = derivedPub.length === pubBytes.length && derivedPub.every((b, i) => b === pubBytes[i]);
+  console.log(`[SkyMonitor] VAPID key-pair match: ${match ? "✅ YES" : "❌ NO — private key does not match VAPID_PUBLIC_KEY"}`);
+  if (!match) {
+    console.error("[SkyMonitor] Aborting — fix your VAPID keys before continuing.");
+    process.exit(1);
+  }
+}
+
 const { results: rows } = await d1Query("SELECT * FROM push_subscriptions");
 console.log(`[SkyMonitor] ${rows.length} subscriber(s)`);
 
