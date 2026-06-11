@@ -74,9 +74,12 @@ async function importVapidKeys(publicKeyB64, privateKeyB64) {
   const pubBytes = b64UrlToBytes(publicKeyB64);
   const x        = bytesToB64Url(pubBytes.slice(1, 33));
   const y        = bytesToB64Url(pubBytes.slice(33, 65));
+  // Normalise to base64url: strip whitespace, remove padding, swap standard-base64 chars
+  const dNorm    = (privateKeyB64 || "").trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  console.log(`[SkyMonitor] VAPID private key length after normalise: ${dNorm.length} chars`);
   const privateKey = await subtle.importKey(
     "jwk",
-    { kty: "EC", crv: "P-256", d: privateKeyB64, x, y },
+    { kty: "EC", crv: "P-256", d: dNorm, x, y },
     { name: "ECDSA", namedCurve: "P-256" },
     false, ["sign"]
   );
