@@ -70,17 +70,31 @@ async function hkdf(salt, ikm, info, length) {
   return Buffer.from(bits);
 }
 
+function buildP256Pkcs8(dBytes) {
+  // Wraps 32 raw private-key bytes in a minimal PKCS#8 DER envelope.
+  // This avoids the JWK x/y mismatch problem and works on Node ≥ 18.
+  const header = Buffer.from([
+    0x30, 0x41,
+    0x02, 0x01, 0x00,
+    0x30, 0x13,
+      0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01,
+      0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07,
+    0x04, 0x27,
+      0x30, 0x25,
+        0x02, 0x01, 0x01,
+        0x04, 0x20,
+  ]);
+  return Buffer.concat([header, dBytes]);
+}
+
 async function importVapidKeys(publicKeyB64, privateKeyB64) {
   const pubBytes = b64UrlToBytes(publicKeyB64);
-  // Normalise to base64url: strip whitespace, remove padding, swap standard-base64 chars
   const dNorm    = (privateKeyB64 || "").trim().replace(/\s+/g, "").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-  console.log(`[SkyMonitor] VAPID private key length after normalise: ${dNorm.length} chars`);
-  // Import private key WITHOUT x/y — those are the public key components and cause
-  // "Invalid keyData" when the public/private keys were generated at different times.
-  // pubBytes is still used separately for the VAPID Authorization header.
+  console.log(`[SkyMonitor] VAPID private key length after normalise: ${dNorm.length} chars (expect 43)`);
+  const dBytes   = b64UrlToBytes(dNorm);
+  const pkcs8    = buildP256Pkcs8(dBytes);
   const privateKey = await subtle.importKey(
-    "jwk",
-    { kty: "EC", crv: "P-256", d: dNorm },
+    "pkcs8", pkcs8,
     { name: "ECDSA", namedCurve: "P-256" },
     false, ["sign"]
   );
