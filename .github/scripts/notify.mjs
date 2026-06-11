@@ -136,7 +136,7 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   const jwt      = `${jwtHead}.${jwtBody}.${bytesToB64Url(sig)}`;
   const vapidPub = bytesToB64Url(vapid.publicKeyBytes);
 
-  console.log(`[SkyMonitor] push aud="${audience}" k="${vapidPub.slice(0,20)}..."`);
+  console.log(`[SkyMonitor] push aud="${audience}" k="${vapidPub}" (full key, ${vapidPub.length} chars)`);
 
   return {
     url:  subscription.endpoint,
@@ -596,6 +596,30 @@ async function checkSPCAndWPC(row, vapid) {
 // ── Main ──────────────────────────────────────────────────────
 
 console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
+
+// ── Cross-check: Worker-served key vs GitHub secret ───────────
+// The subscription is registered with whatever key the Worker serves at
+// /api/push/vapid-public-key.  If that key differs from VAPID_PUBLIC_KEY
+// here, Apple will reject every push with BadJwtToken.
+{
+  const WORKER_URL = "https://skymonitor-push.skymonitor-account.workers.dev";
+  try {
+    const res  = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, { signal: AbortSignal.timeout(8000) });
+    const data = await res.json();
+    const workerKey = (data.publicKey || "").trim();
+    const githubKey = (VAPID_PUB || "").trim();
+    const match = workerKey === githubKey;
+    console.log(`[SkyMonitor] Worker key : ${workerKey}`);
+    console.log(`[SkyMonitor] GitHub key : ${githubKey}`);
+    console.log(`[SkyMonitor] Keys match : ${match ? "✅ YES — push should work" : "❌ NO — THIS IS THE ROOT CAUSE of BadJwtToken. Update one to match the other, then re-subscribe."}`);
+    if (!match) {
+      console.error("[SkyMonitor] Aborting — fix the key mismatch before sending any pushes.");
+      process.exit(1);
+    }
+  } catch (e) {
+    console.warn(`[SkyMonitor] Could not reach Worker to verify key: ${e.message} — continuing anyway`);
+  }
+}
 
 const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 
