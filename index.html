@@ -1780,7 +1780,7 @@
                 else if (isDestructiveSVR) bannerTextPrefix = '\u26A0\uFE0F DESTRUCTIVE SEVERE';
                 else bannerTextPrefix = isEmergency ? '\uD83D\uDEA8 ' + topEventName : '\u26A0\uFE0F ' + topEventName;
                 if (isTopTorEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
-                else if (isTopPDSTornado) { banner.classList.add('emergency-banner'); banner.style.background = '#880e4f'; }
+                else if (isTopPDSTornado) banner.style.background = '#880e4f';
                 else if (isConfirmedTornado) banner.style.background = '#7f0000';
                 else if (isDestructiveSVR) banner.style.background = '#cc5500';
                 else if (isEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
@@ -1802,7 +1802,7 @@
                     } else banner.innerText = bannerTextPrefix;
                 } else banner.innerText = bannerTextPrefix;
 
-                let highestTheme = '', checklistText = '';
+                let highestTheme = '', checklistText = '', checklistPriority = 0;
                 const sortedFeatures = data.features.sort(function(a, b) {
                     return getAlertScore(b) - getAlertScore(a);
                 });
@@ -1877,25 +1877,38 @@
 
                     if (isLocalEmergency) {
                         highestTheme = 'theme-tor';
-                        if (evt.includes('evacuation')) checklistText = 'EVACUATE IMMEDIATELY! FOLLOW LOCAL GUIDANCE!';
-                        else if (evt.includes('fire warning')) checklistText = 'WILDFIRE IN YOUR AREA! FOLLOW LOCAL GUIDANCE!';
-                        else if (evt.includes('child abduction emergency')) checklistText = 'AMBER ALERT! FOLLOW LOCAL GUIDANCE!';
-                        else if (evt.includes('shelter in place warning')) checklistText = 'SHELTER IN PLACE NOW!';
-                        else checklistText = 'CIVIL EMERGENCY! MONITOR LOCAL MEDIA FOR INSTRUCTIONS!';
+                        if (checklistPriority < 5) {
+                            if (evt.includes('evacuation')) checklistText = 'EVACUATE IMMEDIATELY! FOLLOW LOCAL GUIDANCE!';
+                            else if (evt.includes('fire warning')) checklistText = 'WILDFIRE IN YOUR AREA! FOLLOW LOCAL GUIDANCE!';
+                            else if (evt.includes('child abduction emergency')) checklistText = 'AMBER ALERT! FOLLOW LOCAL GUIDANCE!';
+                            else if (evt.includes('shelter in place warning')) checklistText = 'SHELTER IN PLACE NOW!';
+                            else checklistText = 'CIVIL EMERGENCY! MONITOR LOCAL MEDIA FOR INSTRUCTIONS!';
+                            checklistPriority = 5;
+                        }
                     } else if (evt.includes('tornado warning')) {
                         highestTheme = 'theme-tor';
-                        if (isTorEmergency) { checklistText = 'TORNADO EMERGENCY!!! EXTREMELY DANGEROUS SITUATION!!! TAKE COVER NOW!'; window.activeTornadoEmergency = true; }
-                        else if (isPDS) { checklistText = 'PARTICULARLY DANGEROUS SITUATION! TAKE COVER NOW!'; window.activePDSTornado = true; }
-                        else checklistText = 'TAKE COVER NOW!';
+                        if (isTorEmergency) {
+                            window.activeTornadoEmergency = true;
+                            if (checklistPriority < 4) { checklistText = 'TORNADO EMERGENCY!!! EXTREMELY DANGEROUS SITUATION!!! TAKE COVER NOW!'; checklistPriority = 4; }
+                        } else if (isPDS) {
+                            window.activePDSTornado = true;
+                            if (checklistPriority < 3) { checklistText = 'PARTICULARLY DANGEROUS SITUATION! TAKE COVER NOW!'; checklistPriority = 3; }
+                        } else {
+                            if (checklistPriority < 2) { checklistText = 'TAKE COVER NOW!'; checklistPriority = 2; }
+                        }
                     } else if (evt.includes('severe thunderstorm warning') && highestTheme !== 'theme-tor') {
                         highestTheme = 'theme-svr';
-                        checklistText = isPDS ? 'DESTRUCTIVE SEVERE THUNDERSTORM! TAKE SHELTER!' : 'MOVE TO AN INTERIOR ROOM!';
+                        if (checklistPriority < 1) { checklistText = isPDS ? 'DESTRUCTIVE SEVERE THUNDERSTORM! TAKE SHELTER!' : 'MOVE TO AN INTERIOR ROOM!'; checklistPriority = 1; }
                     } else if (evt.includes('flash flood warning') && !highestTheme) {
                         highestTheme = 'theme-ffw';
-                        if (isPDS) { checklistText = 'FLASH FLOOD EMERGENCY! SEEK HIGHER GROUND NOW!'; window.activeFFE = true; }
-                        else checklistText = 'TURN AROUND, DON`T DROWN!';
+                        if (checklistPriority < 1) {
+                            if (isPDS) { checklistText = 'FLASH FLOOD EMERGENCY! SEEK HIGHER GROUND NOW!'; window.activeFFE = true; }
+                            else checklistText = 'TURN AROUND, DON`T DROWN!';
+                            checklistPriority = 1;
+                        }
                     } else if (evt.includes('dust storm warning') && !highestTheme) {
-                        highestTheme = 'theme-svr'; checklistText = 'PULL ASIDE STAY ALIVE!';
+                        highestTheme = 'theme-svr';
+                        if (checklistPriority < 1) { checklistText = 'PULL ASIDE STAY ALIVE!'; checklistPriority = 1; }
                     }
 
                     let displayName = isPDS ? 'PDS ' + p.event : p.event;
