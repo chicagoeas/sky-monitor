@@ -11,7 +11,7 @@
 //   VAPID_EMAIL        — e.g. mailto:you@example.com
 //   PIRATE_WEATHER_KEY — PirateWeather API key (for rain alerts)
 
-import { webcrypto, createPrivateKey, createSign } from "crypto";
+import { webcrypto } from "crypto";
 const { subtle } = webcrypto;
 
 const CF_API_TOKEN      = process.env.CF_API_TOKEN;
@@ -84,20 +84,15 @@ async function importVapidKeys(publicKeyB64, privateKeyB64) {
   // Derive x/y directly from the public key bytes (uncompressed point: 0x04 || x || y)
   const x = bytesToB64Url(pubBytes.slice(1, 33));
   const y = bytesToB64Url(pubBytes.slice(33, 65));
-  // Use JWK import — identical to the Cloudflare Worker approach.
-  // Node.js validates d ↔ (x,y) during import; if they mismatch it throws DataError.
-  // extractable:false is fine; we only need it for encryption key derivation (ECDH),
-  // not for JWT signing (that uses createSign below).
+  // Import as ECDSA signing key — identical to the Cloudflare Worker approach.
+  // Node.js validates d ↔ (x,y) during import; a mismatch throws DataError here.
   const privateKey = await subtle.importKey(
     "jwk",
     { kty: "EC", crv: "P-256", d: dNorm, x, y },
     { name: "ECDSA", namedCurve: "P-256" },
     false, ["sign"]
   );
-  // Also create a node:crypto key for JWT signing — avoids any webcrypto
-  // subtle.sign encoding quirks on different Node.js versions.
-  const nodeCryptoKey = createPrivateKey({ key: { kty: "EC", crv: "P-256", d: dNorm, x, y }, format: "jwk" });
-  return { privateKey, nodeCryptoKey, publicKeyBytes: pubBytes };
+  return { privateKey, publicKeyBytes: pubBytes };
 }
 
 async function buildPushRequest(subscription, payload, vapid, contactEmail) {
@@ -134,12 +129,11 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
   const exp      = Math.floor(Date.now() / 1000) + 86400;
   const jwtHead  = bytesToB64Url(Buffer.from(enc.encode(JSON.stringify({ typ: "JWT", alg: "ES256" }))));
   const jwtBody  = bytesToB64Url(Buffer.from(enc.encode(JSON.stringify({ aud: audience, exp, sub: contactEmail }))));
-  // Sign with node:crypto (classic API) using ieee-p1363 encoding.
-  // This bypasses webcrypto subtle.sign which has known encoding inconsistencies
-  // across Node.js versions when signing EC keys imported via JWK.
-  const sigSigner = createSign("SHA256");
-  sigSigner.update(`${jwtHead}.${jwtBody}`);
-  const sig = sigSigner.sign({ key: vapid.nodeCryptoKey, dsaEncoding: "ieee-p1363" });
+  // Sign with webcrypto subtle — identical to the Cloudflare Worker which is known to work.
+  const sig = Buffer.from(await subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" }, vapid.privateKey,
+    enc.encode(`${jwtHead}.${jwtBody}`)
+  ));
   console.log(`[SkyMonitor] jwt sig bytes: ${sig.length} (expect 64)`);
   const jwt      = `${jwtHead}.${jwtBody}.${bytesToB64Url(sig)}`;
   const vapidPub = bytesToB64Url(vapid.publicKeyBytes);
@@ -741,6 +735,10 @@ for (const row of rows) {
       }
     }
   }
+
+  // Skip remaining checks for this subscriber if their subscription was just deleted
+  // (stale key — no point attempting more pushes that will also 403).
+  if (subDeleted) continue;
 
   // ── Rain (every run — GH Actions is already every 5 min) ──
   if (prefs.rainEnabled !== false) {
