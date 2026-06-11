@@ -586,7 +586,9 @@ const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
     "pkcs8", buildP256Pkcs8(b64UrlToBytes(dNorm)),
     { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]
   );
-  const derivedPub = new Uint8Array(await subtle.exportKey("raw", ecdhKey));
+  // Export as JWK to read x, y, then reconstruct uncompressed public key (0x04 || x || y)
+  const jwk        = await subtle.exportKey("jwk", ecdhKey);
+  const derivedPub = new Uint8Array([0x04, ...b64UrlToBytes(jwk.x), ...b64UrlToBytes(jwk.y)]);
   const match = derivedPub.length === pubBytes.length && derivedPub.every((b, i) => b === pubBytes[i]);
   console.log(`[SkyMonitor] VAPID key-pair match: ${match ? "✅ YES" : "❌ NO — private key does not match VAPID_PUBLIC_KEY"}`);
   if (!match) {
