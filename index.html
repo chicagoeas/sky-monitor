@@ -1105,6 +1105,8 @@
         localStorage.setItem('user_reports_enabled', val ? 'true' : 'false');
         document.getElementById('opt-user-reports-on')?.classList.toggle('active', val);
         document.getElementById('opt-user-reports-off')?.classList.toggle('active', !val);
+        // Immediately refresh so the widget appears/disappears without waiting for the next cycle
+        fetchNearbyReportsForHome();
     }
 
     function openUserReportInfoModal() {
@@ -2907,11 +2909,16 @@
 
         // ── 8. Nearby User Reports (BETA) ─────────────────────────────────
         if (localStorage.getItem('user_reports_enabled') === 'true' && Array.isArray(window.nearbyUserReports) && window.nearbyUserReports.length) {
-            var hasNearbyRotation = window.nearbyUserReports.some(function(r) { return r.type && (r.type.includes('Rotation') || r.type.includes('Tornado')); });
+            // Tornado / Funnel Cloud: serious confirmed sighting → +3
+            var hasNearbyTornado  = window.nearbyUserReports.some(function(r) { return r.type && (r.type.includes('Tornado') || r.type.includes('Funnel')); });
+            // Nearby rotation only (no confirmed tornado): radar-detected or visual rotation → +1
+            var hasNearbyRotation = window.nearbyUserReports.some(function(r) { return r.type && r.type.includes('Rotation') && !r.type.includes('Tornado') && !r.type.includes('Funnel'); });
             var hasNearbyHail     = window.nearbyUserReports.some(function(r) { return r.type && r.type.includes('Hail'); });
             var hasNearbyWind     = window.nearbyUserReports.some(function(r) { return r.type && (r.type.includes('Wind') || r.type.includes('Thunderstorm')); });
-            if (hasNearbyRotation) { score += 3; factorList.push({ label: 'Nearby rotation reported', color: '#ff1744' }); }
-            else if (hasNearbyHail || hasNearbyWind) { score += 1; factorList.push({ label: 'Nearby storm reports', color: '#ff9100' }); }
+            // These stack independently — a tornado report AND a rotation report both contribute
+            if (hasNearbyTornado)  { score += 3; factorList.push({ label: 'Tornado/funnel cloud reported', color: '#e040fb' }); }
+            if (hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby rotation reported', color: '#ff1744' }); }
+            if ((hasNearbyHail || hasNearbyWind) && !hasNearbyTornado && !hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby storm reports', color: '#ff9100' }); }
         }
 
         // ── 9. Observed Atmospheric Conditions ────────────────────────────
@@ -3988,6 +3995,7 @@
     }
 
     function openReportOnMap(rLat, rLon) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         switchTab('reporting', document.getElementById('nav-reporting'));
         function doPan() {
             if (window.reportingMap) {
@@ -4040,6 +4048,10 @@
     }
 
     setInterval(function() { loadAll(); syncPushLocation(); }, 60000);
+
+    // Live-update nearby user reports independently — shorter interval so the
+    // home widget and threat level stay current without waiting for a full 60s refresh
+    setInterval(function() { fetchNearbyReportsForHome(); }, 30000);
 
     // ——— v1.0.4: SWIPE TABS + PULL-TO-REFRESH (respects _modalOpen flag) ———
     const tabs = ['home', 'severe', 'specs', 'reporting'];
