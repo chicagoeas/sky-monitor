@@ -208,6 +208,7 @@
         .threat-tier-low    { background: rgba(0,230,118,0.08);   border-color: #00e676; }
         .threat-tier-elev   { background: rgba(255,235,59,0.08);   border-color: #ffeb3b; }
         .threat-tier-active { background: rgba(255,145,0,0.10);    border-color: #ff9100; }
+        .threat-tier-sig    { background: rgba(255,87,34,0.10);    border-color: #ff5722; }
         .threat-tier-danger { background: rgba(255,23,68,0.12);    border-color: #ff1744; }
         .threat-tier-life   { background: rgba(156,39,176,0.15);   border-color: #e040fb; animation: lifePulse 2s infinite; }
         @keyframes lifePulse { 0% { box-shadow: 0 0 0 0 rgba(224,64,251,0.7); } 70% { box-shadow: 0 0 0 14px rgba(224,64,251,0); } 100% { box-shadow: 0 0 0 0 rgba(224,64,251,0); } }
@@ -2660,6 +2661,7 @@
         // Tier fallbacks
         if (tier === 'LIFE THREATENING') return 'A life-threatening weather situation is ongoing. Take immediate protective action and follow all NWS instructions.';
         if (tier === 'DANGEROUS') return 'Hazardous conditions are active near you. Remain sheltered and closely monitor NWS alerts for updates.';
+        if (tier === 'SIGNIFICANT') return 'Significantly elevated weather concerns are in effect. High-impact conditions are possible — stay alert and be ready to act quickly.';
         if (tier === 'ACTIVE WEATHER') return 'Active weather alerts are in effect for your area. Stay weather-aware and be ready to act if conditions worsen.';
         if (tier === 'ELEVATED') return 'Weather concerns are present today. Monitor forecasts and have a plan ready in case conditions deteriorate.';
         return 'No significant weather hazards detected. Conditions are currently calm.';
@@ -2881,12 +2883,20 @@
         if (window.activeFFE)              score = Math.max(score, 16);
 
         // ── 11. Tier Classification ───────────────────────────────────────
+        // LIFE THREATENING and DANGEROUS are flag-driven, not score-driven.
+        const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeSVRDestructive || window.activeFFE;
+        const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
+        const _hasDangerousWarning = !_isLifeThreatening && (window.activeAlertEvents || []).some(function(e) {
+            var el = e.toLowerCase();
+            return _SHORT_FUSED.some(function(w) { return el.includes(w); });
+        });
         let tier, tierClass, emoji;
-        if (score >= 16)      { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life';   emoji = '\uD83D\uDFE3'; }
-        else if (score >= 8)  { tier = 'DANGEROUS';        tierClass = 'threat-tier-danger'; emoji = '\uD83D\uDD34'; }
-        else if (score >= 5)  { tier = 'ACTIVE WEATHER';   tierClass = 'threat-tier-active'; emoji = '\uD83D\uDFE0'; }
-        else if (score >= 3)  { tier = 'ELEVATED';         tierClass = 'threat-tier-elev';   emoji = '\uD83D\uDFE1'; }
-        else                  { tier = 'LOW';              tierClass = 'threat-tier-low';    emoji = '\uD83D\uDFE2'; }
+        if (_isLifeThreatening)        { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life';   emoji = '\uD83D\uDFE3'; }
+        else if (_hasDangerousWarning) { tier = 'DANGEROUS';        tierClass = 'threat-tier-danger'; emoji = '\uD83D\uDD34'; }
+        else if (score >= 8)           { tier = 'SIGNIFICANT';      tierClass = 'threat-tier-sig';    emoji = '\uD83D\uDD36'; }
+        else if (score >= 5)           { tier = 'ACTIVE WEATHER';   tierClass = 'threat-tier-active'; emoji = '\uD83D\uDFE0'; }
+        else if (score >= 3)           { tier = 'ELEVATED';         tierClass = 'threat-tier-elev';   emoji = '\uD83D\uDFE1'; }
+        else                           { tier = 'LOW';              tierClass = 'threat-tier-low';    emoji = '\uD83D\uDFE2'; }
 
         // ── 12. Smart Contextual Description ─────────────────────────────
         const descFlags = {
