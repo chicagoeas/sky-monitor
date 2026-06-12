@@ -258,6 +258,8 @@
     <!-- Leaflet JS (v1.0.4 NEW) -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <!-- Google reCAPTCHA v3 -->
+    <script src="https://www.google.com/recaptcha/api.js?render=6LdxmhotAAAAAEF0L6UqJZwy5gq6mkavqPv3S8HW" async defer></script>
 </head>
 <body>
     <div id="launch-screen">
@@ -351,6 +353,21 @@
                 <button onclick="openUserReportInfoModal()" title="About this feature" style="background:none; border:1px solid #334455; border-radius:50%; width:28px; height:28px; color:#556677; font-size:0.8em; font-weight:bold; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center;">&#9432;</button>
             </div>
         </div>
+    </div>
+    </div>
+
+    <!-- reCAPTCHA Gate Modal -->
+    <div id="recaptcha-gate" style="display:none; position:fixed; inset:0; z-index:5000; background:rgba(0,0,0,0.88); backdrop-filter:blur(8px); align-items:center; justify-content:center;">
+    <div style="background:#0b1e2d; border:1px solid #223344; border-radius:18px; padding:30px 24px 24px 24px; width:90%; max-width:310px; box-shadow:0 0 60px rgba(0,0,0,1); text-align:center;">
+        <div style="display:flex; justify-content:flex-end; margin-bottom:2px;">
+            <button onclick="closeRecaptchaGate(true)" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.3em; line-height:1;">&#10005;</button>
+        </div>
+        <div style="font-size:2em; margin-bottom:12px;">&#128204;</div>
+        <div style="font-size:0.82em; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Live Reporting</div>
+        <div style="font-size:0.84em; color:#ccd6dd; line-height:1.7; margin-bottom:22px;">In order to make live reports, you must confirm you are not a robot first.</div>
+        <button id="recaptcha-verify-btn" onclick="verifyRecaptcha()" style="width:100%; padding:14px; background:var(--primary); color:#07131d; border:none; border-radius:10px; font-weight:900; font-size:0.88em; cursor:pointer; letter-spacing:0.5px; transition:opacity 0.2s;">&#10003; Confirm I'm Human</button>
+        <div id="recaptcha-status" style="font-size:0.75em; text-align:center; margin-top:10px; min-height:1.1em; color:#888;"></div>
+        <div style="margin-top:16px; font-size:0.58em; color:#2a3d4f; line-height:1.5;">Protected by Google reCAPTCHA &nbsp;&middot;&nbsp; <a href="https://policies.google.com/privacy" target="_blank" style="color:#2a3d4f;">Privacy</a> &nbsp;&middot;&nbsp; <a href="https://policies.google.com/terms" target="_blank" style="color:#2a3d4f;">Terms</a></div>
     </div>
     </div>
 
@@ -805,6 +822,9 @@
         return { get: get, set: set, S: S, migrate: migrate };
     })();
 
+    const RECAPTCHA_SITE_KEY = '6LdxmhotAAAAAEF0L6UqJZwy5gq6mkavqPv3S8HW';
+    var _recaptchaVerified = false; // reset each page load — gate shows once per session
+
     const PIRATE_API_KEY = "lJk66QLMPYrxa7em8BhJIjXGk6MSVVWP";
     const OW_API_KEY = "065942b97acab61c4f876f77d1e71cfb";
     const TWC_API_KEY = "77211cbbfe6841d6a11cbbfe6811d69a";
@@ -1117,6 +1137,56 @@
     function closeUserReportInfoModal() {
         var m = document.getElementById('user-report-info-modal');
         if (m) m.style.display = 'none';
+    }
+
+    // ——— reCAPTCHA v3 Gate ———
+    function showRecaptchaGate() {
+        var gate = document.getElementById('recaptcha-gate');
+        if (!gate) return;
+        var btn = document.getElementById('recaptcha-verify-btn');
+        var statusEl = document.getElementById('recaptcha-status');
+        if (btn) { btn.textContent = '\u2713 Confirm I\'m Human'; btn.disabled = false; btn.style.opacity = '1'; }
+        if (statusEl) statusEl.textContent = '';
+        gate.style.display = 'flex';
+        setModalOpen(true);
+    }
+
+    function closeRecaptchaGate(goHome) {
+        var gate = document.getElementById('recaptcha-gate');
+        if (gate) gate.style.display = 'none';
+        setModalOpen(false);
+        if (goHome) {
+            // X pressed — send user back to home, don't let them in
+            var homeNav = document.getElementById('nav-home');
+            if (homeNav) window.switchTab('home', homeNav);
+        } else {
+            // Verified — re-trigger the reporting tab navigation now that flag is set
+            var repNav = document.getElementById('nav-reporting');
+            if (repNav) window.switchTab('reporting', repNav);
+        }
+    }
+
+    async function verifyRecaptcha() {
+        var btn = document.getElementById('recaptcha-verify-btn');
+        var statusEl = document.getElementById('recaptcha-status');
+        if (btn) { btn.textContent = '\u23F3 Verifying...'; btn.disabled = true; btn.style.opacity = '0.7'; }
+        if (statusEl) { statusEl.textContent = ''; }
+        try {
+            if (typeof grecaptcha === 'undefined') throw new Error('reCAPTCHA not loaded yet');
+            const token = await new Promise(function(resolve, reject) {
+                grecaptcha.ready(function() {
+                    grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'report_gate' }).then(resolve).catch(reject);
+                });
+            });
+            window._lastRecaptchaToken = token;
+            _recaptchaVerified = true;
+            if (btn) { btn.textContent = '\u2713 Verified!'; btn.style.background = 'var(--success)'; btn.style.opacity = '1'; }
+            if (statusEl) { statusEl.textContent = 'Access granted.'; statusEl.style.color = 'var(--success)'; }
+            setTimeout(function() { closeRecaptchaGate(false); }, 650);
+        } catch(e) {
+            if (btn) { btn.textContent = '\u2713 Confirm I\'m Human'; btn.disabled = false; btn.style.opacity = '1'; }
+            if (statusEl) { statusEl.textContent = 'Verification failed \u2014 please try again.'; statusEl.style.color = 'var(--danger)'; }
+        }
     }
 
     function setDataComplexity(mode) {
@@ -3914,11 +3984,22 @@
         const status = document.getElementById('report-status');
         if (btn) { btn.textContent = '\u23F3 Submitting...'; btn.disabled = true; }
         if (status) { status.style.display = 'block'; status.textContent = 'Sending report...'; status.style.color = '#888'; }
+        // Get a fresh reCAPTCHA token for this submission (tokens expire after ~2 min)
+        var recaptchaToken = '';
+        try {
+            if (typeof grecaptcha !== 'undefined') {
+                recaptchaToken = await new Promise(function(resolve, reject) {
+                    grecaptcha.ready(function() {
+                        grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'submit_report' }).then(resolve).catch(reject);
+                    });
+                });
+            }
+        } catch(e) {}
         try {
             const res = await fetch(REPORTS_WORKER_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lat: reportLat != null ? reportLat : parseFloat(lat), lon: reportLon != null ? reportLon : parseFloat(lon), type: type, notes: notes, time: new Date().toISOString() })
+                body: JSON.stringify({ lat: reportLat != null ? reportLat : parseFloat(lat), lon: reportLon != null ? reportLon : parseFloat(lon), type: type, notes: notes, time: new Date().toISOString(), recaptchaToken: recaptchaToken })
             });
             if (res.ok) {
                 clearReportCategory();
@@ -4136,6 +4217,11 @@
 
     const _origSwitchTab = switchTab;
     window.switchTab = function(tabId, element) {
+        // Gate: reporting tab requires reCAPTCHA verification once per session
+        if (tabId === 'reporting' && !_recaptchaVerified) {
+            showRecaptchaGate();
+            return; // don't switch yet — gate will re-trigger switchTab after verification
+        }
         _origSwitchTab(tabId, element);
         currentTabIdx = tabs.indexOf(tabId);
         if (currentTabIdx < 0) currentTabIdx = 0;
