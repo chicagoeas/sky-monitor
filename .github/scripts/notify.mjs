@@ -498,7 +498,7 @@ async function checkSPCAndWPC(row, vapid) {
       const currentIdx = current ? SPC_RISK_ORDER.indexOf(current) : -1;
       const lastIdx    = stored.label ? SPC_RISK_ORDER.indexOf(stored.label) : -1;
       const effectiveLastIdx = (stored.notifiedAt > 0 && hoursSince > 20) ? -1 : lastIdx;
-      const shouldNotify = current && (currentIdx > effectiveLastIdx || (current === stored.label && hoursSince > 8));
+      const shouldNotify = current && currentIdx > effectiveLastIdx;
       console.log(`[SkyMonitor] SPC outlook: current=${current ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
 
       if (shouldNotify) {
@@ -538,7 +538,7 @@ async function checkSPCAndWPC(row, vapid) {
       const currentIdx = eroLabel ? ERO_RISK_ORDER.indexOf(eroLabel) : -1;
       const lastIdx    = stored.label ? ERO_RISK_ORDER.indexOf(stored.label) : -1;
       const effectiveLastIdx = (stored.notifiedAt > 0 && hoursW > 20) ? -1 : lastIdx;
-      const shouldNotify = eroLabel && (currentIdx > effectiveLastIdx || (eroLabel === stored.label && hoursW > 8));
+      const shouldNotify = eroLabel && currentIdx > effectiveLastIdx;
       console.log(`[SkyMonitor] WPC outlook: current=${eroLabel ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
 
       if (shouldNotify) {
