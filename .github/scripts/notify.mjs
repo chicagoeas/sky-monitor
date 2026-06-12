@@ -330,15 +330,20 @@ function buildWPCMPDNotif(mpdNum) {
 }
 
 // ── ArcGIS helper ─────────────────────────────────────────────
+// Returns:
+//   object   — fetch succeeded, feature found (attributes)
+//   null     — fetch succeeded, no features in area
+//   undefined — fetch failed (network error, timeout, non-OK status)
 
 async function fetchArcGIS(url) {
   try {
     const res  = await fetch(url, { signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
+    if (!res.ok) return undefined;
     const data = await res.json();
     if (data?.features?.length > 0) return data.features[0].attributes;
+    return null;
   } catch {}
-  return null;
+  return undefined;
 }
 
 // ── Precipitation check ───────────────────────────────────────
@@ -482,59 +487,72 @@ async function checkSPCAndWPC(row, vapid) {
   const updates = {};
 
   if (prefs.spcOutlookEnabled) {
-    const attrs    = await fetchArcGIS(`${BASE}/outlooks/SPC_wx_outlks/MapServer/1/query?${geo}`);
-    const current  = normalizeSPCLabel(attrs ? (attrs.LABEL || attrs.label || attrs.dn) : null);
-    const stored   = parseSPCStored(row.last_spc_outlook);
-    const nowTs    = Math.floor(Date.now() / 1000);
-    const hoursSince = (nowTs - stored.notifiedAt) / 3600;
-    const currentIdx = current ? SPC_RISK_ORDER.indexOf(current) : -1;
-    const lastIdx    = stored.label ? SPC_RISK_ORDER.indexOf(stored.label) : -1;
-    const effectiveLastIdx = (stored.notifiedAt > 0 && hoursSince > 20) ? -1 : lastIdx;
-    const shouldNotify = current && (currentIdx > effectiveLastIdx || (current === stored.label && hoursSince > 8));
-    console.log(`[SkyMonitor] SPC outlook: current=${current ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
+    const attrs = await fetchArcGIS(`${BASE}/outlooks/SPC_wx_outlks/MapServer/1/query?${geo}`);
+    if (attrs === undefined) {
+      console.log("[SkyMonitor] SPC outlook: ArcGIS fetch failed — skipping, preserving dedup state");
+    } else {
+      const current  = normalizeSPCLabel(attrs ? (attrs.LABEL || attrs.label || attrs.dn) : null);
+      const stored   = parseSPCStored(row.last_spc_outlook);
+      const nowTs    = Math.floor(Date.now() / 1000);
+      const hoursSince = (nowTs - stored.notifiedAt) / 3600;
+      const currentIdx = current ? SPC_RISK_ORDER.indexOf(current) : -1;
+      const lastIdx    = stored.label ? SPC_RISK_ORDER.indexOf(stored.label) : -1;
+      const effectiveLastIdx = (stored.notifiedAt > 0 && hoursSince > 20) ? -1 : lastIdx;
+      const shouldNotify = current && (currentIdx > effectiveLastIdx || (current === stored.label && hoursSince > 8));
+      console.log(`[SkyMonitor] SPC outlook: current=${current ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
 
-    if (shouldNotify) {
-      notifs.push({ ...buildSPCOutlookNotif(current), tag: `spc-outlook-${current}` });
-      updates.last_spc_outlook = `${current}:${nowTs}`;
-    } else if (current !== null) {
-      updates.last_spc_outlook = stored.notifiedAt > 0 ? `${current}:${stored.notifiedAt}` : current;
+      if (shouldNotify) {
+        notifs.push({ ...buildSPCOutlookNotif(current), tag: `spc-outlook-${current}` });
+        updates.last_spc_outlook = `${current}:${nowTs}`;
+      } else if (current !== null) {
+        updates.last_spc_outlook = stored.notifiedAt > 0 ? `${current}:${stored.notifiedAt}` : current;
+      }
     }
   }
 
   if (prefs.spcMdEnabled) {
-    const attrs  = await fetchArcGIS(`${BASE}/outlooks/spc_mesoscale_discussion/MapServer/0/query?${geo}`);
-    const mdName = attrs ? (attrs.Name || attrs.name || attrs.MD_NUM) : null;
-    const mdNum  = mdName ? String(mdName).replace(/[^0-9]/g, "") : null;
-    console.log(`[SkyMonitor] SPC MD: current=${mdNum ?? "none"}, last=${row.last_spc_md ?? "none"}`);
-    if (mdNum && mdNum !== row.last_spc_md) {
-      notifs.push({ ...buildSPCMDNotif(mdNum), tag: `spc-md-${mdNum}`, _updateKey: "last_spc_md", _updateVal: mdNum });
-    } else if (mdNum !== null) {
-      updates.last_spc_md = mdNum;
+    const attrs = await fetchArcGIS(`${BASE}/outlooks/spc_mesoscale_discussion/MapServer/0/query?${geo}`);
+    if (attrs === undefined) {
+      console.log("[SkyMonitor] SPC MD: ArcGIS fetch failed — skipping, preserving dedup state");
+    } else {
+      const mdName = attrs ? (attrs.Name || attrs.name || attrs.MD_NUM) : null;
+      const mdNum  = mdName ? String(mdName).replace(/[^0-9]/g, "") : null;
+      console.log(`[SkyMonitor] SPC MD: current=${mdNum ?? "none"}, last=${row.last_spc_md ?? "none"}`);
+      if (mdNum && mdNum !== row.last_spc_md) {
+        notifs.push({ ...buildSPCMDNotif(mdNum), tag: `spc-md-${mdNum}`, _updateKey: "last_spc_md", _updateVal: mdNum });
+      } else if (mdNum !== null) {
+        updates.last_spc_md = mdNum;
+      }
     }
   }
 
   if (prefs.wpcOutlookEnabled) {
-    const attrs    = await fetchArcGIS(`${BASE}/hazards/wpc_precip_hazards/MapServer/0/query?${geo}`);
-    const eroLabel = normalizeWPCLabel(attrs ? (attrs.outlook || attrs.label || attrs.LABEL || attrs.risk || attrs.RISK || null) : null);
-    const stored   = parseWPCStored(row.last_wpc_outlook);
-    const nowTs    = Math.floor(Date.now() / 1000);
-    const hoursW   = (nowTs - stored.notifiedAt) / 3600;
-    const currentIdx = eroLabel ? ERO_RISK_ORDER.indexOf(eroLabel) : -1;
-    const lastIdx    = stored.label ? ERO_RISK_ORDER.indexOf(stored.label) : -1;
-    const effectiveLastIdx = (stored.notifiedAt > 0 && hoursW > 20) ? -1 : lastIdx;
-    const shouldNotify = eroLabel && (currentIdx > effectiveLastIdx || (eroLabel === stored.label && hoursW > 8));
-    console.log(`[SkyMonitor] WPC outlook: current=${eroLabel ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
+    const attrs = await fetchArcGIS(`${BASE}/hazards/wpc_precip_hazards/MapServer/0/query?${geo}`);
+    if (attrs === undefined) {
+      console.log("[SkyMonitor] WPC outlook: ArcGIS fetch failed — skipping, preserving dedup state");
+    } else {
+      const eroLabel = normalizeWPCLabel(attrs ? (attrs.outlook || attrs.label || attrs.LABEL || attrs.risk || attrs.RISK || null) : null);
+      const stored   = parseWPCStored(row.last_wpc_outlook);
+      const nowTs    = Math.floor(Date.now() / 1000);
+      const hoursW   = (nowTs - stored.notifiedAt) / 3600;
+      const currentIdx = eroLabel ? ERO_RISK_ORDER.indexOf(eroLabel) : -1;
+      const lastIdx    = stored.label ? ERO_RISK_ORDER.indexOf(stored.label) : -1;
+      const effectiveLastIdx = (stored.notifiedAt > 0 && hoursW > 20) ? -1 : lastIdx;
+      const shouldNotify = eroLabel && (currentIdx > effectiveLastIdx || (eroLabel === stored.label && hoursW > 8));
+      console.log(`[SkyMonitor] WPC outlook: current=${eroLabel ?? "none"}, stored=${stored.label ?? "none"}, notify=${shouldNotify}`);
 
-    if (shouldNotify) {
-      notifs.push({ ...buildWPCOutlookNotif(eroLabel), tag: `wpc-ero-${eroLabel}` });
-      updates.last_wpc_outlook = `${eroLabel}:${nowTs}`;
-    } else if (eroLabel !== null) {
-      updates.last_wpc_outlook = stored.notifiedAt > 0 ? `${eroLabel}:${stored.notifiedAt}` : eroLabel;
+      if (shouldNotify) {
+        notifs.push({ ...buildWPCOutlookNotif(eroLabel), tag: `wpc-ero-${eroLabel}` });
+        updates.last_wpc_outlook = `${eroLabel}:${nowTs}`;
+      } else if (eroLabel !== null) {
+        updates.last_wpc_outlook = stored.notifiedAt > 0 ? `${eroLabel}:${stored.notifiedAt}` : eroLabel;
+      }
     }
   }
 
   if (prefs.wpcMpdEnabled) {
     let currentMpdNums = [];
+    let mpdFetchOk = false;
     try {
       const mpdRes = await fetch(
         `https://wpcmetwatch.skymonitor-account.workers.dev/?lat=${row.lat}&lon=${row.lon}`,
@@ -543,18 +561,25 @@ async function checkSPCAndWPC(row, vapid) {
       if (mpdRes.ok) {
         const mpdData = await mpdRes.json();
         currentMpdNums = (mpdData.mpds || []).map(m => String(m.id).replace(/[^0-9]/g, "")).filter(Boolean);
+        mpdFetchOk = true;
       }
     } catch (e) { console.warn(`[SkyMonitor] WPC MPD fetch error: ${e.message}`); }
 
     const lastKnown = row.last_wpc_mpd ? String(row.last_wpc_mpd).split(",").filter(Boolean) : [];
-    console.log(`[SkyMonitor] WPC MPD: current=[${currentMpdNums.join(",")}], last=[${lastKnown.join(",")}]`);
-    for (const mpdNum of currentMpdNums) {
-      if (!lastKnown.includes(mpdNum))
-        notifs.push({ ...buildWPCMPDNotif(mpdNum), tag: `wpc-mpd-${mpdNum}`, _updateKey: "_mpd", _updateVal: mpdNum });
+    console.log(`[SkyMonitor] WPC MPD: current=[${currentMpdNums.join(",")}], last=[${lastKnown.join(",")}], fetchOk=${mpdFetchOk}`);
+    if (!mpdFetchOk) {
+      console.log("[SkyMonitor] WPC MPD: fetch failed — skipping update to preserve deduplication state");
+      updates._mpdCurrent   = lastKnown;
+      updates._mpdLastKnown = lastKnown;
+    } else {
+      for (const mpdNum of currentMpdNums) {
+        if (!lastKnown.includes(mpdNum))
+          notifs.push({ ...buildWPCMPDNotif(mpdNum), tag: `wpc-mpd-${mpdNum}`, _updateKey: "_mpd", _updateVal: mpdNum });
+      }
+      if (currentMpdNums.length === 0) updates.last_wpc_mpd = null;
+      updates._mpdCurrent   = currentMpdNums;
+      updates._mpdLastKnown = lastKnown;
     }
-    if (currentMpdNums.length === 0) updates.last_wpc_mpd = null;
-    updates._mpdCurrent   = currentMpdNums;
-    updates._mpdLastKnown = lastKnown;
   }
 
   const mpdCurrentNums = updates._mpdCurrent  || [];
