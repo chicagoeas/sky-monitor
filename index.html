@@ -320,8 +320,7 @@
             </div>
         </div>
         <div class="settings-row" style="margin-bottom:0;">
-            <span class="settings-label">Advanced</span>
-            <button onclick="openAdvancedSettings()" style="width:100%; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; background:rgba(255,255,255,0.08); color:white;">&#9881;&#65039; ADVANCED SETTINGS</button>
+            <button onclick="openAdvancedSettings()" style="width:100%; padding:9px; border:none; border-radius:8px; font-size:0.72em; font-weight:500; cursor:pointer; letter-spacing:0.3px; background:rgba(255,255,255,0.05); color:#778899;">&#9881;&#65039; Advanced settings</button>
         </div>
         <div style="margin-top:20px; padding-top:15px; border-top:1px solid rgba(255,255,255,0.06); text-align:center; font-size:0.65em; color:#445566;">
             Created by <a href="https://youtube.com/@chicagoareaEAS" target="_blank" style="color:#556677; text-decoration:none;">@chicagoareaEAS</a> on YouTube
@@ -332,16 +331,42 @@
          style="display:none; position:fixed; inset:0; z-index:3500; background:rgba(0,0,0,0.75); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
     <div style="background:#0b1e2d; border:1px solid #223344; border-radius:15px; padding:25px; width:90%; max-width:320px; box-shadow:0 0 50px rgba(0,0,0,1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-            <h3 style="margin:0; font-size:0.85em; letter-spacing:1px; color:var(--primary);">ADVANCED SETTINGS</h3>
+            <span style="font-size:0.78em; color:#556677; letter-spacing:0.5px;">Advanced settings</span>
             <button onclick="closeAdvancedSettings()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
         </div>
-        <div class="settings-row" style="margin-bottom:0;">
+        <div class="settings-row">
             <span class="settings-label">Wind Direction Mode</span>
             <div class="btn-group">
                 <button id="opt-wind-compass" class="btn-opt active" onclick="setWindDirMode('compass')">COMPASS</button>
                 <button id="opt-wind-text" class="btn-opt" onclick="setWindDirMode('text')">TEXT</button>
             </div>
         </div>
+        <div class="settings-row" style="margin-bottom:0;">
+            <span class="settings-label">User Report Info</span>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <div class="btn-group" style="flex:1;">
+                    <button id="opt-user-reports-on" class="btn-opt" onclick="setUserReportsEnabled(true)" style="font-size:0.65em;">ENABLE</button>
+                    <button id="opt-user-reports-off" class="btn-opt active" onclick="setUserReportsEnabled(false)" style="font-size:0.65em;">DISABLE</button>
+                </div>
+                <button onclick="openUserReportInfoModal()" title="About this feature" style="background:none; border:1px solid #334455; border-radius:50%; width:28px; height:28px; color:#556677; font-size:0.8em; font-weight:bold; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center;">&#9432;</button>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <div id="user-report-info-modal" onclick="if(event.target===this)closeUserReportInfoModal()"
+         style="display:none; position:fixed; inset:0; z-index:4000; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
+    <div style="background:#0b1e2d; border:1px solid #223344; border-radius:15px; padding:25px; width:90%; max-width:320px; box-shadow:0 0 50px rgba(0,0,0,1);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <span style="font-size:0.78em; color:#556677; letter-spacing:0.5px;">About User Report Info</span>
+            <button onclick="closeUserReportInfoModal()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+        </div>
+        <p style="font-size:0.82em; line-height:1.65; color:#ccd6dd; margin:0;">
+            When this is enabled, nearby live user reports will be shown on the home page and may be taken into account with Threat Level, Forecasts, and more.
+        </p>
+        <p style="font-size:0.78em; line-height:1.6; color:#ff9100; margin:14px 0 0 0; font-weight:700;">
+            This is a BETA feature and should NOT be relied on.
+        </p>
     </div>
     </div>
 
@@ -867,6 +892,8 @@
     }
     document.addEventListener('click', function(e) {
         const win = document.getElementById('settings-window');
+        const advModal = document.getElementById('advanced-settings-modal');
+        if (advModal && advModal.style.display === 'flex') return;
         if (win && win.style.display === 'block') {
             if (!win.contains(e.target) && !e.target.closest('[onclick*="toggleSettingsWindow"]')) {
                 win.style.display = 'none';
@@ -1058,12 +1085,31 @@
         var mode = localStorage.getItem('wind_dir_mode') || 'compass';
         document.getElementById('opt-wind-compass')?.classList.toggle('active', mode === 'compass');
         document.getElementById('opt-wind-text')?.classList.toggle('active', mode === 'text');
+        var reportsOn = localStorage.getItem('user_reports_enabled') === 'true';
+        document.getElementById('opt-user-reports-on')?.classList.toggle('active', reportsOn);
+        document.getElementById('opt-user-reports-off')?.classList.toggle('active', !reportsOn);
         modal.style.display = 'flex';
     }
 
     function closeAdvancedSettings() {
         var modal = document.getElementById('advanced-settings-modal');
         if (modal) modal.style.display = 'none';
+    }
+
+    function setUserReportsEnabled(val) {
+        localStorage.setItem('user_reports_enabled', val ? 'true' : 'false');
+        document.getElementById('opt-user-reports-on')?.classList.toggle('active', val);
+        document.getElementById('opt-user-reports-off')?.classList.toggle('active', !val);
+    }
+
+    function openUserReportInfoModal() {
+        var m = document.getElementById('user-report-info-modal');
+        if (m) m.style.display = 'flex';
+    }
+
+    function closeUserReportInfoModal() {
+        var m = document.getElementById('user-report-info-modal');
+        if (m) m.style.display = 'none';
     }
 
     function setDataComplexity(mode) {
