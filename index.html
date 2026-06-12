@@ -320,7 +320,7 @@
             </div>
         </div>
         <div class="settings-row" style="margin-bottom:0;">
-            <button onclick="openAdvancedSettings()" style="width:100%; padding:9px; border:none; border-radius:8px; font-size:0.72em; font-weight:500; cursor:pointer; letter-spacing:0.3px; background:rgba(255,255,255,0.05); color:#778899;">&#9881;&#65039; Advanced settings</button>
+            <button onclick="openAdvancedSettings()" style="width:100%; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; background:rgba(255,255,255,0.08); color:white;">&#9881;&#65039; Advanced Settings</button>
         </div>
         <div style="margin-top:20px; padding-top:15px; border-top:1px solid rgba(255,255,255,0.06); text-align:center; font-size:0.65em; color:#445566;">
             Created by <a href="https://youtube.com/@chicagoareaEAS" target="_blank" style="color:#556677; text-decoration:none;">@chicagoareaEAS</a> on YouTube
@@ -531,6 +531,11 @@
                 <span style="font-size:1em; color:#888;">/100</span>
             </div>
             <div id="outdoor-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px;"></div>
+        </div>
+
+        <div id="nearby-reports-widget" style="display:none; background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.18); border-radius:15px; padding:14px 18px; margin-top:15px;">
+            <div style="font-size:0.7em; font-weight:900; color:var(--primary); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">&#128205; NEARBY USER REPORTS <span style="font-weight:400; color:#556677; font-size:0.85em;">(BETA)</span></div>
+            <div id="nearby-reports-list" style="font-size:0.82em; color:#ccd6dd; line-height:1.7;"></div>
         </div>
     </div>
 
@@ -3193,11 +3198,12 @@
         const snowQpf = [daypart.qpfSnow?.[base], daypart.qpfSnow?.[base + 1]];
         const heatIdx   = [daypart.temperatureHeatIndex?.[base],  daypart.temperatureHeatIndex?.[base + 1]];
         const windChill = [daypart.temperatureWindChill?.[base],  daypart.temperatureWindChill?.[base + 1]];
-        // Feels like: prefer heat index when warmer than actual, wind chill when colder, else actual temp
+        // Feels like: heat index for daytime only, wind chill for nighttime only.
+        // Mixing them cross-part causes the swap bug on non-today days.
         const feelsLikeParts = [0, 1].map(function(p) {
             var t = highs[p]; if (t == null) return null;
-            if (heatIdx[p] != null && heatIdx[p] > t) return heatIdx[p];
-            if (windChill[p] != null && windChill[p] < t) return windChill[p];
+            if (p === 0 && heatIdx[0] != null && heatIdx[0] > t) return heatIdx[0];
+            if (p === 1 && windChill[1] != null && windChill[1] < t) return windChill[1];
             return t;
         });
 
@@ -3911,6 +3917,60 @@
         if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
     }
 
+    // ——— NEARBY USER REPORTS (home tab, BETA) ———
+    async function fetchNearbyReportsForHome() {
+        const widget = document.getElementById('nearby-reports-widget');
+        const list   = document.getElementById('nearby-reports-list');
+        if (!widget || !list) return;
+        if (localStorage.getItem('user_reports_enabled') !== 'true') {
+            widget.style.display = 'none'; return;
+        }
+        try {
+            const res = await fetch(REPORTS_WORKER_URL + '/reports');
+            if (!res.ok) throw new Error();
+            const payload = await res.json();
+            const reports = Array.isArray(payload) ? payload : (payload.reports || []);
+            const userLat = parseFloat(lat), userLon = parseFloat(lon);
+            const RADIUS_MI = 25, FRESH_MS = 2 * 3600 * 1000;
+            const now = Date.now();
+            function haverMi(la1, lo1, la2, lo2) {
+                const R = 3958.8, dLat = (la2 - la1) * Math.PI / 180, dLon = (lo2 - lo1) * Math.PI / 180;
+                const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            }
+            const nearby = reports.filter(function(r) {
+                if (!r.lat || !r.lon || !r.time) return false;
+                if (now - new Date(r.time).getTime() > FRESH_MS) return false;
+                return haverMi(userLat, userLon, parseFloat(r.lat), parseFloat(r.lon)) <= RADIUS_MI;
+            }).sort(function(a, b) { return new Date(b.time) - new Date(a.time); }).slice(0, 5);
+            if (!nearby.length) { widget.style.display = 'none'; return; }
+            const REPORT_EMOJIS_HOME = {
+                'Rotation':'\uD83C\uDF00','Tornado / Funnel Cloud':'\uD83C\uDF2A\uFE0F',
+                'Thunderstorm':'\u26C8\uFE0F','Wind Damage':'\uD83D\uDCA8',
+                'Flooding':'\uD83C\uDF0A','Flash Flood':'\uD83C\uDF0A',
+                'Hail':'\uD83C\uDF28\uFE0F','Lightning Strike':'\u26A1',
+                'Rain':'\uD83C\uDF27\uFE0F','Other':'\uD83D\uDCCC'
+            };
+            function reportEmoji(type) {
+                if (!type) return '\uD83D\uDFE2';
+                for (var k in REPORT_EMOJIS_HOME) { if (type.includes(k)) return REPORT_EMOJIS_HOME[k]; }
+                return '\uD83D\uDFE2';
+            }
+            list.innerHTML = nearby.map(function(r) {
+                var minsAgo = Math.round((now - new Date(r.time).getTime()) / 60000);
+                var timeStr = minsAgo < 2 ? 'just now' : minsAgo + ' min ago';
+                var dist = haverMi(userLat, userLon, parseFloat(r.lat), parseFloat(r.lon));
+                var distStr = dist < 1 ? '< 1 mi' : Math.round(dist) + ' mi';
+                return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);">'
+                    + '<span style="font-size:1.1em;">' + reportEmoji(r.type) + '</span>'
+                    + '<span style="flex:1;"><b>' + (r.type || 'Report') + '</b>'
+                    + (r.notes ? ' <span style="opacity:0.6;font-size:0.9em;">— ' + r.notes + '</span>' : '') + '</span>'
+                    + '<span style="color:#888;font-size:0.8em;white-space:nowrap;">' + distStr + ' · ' + timeStr + '</span></div>';
+            }).join('');
+            widget.style.display = 'block';
+        } catch(e) { widget.style.display = 'none'; }
+    }
+
     // ——— LOAD ALL ———
     async function loadAll() {
         lastSyncTime = new Date();
@@ -3924,6 +3984,7 @@
             updateSPCMap(activeSPCDay);
             startSPCCountdown(activeSPCDay);
             computeThreatLevel();
+            fetchNearbyReportsForHome();
             updateLightningEstimate();
             const radarFrame = document.getElementById('radar-frame');
             if (radarFrame) {
