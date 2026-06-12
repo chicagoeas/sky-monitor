@@ -2905,6 +2905,15 @@
         const distinctCats = Object.keys(hazardCats).length;
         if (distinctCats >= 3) { score += 2; factorList.push({ label: 'Multi-hazard event', color: '#e040fb' }); }
 
+        // ── 8. Nearby User Reports (BETA) ─────────────────────────────────
+        if (localStorage.getItem('user_reports_enabled') === 'true' && Array.isArray(window.nearbyUserReports) && window.nearbyUserReports.length) {
+            var hasNearbyRotation = window.nearbyUserReports.some(function(r) { return r.type && (r.type.includes('Rotation') || r.type.includes('Tornado')); });
+            var hasNearbyHail     = window.nearbyUserReports.some(function(r) { return r.type && r.type.includes('Hail'); });
+            var hasNearbyWind     = window.nearbyUserReports.some(function(r) { return r.type && (r.type.includes('Wind') || r.type.includes('Thunderstorm')); });
+            if (hasNearbyRotation) { score += 3; factorList.push({ label: 'Nearby rotation reported', color: '#ff1744' }); }
+            else if (hasNearbyHail || hasNearbyWind) { score += 1; factorList.push({ label: 'Nearby storm reports', color: '#ff9100' }); }
+        }
+
         // ── 9. Observed Atmospheric Conditions ────────────────────────────
         // Wind speed (station-observed)
         if (liveWindSpd >= 58)     { score += 3; factorList.push({ label: 'Wind ' + liveWindSpd + ' mph', color: '#ff1744' }); }
@@ -3684,6 +3693,7 @@
         updatePinCoordsDisplay();
 
         reportingMap = L_ref.map('reporting-map', { zoomControl: true }).setView([rawLat, rawLon], 8);
+        window.reportingMap = reportingMap;
 
         L_ref.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom: 18, opacity: 0.55
@@ -3931,7 +3941,7 @@
             const payload = await res.json();
             const reports = Array.isArray(payload) ? payload : (payload.reports || []);
             const userLat = parseFloat(lat), userLon = parseFloat(lon);
-            const RADIUS_MI = 25, FRESH_MS = 2 * 3600 * 1000;
+            const RADIUS_MI = 10, FRESH_MS = 2 * 3600 * 1000;
             const now = Date.now();
             function haverMi(la1, lo1, la2, lo2) {
                 const R = 3958.8, dLat = (la2 - la1) * Math.PI / 180, dLon = (lo2 - lo1) * Math.PI / 180;
@@ -3956,19 +3966,37 @@
                 for (var k in REPORT_EMOJIS_HOME) { if (type.includes(k)) return REPORT_EMOJIS_HOME[k]; }
                 return '\uD83D\uDFE2';
             }
+            // Store for threat scoring
+            window.nearbyUserReports = nearby;
             list.innerHTML = nearby.map(function(r) {
                 var minsAgo = Math.round((now - new Date(r.time).getTime()) / 60000);
                 var timeStr = minsAgo < 2 ? 'just now' : minsAgo + ' min ago';
                 var dist = haverMi(userLat, userLon, parseFloat(r.lat), parseFloat(r.lon));
                 var distStr = dist < 1 ? '< 1 mi' : Math.round(dist) + ' mi';
-                return '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.06);">'
+                var rLat = parseFloat(r.lat), rLon = parseFloat(r.lon);
+                return '<div onclick="openReportOnMap(' + rLat + ',' + rLon + ')" style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;border-radius:6px;transition:background 0.15s;" onmouseenter="this.style.background=\'rgba(79,195,247,0.08)\'" onmouseleave="this.style.background=\'\'">'
                     + '<span style="font-size:1.1em;">' + reportEmoji(r.type) + '</span>'
                     + '<span style="flex:1;"><b>' + (r.type || 'Report') + '</b>'
                     + (r.notes ? ' <span style="opacity:0.6;font-size:0.9em;">— ' + r.notes + '</span>' : '') + '</span>'
-                    + '<span style="color:#888;font-size:0.8em;white-space:nowrap;">' + distStr + ' · ' + timeStr + '</span></div>';
+                    + '<span style="color:#888;font-size:0.8em;white-space:nowrap;">' + distStr + ' · ' + timeStr + '</span>'
+                    + '<span style="font-size:0.75em;color:var(--primary);margin-left:4px;">&#8594;</span></div>';
             }).join('');
             widget.style.display = 'block';
+            // Re-run threat level now that nearby reports are known
+            computeThreatLevel();
         } catch(e) { widget.style.display = 'none'; }
+    }
+
+    function openReportOnMap(rLat, rLon) {
+        switchTab('reporting', document.getElementById('nav-reporting'));
+        function doPan() {
+            if (window.reportingMap) {
+                window.reportingMap.setView([rLat, rLon], 14);
+            } else {
+                setTimeout(doPan, 300);
+            }
+        }
+        setTimeout(doPan, 250);
     }
 
     // ——— LOAD ALL ———
