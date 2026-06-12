@@ -102,8 +102,6 @@
             color: white; padding: 5px; width: 80px; text-align: center; outline: none;
         }
         #coords-panel.city-mode { background: none; border: none; padding: 0; min-width: 0; display: flex; }
-        .city-mode-container { display: flex; gap: 8px; width: 100%; min-width: 0; align-items: center; }
-
         .btn-action { background: var(--primary); color: #07131d; border: none; padding: 6px 12px; border-radius: 15px; font-weight: bold; cursor: pointer; }
         .btn-gps { background: rgba(255,255,255,0.1); color: white; }
 
@@ -933,7 +931,9 @@
         fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + cityLat + '&lon=' + cityLon)
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                var city = (d.address && (d.address.city || d.address.town || d.address.village || d.address.county)) || 'Current Location';
+                var primaryCity = (d.address && (d.address.city || d.address.town || d.address.village || d.address.county)) || '';
+                var suburb = (d.address && (d.address.suburb || d.address.neighbourhood || d.address.quarter)) || '';
+                var city = (suburb && primaryCity) ? suburb + ', ' + primaryCity : (suburb || primaryCity || 'Current Location');
                 var livePanel = document.getElementById('coords-panel');
                 if (livePanel && localStorage.getItem('input_mode') === 'live') {
                     livePanel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px; cursor:pointer;" onclick="setInputView(\'city\')">📍 ' + city + '</span>';
@@ -1540,12 +1540,10 @@
                 updateTimes = [hourZ, 19.5].sort(function(a, b) { return a - b; });
             }
             let nextUpdateHour = updateTimes.find(function(t) { return t > currentUTC; });
-            let isTomorrow = false;
             let nextDate = new Date(now);
             if (nextUpdateHour === undefined) {
                 nextUpdateHour = updateTimes[0];
                 nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-                isTomorrow = true;
             }
             nextDate.setUTCHours(Math.floor(nextUpdateHour), Math.round((nextUpdateHour % 1) * 60), 0, 0);
             const diff = nextDate.getTime() - new Date().getTime();
@@ -1554,6 +1552,7 @@
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
             const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
             const localTimeStr = nextDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const isTomorrow = nextDate.toLocaleDateString() !== now.toLocaleDateString();
             countdownElem.innerText = 'Next: ' + h + 'h ' + m + 'm ' + s + 's @ ' + localTimeStr + (isTomorrow ? ' Tomorrow' : '');
         }
         updateSPC();
@@ -1591,10 +1590,11 @@
         const isShortFused = shortFused.some(function(sf) { return eventLower.includes(sf); });
         const totalSeconds = totalMs / 1000;
         if (isShortFused) {
-            const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
+            const hNum = Math.floor(totalSeconds / 3600);
+            const h = hNum.toString().padStart(2, '0');
             const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
             const s = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
-            return h > 0 ? h + ':' + m + ':' + s : m + ':' + s;
+            return hNum > 0 ? h + ':' + m + ':' + s : m + ':' + s;
         } else {
             const weeks = Math.floor(totalSeconds / 604800); const days = Math.floor((totalSeconds % 604800) / 86400);
             const hours = Math.floor((totalSeconds % 86400) / 3600); const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -1682,9 +1682,6 @@
         if (currentHour < 6 || currentHour >= 18) { if (boxEl) boxEl.style.display = 'none'; return; }
         const now = Math.floor(Date.now() / 1000);
         const todayHours = hourlyData.filter(function(h) {
-            // BEFORE:
-            return h.time >= now && h.time <= now + 12 * 3600;
-            // AFTER:
             return h.time + 3600 > now && h.time <= now + 12 * 3600;
         }).slice(0, 12);
         if (!todayHours.length || !boxEl) return;
@@ -1767,16 +1764,6 @@
         const maxGust = Math.max(...todayHours.map(function(h) { return h.windGust || h.windSpeed || 0; }));
         const maxFeels = Math.max(...todayHours.map(function(h) { return h.apparentTemperature || h.temperature || 70; }));
         const minFeels = Math.min(...todayHours.map(function(h) { return h.apparentTemperature || h.temperature || 70; }));
-        // BEFORE:
-        var rainWindow = '';
-        var rainHour = todayHours.find(function(h) { return (h.precipProbability || 0) >= 0.5; });
-        if (rainHour) {
-            var rh = new Date(rainHour.time * 1000).getHours();
-            var ampm = rh >= 12 ? 'PM' : 'AM';
-            var rh12 = rh > 12 ? rh - 12 : (rh === 0 ? 12 : rh);
-            rainWindow = rh12 + ' ' + ampm;
-        }
-        // AFTER:
         var rainWindow = '';
         var rainHour = todayHours.find(function(h) { return (h.precipProbability || 0) >= 0.5; });
         if (rainHour) {
@@ -2521,7 +2508,7 @@
                         var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
                         if (hiSimple >= 80) {
                             var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH
-                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391517*RH*RH
+                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
                                + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
                                - 0.00000199*T*T*RH*RH;
                             if (RH < 13 && T >= 80 && T <= 112)
@@ -2759,7 +2746,7 @@
     // Context-aware description builder
     function buildThreatDescription(tier, hazardCats, flags) {
         // Tornado sub-types
-        if (flags.torEmergency) return 'A TORNADO EMERGENCY is in progress 2p� an extremely rare, catastrophic situation. TAKE COVER in the lowest interior room IMMEDIATELY.';
+        if (flags.torEmergency) return 'A TORNADO EMERGENCY is in progress — an extremely rare, catastrophic situation. TAKE COVER in the lowest interior room IMMEDIATELY.';
         if (flags.pdsTor) return 'A Particularly Dangerous Situation (PDS) Tornado Warning is in effect. This is a RARE, LIFE-THREATENING event. TAKE COVER NOW.';
         if (flags.ffe) return 'A FLASH FLOOD EMERGENCY is occurring. Life-threatening flooding is imminent or occuring. SEEK HIGHER GROUND immediately — do not wait.';
         if (flags.torObserved) {
@@ -3646,7 +3633,7 @@
         return timeStr;
     }
 
-    let lsrVisible = localStorage.getItem('report_lsr_on') === '1';
+    let lsrVisible = localStorage.getItem('report_lsr_on') !== '0';
     function toggleLSR() {
         if (!lsrLayer || !reportingMap) return;
         lsrVisible = !lsrVisible;
@@ -3756,12 +3743,7 @@
 
     function initReportingMap() {
         if (reportingMap) {
-            const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
-            const offset = applyPrivacyOffset(rawLat, rawLon);
-            reportingMap.setView([rawLat, rawLon], reportingMap.getZoom());
-            if (reportPinMarker) reportPinMarker.setLatLng([offset.la, offset.lo]);
-            reportLat = offset.la; reportLon = offset.lo;
-            updatePinCoordsDisplay();
+            reportingMap.setView([parseFloat(lat), parseFloat(lon)], reportingMap.getZoom());
             reportingMap.invalidateSize();
             return;
         }
@@ -3826,7 +3808,7 @@
         });
         const isMobile = window.matchMedia('(pointer: coarse)').matches;
         const instrEl = document.getElementById('report-pin-instruction');
-        if (instrEl) instrEl.innerText = '\uD83D\uDCCC Double-click map to pin location';
+        if (instrEl) instrEl.innerText = '\uD83D\uDCCC ' + (isMobile ? 'Double-tap' : 'Double-click') + ' map to pin location';
 
         reportPinMarker = L_ref.marker([reportLat, reportLon], { icon: dotIcon, draggable: true, zIndexOffset: 1000 })
             .bindTooltip('Report location', { permanent: false })
@@ -3872,6 +3854,8 @@
                     const sig = (f.properties.significance || '').toUpperCase();
                     if (sig !== 'W') return; // warnings only
                     if (!shortFusedPhenomena[ph]) return;
+                    // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
+                    if ((f.properties.type || '').toLowerCase().includes('statement')) return;
                     if (!f.geometry) return;
                     const color = shortFusedPhenomena[ph];
                     const label = f.properties.eventid || ph;
@@ -4028,7 +4012,7 @@
             widget.style.display = 'none'; return;
         }
         try {
-            const res = await fetch(REPORTS_WORKER_URL + '/reports');
+            const res = await fetch(REPORTS_WORKER_URL);
             if (!res.ok) throw new Error();
             const payload = await res.json();
             const reports = Array.isArray(payload) ? payload : (payload.reports || []);
