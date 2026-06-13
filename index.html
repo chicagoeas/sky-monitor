@@ -955,7 +955,7 @@
                 var city = (suburb && primaryCity) ? suburb + ', ' + primaryCity : (suburb || primaryCity || 'Current Location');
                 var livePanel = document.getElementById('coords-panel');
                 if (livePanel && localStorage.getItem('input_mode') === 'live') {
-                    livePanel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px; cursor:pointer;" onclick="setInputView(\'city\')">📍 ' + city + '</span>';
+                    livePanel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px; cursor:pointer;" onclick="setInputView(\'city\')">📍 ' + escapeHtml(city) + '</span>';
                 }
             }).catch(function() {});
     }
@@ -1002,7 +1002,7 @@
             }, { enableHighAccuracy: true, maximumAge: 30000 });
         } else {
             const savedCity = localStorage.getItem('waddle_city') || '';
-            panel.innerHTML = '<div class="city-mode-container"><input type="text" id="cityInput" placeholder="Enter City, Zip, Address..." value="' + savedCity + '"><button class="btn-action" onclick="runCitySearch()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button></div>';
+            panel.innerHTML = '<div class="city-mode-container"><input type="text" id="cityInput" placeholder="Enter City, Zip, Address..." value="' + escapeHtml(savedCity) + '"><button class="btn-action" onclick="runCitySearch()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button></div>';
             // Ensure global dropdown exists on body (escapes overflow:hidden ancestors)
             if (!document.getElementById('city-ac-dropdown')) {
                 var _ddEl = document.createElement('div');
@@ -1353,14 +1353,14 @@
             }
             if (trimmed.startsWith('* ')) {
                 if (!inList) { html += '<ul>'; inList = true; }
-                html += '<li>' + trimmed.slice(2) + '</li>';
+                html += '<li>' + escapeHtml(trimmed.slice(2)) + '</li>';
             } else {
                 if (inList) { html += '</ul>'; inList = false; }
                 // Detect section headers: short all-caps lines with 3+ capital letters
                 if (trimmed === trimmed.toUpperCase() && trimmed.length > 5 && /[A-Z]{3}/.test(trimmed)) {
-                    html += '<div style="font-weight:bold;color:var(--accent);margin:8px 0 3px;font-size:0.88em;">' + trimmed + '</div>';
+                    html += '<div style="font-weight:bold;color:var(--accent);margin:8px 0 3px;font-size:0.88em;">' + escapeHtml(trimmed) + '</div>';
                 } else {
-                    html += '<div>' + trimmed + '</div>';
+                    html += '<div>' + escapeHtml(trimmed) + '</div>';
                 }
             }
         }
@@ -1740,7 +1740,7 @@
             const isTruncated = desc.length > 140;
             const shortDesc = isTruncated ? desc.slice(0, 140) + '...' : desc;
             const pwId = 'pw-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
-            stack.innerHTML += '<div class="alert-card" style="background:#e65100; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + title + '</b><br><small>' + shortDesc + (expires ? '<br>Expires: ' + expires : '') + '</small>' + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button><div id="full-' + pwId + '" class="alert-full-text">' + desc + '</div>' : '') + '</div></div>';
+            stack.innerHTML += '<div class="alert-card" style="background:#e65100; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><br><small>' + escapeHtml(shortDesc) + (expires ? '<br>Expires: ' + escapeHtml(expires) : '') + '</small>' + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button><div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
         }
     }
 
@@ -2142,7 +2142,7 @@
                     // v1.0.4 FIX: Include NWSheadline + instruction; button BEFORE text div
                     const nwsHeadline = (p.parameters?.NWSheadline || [])[0] || '';
                     let fullContent = '';
-                    if (nwsHeadline) fullContent += '<div style="font-weight:bold;color:var(--warning);margin-bottom:6px;font-size:0.88em;">\uD83D\uDCE2 ' + nwsHeadline + '</div>';
+                    if (nwsHeadline) fullContent += '<div style="font-weight:bold;color:var(--warning);margin-bottom:6px;font-size:0.88em;">\uD83D\uDCE2 ' + escapeHtml(nwsHeadline) + '</div>';
                     fullContent += formatNWSText(p.description || '');
                     if (p.instruction) {
                         fullContent += '<div style="font-weight:bold;color:var(--accent);margin:8px 0 3px;font-size:0.88em;">PRECAUTIONARY/PREPAREDNESS ACTIONS</div>';
@@ -2151,7 +2151,7 @@
                     const nwsId = 'nws-' + (f.properties.id || (Date.now() + '-' + Math.floor(Math.random() * 9999))).replace(/[^a-zA-Z0-9]/g, '_');
 
                     // v1.0.4: button BEFORE the full-text div
-                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + displayName + '</b><br><small>' + (p.headline || '') + '</small>' + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
+                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + escapeHtml(displayName) + '</b><br><small>' + escapeHtml(p.headline || '') + '</small>' + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
                 });
 
                 _expandedAlertIds.forEach(function(id) {
@@ -2434,7 +2434,7 @@
                 const card = document.createElement('div'); card.className = 'forecast-card';
                 const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
                 const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + rainAmt.toFixed(2) + '"</div>' : '';
-                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + Math.round(h.temperature) + '\u00b0</div><div style="font-size:0.7em; opacity:0.7;">' + (h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round(h.precipProbability * 100) + '%</div>' + rainLine;
+                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + Math.round(h.temperature) + '\u00b0</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round(h.precipProbability * 100) + '%</div>' + rainLine;
                 container.appendChild(card);
             });
         }
@@ -3339,7 +3339,7 @@
             const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
             const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer'; card.style.position = 'relative';
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
-            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + high + '\u00b0 / <span style="color:white">' + low + '\u00b0</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + shortText + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + precipAmt.toFixed(2) + '"' : '') + '</div>' : '');
+            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + high + '\u00b0 / <span style="color:white">' + low + '\u00b0</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + precipAmt.toFixed(2) + '"' : '') + '</div>' : '');
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
@@ -3404,7 +3404,7 @@
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + snowQpf[part] + '"</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + (narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + qpf[part] + '"' : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + qpf[part] + '"' : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
