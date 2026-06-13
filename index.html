@@ -4229,6 +4229,27 @@
     // home widget and threat level stay current without waiting for a full 60s refresh
     setInterval(function() { fetchNearbyReportsForHome(); }, 30000);
 
+    // ——— Notification deep-link: handle #severe / #severe-risks on load ———
+    // When a user taps a push notification, sw.js opens/navigates to a URL like
+    // /sky-monitor/#severe or /sky-monitor/#severe-risks. This block reads the
+    // fragment on startup and routes to the right tab / scroll position.
+    (function() {
+        var hash = window.location.hash;
+        if (!hash) return;
+        if (hash === '#severe' || hash === '#severe-risks') {
+            var navEl = document.getElementById('nav-severe');
+            if (navEl) switchTab('severe', navEl);
+            if (hash === '#severe-risks') {
+                setTimeout(function() {
+                    var el = document.getElementById('active-risks-box');
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 400);
+            }
+        }
+        // Clear the fragment so refreshing doesn't re-trigger the jump
+        history.replaceState(null, '', window.location.pathname);
+    })();
+
     // ——— v1.0.4: SWIPE TABS + PULL-TO-REFRESH (respects _modalOpen flag) ———
     const tabs = ['home', 'severe', 'specs', 'reporting'];
     const navIds = ['nav-home', 'nav-severe', 'nav-specs', 'nav-reporting'];
