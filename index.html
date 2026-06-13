@@ -642,7 +642,7 @@
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
             <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; min-width:0; overflow:hidden;" onclick="openComfortModal()" title="Tap for hourly comfort">
                 <div class="toolkit-header" style="justify-content:center;"><span>COMFORT INDEX</span></div>
-                <div id="aqi-val" style="font-size:26px; font-weight:900; margin:10px 0; white-space:nowrap; overflow:hidden;">--</div>
+                <div id="aqi-val" style="font-size:26px; font-weight:900; margin:10px 0; white-space:nowrap; overflow:hidden; text-align:center; width:100%; display:block;">--</div>
                 <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Loading...</div>
                 <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
@@ -2182,6 +2182,7 @@
             elem.style.fontSize = '28px';
             elem.style.whiteSpace = 'nowrap';
             elem.style.overflow = 'hidden';
+            elem.style.textAlign = 'center';
         } else {
             // True content width inside the toolkit-box grid column:
             //   card = innerWidth - 40px body padding
@@ -2195,6 +2196,7 @@
             elem.style.fontSize = px + 'px';
             elem.style.whiteSpace = 'nowrap';
             elem.style.overflow = 'visible';
+            elem.style.textAlign = 'center';
         }
     }
 
@@ -4569,6 +4571,23 @@
         if (sc) { sc.width = window.innerWidth; sc.height = window.innerHeight; }
         if (window.pirateHourlyData && document.getElementById('specs-tab').classList.contains('active')) renderAnalytics();
         if (reportingMap) reportingMap.invalidateSize();
+        if (!_orientationChangePending) {
+            const aqiVal = document.getElementById('aqi-val');
+            if (aqiVal && aqiVal.textContent && aqiVal.textContent.trim() !== '--') fitComfortText(aqiVal);
+        }
+    });
+
+    // iOS Safari fires orientationchange before innerWidth updates, so we wait
+    // for the browser to finish repainting (300ms is enough even on slow devices).
+    // A flag prevents the subsequent resize event from double-running fitComfortText.
+    var _orientationChangePending = false;
+    window.addEventListener('orientationchange', function() {
+        _orientationChangePending = true;
+        setTimeout(function() {
+            _orientationChangePending = false;
+            var aqiVal = document.getElementById('aqi-val');
+            if (aqiVal && aqiVal.textContent && aqiVal.textContent.trim() !== '--') fitComfortText(aqiVal);
+        }, 300);
     });
 
     window.addEventListener('DOMContentLoaded', function() {
