@@ -1677,14 +1677,15 @@
 
     function computeOutdoorScore(hourlyData) {
         const boxEl = document.getElementById('outdoor-score-box');
-        // Only show 6 AM – 6 PM local time
-        const currentHour = new Date().getHours();
+        // Only show 6 AM – 6 PM at the weather station's local time
+        const _stationNowMs = Date.now() + (stationTzOffset * 1000);
+        const currentHour = new Date(_stationNowMs).getUTCHours();
         if (currentHour < 6 || currentHour >= 18) { if (boxEl) boxEl.style.display = 'none'; return; }
         const now = Math.floor(Date.now() / 1000);
         const todayHours = hourlyData.filter(function(h) {
             return h.time + 3600 > now && h.time <= now + 12 * 3600;
         }).slice(0, 12);
-        if (!todayHours.length || !boxEl) return;
+        if (!todayHours.length || !boxEl) { if (boxEl) boxEl.style.display = 'none'; return; }
         function scoreHour(h) {
             let score = 100;
             const pp = (h.precipProbability || 0) * 100;
@@ -1866,7 +1867,7 @@
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
                 if (el.style.display === 'block' && el.id) _expandedAlertIds.add(el.id.replace('full-', ''));
             });
-            stack.innerHTML = ''; document.body.className = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
+            stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
                 let topAlert = data.features.reduce(function(prev, current) {
@@ -1881,20 +1882,24 @@
                 const isDestructiveSVR = evtLowerTop.includes('severe thunderstorm warning') && damageThreat && damageThreat.includes('DESTRUCTIVE');
                 const topDesc = topP.description ? topP.description.toUpperCase() : '';
                 const isTopTorEmergency = topDesc.includes('TORNADO EMERGENCY');
-                const isTopPDS = topDesc.includes('PARTICULARLY DANGEROUS SITUATION') || topDesc.includes('FLASH FLOOD EMERGENCY');
+                const isTopFFE = topDesc.includes('FLASH FLOOD EMERGENCY');
+                const isTopPDS = topDesc.includes('PARTICULARLY DANGEROUS SITUATION') || isTopFFE;
                 let topEventName = topP.event.toUpperCase();
                 if (isTopTorEmergency && evtLowerTop.includes('tornado')) topEventName = 'TORNADO EMERGENCY';
+                else if (isTopFFE) topEventName = 'FLASH FLOOD EMERGENCY';
                 else if (isTopPDS) topEventName = 'PDS ' + topP.event.toUpperCase();
                 const isEmergency = EMERGENCY_TYPES.some(function(em) { return evtLowerTop.includes(em); }) || isTopTorEmergency;
                 banner.style.display = 'block';
                 const isTopPDSTornado = isTopPDS && evtLowerTop.includes('tornado warning');
                 let bannerTextPrefix;
                 if (isTopTorEmergency) bannerTextPrefix = '\uD83D\uDEA8 TORNADO EMERGENCY';
+                else if (isTopFFE) bannerTextPrefix = '\uD83D\uDEA8 FLASH FLOOD EMERGENCY';
                 else if (isTopPDSTornado) bannerTextPrefix = '\uD83D\uDEA8 PDS TORNADO WARNING';
                 else if (isConfirmedTornado) bannerTextPrefix = '\uD83D\uDEA8 CONFIRMED TORNADO';
                 else if (isDestructiveSVR) bannerTextPrefix = '\u26A0\uFE0F DESTRUCTIVE SEVERE';
                 else bannerTextPrefix = isEmergency ? '\uD83D\uDEA8 ' + topEventName : '\u26A0\uFE0F ' + topEventName;
                 if (isTopTorEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
+                else if (isTopFFE) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
                 else if (isTopPDSTornado) banner.style.background = '#880e4f';
                 else if (isConfirmedTornado) banner.style.background = '#7f0000';
                 else if (isDestructiveSVR) banner.style.background = '#cc5500';
@@ -2094,10 +2099,10 @@
             precipProb = (precipProb !== undefined && !isNaN(precipProb)) ? Number(precipProb) : 0;
             cond = cond ? cond.toLowerCase() : 'clear';
             let word = 'FAIR', color = '#ffffff', reason = '';
-            if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + '), Sunscreen Required'; }
-            else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + Math.round(feelsLike) + '\u00b0, Stay Hydrated'; }
-            else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm')) && precipProb >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H) + '% humidity'; }
+            if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + Math.round(feelsLike) + '\u00b0, Stay Hydrated'; }
             else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + Math.round(feelsLike) + '\u00b0'; }
+            else if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + '), Sunscreen Required'; }
+            else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm')) && precipProb >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H) + '% humidity'; }
             else if (T >= 68 && T <= 78 && H < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = Math.round(T) + '\u00b0, Ideal Conditions'; }
             else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + Math.round(T) + '\u00b0'; }
             else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = Math.round(W) + 'mph wind'; }
@@ -2338,7 +2343,7 @@
         if (!usingCustomContainer && dayTabs) {
             dayKeys.forEach(function(key, i) {
                 const btn = document.createElement('button'); btn.className = 'btn-opt';
-                btn.innerText = i === 0 ? 'Today' : new Date(key).toLocaleDateString([], { weekday: 'short' });
+                btn.innerText = i === 0 ? 'Today' : new Date(key + 'T12:00:00Z').toLocaleDateString([], { weekday: 'short' });
                 if (i === 0) btn.classList.add('active');
                 btn.onclick = function() { document.querySelectorAll('#pirate-day-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); }); btn.classList.add('active'); renderDay(key); };
                 dayTabs.appendChild(btn);
@@ -2530,8 +2535,10 @@
             }
             try {
                 const afdList = await (await fetch('https://api.weather.gov/products/types/AFD/locations/' + wfo)).json();
-                const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
-                document.getElementById('nws-text').innerText = afd.productText;
+                if (afdList['@graph'] && afdList['@graph'].length > 0) {
+                    const afd = await (await fetch(afdList['@graph'][0]['@id'])).json();
+                    document.getElementById('nws-text').innerText = afd.productText;
+                }
             } catch(e) {}
             startWeatherFX(currentCondition);
             startSkyFX(currentCondition);
@@ -2797,7 +2804,7 @@
         const spc = window.spcRisk;
         const SPC_SCORES = { TSTM: 0, MRGL: 1, SLGT: 2, ENH: 3, MDT: 5, HIGH: 7 };
         const SPC_COLORS = { HIGH: '#e040fb', MDT: '#ff1744', ENH: '#ff9100', SLGT: '#ffeb3b', MRGL: '#7BB07B', TSTM: '#4fc3f7' };
-        if (spc && SPC_SCORES[spc] !== undefined) {
+        if (spc && SPC_SCORES[spc] !== undefined && spc !== 'TSTM') {
             score += SPC_SCORES[spc];
             factorList.push({ label: SPC_LABELS[spc] || ('SPC ' + spc), color: SPC_COLORS[spc] || '#7BB07B' });
         }
@@ -3074,7 +3081,7 @@
         }
         const pressureVals = hrs.map(function(h) { return h.pressure ? parseFloat((h.pressure * 0.02953).toFixed(2)) : null; });
         makeChart('chart-pressure', 'line', { data: pressureVals, label: 'Pressure (inHg)', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true });
-        const dewpointVals = hrs.map(function(h) { const T = h.temperature, RH = (h.humidity || 0.5) * 100; if (T === undefined) return null; return parseFloat((T - (100 - RH) / 5).toFixed(1)); });
+        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return parseFloat((TdC * 9 / 5 + 32).toFixed(1)); });
         makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: 'Dewpoint (\u00b0F)', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return v + '\u00b0'; } });
         const windVals = hrs.map(function(h) { return h.windGust || h.windSpeed || 0; });
         makeChart('chart-wind', 'bar', { data: windVals, label: 'Wind Gust (mph)', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return v + ' mph'; } });
@@ -3306,25 +3313,30 @@
 
         // v1.0.4: Swipe between days (only horizontal swipes — ignore scroll)
         const inner = document.getElementById('twc-modal-inner');
-        let twcTouchX = 0, twcTouchY = 0, twcTouchInScroll = false, twcWasScrolling = false;
-        inner.addEventListener('touchstart', function(e) {
-            twcTouchX = e.touches[0].clientX;
-            twcTouchY = e.touches[0].clientY;
-            twcTouchInScroll = !!e.target.closest('.forecast-scroll');
-            twcWasScrolling = false;
-        }, { passive: true });
-        inner.addEventListener('touchmove', function(e) {
-            if (Math.abs(e.touches[0].clientY - twcTouchY) > Math.abs(e.touches[0].clientX - twcTouchX) + 5) twcWasScrolling = true;
-        }, { passive: true });
-        inner.addEventListener('touchend', function(e) {
-            if (!swipeEnabled || twcTouchInScroll || twcWasScrolling) return;
-            const dx = e.changedTouches[0].clientX - twcTouchX;
-            const dy = e.changedTouches[0].clientY - twcTouchY;
-            if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 2) {
-                if (dx < 0) openTWCDetailModal(data, (dayIdx + 1) % data.dayOfWeek.length);
-                else openTWCDetailModal(data, (dayIdx - 1 + data.dayOfWeek.length) % data.dayOfWeek.length);
-            }
-        }, { passive: true });
+        if (!inner._swipeAttached) {
+            inner._swipeAttached = true;
+            let twcTouchX = 0, twcTouchY = 0, twcTouchInScroll = false, twcWasScrolling = false;
+            inner.addEventListener('touchstart', function(e) {
+                twcTouchX = e.touches[0].clientX;
+                twcTouchY = e.touches[0].clientY;
+                twcTouchInScroll = !!e.target.closest('.forecast-scroll');
+                twcWasScrolling = false;
+            }, { passive: true });
+            inner.addEventListener('touchmove', function(e) {
+                if (Math.abs(e.touches[0].clientY - twcTouchY) > Math.abs(e.touches[0].clientX - twcTouchX) + 5) twcWasScrolling = true;
+            }, { passive: true });
+            inner.addEventListener('touchend', function(e) {
+                if (!swipeEnabled || twcTouchInScroll || twcWasScrolling) return;
+                const dx = e.changedTouches[0].clientX - twcTouchX;
+                const dy = e.changedTouches[0].clientY - twcTouchY;
+                if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 2) {
+                    const curDayIdx = inner._currentDayIdx || 0;
+                    if (dx < 0) openTWCDetailModal(_twcData, (curDayIdx + 1) % _twcData.dayOfWeek.length);
+                    else openTWCDetailModal(_twcData, (curDayIdx - 1 + _twcData.dayOfWeek.length) % _twcData.dayOfWeek.length);
+                }
+            }, { passive: true });
+        }
+        inner._currentDayIdx = dayIdx;
 
         if (window.pirateHourlyData) {
             const baseDate = data.validTimeLocal?.[dayIdx]?.split('T')[0];
