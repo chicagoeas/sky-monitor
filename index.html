@@ -909,6 +909,15 @@
         return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
     }
 
+    function escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function updateTimestamp() {
         if (!lastSyncTime) return;
         const diff = Math.floor((new Date() - lastSyncTime) / 1000);
@@ -1098,13 +1107,13 @@
         var r, g, b;
         if (pct <= 50) {
             // red (#cc2200) -> yellow (#ffcc00)
-            var t = pct / 50;
+            let t = pct / 50;
             r = Math.round(204 + (255 - 204) * t);
             g = Math.round(34  + (204 - 34)  * t);
             b = 0;
         } else {
             // yellow (#ffcc00) -> green (#00e676)
-            var t = (pct - 50) / 50;
+            let t = (pct - 50) / 50;
             r = Math.round(255 + (0   - 255) * t);
             g = Math.round(204 + (230 - 204) * t);
             b = Math.round(0   + (118 - 0)   * t);
@@ -1419,7 +1428,7 @@
     function getLocation() {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(p => {
-                lat = p.coords.latitude.toFixed(4); lon = p.coords.longitude.toFixed(4);
+                lat = parseFloat(p.coords.latitude.toFixed(4)); lon = parseFloat(p.coords.longitude.toFixed(4));
                 const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
                 if (latBox) latBox.value = lat; if (lonBox) lonBox.value = lon;
                 const cityBox = document.getElementById('cityInput');
@@ -1611,16 +1620,17 @@
             let updateTimes = [];
             if (day === 1) updateTimes = [1.0, 6.0, 13.0, 16.5, 20.0];
             else if (day === 2) {
-                const d2CST = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
-                const centralDate = new Date(d2CST); centralDate.setHours(1, 0, 0, 0);
-                const offset = (new Date(d2CST).getTime() - new Date().getTime());
+                // Use 'sv' locale: produces 'YYYY-MM-DD HH:MM:SS', reliably parseable on all browsers
+                const d2sv = new Date().toLocaleString('sv', { timeZone: 'America/Chicago' });
+                const centralDate = new Date(d2sv.replace(' ', 'T')); centralDate.setHours(1, 0, 0, 0);
+                const offset = (new Date(d2sv.replace(' ', 'T')).getTime() - new Date().getTime());
                 const finalTarget = new Date(centralDate.getTime() - offset);
                 const hourZ = finalTarget.getUTCHours() + (finalTarget.getUTCMinutes() / 60);
                 updateTimes = [hourZ, 17.5].sort(function(a, b) { return a - b; });
             } else if (day === 3) {
-                const d3CST = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' });
-                const centralDate = new Date(d3CST); centralDate.setHours(2, 30, 0, 0);
-                const offset = (new Date(d3CST).getTime() - new Date().getTime());
+                const d3sv = new Date().toLocaleString('sv', { timeZone: 'America/Chicago' });
+                const centralDate = new Date(d3sv.replace(' ', 'T')); centralDate.setHours(2, 30, 0, 0);
+                const offset = (new Date(d3sv.replace(' ', 'T')).getTime() - new Date().getTime());
                 const finalTarget = new Date(centralDate.getTime() - offset);
                 const hourZ = finalTarget.getUTCHours() + (finalTarget.getUTCMinutes() / 60);
                 updateTimes = [hourZ, 19.5].sort(function(a, b) { return a - b; });
@@ -2024,7 +2034,7 @@
                             keys.slice(start + 1, end).forEach(function(key) {
                                 const value = params2[key]?.[0]; if (!value) return;
                                 const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, function(str) { return str.toUpperCase(); });
-                                extraDetails += '<div>' + label + ': ' + value + '</div>';
+                                extraDetails += '<div>' + escapeHtml(label) + ': ' + escapeHtml(value) + '</div>';
                             });
                         }
                     }
@@ -4158,7 +4168,7 @@
                 return '<div onclick="openReportOnMap(' + rLat + ',' + rLon + ')" style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;border-radius:6px;transition:background 0.15s;" onmouseenter="this.style.background=\'rgba(79,195,247,0.08)\'" onmouseleave="this.style.background=\'\'">'
                     + '<span style="font-size:1.1em;">' + reportEmoji(r.type) + '</span>'
                     + '<span style="flex:1;"><b>' + (r.type || 'Report') + '</b>'
-                    + (r.notes ? ' <span style="opacity:0.6;font-size:0.9em;">— ' + r.notes + '</span>' : '') + '</span>'
+                    + (r.notes ? ' <span style="opacity:0.6;font-size:0.9em;">— ' + escapeHtml(r.notes) + '</span>' : '') + '</span>'
                     + '<span style="color:#888;font-size:0.8em;white-space:nowrap;">' + distStr + ' · ' + timeStr + '</span>'
                     + '<span style="font-size:0.75em;color:var(--primary);margin-left:4px;">&#8594;</span></div>';
             }).join('');
