@@ -289,7 +289,7 @@
     <span id="sync-indicator">&#9679; UPDATING</span>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1 BETA</span></span>
+        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.2</span></span>
     </h1>
 
     <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
@@ -2180,19 +2180,22 @@
         const isMobile = window.innerWidth <= 600;
         if (!isMobile) {
             elem.style.fontSize = '28px';
+            elem.style.whiteSpace = 'nowrap';
+            elem.style.overflow = 'hidden';
         } else {
             // True content width inside the toolkit-box grid column:
             //   card = innerWidth - 40px body padding
             //   column = (card - 15px grid gap) / 2
             //   text area = column - 20px pad each side - 1px border each side = column - 42
-            // Bold-900 uppercase Segoe UI chars measure ~0.75× font-size wide.
+            // Bold-900 uppercase chars measure ~0.72× font-size wide.
+            // No upper/lower caps — short words ("FAIR") get big, long words ("OPPRESSIVE") scale down to fit.
             const cardW = window.innerWidth - 40;
             const avail = Math.max(50, (cardW - 15) / 2 - 42);
-            const px = Math.max(12, Math.min(16, Math.floor(avail / (len * 0.75))));
+            const px = Math.max(9, Math.min(40, Math.floor(avail / (len * 0.72))));
             elem.style.fontSize = px + 'px';
+            elem.style.whiteSpace = 'nowrap';
+            elem.style.overflow = 'visible';
         }
-        elem.style.whiteSpace = 'nowrap';
-        elem.style.overflow = 'hidden';
     }
 
     function updateSmartComfort(T, feelsLike, H, W, cond, uv, precipProb) {
@@ -3088,10 +3091,14 @@
             var hasNearbyRotation = window.nearbyUserReports.some(function(r) { return r.type && r.type.includes('Rotation') && !r.type.includes('Tornado') && !r.type.includes('Funnel'); });
             var hasNearbyHail     = window.nearbyUserReports.some(function(r) { return r.type && r.type.includes('Hail'); });
             var hasNearbyWind     = window.nearbyUserReports.some(function(r) { return r.type && (r.type.includes('Wind') || r.type.includes('Thunderstorm')); });
+            var hasNearbyFlood  = window.nearbyUserReports.some(function(r) { return r.type && (r.type.toLowerCase().includes('flood')); });
             // These stack independently — a tornado report AND a rotation report both contribute
             if (hasNearbyTornado)  { score += 3; factorList.push({ label: 'Tornado/funnel cloud reported', color: '#e040fb' }); }
             if (hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby rotation reported', color: '#ff1744' }); }
             if ((hasNearbyHail || hasNearbyWind) && !hasNearbyTornado && !hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby storm reports', color: '#ff9100' }); }
+            if (hasNearbyFlood && !(window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flood'); })) {
+                score += 1; factorList.push({ label: 'Flooding reported nearby', color: '#00bcd4' });
+            }
         }
 
         // ── 9. Observed Atmospheric Conditions ────────────────────────────
@@ -3226,7 +3233,7 @@
             let bg = '#7BB07B';
             if (spcLabelRaw === 'MRGL') bg = '#45f925'; else if (spcLabelRaw === 'SLGT') bg = '#F6F67B'; else if (spcLabelRaw === 'ENH') bg = '#E6B87B'; else if (spcLabelRaw === 'MDT') bg = '#E67B7B'; else if (spcLabelRaw === 'HIGH') bg = '#FF7BFF';
             const textColor = (bg === '#F6F67B' || bg === '#45f925') ? '#000' : '#fff';
-            riskHtml += '<div style="background:' + bg + '; color:' + textColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">SPC: ' + badgeWord + ' Risk</div>';
+            riskHtml += '<div style="background:' + bg + '; color:' + textColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">\u26C8\uFE0F SPC: ' + badgeWord + ' Risk</div>';
             if (['ENH','MDT','HIGH'].includes(spcLabelRaw) && banner) {
                 banner.style.display = 'block'; banner.innerText = '\u26A0\uFE0F ' + full;
                 if (spcLabelRaw === 'ENH') banner.style.background = '#b45309';
@@ -3251,7 +3258,7 @@
             const cleanMD = String(mdName).replace(/[^0-9]/g, ''); const paddedMD = cleanMD.padStart(4, '0');
             const url = 'https://www.spc.noaa.gov/products/md/md' + paddedMD + '.html';
             if (banner && banner.style.display === 'none') { banner.style.display = 'block'; banner.innerText = '\u26A0\uFE0F SPC MD #' + cleanMD + ' ACTIVE'; banner.style.background = '#7c3aed'; banner.style.color = '#fff'; banner.onclick = function() { window.open(url, '_blank'); }; }
-            riskHtml += '<a href="' + url + '" target="_blank" style="text-decoration:none;"><div style="background:#9c27b0; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">SPC: MD #' + cleanMD + '</div></a>';
+            riskHtml += '<a href="' + url + '" target="_blank" style="text-decoration:none;"><div style="background:#9c27b0; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">\u26C8\uFE0F SPC: MD #' + cleanMD + '</div></a>';
         }
 
         const eroUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
@@ -4164,6 +4171,38 @@
                 for (var k in REPORT_EMOJIS_HOME) { if (type.includes(k)) return REPORT_EMOJIS_HOME[k]; }
                 return '\uD83D\uDFE2';
             }
+            // Classify severity for widget styling and minute summary
+            var _hasTornado  = nearby.some(function(r) { return r.type && (r.type.includes('Tornado') || r.type.includes('Funnel')); });
+            var _hasRotation = nearby.some(function(r) { return r.type && r.type.includes('Rotation') && !r.type.includes('Tornado'); });
+            var _hasSevere   = nearby.some(function(r) { return r.type && (r.type.includes('Hail') || r.type.includes('Wind') || r.type.includes('Thunderstorm') || r.type.includes('Lightning')); });
+            var _hasFlood    = nearby.some(function(r) { return r.type && r.type.toLowerCase().includes('flood'); });
+
+            // Widget border/background reflects severity
+            if (_hasTornado || _hasRotation) {
+                widget.style.background = 'rgba(224,64,251,0.08)';
+                widget.style.border = '1px solid rgba(224,64,251,0.45)';
+            } else if (_hasSevere) {
+                widget.style.background = 'rgba(255,145,0,0.07)';
+                widget.style.border = '1px solid rgba(255,145,0,0.4)';
+            } else if (_hasFlood) {
+                widget.style.background = 'rgba(0,230,118,0.06)';
+                widget.style.border = '1px solid rgba(0,230,118,0.3)';
+            } else {
+                widget.style.background = 'rgba(79,195,247,0.05)';
+                widget.style.border = '1px solid rgba(79,195,247,0.18)';
+            }
+
+            // Inject warning into minute summary for serious nearby reports
+            var summaryEl = document.getElementById('minuteSummary');
+            if (summaryEl && (_hasTornado || _hasRotation)) {
+                var _warn = _hasTornado ? '\u26a0\ufe0f Tornado/Funnel Cloud reported nearby!' : '\u26a0\ufe0f Rotation reported nearby.';
+                var _cur = summaryEl.innerText || '';
+                summaryEl.innerText = _warn + (_cur && !_cur.startsWith('\u26a0') && !_cur.startsWith('Scanning') ? ' \u00b7 ' + _cur : '');
+                summaryEl.style.color = _hasTornado ? '#e040fb' : '#ff1744';
+            } else if (summaryEl && summaryEl.style.color === '#e040fb' || (summaryEl && summaryEl.style.color === '#ff1744')) {
+                summaryEl.style.color = '';
+            }
+
             // Store for threat scoring
             window.nearbyUserReports = nearby;
             list.innerHTML = nearby.map(function(r) {
