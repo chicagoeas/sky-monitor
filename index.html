@@ -172,6 +172,20 @@
             background: none; border: none; border-bottom: 1px solid var(--primary);
             color: white; padding: 4px 8px; width: 0; flex: 1; min-width: 0; text-align: center; outline: none;
         }
+        .city-ac-dropdown {
+            position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+            background: #0b1e2d; border: 1px solid rgba(79,195,247,0.3);
+            border-radius: 12px; overflow: hidden; display: none;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.7); z-index: 200;
+        }
+        .city-ac-item {
+            padding: 10px 18px; cursor: pointer; font-size: 0.82em;
+            color: #cfd8dc; border-bottom: 1px solid rgba(255,255,255,0.06);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            transition: background 0.12s, color 0.12s;
+        }
+        .city-ac-item:last-child { border-bottom: none; }
+        .city-ac-item:hover { background: rgba(79,195,247,0.12); color: #4fc3f7; }
 
         #spc-banner {
             display: none; background: var(--danger); color: white; padding: 15px;
@@ -275,7 +289,7 @@
     <span id="sync-indicator">&#9679; UPDATING</span>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.0.5</span></span>
+        <span>SkyMonitor</span>
     </h1>
 
     <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
@@ -757,13 +771,9 @@
 </div>
 
 <footer style="text-align:center; padding:60px 0 30px 0; font-family:'Segoe UI',sans-serif; color:#777; font-size:0.85em;">
-    <div style="margin-bottom:8px;">
-        <span style="letter-spacing:2px; font-weight:800; color:#aaa;">SkyMonitor</span>
-        <span style="margin:0 8px; opacity:0.3;">|</span>
-        ALPHA RELEASE - v1.0.5
-    </div>
     <p style="font-size:0.85em; margin-top:10px; opacity:0.6; font-weight:600; letter-spacing:0.5px;">Accurate weather, simplified.</p>
     <p style="font-size:0.65em; margin-top:4px; opacity:0.5;">Powered by TWC, PirateWeather, OpenWeather, SPC, NWS, and WU</p>
+    <p style="font-size:0.75em; margin-top:12px; opacity:0.45; letter-spacing:0.5px;">&copy; 2026 SkyMonitor. All rights reserved.</p>
 </footer>
 
 <script>
@@ -983,27 +993,77 @@
             }, { enableHighAccuracy: true, maximumAge: 30000 });
         } else {
             const savedCity = localStorage.getItem('waddle_city') || '';
-            panel.innerHTML = '<div class="city-mode-container"><input type="text" id="cityInput" placeholder="Enter City, Zip, Address..." value="' + savedCity + '"><button class="btn-action" onclick="runCitySearch()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button></div>';
+            panel.innerHTML = '<div class="city-mode-container"><input type="text" id="cityInput" placeholder="Enter City, Zip, Address..." value="' + savedCity + '"><button class="btn-action" onclick="runCitySearch()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button><div id="city-ac-dropdown" class="city-ac-dropdown"></div></div>';
+            var _cityEl = document.getElementById('cityInput');
+            if (_cityEl) {
+                _cityEl.addEventListener('keydown', function(e) { if (e.key === 'Enter') runCitySearch(); });
+                _cityEl.addEventListener('blur', function() {
+                    setTimeout(function() { var dd = document.getElementById('city-ac-dropdown'); if (dd) dd.style.display = 'none'; }, 200);
+                });
+                var _acTimer = null;
+                _cityEl.addEventListener('input', function() {
+                    clearTimeout(_acTimer);
+                    var q = (_cityEl.value || '').trim();
+                    var dd = document.getElementById('city-ac-dropdown');
+                    if (!q || q.length < 2) { if (dd) dd.style.display = 'none'; return; }
+                    _acTimer = setTimeout(function() {
+                        fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&q=' + encodeURIComponent(q))
+                            .then(function(r) { return r.json(); })
+                            .then(function(data) { _renderCityAC(data); })
+                            .catch(function() {});
+                    }, 350);
+                });
+            }
         }
+    }
+
+    function _renderCityAC(data) {
+        var dd = document.getElementById('city-ac-dropdown');
+        var cityEl = document.getElementById('cityInput');
+        if (!dd) return;
+        if (!data || data.length === 0) { dd.style.display = 'none'; return; }
+        var _acData = data.slice(0, 5);
+        dd.innerHTML = _acData.map(function(r, i) {
+            return '<div class="city-ac-item" data-idx="' + i + '">' + r.display_name + '</div>';
+        }).join('');
+        dd.style.display = 'block';
+        dd.querySelectorAll('.city-ac-item').forEach(function(item) {
+            item.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                var r = _acData[parseInt(item.dataset.idx)];
+                lat = parseFloat(parseFloat(r.lat).toFixed(4));
+                lon = parseFloat(parseFloat(r.lon).toFixed(4));
+                var shortName = r.display_name.split(',')[0].trim();
+                if (cityEl) cityEl.value = shortName;
+                localStorage.setItem('waddle_city', shortName);
+                dd.style.display = 'none';
+                updateLocation();
+            });
+        });
     }
 
     async function runCitySearch() {
         const cityEl = document.getElementById('cityInput');
-        const query = cityEl ? cityEl.value : '';
+        const query = cityEl ? cityEl.value.trim() : '';
         if (!query) return;
         try {
-            document.getElementById('stationName').innerText = 'SEARCHING CITY...';
-            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(query));
+            const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&q=' + encodeURIComponent(query));
             const data = await res.json();
             if (data && data.length > 0) {
-                lat = parseFloat(parseFloat(data[0].lat).toFixed(4));
-                lon = parseFloat(parseFloat(data[0].lon).toFixed(4));
-                const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
-                if (latBox) latBox.value = lat; if (lonBox) lonBox.value = lon;
-                localStorage.setItem('waddle_city', query);
-                updateLocation();
-            } else { document.getElementById('stationName').innerText = 'CITY NOT FOUND'; }
-        } catch(e) { document.getElementById('stationName').innerText = 'SEARCH ERROR'; }
+                if (data.length === 1) {
+                    lat = parseFloat(parseFloat(data[0].lat).toFixed(4));
+                    lon = parseFloat(parseFloat(data[0].lon).toFixed(4));
+                    const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
+                    if (latBox) latBox.value = lat; if (lonBox) lonBox.value = lon;
+                    localStorage.setItem('waddle_city', query);
+                    const dd = document.getElementById('city-ac-dropdown');
+                    if (dd) dd.style.display = 'none';
+                    updateLocation();
+                } else {
+                    _renderCityAC(data);
+                }
+            } else { alert('No results found. Ensure you have not misspelled anything.'); }
+        } catch(e) { alert('No results found. Ensure you have not misspelled anything.'); }
     }
 
     function colorHumidity(val) {
