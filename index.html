@@ -289,7 +289,7 @@
     <span id="sync-indicator">&#9679; UPDATING</span>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.2</span></span>
+        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.3</span></span>
     </h1>
 
     <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
@@ -855,7 +855,9 @@
     let particles = [];
     let lastPressureMb = null;
     let lastSyncTime = null;
-    let _isOffline = false;
+    let _isOffline = !navigator.onLine;
+    window.addEventListener('offline', function() { _isOffline = true; });
+    window.addEventListener('online',  function() { _isOffline = false; });
     let liveWindSpd = 0;
     let livePrecipInt = 0;
     let liveFeelsLike = 0;
@@ -922,15 +924,22 @@
     }
 
     function updateTimestamp() {
+        const el = document.getElementById('sync-time-display');
+        if (!el) return;
+        if (_isOffline) {
+            if (lastSyncTime) {
+                const diff = Math.floor((new Date() - lastSyncTime) / 1000);
+                const timeStr = diff < 60 ? diff + 's ago' : Math.floor(diff / 60) + 'm ago';
+                el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
+            } else {
+                el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE</span>';
+            }
+            return;
+        }
         if (!lastSyncTime) return;
         const diff = Math.floor((new Date() - lastSyncTime) / 1000);
         const timeStr = diff < 60 ? diff + 's ago' : Math.floor(diff / 60) + 'm ago';
-        const el = document.getElementById('sync-time-display');
-        if (_isOffline) {
-            el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
-        } else {
-            el.innerText = 'UPDATED: ' + timeStr;
-        }
+        el.innerText = 'UPDATED: ' + timeStr;
     }
     setInterval(updateTimestamp, 1000);
 
@@ -1268,12 +1277,22 @@
     }
 
     async function verifyRecaptcha() {
+        // Must be online — reCAPTCHA cannot issue a valid token offline and
+        // the JS SDK may silently resolve with a bad token, granting false access.
+        if (!navigator.onLine) {
+            alert('You must be connected to the internet to verify. Please check your connection and try again.');
+            return;
+        }
         var btn = document.getElementById('recaptcha-verify-btn');
         var statusEl = document.getElementById('recaptcha-status');
         if (btn) { btn.textContent = '\u23F3 Verifying...'; btn.disabled = true; btn.style.opacity = '0.7'; }
         if (statusEl) { statusEl.textContent = ''; }
         try {
-            if (typeof grecaptcha === 'undefined') throw new Error('reCAPTCHA not loaded yet');
+            if (typeof grecaptcha === 'undefined') {
+                alert('Verification service not loaded. Please reload the page and try again.');
+                if (btn) { btn.textContent = '\u2713 Confirm I\'m Human'; btn.disabled = false; btn.style.opacity = '1'; }
+                return;
+            }
             const token = await new Promise(function(resolve, reject) {
                 grecaptcha.ready(function() {
                     grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'report_gate' }).then(resolve).catch(reject);
@@ -1286,8 +1305,9 @@
             if (statusEl) { statusEl.textContent = 'Access granted.'; statusEl.style.color = 'var(--success)'; }
             setTimeout(function() { closeRecaptchaGate(false); }, 650);
         } catch(e) {
+            alert('Verification failed — please try again.');
             if (btn) { btn.textContent = '\u2713 Confirm I\'m Human'; btn.disabled = false; btn.style.opacity = '1'; }
-            if (statusEl) { statusEl.textContent = 'Verification failed \u2014 please try again.'; statusEl.style.color = 'var(--danger)'; }
+            if (statusEl) { statusEl.textContent = ''; }
         }
     }
 
@@ -4128,10 +4148,10 @@
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
             } else {
-                if (status) { status.textContent = 'Failed to submit. Check REPORTS_WORKER_URL.'; status.style.color = 'var(--danger)'; }
+                alert('Failed to submit report. Check that REPORTS_WORKER_URL is configured correctly.');
             }
         } catch(e) {
-            if (status) { status.textContent = 'Worker not configured \u2014 update REPORTS_WORKER_URL in the code.'; status.style.color = 'var(--warning)'; }
+            alert('Report worker not configured \u2014 update REPORTS_WORKER_URL in the code.');
         }
         if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
     }
