@@ -1,4 +1,23 @@
-const CACHE = 'skymonitor-v2.0.0';
+const CACHE = 'skymonitor-v1.1.0';
+
+// Base URL for deep-link construction
+const BASE_URL = 'https://chicagoeas.github.io/sky-monitor/';
+
+// Maps notification tag → URL fragment.
+// Fragment is appended to BASE_URL when the user taps a notification.
+// Tabs:   #severe        → switch to Severe tab
+//         #severe-risks  → switch to Severe tab AND scroll to ACTIVE LOCAL RISKS
+// Omitted tags (rain, generic) → BASE_URL (home tab, no fragment)
+const TAG_PATHS = {
+    'nws-alert':   '#severe',
+    'nws-warning': '#severe',
+    'nws-watch':   '#severe',
+    'spc-outlook': '#severe-risks',
+    'spc-md':      '#severe-risks',
+    'wpc-mcd':     '#severe-risks',
+    'wpc-mpd':     '#severe-risks',
+    'wpc-outlook': '#severe-risks',
+};
 
 // App shell: cached on install so the app loads instantly from disk with no network
 const PRECACHE = [
@@ -64,30 +83,44 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
     let data = {};
     try { data = e.data ? e.data.json() : {}; } catch (_) {}
+
+    const tag = data.tag || 'weather-alert';
+
+    // Build the deep-link URL: push server can override with data.url,
+    // otherwise derive from the tag mapping above
+    const fragment = TAG_PATHS[tag] || '';
+    const targetUrl = data.url || (BASE_URL + fragment);
+
     const title = data.title || 'SkyMonitor Alert';
     const options = {
         body: data.body || 'New weather alert for your area.',
         icon: data.icon || 'https://cdn-icons-png.flaticon.com/512/1779/1779927.png',
         badge: data.badge || 'https://cdn-icons-png.flaticon.com/512/1779/1779927.png',
-        tag: data.tag || 'weather-alert',
+        tag,
         renotify: true,
         requireInteraction: true,
         vibrate: [200, 100, 200],
         'interruption-level': 'time-sensitive',   // iOS 16.4+: breaks through Focus / DND
         timestamp: data.timestamp || Date.now(),
-        data: { url: data.url || '/' },
+        data: { url: targetUrl },
     };
     e.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (e) => {
     e.notification.close();
-    const url = (e.notification.data && e.notification.data.url) ? e.notification.data.url : '/sky-monitor/';
+    const url = (e.notification.data && e.notification.data.url) ? e.notification.data.url : BASE_URL;
     e.waitUntil(
         self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
             for (const client of clientList) {
-                if (client.url.includes(self.location.origin) && 'focus' in client) return client.focus();
+                if (client.url.includes(self.location.origin) && 'focus' in client) {
+                    // Navigate the existing tab to the deep-link URL, then focus it.
+                    // client.navigate() is supported in all modern browsers.
+                    const navPromise = ('navigate' in client) ? client.navigate(url) : Promise.resolve(client);
+                    return navPromise.then(() => client.focus());
+                }
             }
+            // No existing tab — open a new window at the deep-link URL
             if (self.clients.openWindow) return self.clients.openWindow(url);
         })
     );
