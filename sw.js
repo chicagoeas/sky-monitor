@@ -1,4 +1,4 @@
-const CACHE = 'skymonitor-v1.1.1';
+const CACHE = 'skymonitor-v1.1.2';
 
 // Base URL for deep-link construction
 const BASE_URL = 'https://chicagoeas.github.io/sky-monitor/';
