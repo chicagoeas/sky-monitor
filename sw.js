@@ -2,7 +2,7 @@
 // Bump CACHE_VERSION whenever you deploy a breaking change.
 // All three sub-caches share the same version prefix so a single bump clears
 // everything consistently.
-const CACHE_VERSION = 'skymonitor-v1.1.2';
+const CACHE_VERSION = 'skymonitor-v1.1.3';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;   // CDN libs — cache-first
 const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small images — cache-on-use
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;  // HTML + same-origin — network-first
@@ -125,12 +125,21 @@ self.addEventListener('fetch', (e) => {
         return; // let the browser handle it normally
     }
 
-    // 3. Other images — cache-on-use with a size gate (≤ 500 KB only)
+    // 3. Other images — cache-on-use with a size gate (≤ 500 KB only).
+    //    Opaque responses (cross-origin <img> tags, e.g. TWC/Wunderground icons) have
+    //    status 0 and ok:false but are perfectly valid to cache and display. We cache
+    //    them directly without a size check since we cannot read their body — they are
+    //    always small SVG/PNG weather icons in practice.
     if (isImageRequest(e.request, url)) {
         e.respondWith(
             caches.match(e.request).then((cached) => {
                 if (cached) return cached;
                 return fetch(e.request).then((res) => {
+                    if (res.type === 'opaque') {
+                        // Cross-origin image from <img> tag — cache directly
+                        caches.open(IMAGE_CACHE).then((c) => c.put(e.request, res.clone()));
+                        return res;
+                    }
                     if (!res.ok) return res;
                     // Check declared size first (saves cloning if obviously too large)
                     const cl = Number(res.headers.get('content-length') || 0);
