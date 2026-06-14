@@ -361,7 +361,7 @@
                 <button id="opt-wind-text" class="btn-opt" onclick="setWindDirMode('text')">TEXT</button>
             </div>
         </div>
-        <div class="settings-row" style="margin-bottom:0;">
+        <div class="settings-row">
             <span class="settings-label">User Report Info</span>
             <div style="display:flex; gap:6px; align-items:center;">
                 <div class="btn-group" style="flex:1;">
@@ -369,6 +369,20 @@
                     <button id="opt-user-reports-off" class="btn-opt active" onclick="setUserReportsEnabled(false)" style="font-size:0.65em;">DISABLE</button>
                 </div>
                 <button onclick="openUserReportInfoModal()" title="About this feature" style="background:none; border:1px solid #334455; border-radius:50%; width:28px; height:28px; color:#556677; font-size:0.8em; font-weight:bold; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center;">&#9432;</button>
+            </div>
+        </div>
+        <div class="settings-row">
+            <span class="settings-label">Unit System</span>
+            <div class="btn-group">
+                <button id="opt-unit-imperial" class="btn-opt active" onclick="setUnitSystem('imperial')">IMPERIAL</button>
+                <button id="opt-unit-metric" class="btn-opt" onclick="setUnitSystem('metric')">METRIC</button>
+            </div>
+        </div>
+        <div class="settings-row" style="margin-bottom:0;">
+            <span class="settings-label">Global Alerts Language</span>
+            <div class="btn-group">
+                <button id="opt-lang-default" class="btn-opt active" onclick="setAlertsLanguage('default')">DEFAULT</button>
+                <button id="opt-lang-en" class="btn-opt" onclick="setAlertsLanguage('en')">ENGLISH</button>
             </div>
         </div>
     </div>
@@ -1214,6 +1228,12 @@
         var reportsOn = localStorage.getItem('user_reports_enabled') === 'true';
         document.getElementById('opt-user-reports-on')?.classList.toggle('active', reportsOn);
         document.getElementById('opt-user-reports-off')?.classList.toggle('active', !reportsOn);
+        var unitSys = localStorage.getItem('unit_system') || 'imperial';
+        document.getElementById('opt-unit-imperial')?.classList.toggle('active', unitSys === 'imperial');
+        document.getElementById('opt-unit-metric')?.classList.toggle('active', unitSys === 'metric');
+        var alertLang = localStorage.getItem('alerts_language') || 'default';
+        document.getElementById('opt-lang-default')?.classList.toggle('active', alertLang === 'default');
+        document.getElementById('opt-lang-en')?.classList.toggle('active', alertLang === 'en');
         modal.style.display = 'flex';
     }
 
@@ -1228,6 +1248,23 @@
         document.getElementById('opt-user-reports-off')?.classList.toggle('active', !val);
         // Immediately refresh so the widget appears/disappears without waiting for the next cycle
         fetchNearbyReportsForHome();
+    }
+
+    function _isMetric() { return localStorage.getItem('unit_system') === 'metric'; }
+
+    function setUnitSystem(val) {
+        localStorage.setItem('unit_system', val);
+        document.getElementById('opt-unit-imperial')?.classList.toggle('active', val === 'imperial');
+        document.getElementById('opt-unit-metric')?.classList.toggle('active', val === 'metric');
+        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
+        loadAll();
+    }
+
+    function setAlertsLanguage(val) {
+        localStorage.setItem('alerts_language', val);
+        document.getElementById('opt-lang-default')?.classList.toggle('active', val === 'default');
+        document.getElementById('opt-lang-en')?.classList.toggle('active', val === 'en');
+        window.alertTranslationCache = {};
     }
 
     function openUserReportInfoModal() {
@@ -1425,6 +1462,7 @@
         document.getElementById('alert-banner').style.display = 'none';
         document.getElementById('alert-stack').innerHTML = '';
         stopWeatherFX();
+        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         loadAll();
         if (document.getElementById('reporting-tab')?.classList.contains('active')) {
             initReportingMap();
@@ -1715,21 +1753,24 @@
         if (!alerts.length) { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; return; }
         window.alertTranslationCache = window.alertTranslationCache || {};
         banner.style.display = 'block'; banner.style.background = '#e65100';
-        banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '') + ' (PirateWeather)';
+        banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '');
         stack.innerHTML = '';
+        const _doTranslate = localStorage.getItem('alerts_language') === 'en';
         for (const alert of alerts) {
             let title = alert.title || 'Weather Alert';
-            if (window.alertTranslationCache[title]) title = window.alertTranslationCache[title];
-            else {
-                try {
-                    const tr = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(title));
-                    const td = await tr.json();
-                    if (td?.[0]?.[0]?.[0]) { window.alertTranslationCache[alert.title] = td[0][0][0]; title = td[0][0][0]; }
-                } catch(e) {}
+            if (_doTranslate) {
+                if (window.alertTranslationCache[title]) title = window.alertTranslationCache[title];
+                else {
+                    try {
+                        const tr = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(title));
+                        const td = await tr.json();
+                        if (td?.[0]?.[0]?.[0]) { window.alertTranslationCache[alert.title] = td[0][0][0]; title = td[0][0][0]; }
+                    } catch(e) {}
+                }
             }
             const expires = alert.expires ? new Date(alert.expires * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : '';
             let desc = alert.description || '';
-            if (desc) {
+            if (desc && _doTranslate) {
                 const cacheKey = 'desc:' + desc.slice(0, 80);
                 if (window.alertTranslationCache[cacheKey]) {
                     desc = window.alertTranslationCache[cacheKey];
@@ -2277,12 +2318,12 @@
             // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
             let temp = useWU ? wu.temp : curr.temperature;
             window.liveTemp = Math.round(temp);
-            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
             liveUV = curr.uvIndex || 0;
             const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
             const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
             liveWindSpd = Math.round(windSpeed);
-            document.getElementById('windVal').innerText = liveWindSpd + ' mph';
+            document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
             setWindCompass(liveWindSpd > 0 && windDir !== null ? windDir : null);
             let humidity = useWU ? wu.humidity : curr.humidity * 100;
             (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
@@ -2316,7 +2357,7 @@
                 }
                 liveFeelsLike = fl;
             })();
-            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
             const presIn = (curr.pressure * 0.02953).toFixed(2);
             let trend = '\u27A1\uFE0F';
             if (lastPressureMb !== null && curr.pressure !== null) {
@@ -2324,7 +2365,7 @@
                 else if (curr.pressure < lastPressureMb - 1) trend = '\u2198\uFE0F';
             }
             lastPressureMb = curr.pressure;
-            document.getElementById('presVal').innerHTML = presIn + ' in <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
+            document.getElementById('presVal').innerHTML = (_isMetric() ? Math.round(curr.pressure) + ' hPa' : presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
             const MAX_PRECIP_INTENSITY = 2.0; // in/hr sanity cap (guards against PirateWeather data glitches)
             let precip1h = 0;
             if (d.minutely?.data?.length) { precip1h = d.minutely.data.reduce(function(sum, m) { return sum + (Math.min(m.precipIntensity || 0, MAX_PRECIP_INTENSITY) / 60); }, 0); }
@@ -2420,10 +2461,10 @@
             // Offline: restore last known current conditions from IndexedDB
             SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
                 if (!c) return;
-                (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                 (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-                document.getElementById('windVal').innerText  = c.wind + ' mph'; setWindCompass(null);
+                (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                document.getElementById('windVal').innerText  = _isMetric() ? Math.round(c.wind * 1.60934) + ' km/h' : c.wind + ' mph'; setWindCompass(null);
                 if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
                 document.getElementById('uv-val').innerText = c.uv || '--';
             });
@@ -2607,14 +2648,14 @@
             // the entire NWS override; update each field only when it is available.
             if (_nwsNeedsOverride && !window.isOutsideUS && nwsObsTempF !== null) {
                 window.liveTemp = Math.round(nwsObsTempF);
-                (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                 if (nwsObsHumidity !== null) {
                     (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                 }
                 document.getElementById('wuStation').style.display = 'none';
                 if (nwsObsWindMph !== null) {
                     liveWindSpd = Math.round(nwsObsWindMph);
-                    document.getElementById('windVal').innerText = liveWindSpd + ' mph';
+                    document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
                     setWindCompass(liveWindSpd > 0 && nwsObsWindDir !== null ? nwsObsWindDir : null);
                 }
                 // Recalculate feels-like with NWS values using the same NWS formulae
@@ -2644,7 +2685,7 @@
                     }
                     liveFeelsLike = fl;
                 })();
-                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                 var _pw = window.pirateCurrently;
                 var _rhForComfort = (nwsObsHumidity !== null) ? Math.round(nwsObsHumidity) : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
                 updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, _rhForComfort, liveWindSpd,
