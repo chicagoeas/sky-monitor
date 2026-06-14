@@ -1251,6 +1251,8 @@
     }
 
     function _isMetric() { return localStorage.getItem('unit_system') === 'metric'; }
+    function _fmtTemp(f) { return _isMetric() ? Math.round((f - 32) * 5 / 9) + '\u00b0C' : Math.round(f) + '\u00b0'; }
+    function _fmtWind(mph) { return _isMetric() ? Math.round(mph * 1.60934) + ' km/h' : Math.round(mph) + ' mph'; }
 
     function setUnitSystem(val) {
         localStorage.setItem('unit_system', val);
@@ -1265,6 +1267,7 @@
         document.getElementById('opt-lang-default')?.classList.toggle('active', val === 'default');
         document.getElementById('opt-lang-en')?.classList.toggle('active', val === 'en');
         window.alertTranslationCache = {};
+        fetchAlerts();
     }
 
     function openUserReportInfoModal() {
@@ -1952,7 +1955,7 @@
         } else if (hasRain) {
             desc = 'Rainy periods likely' + (rainWindow ? ' starting around ' + rainWindow : '') + '. Have an umbrella ready.';
         } else if (maxGust >= 35) {
-            desc = 'Very windy (' + Math.round(maxGust) + ' mph gusts). Outdoor plans may be disrupted.';
+            desc = 'Very windy (' + _fmtWind(maxGust) + ' gusts). Outdoor plans may be disrupted.';
         } else if (avgScore >= 45) {
             desc = 'Marginal — plan carefully and dress for the conditions.';
         } else if (avgScore >= 30) {
@@ -2247,18 +2250,18 @@
             precipProb = (precipProb !== undefined && !isNaN(precipProb)) ? Number(precipProb) : 0;
             cond = cond ? cond.toLowerCase() : 'clear';
             let word = 'FAIR', color = '#ffffff', reason = '';
-            if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + Math.round(feelsLike) + '\u00b0, Stay Hydrated'; }
-            else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + Math.round(feelsLike) + '\u00b0'; }
+            if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + _fmtTemp(feelsLike) + ', Stay Hydrated'; }
+            else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + _fmtTemp(feelsLike); }
             else if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + '), Sunscreen Required'; }
             else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm')) && precipProb >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H) + '% humidity'; }
-            else if (T >= 68 && T <= 78 && H < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = Math.round(T) + '\u00b0, Ideal Conditions'; }
-            else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + Math.round(T) + '\u00b0'; }
-            else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = Math.round(W) + 'mph wind'; }
-            else if (H > 80 && T > 72) { word = 'MUGGY'; color = '#aed581'; reason = Math.round(H) + '% hum, ' + Math.round(T) + '\u00b0'; }
-            else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + Math.round(T) + '\u00b0'; }
-            else if (T < 52) { word = 'CHILLY'; color = '#81d4fa'; reason = Math.round(T) + '\u00b0'; }
-            else if (T >= 65 && T <= 82) { word = 'PLEASANT'; color = '#b9f6ca'; reason = Math.round(T) + '\u00b0, ' + Math.round(H) + '% hum'; }
-            else { word = 'FAIR'; color = '#b9f6ca'; reason = Math.round(T) + '\u00b0, ' + Math.round(W) + 'mph, ' + Math.round(H) + '% hum'; }
+            else if (T >= 68 && T <= 78 && H < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = _fmtTemp(T) + ', Ideal Conditions'; }
+            else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + _fmtTemp(T); }
+            else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = _fmtWind(W) + ' wind'; }
+            else if (H > 80 && T > 72) { word = 'MUGGY'; color = '#aed581'; reason = Math.round(H) + '% hum, ' + _fmtTemp(T); }
+            else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + _fmtTemp(T); }
+            else if (T < 52) { word = 'CHILLY'; color = '#81d4fa'; reason = _fmtTemp(T); }
+            else if (T >= 65 && T <= 82) { word = 'PLEASANT'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + Math.round(H) + '% hum'; }
+            else { word = 'FAIR'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + _fmtWind(W) + ', ' + Math.round(H) + '% hum'; }
             const valElem = document.getElementById('aqi-val'); const descElem = document.getElementById('aqi-desc');
             if (valElem) {
                 valElem.innerText = word; valElem.style.color = color;
@@ -2494,7 +2497,7 @@
                 const card = document.createElement('div'); card.className = 'forecast-card';
                 const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
                 const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + rainAmt.toFixed(2) + '"</div>' : '';
-                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + Math.round(h.temperature) + '\u00b0</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round(h.precipProbability * 100) + '%</div>' + rainLine;
+                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(h.temperature) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round(h.precipProbability * 100) + '%</div>' + rainLine;
                 container.appendChild(card);
             });
         }
@@ -2577,7 +2580,7 @@
             document.getElementById('stationName').innerText = primaryStation.properties.name;
             document.getElementById('meta-name').innerText = primaryStation.properties.name;
             document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
-            document.getElementById('meta-elev').innerText = elevMeters ? Math.round(elevMeters * 3.28084) + ' ft' : 'N/A';
+            document.getElementById('meta-elev').innerText = elevMeters ? (_isMetric() ? Math.round(elevMeters) + ' m' : Math.round(elevMeters * 3.28084) + ' ft') : 'N/A';
             const PW_ICON_MAP = { 'clear-day':'https://api.weather.gov/icons/land/day/skc?size=medium','clear-night':'https://api.weather.gov/icons/land/night/skc?size=medium','rain':'https://api.weather.gov/icons/land/day/rain?size=medium','snow':'https://api.weather.gov/icons/land/day/snow?size=medium','sleet':'https://api.weather.gov/icons/land/day/sleet?size=medium','wind':'https://api.weather.gov/icons/land/day/wind_bkn?size=medium','fog':'https://api.weather.gov/icons/land/day/fog?size=medium','cloudy':'https://api.weather.gov/icons/land/day/ovc?size=medium','partly-cloudy-day':'https://api.weather.gov/icons/land/day/few?size=medium','partly-cloudy-night':'https://api.weather.gov/icons/land/night/few?size=medium','thunderstorm':'https://api.weather.gov/icons/land/day/tsra?size=medium' };
             const PW_ICON_TO_TEXT = { 'clear-day':'Clear','clear-night':'Clear','rain':'Rain','snow':'Snow','sleet':'Sleet','wind':'Windy','fog':'Fog','cloudy':'Cloudy','partly-cloudy-day':'Partly Cloudy','partly-cloudy-night':'Partly Cloudy','thunderstorm':'Thunderstorm' };
             let nwsCond = '';
@@ -3119,8 +3122,8 @@
         else if (window.alertMaxHailIn >= 1.75) { score += 1; factorList.push({ label: 'Hail ' + window.alertMaxHailIn.toFixed(1) + '"', color: '#ff9100' }); }
 
         // High wind gust (NWS-reported from warning parameters)
-        if (window.alertMaxWindGustMph >= 80)   { score += 2; factorList.push({ label: 'Gust ' + window.alertMaxWindGustMph + ' mph', color: '#ff5722' }); }
-        else if (window.alertMaxWindGustMph >= 65) { score += 1; factorList.push({ label: 'Gust ' + window.alertMaxWindGustMph + ' mph', color: '#ff9100' }); }
+        if (window.alertMaxWindGustMph >= 80)   { score += 2; factorList.push({ label: 'Gust ' + _fmtWind(window.alertMaxWindGustMph), color: '#ff5722' }); }
+        else if (window.alertMaxWindGustMph >= 65) { score += 1; factorList.push({ label: 'Gust ' + _fmtWind(window.alertMaxWindGustMph), color: '#ff9100' }); }
 
         // Flash flood catastrophic designation (below FFE level but still extreme)
         if (window.alertHasCatastrophicFlood && !window.activeFFE) {
@@ -3153,9 +3156,9 @@
 
         // ── 9. Observed Atmospheric Conditions ────────────────────────────
         // Wind speed (station-observed)
-        if (liveWindSpd >= 58)     { score += 3; factorList.push({ label: 'Wind ' + liveWindSpd + ' mph', color: '#ff1744' }); }
-        else if (liveWindSpd >= 40) { score += 2; factorList.push({ label: 'Wind ' + liveWindSpd + ' mph', color: '#ff9100' }); }
-        else if (liveWindSpd >= 30) { score += 1; factorList.push({ label: 'Wind ' + liveWindSpd + ' mph', color: '#ffeb3b' }); }
+        if (liveWindSpd >= 58)     { score += 3; factorList.push({ label: 'Wind ' + _fmtWind(liveWindSpd), color: '#ff1744' }); }
+        else if (liveWindSpd >= 40) { score += 2; factorList.push({ label: 'Wind ' + _fmtWind(liveWindSpd), color: '#ff9100' }); }
+        else if (liveWindSpd >= 30) { score += 1; factorList.push({ label: 'Wind ' + _fmtWind(liveWindSpd), color: '#ffeb3b' }); }
 
         // Precipitation intensity — only elevates score when a Flash Flood Warning is active
         // (regular Flood Warnings are river/drainage events, not rain-rate dependent)
@@ -3165,11 +3168,11 @@
 
         // Atmospheric extremes (feels-like temperature)
         const feels = liveFeelsLike;
-        if (feels >= 115)      { score += 3; factorList.push({ label: 'Feels ' + Math.round(feels) + '\u00b0F', color: '#ff1744' }); }
-        else if (feels >= 105) { score += 2; factorList.push({ label: 'Feels ' + Math.round(feels) + '\u00b0F', color: '#ff5722' }); }
-        else if (feels >= 95 && hazardCats.heat) { score += 1; factorList.push({ label: 'Feels ' + Math.round(feels) + '\u00b0F', color: '#ff8a65' }); }
-        if (feels <= -35)      { score += 3; factorList.push({ label: 'Feels ' + Math.round(feels) + '\u00b0F', color: '#90caf9' }); }
-        else if (feels <= -20) { score += 2; factorList.push({ label: 'Feels ' + Math.round(feels) + '\u00b0F', color: '#b0bec5' }); }
+        if (feels >= 115)      { score += 3; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#ff1744' }); }
+        else if (feels >= 105) { score += 2; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#ff5722' }); }
+        else if (feels >= 95 && hazardCats.heat) { score += 1; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#ff8a65' }); }
+        if (feels <= -35)      { score += 3; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#90caf9' }); }
+        else if (feels <= -20) { score += 2; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#b0bec5' }); }
 
         // Rapid pressure fall (meteorological instability signal)
         const presEl = document.getElementById('presVal');
@@ -3241,12 +3244,19 @@
             if (extraOpts.yCallback) opts.scales.y.ticks.callback = extraOpts.yCallback;
             window.chartInstances[id] = new Chart(canvas, { type: type, data: { labels: labels, datasets: [data] }, options: opts });
         }
-        const pressureVals = hrs.map(function(h) { return h.pressure ? parseFloat((h.pressure * 0.02953).toFixed(2)) : null; });
-        makeChart('chart-pressure', 'line', { data: pressureVals, label: 'Pressure (inHg)', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true });
-        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return parseFloat((TdC * 9 / 5 + 32).toFixed(1)); });
-        makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: 'Dewpoint (\u00b0F)', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return v + '\u00b0'; } });
-        const windVals = hrs.map(function(h) { return h.windGust || h.windSpeed || 0; });
-        makeChart('chart-wind', 'bar', { data: windVals, label: 'Wind Gust (mph)', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return v + ' mph'; } });
+        // Update analytics labels for current unit system
+        var _pLbl = document.getElementById('chart-pressure')?.previousElementSibling;
+        var _dLbl = document.getElementById('chart-dewpoint')?.previousElementSibling;
+        var _wLbl = document.getElementById('chart-wind')?.previousElementSibling;
+        if (_pLbl) _pLbl.innerHTML = '\uD83C\uDF21\uFE0F Pressure Trend (' + (_isMetric() ? 'hPa' : 'inHg') + ')';
+        if (_dLbl) _dLbl.innerHTML = '\uD83D\uDCA7 Dewpoint Trend (' + (_isMetric() ? '\u00b0C' : '\u00b0F') + ')';
+        if (_wLbl) _wLbl.innerHTML = '\uD83D\uDCA8 Wind Gust Trend (' + (_isMetric() ? 'km/h' : 'mph') + ')';
+        const pressureVals = hrs.map(function(h) { return h.pressure ? (_isMetric() ? Math.round(h.pressure) : parseFloat((h.pressure * 0.02953).toFixed(2))) : null; });
+        makeChart('chart-pressure', 'line', { data: pressureVals, label: _isMetric() ? 'Pressure (hPa)' : 'Pressure (inHg)', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return v + (_isMetric() ? ' hPa' : ' in'); } });
+        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return _isMetric() ? parseFloat(TdC.toFixed(1)) : parseFloat((TdC * 9 / 5 + 32).toFixed(1)); });
+        makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: _isMetric() ? 'Dewpoint (\u00b0C)' : 'Dewpoint (\u00b0F)', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return v + '\u00b0'; } });
+        const windVals = hrs.map(function(h) { return _isMetric() ? Math.round((h.windGust || h.windSpeed || 0) * 1.60934) : (h.windGust || h.windSpeed || 0); });
+        makeChart('chart-wind', 'bar', { data: windVals, label: _isMetric() ? 'Wind Gust (km/h)' : 'Wind Gust (mph)', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return v + (_isMetric() ? ' km/h' : ' mph'); } });
         let accum = 0;
         const precipVals = hrs.map(function(h) { accum += (h.precipAccumulation || h.precipIntensity || 0); return parseFloat(accum.toFixed(3)); });
         makeChart('chart-precip', 'line', { data: precipVals, label: 'Precip Accum (in)', borderColor: '#29b6f6', backgroundColor: 'rgba(41,182,246,0.12)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.3, fill: true, spanGaps: true }, { yMin: 0, yCallback: function(v) { return v + '"'; } });
@@ -3403,7 +3413,7 @@
             const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
             const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer'; card.style.position = 'relative';
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
-            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + high + '\u00b0 / <span style="color:white">' + low + '\u00b0</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + precipAmt.toFixed(2) + '"' : '') + '</div>' : '');
+            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + (_isMetric() && high !== '--' ? Math.round((high-32)*5/9) + '\u00b0C' : high + '\u00b0') + ' / <span style="color:white">' + (_isMetric() && low !== '--' ? Math.round((low-32)*5/9) + '\u00b0C' : low + '\u00b0') + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + precipAmt.toFixed(2) + '"' : '') + '</div>' : '');
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
@@ -3464,11 +3474,11 @@
             const detailRows = [
                 humidity[part] != null ? '<span style="opacity:0.55">\uD83D\uDCA7 Humidity</span><span>' + humidity[part] + '%</span>' : null,
                 (uvIndex[part] != null && uvIndex[part] > 0) ? '<span style="opacity:0.55">\u2600\uFE0F UV Index</span><span>' + uvIndex[part] + (uvDesc2[part] ? ' \u2014 ' + uvDesc2[part] : '') + '</span>' : null,
-                feelsLikeParts[part] != null ? '<span style="opacity:0.55">\uD83C\uDF21\uFE0F Feels Like</span><span>' + feelsLikeParts[part] + '\u00b0</span>' : null,
+                feelsLikeParts[part] != null ? '<span style="opacity:0.55">\uD83C\uDF21\uFE0F Feels Like</span><span>' + _fmtTemp(feelsLikeParts[part]) + '</span>' : null,
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + snowQpf[part] + '"</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + lohi[0] : 'Low: ' + lohi[1]) + '\u00b0</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + qpf[part] + '"' : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0C' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0C' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(narratives[part] ?? '--') + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + qpf[part] + '"' : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
@@ -3529,17 +3539,17 @@
         const cond = (h.summary ?? h.icon ?? '').toLowerCase();
         let word = 'FAIR', color = '#ffffff', reason = '';
         if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + ')'; }
-        else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + Math.round(feelsLike) + '\u00b0'; }
+        else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + _fmtTemp(feelsLike); }
         else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm') || cond.includes('sleet')) && (h.precipProbability ?? 0) * 100 >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H2) + '% hum'; }
-        else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + Math.round(feelsLike) + '\u00b0'; }
-        else if (T >= 68 && T <= 78 && H2 < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = Math.round(T) + '\u00b0, Ideal'; }
-        else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + Math.round(T) + '\u00b0'; }
-        else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = Math.round(W) + ' mph wind'; }
-        else if (H2 > 80 && T > 72) { word = 'MUGGY'; color = '#aed581'; reason = Math.round(H2) + '% hum, ' + Math.round(T) + '\u00b0'; }
-        else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + Math.round(T) + '\u00b0'; }
-        else if (T < 52) { word = 'CHILLY'; color = '#81d4fa'; reason = Math.round(T) + '\u00b0'; }
-        else if (T >= 65 && T <= 82) { word = 'PLEASANT'; color = '#b9f6ca'; reason = Math.round(T) + '\u00b0, ' + Math.round(H2) + '% hum'; }
-        else { word = 'FAIR'; color = '#b9f6ca'; reason = Math.round(T) + '\u00b0, ' + Math.round(W) + ' mph'; }
+        else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + _fmtTemp(feelsLike); }
+        else if (T >= 68 && T <= 78 && H2 < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = _fmtTemp(T) + ', Ideal'; }
+        else if (cond.includes('snow') || cond.includes('flurries')) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + _fmtTemp(T); }
+        else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = _fmtWind(W) + ' wind'; }
+        else if (H2 > 80 && T > 72) { word = 'MUGGY'; color = '#aed581'; reason = Math.round(H2) + '% hum, ' + _fmtTemp(T); }
+        else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + _fmtTemp(T); }
+        else if (T < 52) { word = 'CHILLY'; color = '#81d4fa'; reason = _fmtTemp(T); }
+        else if (T >= 65 && T <= 82) { word = 'PLEASANT'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + Math.round(H2) + '% hum'; }
+        else { word = 'FAIR'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + _fmtWind(W); }
         return { word: word, color: color, reason: reason };
     }
 
@@ -3571,10 +3581,10 @@
             return hours.map(function(h) {
                 const c = computeHourComfort(h);
                 const hourLabel = new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
-                const temp = Math.round(h.temperature ?? 0);
+                const temp = _fmtTemp(h.temperature ?? 0);
                 const iconMap2 = { 'clear-day':'\u2600\uFE0F','clear-night':'\uD83C\uDF19','rain':'\uD83C\uDF27\uFE0F','snow':'\u2744\uFE0F','sleet':'\uD83C\uDF28\uFE0F','wind':'\uD83D\uDCA8','fog':'\uD83C\uDF2B\uFE0F','cloudy':'\u2601\uFE0F','partly-cloudy-day':'\u26C5','partly-cloudy-night':'\u2601\uFE0F\uD83C\uDF19','thunderstorm':'\u26C8\uFE0F' };
                 const icon = iconMap2[h.icon] || '\uD83C\uDF21\uFE0F';
-                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><div style="min-width:42px;font-size:0.75em;color:#aaa;text-align:right;">' + hourLabel + '</div><div style="font-size:1.3em;min-width:24px;text-align:center;">' + icon + '</div><div style="min-width:36px;font-size:0.9em;font-weight:bold;color:var(--accent);">' + temp + '\u00b0</div><div style="flex:1;"><div style="font-weight:900;font-size:0.85em;color:' + c.color + ';letter-spacing:0.5px;">' + c.word + '</div><div style="font-size:0.68em;opacity:0.65;">' + c.reason + '</div></div></div>';
+                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><div style="min-width:42px;font-size:0.75em;color:#aaa;text-align:right;">' + hourLabel + '</div><div style="font-size:1.3em;min-width:24px;text-align:center;">' + icon + '</div><div style="min-width:36px;font-size:0.9em;font-weight:bold;color:var(--accent);">' + temp + '</div><div style="flex:1;"><div style="font-weight:900;font-size:0.85em;color:' + c.color + ';letter-spacing:0.5px;">' + c.word + '</div><div style="font-size:0.68em;opacity:0.65;">' + c.reason + '</div></div></div>';
             }).join('');
         }
         window._comfortDayIdx = 0;
