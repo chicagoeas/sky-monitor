@@ -1907,6 +1907,12 @@
             boxEl.style.display = 'block';
             return;
         }
+        if (window.activeHeatWarning) {
+            if (scoreEl) scoreEl.innerText = 0;
+            if (descEl) descEl.innerText = 'Not recommended — active extreme heat warning';
+            boxEl.style.display = 'block';
+            return;
+        }
         // Weighted average: closer hours count more (first 4h weight 3, next 4h weight 2, last 4h weight 1)
         const weights = todayHours.map(function(_, i) { return i < 4 ? 3 : i < 8 ? 2 : 1; });
         const totalWeight = weights.reduce(function(s, w) { return s + w; }, 0);
@@ -2003,6 +2009,7 @@
         window.alertHasConsiderableWind = false;
         window.alertHasCatastrophicFlood = false;
         window.alertHasObservedCertainty = false;
+        window.activeHeatWarning = false;
 
         if (window.isOutsideUS) {
             stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
@@ -2063,7 +2070,7 @@
                 else banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
 
                 if (evtLowerTop.includes('warning') || isEmergency) {
-                    const expTimeStr = topP.expires || topP.ends;
+                    const expTimeStr = topP.ends || topP.expires;
                     if (expTimeStr) {
                         const expTime = new Date(expTimeStr).getTime();
                         (function(_gen, _exp, _prefix, _evt) {
@@ -2115,6 +2122,8 @@
                         window.activeSVRWarning = true; window.activeStormWarning = true;
                         const dmgThreat = (p.parameters && p.parameters.thunderstormDamageThreat && p.parameters.thunderstormDamageThreat[0]) || '';
                         if (dmgThreat.includes('DESTRUCTIVE')) window.activeSVRDestructive = true;
+                    } else if (evt.includes('extreme heat warning') || evt.includes('excessive heat warning') || evt.includes('heat emergency')) {
+                        window.activeHeatWarning = true; window.activeStormWarning = true;
                     } else if (evt.includes('warning')) window.activeStormWarning = true;
 
                     // v1.0.6: Extract extended sub-parameters for threat intelligence
@@ -2224,6 +2233,7 @@
             } else {
                 stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             }
+            if (window.pirateHourlyData) computeOutdoorScore(window.pirateHourlyData);
         } catch(e) {}
     }
 
@@ -2969,7 +2979,7 @@
         const factorList = [];
         const hazardCats = {}; // tracks distinct hazard categories active
 
-        // ── 1. SPC Convective Outlook ──────────────────────────────────────
+        // ── 1. SPC Convective Outlook ─────────────────or�────────────────────
         const spc = window.spcRisk;
         const SPC_SCORES = { TSTM: 0, MRGL: 1, SLGT: 2, ENH: 3, MDT: 5, HIGH: 7 };
         const SPC_COLORS = { HIGH: '#e040fb', MDT: '#ff1744', ENH: '#ff9100', SLGT: '#ffeb3b', MRGL: '#7BB07B', TSTM: '#4fc3f7' };
@@ -3180,7 +3190,7 @@
         else if (feels >= 105) { score += 2; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#ff5722' }); }
         else if (feels >= 95 && hazardCats.heat) { score += 1; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#ff8a65' }); }
         if (feels <= -35)      { score += 3; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#90caf9' }); }
-        else if (feels <= -20) { score += 2; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#b0bec5' }); }
+        else if (feels <= -20) { scor� += 2; factorList.push({ label: 'Feels ' + _fmtTemp(feels), color: '#b0bec5' }); }
 
         // Rapid pressure fall (meteorological instability signal)
         const presEl = document.getElementById('presVal');
