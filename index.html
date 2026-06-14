@@ -642,7 +642,7 @@
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:20px;">
             <div class="toolkit-box" style="margin-bottom:0; text-align:center; cursor:pointer; min-width:0; overflow:hidden;" onclick="openComfortModal()" title="Tap for hourly comfort">
                 <div class="toolkit-header" style="justify-content:center;"><span>COMFORT INDEX</span></div>
-                <div id="aqi-val" style="font-size:26px; font-weight:900; margin:10px 0; white-space:nowrap; overflow:hidden; display:flex; justify-content:center; align-items:center; width:100%;">--</div>
+                <div id="aqi-val" style="font-size:26px; font-weight:900; margin:10px 0; white-space:nowrap; overflow:hidden;">--</div>
                 <div id="aqi-desc" style="font-size:0.75em; opacity:0.8;">Loading...</div>
                 <div style="font-size:0.6em; color:var(--primary); opacity:0.7; margin-top:4px;">TAP FOR HOURLY</div>
             </div>
@@ -855,9 +855,7 @@
     let particles = [];
     let lastPressureMb = null;
     let lastSyncTime = null;
-    let _isOffline = !navigator.onLine;
-    window.addEventListener('offline', function() { _isOffline = true; });
-    window.addEventListener('online',  function() { _isOffline = false; });
+    let _isOffline = false;
     let liveWindSpd = 0;
     let livePrecipInt = 0;
     let liveFeelsLike = 0;
@@ -880,12 +878,6 @@
     window.pirateCurrently = null;
     window.pirateAlerts = [];
     window.wuDeviates = false;
-    window.omPrecipProb = 0;
-    let liveHumidity = 50;
-    let _owCondSummary = '';
-    let _lastPirateCallMs = 0;
-    const PIRATE_MIN_INTERVAL_MS = 5 * 60 * 1000;
-    let _loadAllInProgress = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
     window.activeStormWarning = false;
@@ -930,22 +922,15 @@
     }
 
     function updateTimestamp() {
-        const el = document.getElementById('sync-time-display');
-        if (!el) return;
-        if (_isOffline) {
-            if (lastSyncTime) {
-                const diff = Math.floor((new Date() - lastSyncTime) / 1000);
-                const timeStr = diff < 60 ? diff + 's ago' : Math.floor(diff / 60) + 'm ago';
-                el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
-            } else {
-                el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE</span>';
-            }
-            return;
-        }
         if (!lastSyncTime) return;
         const diff = Math.floor((new Date() - lastSyncTime) / 1000);
         const timeStr = diff < 60 ? diff + 's ago' : Math.floor(diff / 60) + 'm ago';
-        el.innerText = 'UPDATED: ' + timeStr;
+        const el = document.getElementById('sync-time-display');
+        if (_isOffline) {
+            el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
+        } else {
+            el.innerText = 'UPDATED: ' + timeStr;
+        }
     }
     setInterval(updateTimestamp, 1000);
 
@@ -1283,22 +1268,12 @@
     }
 
     async function verifyRecaptcha() {
-        // Must be online — reCAPTCHA cannot issue a valid token offline and
-        // the JS SDK may silently resolve with a bad token, granting false access.
-        if (!navigator.onLine) {
-            alert('You must be connected to the internet to verify. Please check your connection and try again.');
-            return;
-        }
         var btn = document.getElementById('recaptcha-verify-btn');
         var statusEl = document.getElementById('recaptcha-status');
         if (btn) { btn.textContent = '\u23F3 Verifying...'; btn.disabled = true; btn.style.opacity = '0.7'; }
         if (statusEl) { statusEl.textContent = ''; }
         try {
-            if (typeof grecaptcha === 'undefined') {
-                alert('Verification service not loaded. Please reload the page and try again.');
-                if (btn) { btn.textContent = '\u2713 Confirm I\'m Human'; btn.disabled = false; btn.style.opacity = '1'; }
-                return;
-            }
+            if (typeof grecaptcha === 'undefined') throw new Error('reCAPTCHA not loaded yet');
             const token = await new Promise(function(resolve, reject) {
                 grecaptcha.ready(function() {
                     grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: 'report_gate' }).then(resolve).catch(reject);
@@ -1311,9 +1286,8 @@
             if (statusEl) { statusEl.textContent = 'Access granted.'; statusEl.style.color = 'var(--success)'; }
             setTimeout(function() { closeRecaptchaGate(false); }, 650);
         } catch(e) {
-            alert('Verification failed — please try again.');
             if (btn) { btn.textContent = '\u2713 Confirm I\'m Human'; btn.disabled = false; btn.style.opacity = '1'; }
-            if (statusEl) { statusEl.textContent = ''; }
+            if (statusEl) { statusEl.textContent = 'Verification failed \u2014 please try again.'; statusEl.style.color = 'var(--danger)'; }
         }
     }
 
@@ -1341,6 +1315,7 @@
         if (spcCountdown) spcCountdown.style.display = (mode === 'specific') ? '' : 'none';
         const threatFactors = document.getElementById('threat-factors');
         if (threatFactors) threatFactors.style.display = (mode === 'specific') ? '' : 'none';
+        loadAll();
     }
 
     function updateAtmosphereTheme() {
@@ -2203,10 +2178,6 @@
     function fitComfortText(elem) {
         const len = (elem.textContent || '').length || 1;
         const isMobile = window.innerWidth <= 600;
-        elem.style.display = 'flex';
-        elem.style.justifyContent = 'center';
-        elem.style.alignItems = 'center';
-        elem.style.width = '100%';
         if (!isMobile) {
             elem.style.fontSize = '28px';
             elem.style.whiteSpace = 'nowrap';
@@ -2270,15 +2241,91 @@
         blip.style.transform = 'translate(' + (radius * Math.cos(angleRad)) + 'px, ' + (radius * Math.sin(angleRad)) + 'px)';
     }
 
+    var _lastPirateFetch = 0;
+    var _lastPirateLat = null;
+    var _lastPirateLon = null;
     async function fetchPirate() {
-        if (Date.now() - _lastPirateCallMs < PIRATE_MIN_INTERVAL_MS) return;
-        _lastPirateCallMs = Date.now();
+        const now = Date.now();
+        const locationChanged = (lat !== _lastPirateLat || lon !== _lastPirateLon);
+        if (!locationChanged && now - _lastPirateFetch < 300000) return; // throttle to 5 min
+        _lastPirateFetch = now;
+        _lastPirateLat = lat;
+        _lastPirateLon = lon;
         try {
-            const resP = await fetch('https://api.pirateweather.net/forecast/' + PIRATE_API_KEY + '/' + lat + ',' + lon + '?units=us&exclude=flags');
+            const resP = await fetch('https://api.pirateweather.net/forecast/' + PIRATE_API_KEY + '/' + lat + ',' + lon + '?units=us');
             const d = await resP.json();
-            window.pirateCurrently = d.currently || null;
+            stationTzOffset = d.offset * 3600;
+            const wu = await fetchWUData(lat, lon);
+            const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
+            // WU PWS is always the primary source. fetchNWSChain compares WU vs NWS obs
+            // and overrides the display if they diverge by >5°F / >10% humidity.
+            // Never compare WU against PirateWeather — Pirate can be significantly lagged.
+            const useWU = wuAvailable;
+            window.wuData = wu || null;
+            window.wuDeviates = false; // reset; fetchNWSChain sets this after WU vs NWS comparison
+            const wuStationEl = document.getElementById('wuStation');
+            const wuLinkEl = document.getElementById('wuLink');
+            if (useWU && wu.stationId) {
+                wuLinkEl.innerText = wu.stationId; wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
+                wuStationEl.style.display = 'block';
+            } else wuStationEl.style.display = 'none';
+            const curr = d.currently;
+            window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
-            const MAX_PRECIP_INTENSITY = 2.0;
+            const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
+            if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
+            // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
+            let temp = useWU ? wu.temp : curr.temperature;
+            window.liveTemp = Math.round(temp);
+            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+            liveUV = curr.uvIndex || 0;
+            const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
+            const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
+            liveWindSpd = Math.round(windSpeed);
+            document.getElementById('windVal').innerText = liveWindSpd + ' mph';
+            setWindCompass(liveWindSpd > 0 && windDir !== null ? windDir : null);
+            let humidity = useWU ? wu.humidity : curr.humidity * 100;
+            (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+            // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
+            (function() {
+                var T = temp, W = liveWindSpd, RH = humidity, fl = T;
+                if (T <= 50 && W >= 3) {
+                    // NWS Wind Chill formula
+                    fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
+                } else if (T >= 70) {
+                    // NWS Heat Index — simplified screening first
+                    var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
+                    if (hiSimple >= 80) {
+                        // Full Rothfusz polynomial (valid ≥80°F)
+                        var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH
+                           - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
+                           + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
+                           - 0.00000199*T*T*RH*RH;
+                        // NWS adjustment: low humidity correction
+                        if (RH < 13 && T >= 80 && T <= 112)
+                            hiRoth -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
+                        // NWS adjustment: high humidity / mild temp correction
+                        if (RH > 85 && T >= 80 && T <= 87)
+                            hiRoth += (RH - 85) / 10 * (87 - T) / 5;
+                        // Rothfusz overestimates vs. the Steadman chart in the 80-90°F range.
+                        // Average T and the polynomial result to match NWS table / TWC values.
+                        fl = (T + hiRoth) / 2;
+                    } else {
+                        fl = hiSimple;
+                    }
+                }
+                liveFeelsLike = fl;
+            })();
+            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+            const presIn = (curr.pressure * 0.02953).toFixed(2);
+            let trend = '\u27A1\uFE0F';
+            if (lastPressureMb !== null && curr.pressure !== null) {
+                if (curr.pressure > lastPressureMb + 1) trend = '\u2197\uFE0F';
+                else if (curr.pressure < lastPressureMb - 1) trend = '\u2198\uFE0F';
+            }
+            lastPressureMb = curr.pressure;
+            document.getElementById('presVal').innerHTML = presIn + ' in <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
+            const MAX_PRECIP_INTENSITY = 2.0; // in/hr sanity cap (guards against PirateWeather data glitches)
             let precip1h = 0;
             if (d.minutely?.data?.length) { precip1h = d.minutely.data.reduce(function(sum, m) { return sum + (Math.min(m.precipIntensity || 0, MAX_PRECIP_INTENSITY) / 60); }, 0); }
             else precip1h = Math.min(d.hourly?.data?.[0]?.precipAccumulation || 0, MAX_PRECIP_INTENSITY);
@@ -2340,11 +2387,47 @@
                 dirVal.innerText = 'NO CELLS DETECTED'; distVal.innerText = '--'; toaVal.innerText = 'N/A';
             }
             updateRadarUI(currentDist, currentBearing);
+            const uv = d.currently?.uvIndex || 0;
+            document.getElementById('uv-val').innerText = uv;
+            let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
+            if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
+            if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
+            if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
+            if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
+            document.getElementById('uv-val').style.color = uvCol;
+            document.getElementById('uv-desc').innerText = uvDesc;
             if (d.daily?.data?.[0]) {
                 document.getElementById('moonVal').innerText = getMoonPhaseName(d.daily.data[0].moonPhase);
                 moonPhaseVal = d.daily.data[0].moonPhase || 0;
             }
-        } catch(e) {}
+            if (d.hourly && d.hourly.data) {
+                window.pirateHourlyData = d.hourly.data;
+                window.pirateTimezoneOffset = d.offset || 0;
+                computeOutdoorScore(d.hourly.data);
+            }
+            updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability ?? 0) * 100);
+            // Save current conditions to IndexedDB for offline restore
+            SkyDB.set(SkyDB.S.weather, 'last_conditions', {
+                ts: Date.now(),
+                temp: Math.round(temp), humidity: Math.round(humidity),
+                feelsLike: Math.round(liveFeelsLike), wind: liveWindSpd,
+                condition: curr.summary || '', uv: liveUV,
+                pressure: curr.pressure ? (curr.pressure * 0.02953).toFixed(2) : null
+            });
+            _isOffline = false;
+        } catch(e) {
+            _isOffline = true;
+            // Offline: restore last known current conditions from IndexedDB
+            SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
+                if (!c) return;
+                (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+                (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                document.getElementById('windVal').innerText  = c.wind + ' mph'; setWindCompass(null);
+                if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
+                document.getElementById('uv-val').innerText = c.uv || '--';
+            });
+        }
     }
 
     function renderPirateHourly(hourlyData, timezoneOffset, targetCont) {
@@ -2401,94 +2484,20 @@
     }
     setInterval(updateStationClock, 1000);
 
-    async function fetchOWCurrent() {
+    async function fetchOpenWeather() {
         try {
-            const wu = await fetchWUData(lat, lon);
-            const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
-            window.wuData = wu || null;
-            window.wuDeviates = false;
-            const wuStationEl = document.getElementById('wuStation');
-            const wuLinkEl = document.getElementById('wuLink');
-            if (wuAvailable && wu.stationId) {
-                wuLinkEl.innerText = wu.stationId; wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
-                wuStationEl.style.display = 'block';
-            } else wuStationEl.style.display = 'none';
-            const res = await fetch('https://api.openweathermap.org/data/2.5/weather?lat=' + lat + '&lon=' + lon + '&appid=' + OW_API_KEY + '&units=imperial');
+            const res = await fetch('https://api.openweathermap.org/data/2.5/forecast?lat=' + lat + '&lon=' + lon + '&appid=' + OW_API_KEY + '&units=imperial');
             const d = await res.json();
-            stationTzOffset = d.timezone;
-            localRiseTime = d.sys.sunrise * 1000;
-            localSetTime = d.sys.sunset * 1000;
-            document.getElementById('riseVal').innerText = formatOffsetTime(d.sys.sunrise, d.timezone);
-            document.getElementById('setVal').innerText = formatOffsetTime(d.sys.sunset, d.timezone);
+            stationTzOffset = d.city.timezone;
+            localRiseTime = d.city.sunrise * 1000;
+            localSetTime = d.city.sunset * 1000;
+            document.getElementById('riseVal').innerText = formatOffsetTime(d.city.sunrise, d.city.timezone);
+            document.getElementById('setVal').innerText = formatOffsetTime(d.city.sunset, d.city.timezone);
             const nowMs = Date.now();
             isNightAtStation = nowMs < localRiseTime || nowMs > localSetTime;
             updateAtmosphereTheme();
-            SkyDB.set(SkyDB.S.weather, 'openweather', { ts: Date.now(), sunrise: d.sys.sunrise, sunset: d.sys.sunset, timezone: d.timezone });
-            let temp = wuAvailable ? wu.temp : d.main.temp;
-            window.liveTemp = Math.round(temp);
-            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
-            const windSpeed = (wuAvailable && wu.windSpeed !== null) ? wu.windSpeed : d.wind.speed;
-            const windDir = (wuAvailable && wu.windDir !== null) ? wu.windDir : d.wind.deg;
-            liveWindSpd = Math.round(windSpeed);
-            document.getElementById('windVal').innerText = liveWindSpd + ' mph';
-            setWindCompass(liveWindSpd > 0 && windDir !== null ? windDir : null);
-            liveHumidity = wuAvailable ? wu.humidity : d.main.humidity;
-            (function(){ var _hv = Math.round(liveHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-            (function() {
-                var T = temp, W = liveWindSpd, RH = liveHumidity, fl = T;
-                if (T <= 50 && W >= 3) {
-                    fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
-                } else if (T >= 70) {
-                    var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
-                    if (hiSimple >= 80) {
-                        var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH
-                           - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
-                           + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
-                           - 0.00000199*T*T*RH*RH;
-                        if (RH < 13 && T >= 80 && T <= 112)
-                            hiRoth -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
-                        if (RH > 85 && T >= 80 && T <= 87)
-                            hiRoth += (RH - 85) / 10 * (87 - T) / 5;
-                        fl = (T + hiRoth) / 2;
-                    } else {
-                        fl = hiSimple;
-                    }
-                }
-                liveFeelsLike = fl;
-            })();
-            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-            const pressHPa = d.main.pressure;
-            const presIn = (pressHPa * 0.02953).toFixed(2);
-            let trend = '\u27A1\uFE0F';
-            if (lastPressureMb !== null && pressHPa !== null) {
-                if (pressHPa > lastPressureMb + 1) trend = '\u2197\uFE0F';
-                else if (pressHPa < lastPressureMb - 1) trend = '\u2198\uFE0F';
-            }
-            lastPressureMb = pressHPa;
-            document.getElementById('presVal').innerHTML = presIn + ' in <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
-            const owDesc = d.weather && d.weather[0] ? d.weather[0].description : '';
-            _owCondSummary = owDesc;
-            const vibeEl = document.getElementById('vibeCheck');
-            if (vibeEl && owDesc) vibeEl.innerText = owDesc.charAt(0).toUpperCase() + owDesc.slice(1);
-            SkyDB.set(SkyDB.S.weather, 'last_conditions', {
-                ts: Date.now(),
-                temp: Math.round(temp), humidity: Math.round(liveHumidity),
-                feelsLike: Math.round(liveFeelsLike), wind: liveWindSpd,
-                condition: _owCondSummary, uv: liveUV,
-                pressure: presIn
-            });
-            _isOffline = false;
+            SkyDB.set(SkyDB.S.weather, 'openweather', { ts: Date.now(), sunrise: d.city.sunrise, sunset: d.city.sunset, timezone: d.city.timezone });
         } catch(e) {
-            _isOffline = true;
-            SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
-                if (!c) return;
-                (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
-                (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-                document.getElementById('windVal').innerText  = c.wind + ' mph'; setWindCompass(null);
-                if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
-                document.getElementById('uv-val').innerText = c.uv || '--';
-            });
             SkyDB.get(SkyDB.S.weather, 'openweather').then(function(c) {
                 if (!c) return;
                 stationTzOffset = c.timezone;
@@ -2498,83 +2507,6 @@
                 document.getElementById('setVal').innerText = formatOffsetTime(c.sunset, c.timezone);
                 isNightAtStation = Date.now() < localRiseTime || Date.now() > localSetTime;
                 updateAtmosphereTheme();
-            });
-        }
-    }
-
-    function _wmoToIcon(code, night) {
-        if (code === 0) return night ? 'clear-night' : 'clear-day';
-        if (code <= 2) return night ? 'partly-cloudy-night' : 'partly-cloudy-day';
-        if (code === 3) return 'cloudy';
-        if (code === 45 || code === 48) return 'fog';
-        if (code >= 51 && code <= 67) return 'rain';
-        if (code >= 71 && code <= 77) return 'snow';
-        if (code >= 80 && code <= 82) return 'rain';
-        if (code === 85 || code === 86) return 'snow';
-        if (code >= 95) return 'thunderstorm';
-        return night ? 'clear-night' : 'clear-day';
-    }
-
-    function _wmoToText(code) {
-        var m = {0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Foggy',48:'Icy fog',51:'Light drizzle',53:'Drizzle',55:'Heavy drizzle',61:'Light rain',63:'Moderate rain',65:'Heavy rain',66:'Freezing rain',67:'Heavy freezing rain',71:'Light snow',73:'Moderate snow',75:'Heavy snow',77:'Snow grains',80:'Rain showers',81:'Moderate showers',82:'Heavy showers',85:'Snow showers',86:'Heavy snow showers',95:'Thunderstorm',96:'Thunderstorm w/ Hail',99:'Thunderstorm w/ Heavy Hail'};
-        return m[code] || 'Mixed conditions';
-    }
-
-    async function fetchOpenMeteoHourly() {
-        try {
-            const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-                '&hourly=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,precipitation,wind_speed_10m,wind_direction_10m,wind_gusts_10m,uv_index,weather_code,pressure_msl' +
-                '&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&forecast_days=3';
-            const res = await fetch(url);
-            const d = await res.json();
-            if (!d.hourly || !d.hourly.time) return;
-            const tzOffSec = d.utc_offset_seconds || 0;
-            window.pirateTimezoneOffset = tzOffSec / 3600;
-            const nowSec = Math.floor(Date.now() / 1000);
-            const h = d.hourly;
-            const pwHourly = h.time.map(function(t, i) {
-                const unix = Math.floor(new Date(t + 'Z').getTime() / 1000) - tzOffSec;
-                return {
-                    time: unix,
-                    temperature: h.temperature_2m[i],
-                    humidity: (h.relative_humidity_2m[i] || 0) / 100,
-                    apparentTemperature: h.apparent_temperature[i],
-                    precipProbability: (h.precipitation_probability[i] || 0) / 100,
-                    precipIntensity: h.precipitation[i] || 0,
-                    precipAccumulation: h.precipitation[i] || 0,
-                    windSpeed: h.wind_speed_10m[i] || 0,
-                    windBearing: h.wind_direction_10m[i] || 0,
-                    windGust: h.wind_gusts_10m[i] || 0,
-                    uvIndex: h.uv_index[i] || 0,
-                    pressure: h.pressure_msl[i] || null,
-                    icon: _wmoToIcon(h.weather_code[i] || 0, isNightAtStation),
-                    summary: _wmoToText(h.weather_code[i] || 0)
-                };
-            });
-            window.pirateHourlyData = pwHourly.filter(function(entry) { return entry.time >= nowSec - 3600; });
-            const firstH = window.pirateHourlyData[0];
-            if (firstH) {
-                liveUV = firstH.uvIndex || 0;
-                window.omPrecipProb = Math.round((firstH.precipProbability || 0) * 100);
-                const uv = liveUV;
-                document.getElementById('uv-val').innerText = uv;
-                let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
-                if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
-                if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
-                if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
-                if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
-                document.getElementById('uv-val').style.color = uvCol;
-                document.getElementById('uv-desc').innerText = uvDesc;
-            }
-            computeOutdoorScore(window.pirateHourlyData);
-            const analyticsEl = document.getElementById('analytics-section');
-            if (analyticsEl && analyticsEl.style.display !== 'none' && typeof renderAnalytics === 'function') renderAnalytics();
-            SkyDB.set(SkyDB.S.weather, 'om_hourly', { ts: Date.now(), data: pwHourly.slice(0, 48), tzOffset: window.pirateTimezoneOffset });
-        } catch(e) {
-            SkyDB.get(SkyDB.S.weather, 'om_hourly').then(function(c) {
-                if (!c || !c.data) return;
-                window.pirateHourlyData = c.data;
-                window.pirateTimezoneOffset = c.tzOffset || 0;
             });
         }
     }
@@ -2716,7 +2648,7 @@
                 var _pw = window.pirateCurrently;
                 var _rhForComfort = (nwsObsHumidity !== null) ? Math.round(nwsObsHumidity) : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
                 updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, _rhForComfort, liveWindSpd,
-                    _owCondSummary || (_pw ? (_pw.summary || '') : ''), liveUV, window.omPrecipProb || (_pw ? ((_pw.precipProbability || 0) * 100) : 0));
+                    _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
             }
             try {
                 const afdList = await (await fetch('https://api.weather.gov/products/types/AFD/locations/' + wfo)).json();
@@ -4201,10 +4133,10 @@
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
             } else {
-                alert('Failed to submit report. Check that REPORTS_WORKER_URL is configured correctly.');
+                if (status) { status.textContent = 'Failed to submit. Check REPORTS_WORKER_URL.'; status.style.color = 'var(--danger)'; }
             }
         } catch(e) {
-            alert('Report worker not configured \u2014 update REPORTS_WORKER_URL in the code.');
+            if (status) { status.textContent = 'Worker not configured \u2014 update REPORTS_WORKER_URL in the code.'; status.style.color = 'var(--warning)'; }
         }
         if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
     }
@@ -4318,15 +4250,12 @@
 
     // ——— LOAD ALL ———
     async function loadAll() {
-        if (_loadAllInProgress) return Promise.resolve();
-        _loadAllInProgress = true;
         lastSyncTime = new Date();
         const sync = document.getElementById('sync-indicator');
         if (sync) sync.style.opacity = '1';
         try {
-            await Promise.all([fetchPirate(), fetchOWCurrent(), fetchOpenMeteoHourly()]);
-            updateSmartComfort(Math.round(window.liveTemp || 70), liveFeelsLike, Math.round(liveHumidity), liveWindSpd, _owCondSummary, liveUV, window.omPrecipProb);
-            await Promise.all([fetchNWSChain(), fetchTWCForecast()]);
+            await fetchPirate();
+            await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast()]);
             await fetchAlerts();
             await fetchRiskLevels();
             updateSPCMap(activeSPCDay);
@@ -4343,7 +4272,6 @@
             }
         } catch(e) {}
         setTimeout(function() { if (sync) sync.style.opacity = '0'; }, 2000);
-        _loadAllInProgress = false;
         return Promise.resolve();
     }
 
@@ -4490,15 +4418,6 @@
     var _swReg = null;
 
     if ('serviceWorker' in navigator) {
-        // When the SW activates after an update it posts SW_UPDATED.
-        // We reload silently so the fresh HTML is shown without the user
-        // having to clear cache, hard-refresh, or re-add the PWA.
-        navigator.serviceWorker.addEventListener('message', function(e) {
-            if (e.data && e.data.type === 'SW_UPDATED') {
-                window.location.reload();
-            }
-        });
-
         window.addEventListener('load', function() {
             navigator.serviceWorker.register('./sw.js').then(function(reg) {
                 _swReg = reg;
@@ -4659,23 +4578,6 @@
         if (sc) { sc.width = window.innerWidth; sc.height = window.innerHeight; }
         if (window.pirateHourlyData && document.getElementById('specs-tab').classList.contains('active')) renderAnalytics();
         if (reportingMap) reportingMap.invalidateSize();
-        if (!_orientationChangePending) {
-            const aqiVal = document.getElementById('aqi-val');
-            if (aqiVal && aqiVal.textContent && aqiVal.textContent.trim() !== '--') fitComfortText(aqiVal);
-        }
-    });
-
-    // iOS Safari fires orientationchange before innerWidth updates, so we wait
-    // for the browser to finish repainting (300ms is enough even on slow devices).
-    // A flag prevents the subsequent resize event from double-running fitComfortText.
-    var _orientationChangePending = false;
-    window.addEventListener('orientationchange', function() {
-        _orientationChangePending = true;
-        setTimeout(function() {
-            _orientationChangePending = false;
-            var aqiVal = document.getElementById('aqi-val');
-            if (aqiVal && aqiVal.textContent && aqiVal.textContent.trim() !== '--') fitComfortText(aqiVal);
-        }, 300);
     });
 
     window.addEventListener('DOMContentLoaded', function() {
