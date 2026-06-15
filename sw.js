@@ -2,7 +2,7 @@
 // Bump CACHE_VERSION whenever you deploy a breaking change.
 // All three sub-caches share the same version prefix so a single bump clears
 // everything consistently.
-const CACHE_VERSION = 'skymonitor-v1.1.4';
+const CACHE_VERSION = 'skymonitor-v1.1.3';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;   // CDN libs — cache-first
 const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small icons — cache-on-use
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;  // HTML + same-origin — network-first
@@ -155,11 +155,10 @@ self.addEventListener('fetch', (e) => {
             caches.match(e.request).then((cached) => {
                 if (cached) return cached;
                 return fetch(e.request).then((res) => {
-                    if (res.type === 'opaque') {
-                        const toCache = res.clone();
-                        caches.open(IMAGE_CACHE).then((c) => c.put(e.request, toCache));
-                        return res;
-                    }
+                    // Never cache opaque (cross-origin) responses. Browsers pad each
+                    // opaque cache entry to ~7 MB as a Spectre mitigation — a handful
+                    // of weather icons turns into 40+ MB of wasted storage.
+                    if (res.type === 'opaque') return res;
                     if (!res.ok) return res;
                     const cl = Number(res.headers.get('content-length') || 0);
                     if (cl > MAX_IMAGE_CACHE_BYTES) return res;
