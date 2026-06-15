@@ -1003,6 +1003,10 @@
                 return;
             }
             panel.innerHTML = '<span style="color:#4fc3f7; font-size:0.85em; font-weight:700; letter-spacing:1px;">📍 Locating…</span>';
+            if (_liveWatchId !== null) {
+                navigator.geolocation.clearWatch(_liveWatchId);
+                _liveWatchId = null;
+            }
             var lastLat = null, lastLon = null;
             _liveWatchId = navigator.geolocation.watchPosition(function(p) {
                 var newLat = parseFloat(p.coords.latitude.toFixed(4));
@@ -2226,13 +2230,13 @@
                     var _endMs = _endRaw ? new Date(_endRaw).getTime() : 0;
                     var _timingHtml = '';
                     if (_onsetMs && _onsetMs > _nowMs) {
-                        _timingHtml = '<div style="display:inline-block;font-size:0.72em;font-weight:600;color:#fff;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:5px;">\u23F0 In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
+                        _timingHtml = '<div style="display:inline-block;font-size:0.72em;font-weight:600;color:#fff;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:5px;">In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
                     } else if (_endMs && !isNaN(_endMs)) {
                         _timingHtml = '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:5px;">Expires ' + _fmtAlertTime(_endRaw) + '</div>';
                     }
 
                     // v1.0.4: button BEFORE the full-text div
-                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + escapeHtml(displayName) + '</b><br><small>' + escapeHtml(p.headline || '') + '</small>' + _timingHtml + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
+                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + escapeHtml(displayName) + '</b>' + _timingHtml + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
                 });
 
                 _expandedAlertIds.forEach(function(id) {
@@ -2342,8 +2346,9 @@
         _lastPirateLon = lon;
         try {
             const resP = await fetch('https://api.pirateweather.net/forecast/' + PIRATE_API_KEY + '/' + lat + ',' + lon + '?units=us');
+            if (!resP.ok) throw new Error('Pirate ' + resP.status);
             const d = await resP.json();
-            stationTzOffset = d.offset * 3600;
+            if (d.offset != null) stationTzOffset = d.offset * 3600;
             const wu = await fetchWUData(lat, lon);
             const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
             // WU PWS is always the primary source. fetchNWSChain compares WU vs NWS obs
@@ -2576,7 +2581,9 @@
     async function fetchOpenWeather() {
         try {
             const res = await fetch('https://api.openweathermap.org/data/2.5/forecast?lat=' + lat + '&lon=' + lon + '&appid=' + OW_API_KEY + '&units=imperial');
+            if (!res.ok) throw new Error('OW ' + res.status);
             const d = await res.json();
+            if (!d || !d.city) throw new Error('OW bad data');
             stationTzOffset = d.city.timezone;
             localRiseTime = d.city.sunrise * 1000;
             localSetTime = d.city.sunset * 1000;
