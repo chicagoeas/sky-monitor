@@ -2,9 +2,9 @@
 // Bump CACHE_VERSION whenever you deploy a breaking change.
 // All three sub-caches share the same version prefix so a single bump clears
 // everything consistently.
-const CACHE_VERSION = 'skymonitor-v1.1.3';
+const CACHE_VERSION = 'skymonitor-v1.1.4';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;   // CDN libs — cache-first
-const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small images — cache-on-use
+const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small icons — cache-on-use
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;  // HTML + same-origin — network-first
 
 const ALL_CACHES = [STATIC_CACHE, IMAGE_CACHE, RUNTIME_CACHE];
@@ -37,7 +37,7 @@ const STATIC_URLS = [
 ];
 
 // Images matching any of these patterns are skipped entirely — too large or too
-// dynamic to be worth caching (radar, satellite, SPC outlooks, weather stories).
+// dynamic to be worth caching.
 const SKIP_IMAGE_PATTERNS = [
     /spc\.noaa\.gov/,
     /ems\.psu\.edu/,
@@ -50,11 +50,24 @@ const SKIP_IMAGE_PATTERNS = [
     /nws\.noaa\.gov.*png/i,
     /api\.weather\.gov.*\.(png|jpg|gif)/i,
     /weather-story/i,
+    // ── Map tile providers ── each page load fetches 20-100+ tiles; never cache
+    /openstreetmap\.org/,
+    /tile\.openstreetmap/,
+    /arcgisonline\.com/,
+    /arcgis\.com/,
+    /mapbox\.com/,
+    /maptiler\.com/,
+    /googleapis\.com\/maps/,
 ];
 
-// Largest image we're willing to cache (500 KB). Anything bigger is served
-// directly from the network without being stored.
-const MAX_IMAGE_CACHE_BYTES = 500 * 1024;
+// Largest icon we're willing to cache. Weather condition icons are small SVGs
+// or PNGs — 100 KB is generous. Bumping this higher causes multi-MB IMAGE_CACHE
+// bloat from tilesets and high-res graphics.
+const MAX_IMAGE_CACHE_BYTES = 100 * 1024; // 100 KB
+
+// Maximum number of entries to keep in RUNTIME_CACHE (same-origin HTML/assets).
+// Prevents slow accumulation if the app URL changes frequently (e.g. query params).
+const MAX_RUNTIME_ENTRIES = 30;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 function isStaticCDN(url) {
@@ -68,6 +81,15 @@ function isImageRequest(request, url) {
 
 function shouldSkipImage(url) {
     return SKIP_IMAGE_PATTERNS.some((p) => p.test(url));
+}
+
+// Trim a cache to at most `maxEntries` entries (drops oldest first).
+async function trimCache(cacheName, maxEntries) {
+    const cache = await caches.open(cacheName);
+    const keys = await cache.keys();
+    if (keys.length > maxEntries) {
+        await Promise.all(keys.slice(0, keys.length - maxEntries).map((k) => cache.delete(k)));
+    }
 }
 
 // ─── Install: pre-cache static CDN assets ────────────────────────────────────
@@ -90,10 +112,9 @@ self.addEventListener('activate', (e) => {
                         .map((k) => caches.delete(k))
                 )
             )
+            .then(() => trimCache(RUNTIME_CACHE, MAX_RUNTIME_ENTRIES))
             .then(() => self.clients.claim())
             .then(() =>
-                // Tell every open tab to reload so the fresh HTML and assets are
-                // picked up immediately — no manual cache-clear needed.
                 self.clients.matchAll({ type: 'window', includeUncontrolled: true })
             )
             .then((clients) => {
@@ -112,8 +133,6 @@ self.addEventListener('fetch', (e) => {
         e.respondWith(
             caches.match(e.request).then((cached) =>
                 cached || fetch(e.request).then((res) => {
-                    // FIX: clone synchronously before returning res, so the body
-                    // is still unread when we hand the clone to caches.put().
                     const toCache = res.clone();
                     caches.open(STATIC_CACHE).then((c) => c.put(e.request, toCache));
                     return res;
@@ -125,33 +144,25 @@ self.addEventListener('fetch', (e) => {
 
     // 2. Large / dynamic weather images — network-only, never cache
     if (isImageRequest(e.request, url) && shouldSkipImage(url)) {
-        return; // let the browser handle it normally
+        return;
     }
 
-    // 3. Other images — cache-on-use with a size gate (≤ 500 KB only).
-    //    Opaque responses (cross-origin <img> tags, e.g. TWC/Wunderground icons) have
-    //    status 0 and ok:false but are perfectly valid to cache and display. We cache
-    //    them directly without a size check since we cannot read their body — they are
-    //    always small SVG/PNG weather icons in practice.
+    // 3. Other images — cache-on-use with a size gate (≤ 100 KB only).
+    //    Opaque cross-origin responses (e.g. TWC/Wunderground icons) are cached
+    //    directly — they're always tiny SVG/PNG icons in practice.
     if (isImageRequest(e.request, url)) {
         e.respondWith(
             caches.match(e.request).then((cached) => {
                 if (cached) return cached;
                 return fetch(e.request).then((res) => {
                     if (res.type === 'opaque') {
-                        // FIX: clone synchronously — caches.open() is async and by the time
-                        // its .then() fires, res.body would already be consumed by return res.
                         const toCache = res.clone();
                         caches.open(IMAGE_CACHE).then((c) => c.put(e.request, toCache));
                         return res;
                     }
                     if (!res.ok) return res;
-                    // Check declared size first (saves cloning if obviously too large)
                     const cl = Number(res.headers.get('content-length') || 0);
                     if (cl > MAX_IMAGE_CACHE_BYTES) return res;
-                    // Clone and inspect actual size before deciding to cache.
-                    // FIX: create the cache copy synchronously within the blob().then()
-                    // callback — before return res — so its body is still unconsumed.
                     return res.clone().blob().then((blob) => {
                         if (blob.size <= MAX_IMAGE_CACHE_BYTES) {
                             const toCache = res.clone();
@@ -165,18 +176,18 @@ self.addEventListener('fetch', (e) => {
         return;
     }
 
-    // 4. Main HTML document and all same-origin assets — network-first.
-    //    This is the key change: the HTML page always tries the network so
-    //    every GitHub Pages deployment reaches users on their next visit.
-    //    If offline, the cached version is served as a fallback.
+    // 4. Main HTML and all same-origin assets — network-first so GitHub Pages
+    //    deployments reach users immediately. Cached copy is the offline fallback.
     if (url.startsWith(self.location.origin)) {
         e.respondWith(
             fetch(e.request)
                 .then((res) => {
                     if (res.ok) {
-                        // FIX: clone synchronously before return res.
                         const toCache = res.clone();
-                        caches.open(RUNTIME_CACHE).then((c) => c.put(e.request, toCache));
+                        caches.open(RUNTIME_CACHE).then((c) => {
+                            c.put(e.request, toCache);
+                            trimCache(RUNTIME_CACHE, MAX_RUNTIME_ENTRIES);
+                        });
                     }
                     return res;
                 })
@@ -185,20 +196,21 @@ self.addEventListener('fetch', (e) => {
         return;
     }
 
-    // 5. External API calls (weather data, etc.) — network-first, cache fallback.
-    //    Offline users see the last known data instead of a blank card.
-    e.respondWith(
-        fetch(e.request)
-            .then((res) => {
-                if (res.ok) {
-                    // FIX: clone synchronously before return res.
-                    const toCache = res.clone();
-                    caches.open(RUNTIME_CACHE).then((c) => c.put(e.request, toCache));
-                }
-                return res;
-            })
-            .catch(() => caches.match(e.request))
-    );
+    // 5. External API calls (weather data, push workers, etc.) — network-only.
+    //
+    //    WHY NOT CACHE: Every weather API URL embeds lat/lon or a timestamp as
+    //    query parameters, so each call produces a brand-new unique cache key
+    //    that is never matched again. Over time this silently fills the
+    //    RUNTIME_CACHE with gigabytes of stale JSON that never gets evicted.
+    //
+    //    OFFLINE FALLBACK: The app already persists critical data in IndexedDB
+    //    (current conditions, NWS observations, TWC forecast, last alert state)
+    //    and shows that stored data when the network is unavailable. The SW
+    //    cache adds no value here and only wastes storage.
+    //
+    //    Just return — the browser makes a normal network request with no SW
+    //    interception, and the app's own offline logic handles failures.
+    return;
 });
 
 // ─── Push notifications ───────────────────────────────────────────────────────
@@ -220,7 +232,7 @@ self.addEventListener('push', (e) => {
         renotify: true,
         requireInteraction: true,
         vibrate: [200, 100, 200],
-        'interruption-level': 'time-sensitive',   // iOS 16.4+: breaks through Focus / DND
+        'interruption-level': 'time-sensitive',
         timestamp: data.timestamp || Date.now(),
         data: { url: targetUrl },
     };
