@@ -2034,6 +2034,7 @@
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
                 if (el.style.display === 'block' && el.id) _expandedAlertIds.add(el.id.replace('full-', ''));
             });
+            const _savedScrollY = window.scrollY;
             stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
@@ -2230,13 +2231,13 @@
                     var _endMs = _endRaw ? new Date(_endRaw).getTime() : 0;
                     var _timingHtml = '';
                     if (_onsetMs && _onsetMs > _nowMs) {
-                        _timingHtml = '<div style="display:block;font-size:0.72em;font-weight:600;color:#fff;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:4px;">In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
+                        _timingHtml = '<div style="display:inline-block;font-size:0.72em;font-weight:600;color:#fff;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:4px;">In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
                     } else if (_endMs && !isNaN(_endMs)) {
-                        _timingHtml = '<div style="display:block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + _fmtAlertTime(_endRaw) + '</div>';
+                        _timingHtml = '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + _fmtAlertTime(_endRaw) + '</div>';
                     }
 
                     // v1.0.4: button BEFORE the full-text div
-                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + escapeHtml(displayName) + '</b>' + _timingHtml + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
+                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><div style="font-weight:bold;">' + escapeHtml(displayName) + '</div>' + _timingHtml + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
                 });
 
                 _expandedAlertIds.forEach(function(id) {
@@ -2244,6 +2245,8 @@
                     const btn = document.getElementById('btn-' + id);
                     if (el && btn) { el.style.display = 'block'; btn.textContent = '\u25b2 Show less'; }
                 });
+                // Restore scroll position so auto-refresh doesn't yank the user back to the top
+                if (_savedScrollY > 0) window.scrollTo({ top: _savedScrollY, behavior: 'instant' });
 
                 if (highestTheme) document.body.classList.add(highestTheme);
                 if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
@@ -4555,6 +4558,33 @@
                     setTimeout(checkNotifStatus, 1500);
                 }
             }).catch(function() {});
+
+            // Evict large weather API responses from SW cache — only the app shell should persist.
+            // These URLs change every refresh anyway so caching them wastes 50+ MB.
+            if ('caches' in window) {
+                caches.keys().then(function(cacheNames) {
+                    cacheNames.forEach(function(cacheName) {
+                        caches.open(cacheName).then(function(cache) {
+                            cache.keys().then(function(reqs) {
+                                reqs.forEach(function(req) {
+                                    var u = req.url;
+                                    if (u.includes('api.weather.gov') ||
+                                        u.includes('pirateweather.net') ||
+                                        u.includes('api.weather.com') ||
+                                        u.includes('openweathermap.org') ||
+                                        u.includes('agron.iastate.edu') ||
+                                        u.includes('mesonet') ||
+                                        u.includes('api.openstreetmap') ||
+                                        u.includes('nominatim') ||
+                                        u.includes('workers.dev')) {
+                                        cache.delete(req);
+                                    }
+                                });
+                            });
+                        });
+                    });
+                });
+            }
         });
     }
 
