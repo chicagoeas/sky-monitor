@@ -2230,9 +2230,9 @@
                     var _endMs = _endRaw ? new Date(_endRaw).getTime() : 0;
                     var _timingHtml = '';
                     if (_onsetMs && _onsetMs > _nowMs) {
-                        _timingHtml = '<div style="display:inline-block;font-size:0.72em;font-weight:600;color:#fff;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:5px;">In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
+                        _timingHtml = '<div style="display:block;font-size:0.72em;font-weight:600;color:#fff;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:4px;">In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
                     } else if (_endMs && !isNaN(_endMs)) {
-                        _timingHtml = '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:5px;">Expires ' + _fmtAlertTime(_endRaw) + '</div>';
+                        _timingHtml = '<div style="display:block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + _fmtAlertTime(_endRaw) + '</div>';
                     }
 
                     // v1.0.4: button BEFORE the full-text div
@@ -2495,9 +2495,9 @@
                 moonPhaseVal = d.daily.data[0].moonPhase || 0;
             }
             if (d.hourly && d.hourly.data) {
-                window.pirateHourlyData = d.hourly.data;
+                window.pirateHourlyData = d.hourly.data.slice(0, 72); // 72h is enough; full set bloats memory & SW cache
                 window.pirateTimezoneOffset = d.offset || 0;
-                computeOutdoorScore(d.hourly.data);
+                computeOutdoorScore(window.pirateHourlyData);
             }
             updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability ?? 0) * 100);
             // Save current conditions to IndexedDB for offline restore
@@ -3425,7 +3425,31 @@
         try {
             const res = await fetch(url); const d = await res.json();
             renderTWCForecast(d);
-            SkyDB.set(SkyDB.S.weather, 'twc_forecast', { ts: Date.now(), data: d });
+            // Only cache the fields actually used by renderTWCForecast / openTWCDetailModal
+            var _dp = d.daypart && d.daypart[0];
+            var _slimTwc = {
+                dayOfWeek: d.dayOfWeek,
+                calendarDayTemperatureMax: d.calendarDayTemperatureMax,
+                calendarDayTemperatureMin: d.calendarDayTemperatureMin,
+                validTimeLocal: d.validTimeLocal,
+                daypart: _dp ? [{
+                    iconCode:              _dp.iconCode,
+                    wxPhraseLong:          _dp.wxPhraseLong,
+                    precipChance:          _dp.precipChance,
+                    qpf:                   _dp.qpf,
+                    narrative:             _dp.narrative,
+                    daypartName:           _dp.daypartName,
+                    temperature:           _dp.temperature,
+                    humidity:              _dp.humidity,
+                    uvIndex:               _dp.uvIndex,
+                    uvDescription:         _dp.uvDescription,
+                    cloudCoverPhrase:      _dp.cloudCoverPhrase,
+                    qpfSnow:               _dp.qpfSnow,
+                    temperatureHeatIndex:  _dp.temperatureHeatIndex,
+                    temperatureWindChill:  _dp.temperatureWindChill
+                }] : d.daypart
+            };
+            SkyDB.set(SkyDB.S.weather, 'twc_forecast', { ts: Date.now(), data: _slimTwc });
         } catch(e) {
             SkyDB.get(SkyDB.S.weather, 'twc_forecast').then(function(cached) {
                 if (cached && cached.data) renderTWCForecast(cached.data);
