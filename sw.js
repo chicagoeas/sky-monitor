@@ -112,7 +112,10 @@ self.addEventListener('fetch', (e) => {
         e.respondWith(
             caches.match(e.request).then((cached) =>
                 cached || fetch(e.request).then((res) => {
-                    caches.open(STATIC_CACHE).then((c) => c.put(e.request, res.clone()));
+                    // FIX: clone synchronously before returning res, so the body
+                    // is still unread when we hand the clone to caches.put().
+                    const toCache = res.clone();
+                    caches.open(STATIC_CACHE).then((c) => c.put(e.request, toCache));
                     return res;
                 })
             )
@@ -136,18 +139,23 @@ self.addEventListener('fetch', (e) => {
                 if (cached) return cached;
                 return fetch(e.request).then((res) => {
                     if (res.type === 'opaque') {
-                        // Cross-origin image from <img> tag — cache directly
-                        caches.open(IMAGE_CACHE).then((c) => c.put(e.request, res.clone()));
+                        // FIX: clone synchronously — caches.open() is async and by the time
+                        // its .then() fires, res.body would already be consumed by return res.
+                        const toCache = res.clone();
+                        caches.open(IMAGE_CACHE).then((c) => c.put(e.request, toCache));
                         return res;
                     }
                     if (!res.ok) return res;
                     // Check declared size first (saves cloning if obviously too large)
                     const cl = Number(res.headers.get('content-length') || 0);
                     if (cl > MAX_IMAGE_CACHE_BYTES) return res;
-                    // Clone and inspect actual size before deciding to cache
+                    // Clone and inspect actual size before deciding to cache.
+                    // FIX: create the cache copy synchronously within the blob().then()
+                    // callback — before return res — so its body is still unconsumed.
                     return res.clone().blob().then((blob) => {
                         if (blob.size <= MAX_IMAGE_CACHE_BYTES) {
-                            caches.open(IMAGE_CACHE).then((c) => c.put(e.request, res.clone()));
+                            const toCache = res.clone();
+                            caches.open(IMAGE_CACHE).then((c) => c.put(e.request, toCache));
                         }
                         return res;
                     });
@@ -166,7 +174,9 @@ self.addEventListener('fetch', (e) => {
             fetch(e.request)
                 .then((res) => {
                     if (res.ok) {
-                        caches.open(RUNTIME_CACHE).then((c) => c.put(e.request, res.clone()));
+                        // FIX: clone synchronously before return res.
+                        const toCache = res.clone();
+                        caches.open(RUNTIME_CACHE).then((c) => c.put(e.request, toCache));
                     }
                     return res;
                 })
@@ -181,7 +191,9 @@ self.addEventListener('fetch', (e) => {
         fetch(e.request)
             .then((res) => {
                 if (res.ok) {
-                    caches.open(RUNTIME_CACHE).then((c) => c.put(e.request, res.clone()));
+                    // FIX: clone synchronously before return res.
+                    const toCache = res.clone();
+                    caches.open(RUNTIME_CACHE).then((c) => c.put(e.request, toCache));
                 }
                 return res;
             })
