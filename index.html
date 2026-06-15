@@ -2218,8 +2218,21 @@
                     }
                     const nwsId = 'nws-' + (f.properties.id || (Date.now() + '-' + Math.floor(Math.random() * 9999))).replace(/[^a-zA-Z0-9]/g, '_');
 
+                    // Timing chip: "In effect Jun 17 at 2 PM" (future onset) or "Expires Jun 17 at 9 PM" (active)
+                    var _nowMs = Date.now();
+                    var _onsetRaw = p.onset || p.effective;
+                    var _onsetMs = _onsetRaw ? new Date(_onsetRaw).getTime() : 0;
+                    var _endRaw = p.ends || p.expires;
+                    var _endMs = _endRaw ? new Date(_endRaw).getTime() : 0;
+                    var _timingHtml = '';
+                    if (_onsetMs && _onsetMs > _nowMs) {
+                        _timingHtml = '<div style="font-size:0.72em;font-weight:700;color:#ffd54f;margin-top:5px;letter-spacing:0.2px;">\u23F0 In effect ' + _fmtAlertTime(_onsetRaw) + '</div>';
+                    } else if (_endMs && !isNaN(_endMs)) {
+                        _timingHtml = '<div style="font-size:0.72em;color:rgba(255,255,255,0.6);margin-top:5px;">Expires ' + _fmtAlertTime(_endRaw) + '</div>';
+                    }
+
                     // v1.0.4: button BEFORE the full-text div
-                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + escapeHtml(displayName) + '</b><br><small>' + escapeHtml(p.headline || '') + '</small>' + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
+                    stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><b>' + escapeHtml(displayName) + '</b><br><small>' + escapeHtml(p.headline || '') + '</small>' + _timingHtml + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button><div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
                 });
 
                 _expandedAlertIds.forEach(function(id) {
@@ -2235,6 +2248,20 @@
             }
             if (window.pirateHourlyData) computeOutdoorScore(window.pirateHourlyData);
         } catch(e) {}
+    }
+
+    // Format an ISO alert time as "today at 2:00 PM", "tomorrow at 2:00 PM", or "Jun 17 at 2:00 PM"
+    function _fmtAlertTime(isoStr) {
+        if (!isoStr) return '';
+        var d = new Date(isoStr);
+        if (isNaN(d.getTime())) return '';
+        var now = new Date();
+        var todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        var dMid = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+        var timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        if (dMid === todayMid) return 'today at ' + timeStr;
+        if (dMid === todayMid + 86400000) return 'tomorrow at ' + timeStr;
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' at ' + timeStr;
     }
 
     function fitComfortText(elem) {
