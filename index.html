@@ -1997,6 +1997,7 @@
         const _myAlertGen = alertIntervalGen;
         window.activeAlertWatches = [];
         window.activeHighImpactWatches = [];
+        window.activeAlertOnsets = {};
         window.activeStormWarning = false;
         window.activeTornadoWarning = false;
         window.activeSVRWarning = false;
@@ -2118,6 +2119,8 @@
                     }
                     // v1.0.5: Collect full event names for per-type scoring
                     if (!window.activeAlertEvents.includes(p.event)) window.activeAlertEvents.push(p.event);
+                    // Store onset time so computeThreatLevel can skip future-outlook watches
+                    window.activeAlertOnsets[p.event] = p.onset ? new Date(p.onset).getTime() : 0;
                     // v1.0.4: Track TOR vs SVR separately for smarter threat level
                     if (evt.includes('tornado warning')) {
                         window.activeTornadoWarning = true; window.activeStormWarning = true;
@@ -3097,17 +3100,13 @@
             ['gale warning',                4, 'Gale Warning',            '#4fc3f7', 'wind'],
             ['dust storm warning',          5, 'Dust Storm Warning',      '#a1887f', 'wind'],
             ['blowing dust advisory',       2, 'Blowing Dust Advisory',   '#a1887f', 'wind'],
-            // Heat
+            // Heat (warnings only — heat/cold watches are filtered before this table)
             ['excessive heat warning',      5, 'Excessive Heat Warning',  '#ff5722', 'heat'],
             ['heat advisory',               2, 'Heat Advisory',           '#ff8a65', 'heat'],
-            // Fire
-            ['fire warning',                6, 'Fire Warning',            '#ff5722', 'fire'],
-            ['red flag warning',            4, 'Red Flag Warning',        '#ff5722', 'fire'],
-            ['fire weather watch',          2, 'Fire Weather Watch',      '#ff8a65', 'fire'],
-            ['dense smoke advisory',        2, 'Dense Smoke Advisory',    '#a1887f', 'fire'],
+            // Fire / smoke / air-quality are environmental, not acute meteorological hazards —
+            // they are excluded via _NEVER_SCORE before this table is consulted.
             // Other
             ['dense fog advisory',          2, 'Dense Fog Advisory',      '#b0bec5', 'other'],
-            ['air quality alert',           1, 'Air Quality Alert',       '#a1887f', 'other'],
             ['special weather statement',   1, 'Special Wx Statement',    '#ffeb3b', 'other'],
             ['severe weather statement',    2, 'Severe Wx Statement',     '#ff9100', 'other'],
             // Convective watches
@@ -3123,6 +3122,22 @@
         (window.activeAlertEvents || []).forEach(function(evtName) {
             var evtLower = evtName.toLowerCase();
             if (evtLower.includes('tornado warning')) return; // handled below with full sub-type logic
+
+            // ── Fire, smoke, and air-quality: environmental conditions, not acute weather threats ──
+            var _NEVER_SCORE = [
+                'fire weather', 'red flag warning', 'fire warning', 'dense smoke', 'air quality alert',
+                'excessive heat watch', 'extreme heat watch',
+                'wind chill watch', 'extreme cold watch', 'excessive cold watch',
+                'freeze watch', 'frost advisory', 'wind chill advisory', 'blowing dust advisory'
+            ];
+            if (_NEVER_SCORE.some(function(s) { return evtLower.includes(s); })) return;
+
+            // ── Watches that haven't started yet are future-outlook, not current threats ──
+            if (evtLower.includes('watch')) {
+                var _onsetMs = (window.activeAlertOnsets || {})[evtName] || 0;
+                if (_onsetMs > 0 && _onsetMs > Date.now()) return;
+            }
+
             for (var i = 0; i < ALERT_TABLE.length; i++) {
                 var row = ALERT_TABLE[i];
                 if (evtLower.includes(row[0])) {
