@@ -1783,7 +1783,12 @@
                     } catch(e) {}
                 }
             }
-            const expires = alert.expires ? new Date(alert.expires * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' }) : '';
+            const _nowMs = Date.now();
+            const _onsetMs = alert.time ? alert.time * 1000 : 0;
+            const _inEffect = !_onsetMs || _onsetMs <= _nowMs;
+            const _tzOffMs = (window.pirateTimezoneOffset || 0) * 3600000;
+            const _expFake = (alert.expires && _inEffect) ? new Date(alert.expires * 1000 + _tzOffMs) : null;
+            const expires = _expFake ? _expFake.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }) : '';
             let desc = alert.description || '';
             if (desc && _doTranslate) {
                 const cacheKey = 'desc:' + desc.slice(0, 80);
@@ -2077,7 +2082,10 @@
 
                 if (evtLowerTop.includes('warning') || isEmergency) {
                     const expTimeStr = topP.ends || topP.expires;
-                    if (expTimeStr) {
+                    const _onsetRawTop = topP.onset || topP.effective;
+                    const _onsetMsTop = _onsetRawTop ? new Date(_onsetRawTop).getTime() : 0;
+                    const _isActiveNow = !_onsetMsTop || _onsetMsTop <= Date.now();
+                    if (expTimeStr && _isActiveNow) {
                         const expTime = new Date(expTimeStr).getTime();
                         (function(_gen, _exp, _prefix, _evt) {
                             const _iv = setInterval(function() {
@@ -2088,6 +2096,20 @@
                             }, 1000);
                             alertIntervalId = _iv;
                         })(_myAlertGen, expTime, bannerTextPrefix, topP.event);
+                    } else if (_onsetMsTop && _onsetMsTop > Date.now()) {
+                        // Future alert — tick down to when it begins
+                        (function(_gen, _onset, _prefix) {
+                            const _iv = setInterval(function() {
+                                if (alertIntervalGen !== _gen) { clearInterval(_iv); return; }
+                                const diff = _onset - Date.now();
+                                if (diff <= 0) { clearInterval(_iv); }
+                                else banner.innerText = _prefix + ' \u2014 Starts in ' + getFormattedTime('advisory', diff);
+                            }, 1000);
+                            alertIntervalId = _iv;
+                            // Set immediately so there's no 1-second blank
+                            const diff0 = _onsetMsTop - Date.now();
+                            if (diff0 > 0) banner.innerText = _prefix + ' \u2014 Starts in ' + getFormattedTime('advisory', diff0);
+                        })(_myAlertGen, _onsetMsTop, bannerTextPrefix);
                     } else banner.innerText = bannerTextPrefix;
                 } else banner.innerText = bannerTextPrefix;
 
@@ -2261,17 +2283,24 @@
     }
 
     // Format an ISO alert time as "today at 2:00 PM", "tomorrow at 2:00 PM", or "Jun 17 at 2:00 PM"
+    // All times shown in the LOCATION's local timezone (pirateTimezoneOffset), not the browser's.
     function _fmtAlertTime(isoStr) {
         if (!isoStr) return '';
         var d = new Date(isoStr);
         if (isNaN(d.getTime())) return '';
-        var now = new Date();
-        var todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-        var dMid = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-        var timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-        if (dMid === todayMid) return 'today at ' + timeStr;
-        if (dMid === todayMid + 86400000) return 'tomorrow at ' + timeStr;
-        return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' at ' + timeStr;
+        // Shift to location's local time by applying its UTC offset
+        var offsetMs = (window.pirateTimezoneOffset || 0) * 3600000;
+        var localMs = d.getTime() + offsetMs;
+        var fakeDate = new Date(localMs);
+        var timeStr = fakeDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+        // Compare days in location-local time (not browser time)
+        var nowLocalMs = Date.now() + offsetMs;
+        var todayDay = Math.floor(nowLocalMs / 86400000);
+        var alertDay = Math.floor(localMs / 86400000);
+        if (alertDay === todayDay) return 'today at ' + timeStr;
+        if (alertDay === todayDay + 1) return 'tomorrow at ' + timeStr;
+        var _months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return _months[fakeDate.getUTCMonth()] + ' ' + fakeDate.getUTCDate() + ' at ' + timeStr;
     }
 
     function fitComfortText(elem) {
