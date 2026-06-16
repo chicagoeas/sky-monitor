@@ -641,11 +641,16 @@
                 <button class="btn-opt" id="outlook-day4-btn" style="display:none;" onclick="switchOutlookDay(4, this)">Day 4</button>
                 <button class="btn-opt" id="outlook-day5-btn" style="display:none;" onclick="switchOutlookDay(5, this)">Day 5</button>
             </div>
-            <div class="spc-btn-tabs btn-group" id="nhc-basin-tabs" style="display:none;">
-                <button class="btn-opt active" id="nhc-atl2d-btn" onclick="switchNHCSelection('atl2d', this)">ATL 2-Day</button>
-                <button class="btn-opt" id="nhc-atl5d-btn" onclick="switchNHCSelection('atl5d', this)">ATL 5-Day</button>
-                <button class="btn-opt" id="nhc-epac2d-btn" onclick="switchNHCSelection('epac2d', this)">E.PAC 2-Day</button>
-                <button class="btn-opt" id="nhc-epac5d-btn" onclick="switchNHCSelection('epac5d', this)">E.PAC 5-Day</button>
+            <div id="nhc-controls" style="display:none; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; width:100%;">
+                <div class="spc-btn-tabs btn-group" id="nhc-basin-tabs">
+                    <button class="btn-opt active" onclick="switchNHCBasin('atl', this)">ATL</button>
+                    <button class="btn-opt" onclick="switchNHCBasin('pac', this)">PAC</button>
+                    <button class="btn-opt" onclick="switchNHCBasin('cpac', this)">C.PAC</button>
+                </div>
+                <div class="spc-btn-tabs btn-group" id="nhc-range-tabs">
+                    <button class="btn-opt active" onclick="switchNHCRange('2d', this)">2-Day</button>
+                    <button class="btn-opt" onclick="switchNHCRange('7d', this)">7-Day</button>
+                </div>
             </div>
             <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
                 <div style="background:#111; border-radius:15px; overflow:hidden; border:1px solid #333; margin-bottom:20px;">
@@ -892,7 +897,8 @@
     let stationTzOffset = 0; // always in seconds
     let activeSPCDay = 1;
     let activeOutlookCenter = 'spc';
-    let activeNHCSelection = 'atl2d';
+    let nhcBasin = 'atl';
+    let nhcRange = '2d';
     let skyAnimId = null;
     let skyStars = [];
     let moonPhaseVal = 0;
@@ -1552,22 +1558,12 @@
             if (titleEl) titleEl.innerText = 'DAY ' + day + ' EXCESSIVE RAINFALL OUTLOOK';
             if (countdown) countdown.style.display = '';
         } else if (center === 'nhc') {
-            const NHC_URLS = {
-                'atl2d':  'www.nhc.noaa.gov/xgtwo/two_atl_2d0.png',
-                'atl5d':  'www.nhc.noaa.gov/xgtwo/two_atl_5d0.png',
-                'epac2d': 'www.nhc.noaa.gov/xgtwo/two_epac_2d0.png',
-                'epac5d': 'www.nhc.noaa.gov/xgtwo/two_epac_5d0.png'
-            };
-            const NHC_TITLES = {
-                'atl2d':  'ATLANTIC 2-DAY TROPICAL OUTLOOK',
-                'atl5d':  'ATLANTIC 5-DAY TROPICAL OUTLOOK',
-                'epac2d': 'E. PACIFIC 2-DAY TROPICAL OUTLOOK',
-                'epac5d': 'E. PACIFIC 5-DAY TROPICAL OUTLOOK'
-            };
-            const nhcUrl = NHC_URLS[day] || NHC_URLS['atl2d'];
-            img.src = 'https://images.weserv.nl/?url=' + nhcUrl + '&t=' + Date.now();
+            const NHC_BASIN_LABELS = { atl: 'ATLANTIC', pac: 'PACIFIC', cpac: 'CENTRAL PACIFIC' };
+            const NHC_RANGE_LABELS = { '2d': '2-DAY', '7d': '7-DAY' };
+            const nhcImgPath = 'www.nhc.noaa.gov/xgtwo/two_' + nhcBasin + '_' + nhcRange + '0.png';
+            img.src = 'https://images.weserv.nl/?url=' + nhcImgPath + '&t=' + Date.now();
             lnk.href = 'https://www.nhc.noaa.gov/gtwo.php';
-            if (titleEl) titleEl.innerText = NHC_TITLES[day] || NHC_TITLES['atl2d'];
+            if (titleEl) titleEl.innerText = (NHC_BASIN_LABELS[nhcBasin] || nhcBasin.toUpperCase()) + ' ' + (NHC_RANGE_LABELS[nhcRange] || nhcRange.toUpperCase()) + ' TROPICAL OUTLOOK';
             if (countdown) countdown.style.display = '';
         } else {
             const spcUrl = 'www.spc.noaa.gov/products/outlook/day' + day + 'otlk.png';
@@ -1587,9 +1583,9 @@
 
         // Show the right button row
         const spcDayTabs = document.getElementById('spc-day-tabs');
-        const nhcBasinTabs = document.getElementById('nhc-basin-tabs');
+        const nhcControls = document.getElementById('nhc-controls');
         if (spcDayTabs) spcDayTabs.style.display = center === 'nhc' ? 'none' : '';
-        if (nhcBasinTabs) nhcBasinTabs.style.display = center === 'nhc' ? '' : 'none';
+        if (nhcControls) nhcControls.style.display = center === 'nhc' ? 'flex' : 'none';
 
         if (center !== 'nhc') {
             // Show/hide Day 4 & 5 buttons (WPC only)
@@ -1608,17 +1604,23 @@
             if (center === 'spc') startSPCCountdown(activeSPCDay);
             else startWPCCountdown(activeSPCDay);
         } else {
-            updateOutlookMap('nhc', activeNHCSelection);
+            updateOutlookMap('nhc', null);
             startNHCCountdown();
         }
     }
 
-    function switchNHCSelection(sel, element) {
-        activeNHCSelection = sel;
+    function switchNHCBasin(basin, element) {
+        nhcBasin = basin;
         document.querySelectorAll('#nhc-basin-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
         element.classList.add('active');
-        updateOutlookMap('nhc', sel);
-        startNHCCountdown();
+        updateOutlookMap('nhc', null);
+    }
+
+    function switchNHCRange(range, element) {
+        nhcRange = range;
+        document.querySelectorAll('#nhc-range-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+        element.classList.add('active');
+        updateOutlookMap('nhc', null);
     }
 
     async function updateWeatherStory(wfo) {
@@ -2598,9 +2600,18 @@
                 wuLinkEl.innerText = wu.stationId; wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
                 wuStationEl.style.display = 'block';
             } else wuStationEl.style.display = 'none';
+            // Remove Open-Meteo fallback banner if PirateWeather is back
+            var _omBanner = document.getElementById('om-fallback-banner');
+            if (_omBanner) _omBanner.remove();
             const curr = d.currently;
             window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
+            // Sanitize PirateWeather sentinel values (-999 = broken data from known PW bugs)
+            var _uvWasBad = curr.uvIndex != null && curr.uvIndex < 0;
+            if (_uvWasBad) curr.uvIndex = null;
+            if (curr.nearestStormDistance != null && curr.nearestStormDistance < 0) curr.nearestStormDistance = null;
+            if (curr.nearestStormBearing != null && curr.nearestStormBearing < 0) curr.nearestStormBearing = null;
+            if (_uvWasBad) _patchUVFromOpenMeteo(); // silently fix UV in the background
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
             // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
@@ -2745,18 +2756,208 @@
             });
             _isOffline = false;
         } catch(e) {
-            _isOffline = true;
-            // Offline: restore last known current conditions from IndexedDB
-            SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
-                if (!c) return;
-                (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
-                (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-                document.getElementById('windVal').innerText  = _isMetric() ? Math.round(c.wind * 1.60934) + ' km/h' : c.wind + ' mph'; setWindCompass(null);
-                if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
-                document.getElementById('uv-val').innerText = c.uv || '--';
+            // PirateWeather failed — try Open-Meteo as a live backup
+            try {
+                await fetchOpenMeteoFallback();
+            } catch(e2) {
+                _isOffline = true;
+                // Both live sources unavailable — restore from IndexedDB cache
+                SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
+                    if (!c) return;
+                    (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                    (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+                    (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                    document.getElementById('windVal').innerText  = _isMetric() ? Math.round(c.wind * 1.60934) + ' km/h' : c.wind + ' mph'; setWindCompass(null);
+                    if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
+                    document.getElementById('uv-val').innerText = c.uv || '--';
+                });
+            }
+        }
+    }
+
+    // Silently fetch UV index from Open-Meteo and patch the display (called when PW returns -999 UV)
+    async function _patchUVFromOpenMeteo() {
+        try {
+            const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current=uv_index&timezone=auto');
+            if (!res.ok) return;
+            const d = await res.json();
+            const uv = d.current?.uv_index;
+            if (uv == null || uv < 0) return;
+            liveUV = uv;
+            document.getElementById('uv-val').innerText = uv;
+            let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
+            if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
+            if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
+            if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
+            if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
+            document.getElementById('uv-val').style.color = uvCol;
+            document.getElementById('uv-desc').innerText = uvDesc;
+        } catch(e) { /* silent — best-effort only */ }
+    }
+
+    // Full Open-Meteo fallback — used when PirateWeather is completely unavailable
+    // Populates all weather data EXCEPT minutely (not supported by Open-Meteo)
+    async function fetchOpenMeteoFallback() {
+        function omIcon(code, isDay) {
+            var d = isDay !== false;
+            if (code === 0) return d ? 'clear-day' : 'clear-night';
+            if (code <= 2) return d ? 'partly-cloudy-day' : 'partly-cloudy-night';
+            if (code === 3) return 'cloudy';
+            if (code === 45 || code === 48) return 'fog';
+            if (code >= 51 && code <= 67) return 'rain';
+            if (code >= 71 && code <= 77) return 'snow';
+            if (code >= 80 && code <= 82) return 'rain';
+            if (code >= 85 && code <= 86) return 'snow';
+            if (code >= 95) return 'thunderstorm';
+            return 'partly-cloudy-day';
+        }
+        function omSummary(code) {
+            if (code === 0) return 'Clear';
+            if (code <= 2) return 'Partly Cloudy';
+            if (code === 3) return 'Overcast';
+            if (code === 45 || code === 48) return 'Foggy';
+            if (code >= 51 && code <= 55) return 'Drizzle';
+            if (code >= 56 && code <= 57) return 'Freezing Drizzle';
+            if (code >= 61 && code <= 65) return 'Rain';
+            if (code >= 66 && code <= 67) return 'Freezing Rain';
+            if (code >= 71 && code <= 75) return 'Snow';
+            if (code === 77) return 'Snow Grains';
+            if (code >= 80 && code <= 82) return 'Rain Showers';
+            if (code >= 85 && code <= 86) return 'Snow Showers';
+            if (code >= 95) return 'Thunderstorm';
+            return 'Mixed Conditions';
+        }
+        const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon
+            + '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,uv_index,precipitation,weather_code'
+            + '&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,precipitation_probability,uv_index,weather_code,precipitation'
+            + '&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&forecast_days=3';
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Open-Meteo ' + res.status);
+        const d = await res.json();
+        const cur = d.current;
+        const utcOffH = (d.utc_offset_seconds || 0) / 3600;
+        if (d.utc_offset_seconds != null) { stationTzOffset = d.utc_offset_seconds; window.pirateTimezoneOffset = utcOffH; }
+
+        // Build PirateWeather-compatible current object so the rest of the app can use it normally
+        const fakeCurr = {
+            temperature: cur.temperature_2m,
+            humidity: cur.relative_humidity_2m / 100,
+            windSpeed: cur.wind_speed_10m,
+            windBearing: cur.wind_direction_10m,
+            pressure: cur.surface_pressure,
+            uvIndex: cur.uv_index,
+            precipIntensity: cur.precipitation || 0,
+            summary: omSummary(cur.weather_code),
+            icon: omIcon(cur.weather_code, !isNightAtStation)
+        };
+        window.pirateCurrently = fakeCurr;
+        window.pirateAlerts = window.pirateAlerts || [];
+
+        document.getElementById('vibeCheck').innerText = fakeCurr.summary + ' \u2014 via Open-Meteo';
+
+        // Temperature
+        const temp = fakeCurr.temperature;
+        window.liveTemp = Math.round(temp);
+        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+        liveUV = fakeCurr.uvIndex || 0;
+
+        // Wind
+        const windSpeed = fakeCurr.windSpeed, windDir = fakeCurr.windBearing;
+        liveWindSpd = Math.round(windSpeed);
+        document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+        setWindCompass(liveWindSpd > 0 && windDir != null ? windDir : null);
+
+        // Humidity
+        const humidity = cur.relative_humidity_2m; // already 0-100
+        (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+
+        // Feels-like (NWS formula — same as fetchPirate)
+        (function() {
+            var T = temp, W = liveWindSpd, RH = humidity, fl = T;
+            if (T <= 50 && W >= 3) {
+                fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
+            } else if (T >= 70) {
+                var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
+                if (hiSimple >= 80) {
+                    var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH - 0.22475541*T*RH
+                        - 0.00683783*T*T - 0.05391317*RH*RH + 0.00122874*T*T*RH
+                        + 0.00085282*T*RH*RH - 0.00000199*T*T*RH*RH;
+                    if (RH < 13 && T >= 80 && T <= 112) hiRoth -= (13-RH)/4 * Math.sqrt((17-Math.abs(T-95))/17);
+                    if (RH > 85 && T >= 80 && T <= 87) hiRoth += (RH-85)/10 * (87-T)/5;
+                    fl = (T + hiRoth) / 2;
+                } else { fl = hiSimple; }
+            }
+            liveFeelsLike = fl;
+        })();
+        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+
+        // Pressure
+        const presIn = (cur.surface_pressure * 0.02953).toFixed(2);
+        document.getElementById('presVal').innerHTML = (_isMetric() ? Math.round(cur.surface_pressure) + ' hPa' : presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">\u27A1\uFE0F</span>';
+
+        // Precipitation 1h (Open-Meteo current gives instantaneous; use hourly[0] accumulation)
+        const precip1h = d.hourly?.precipitation?.[0] || 0;
+        document.getElementById('precip1h').innerText = '1h: ' + precip1h.toFixed(2) + '"';
+        document.getElementById('precip1h').style.display = (precip1h > 0.005) ? '' : 'none';
+        livePrecipInt = precip1h;
+
+        // Minutely: Open-Meteo has no minutely data
+        document.getElementById('minuteSummary').innerText = 'Minutely data unavailable (Open-Meteo backup active).';
+        document.getElementById('timeline').innerHTML = '';
+
+        // Storm detection: Open-Meteo has no nearest-storm data
+        window.currentStormDist = null; window.stormApproaching = false;
+        document.getElementById('storm-status-tag').innerText = 'CLEAR SCAN';
+        document.getElementById('storm-status-tag').style.color = 'var(--success)';
+        document.getElementById('storm-dir-val').innerText = 'NO CELLS DETECTED';
+        document.getElementById('storm-dist-val').innerText = '--';
+        document.getElementById('storm-toa').innerText = 'N/A';
+        updateRadarUI(null, null);
+
+        // UV
+        const uv = fakeCurr.uvIndex || 0;
+        document.getElementById('uv-val').innerText = uv;
+        let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
+        if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
+        if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
+        if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
+        if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
+        document.getElementById('uv-val').style.color = uvCol;
+        document.getElementById('uv-desc').innerText = uvDesc;
+
+        // Convert Open-Meteo columnar hourly → PirateWeather row format for renderPirateHourly
+        const h = d.hourly;
+        const hourlyRows = [];
+        for (let i = 0; i < Math.min(h.time.length, 72); i++) {
+            hourlyRows.push({
+                time: new Date(h.time[i]).getTime() / 1000,
+                temperature: h.temperature_2m[i],
+                humidity: (h.relative_humidity_2m[i] || 0) / 100,
+                windSpeed: h.wind_speed_10m[i] || 0,
+                windBearing: h.wind_direction_10m[i] || 0,
+                precipProbability: (h.precipitation_probability[i] || 0) / 100,
+                precipAccumulation: h.precipitation[i] || 0,
+                precipIntensity: h.precipitation[i] || 0,
+                uvIndex: h.uv_index[i] || 0,
+                summary: omSummary(h.weather_code[i]),
+                icon: omIcon(h.weather_code[i], true)
             });
         }
+        window.pirateHourlyData = hourlyRows;
+        computeOutdoorScore(hourlyRows);
+        updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, fakeCurr.summary, liveUV, (fakeCurr.precipIntensity || 0) * 100);
+
+        // Show a subtle banner so users know PW is unavailable
+        let banner = document.getElementById('om-fallback-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'om-fallback-banner';
+            banner.style.cssText = 'background:#0d1f2d; border:1px solid #4fc3f7; border-radius:8px; padding:5px 12px; font-size:0.73em; color:#4fc3f7; text-align:center; margin:8px 0;';
+            banner.innerHTML = '\u2601\uFE0F Using <strong>Open-Meteo</strong> backup data &mdash; PirateWeather is currently unavailable. (No minutely or storm data.)';
+            const vibeEl = document.getElementById('vibeCheck');
+            if (vibeEl && vibeEl.parentNode) vibeEl.parentNode.insertBefore(banner, vibeEl.nextSibling);
+        }
+        _isOffline = false;
     }
 
     function renderPirateHourly(hourlyData, timezoneOffset, targetCont) {
@@ -4668,7 +4869,7 @@
             await fetchAlerts();
             await fetchRiskLevels();
             if (activeOutlookCenter === 'nhc') {
-                updateOutlookMap('nhc', activeNHCSelection);
+                updateOutlookMap('nhc', null);
                 startNHCCountdown();
             } else {
                 updateOutlookMap(activeOutlookCenter, activeSPCDay);
