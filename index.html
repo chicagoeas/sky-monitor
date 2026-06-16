@@ -913,6 +913,9 @@
     window._locFromGPS = false;
     window._reportPinInitialized = false;
     window.isOutsideUS = false;
+    window._syncPending = 0;
+    window._syncMinDone = false;
+    window._maybeHideSync = function() {};
     window.pirateCurrently = null;
     window.pirateAlerts = [];
     window.wuDeviates = false;
@@ -2754,7 +2757,13 @@
                 window.pirateTimezoneOffset = d.offset || 0;
                 computeOutdoorScore(window.pirateHourlyData);
                 // Silently patch any bad sentinel values from Open-Meteo
-                if (_uvWasBad || _hourlyHasBadUV) _patchUVFromOpenMeteo();
+                if (_uvWasBad || _hourlyHasBadUV) {
+                    window._syncPending++;
+                    _patchUVFromOpenMeteo().finally(function() {
+                        window._syncPending = Math.max(0, window._syncPending - 1);
+                        window._maybeHideSync();
+                    });
+                }
             }
             updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability ?? 0) * 100);
             // Save current conditions to IndexedDB for offline restore
@@ -2809,6 +2818,14 @@
                 if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
                 document.getElementById('uv-val').style.color = uvCol;
                 document.getElementById('uv-desc').innerText = uvDesc;
+                // Re-run comfort now that liveUV is real — was computed earlier with UV=0
+                var _pc = window.pirateCurrently;
+                updateSmartComfort(
+                    window.liveTemp || 70, liveFeelsLike,
+                    _pc ? Math.round((_pc.humidity || 0.5) * 100) : 50,
+                    liveWindSpd, _pc ? (_pc.summary || '') : '', uv,
+                    _pc ? ((_pc.precipProbability || 0) * 100) : 0
+                );
             }
 
             // — Patch hourly UV in pirateHourlyData —
@@ -2870,7 +2887,7 @@
         }
         const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon
             + '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,uv_index,precipitation,weather_code'
-            + '&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,precipitation_probability,uv_index,weather_code,precipitation'
+            + '&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation_probability,uv_index,weather_code,precipitation'
             + '&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&forecast_days=3';
         const res = await fetch(url);
         if (!res.ok) throw new Error('Open-Meteo ' + res.status);
@@ -2955,6 +2972,25 @@
         document.getElementById('storm-toa').innerText = 'N/A';
         updateRadarUI(null, null);
 
+        // Moon phase: Open-Meteo doesn't provide this — fetch from OpenWeather One Call 2.5.
+        // moon_phase 0–1 convention matches PirateWeather exactly (0=new, 0.5=full).
+        window._syncPending++;
+        (async function() {
+            try {
+                var owMoonRes = await fetch('https://api.openweathermap.org/data/2.5/onecall?lat=' + lat + '&lon=' + lon + '&appid=' + OW_API_KEY + '&exclude=current,minutely,hourly,alerts');
+                if (!owMoonRes.ok) throw new Error('OW onecall ' + owMoonRes.status);
+                var owMoonData = await owMoonRes.json();
+                var phase = owMoonData.daily && owMoonData.daily[0] && owMoonData.daily[0].moon_phase != null
+                    ? owMoonData.daily[0].moon_phase : null;
+                if (phase != null) {
+                    moonPhaseVal = phase;
+                    document.getElementById('moonVal').innerText = getMoonPhaseName(phase);
+                }
+            } catch(e) { /* silent — moon display stays at '--' */ }
+            window._syncPending = Math.max(0, window._syncPending - 1);
+            window._maybeHideSync();
+        })();
+
         // UV
         const uv = fakeCurr.uvIndex || 0;
         document.getElementById('uv-val').innerText = uv;
@@ -2975,7 +3011,9 @@
                 temperature: h.temperature_2m[i],
                 humidity: (h.relative_humidity_2m[i] || 0) / 100,
                 windSpeed: h.wind_speed_10m[i] || 0,
+                windGust: h.wind_gusts_10m ? (h.wind_gusts_10m[i] || 0) : 0,
                 windBearing: h.wind_direction_10m[i] || 0,
+                pressure: h.surface_pressure ? (h.surface_pressure[i] || null) : null,
                 precipProbability: (h.precipitation_probability[i] || 0) / 100,
                 precipAccumulation: h.precipitation[i] || 0,
                 precipIntensity: h.precipitation[i] || 0,
@@ -4928,7 +4966,12 @@
                 loadReportingMapData();
             }
         } catch(e) {}
-        setTimeout(function() { if (sync) sync.style.opacity = '0'; }, 2000);
+        window._syncPending = window._syncPending || 0;
+        window._syncMinDone = false;
+        window._maybeHideSync = function() {
+            if (window._syncMinDone && window._syncPending <= 0 && sync) sync.style.opacity = '0';
+        };
+        setTimeout(function() { window._syncMinDone = true; window._maybeHideSync(); }, 2000);
         return Promise.resolve();
     }
 
