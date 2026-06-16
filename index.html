@@ -1291,6 +1291,8 @@
         text = text.replace(/(\d+)\s*\u00b0?F\b/gi, function(m, a) { return Math.round((+a-32)*5/9) + '\u00b0C'; });
         text = text.replace(/(\d+)\s+to\s+(\d+)\s*mph\b/gi, function(m, a, b) { return Math.round(+a*1.60934) + ' to ' + Math.round(+b*1.60934) + ' km/h'; });
         text = text.replace(/(\d+)\s*mph\b/gi, function(m, a) { return Math.round(+a*1.60934) + ' km/h'; });
+        text = text.replace(/(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a, b) { return parseFloat((+a*25.4).toFixed(1)) + ' to ' + parseFloat((+b*25.4).toFixed(1)) + ' mm'; });
+        text = text.replace(/(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a) { return parseFloat((+a*25.4).toFixed(1)) + ' mm'; });
         return text;
     }
 
@@ -2131,7 +2133,8 @@
             if (rainHour.time <= now) {
                 rainWindow = 'now';
             } else {
-                var rh = new Date(rainHour.time * 1000).getHours();
+                var _tzOffSec = (window.pirateTimezoneOffset || 0) * 3600;
+                var rh = new Date((rainHour.time + _tzOffSec) * 1000).getUTCHours();
                 var ampm = rh >= 12 ? 'PM' : 'AM';
                 var rh12 = rh > 12 ? rh - 12 : (rh === 0 ? 12 : rh);
                 rainWindow = rh12 + ' ' + ampm;
@@ -2148,7 +2151,7 @@
         } else if (peakFeels >= 103) {
             desc = 'Dangerous heat ahead. Minimize outdoor exposure and hydrate.';
         } else if (peakFeels >= 95) {
-            desc = 'Very hot (feels like ' + Math.round(peakFeels) + '\u00b0). Limit activity during peak heat.';
+            desc = 'Very hot (feels like ' + _fmtTemp(peakFeels) + '). Limit activity during peak heat.';
         } else if (minFeels < 15) {
             desc = 'Dangerously cold wind chills. Limit time outdoors.';
         } else if (minFeels < 32) {
@@ -3063,7 +3066,7 @@
                 const card = document.createElement('div'); card.className = 'forecast-card';
                 const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
                 const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + rainAmt.toFixed(2) + '"</div>' : '';
-                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(h.temperature) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round(h.precipProbability * 100) + '%</div>' + rainLine;
+                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(h.temperature) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round((h.precipProbability || 0) * 100) + '%</div>' + rainLine;
                 container.appendChild(card);
             });
         }
