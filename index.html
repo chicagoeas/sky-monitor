@@ -1431,6 +1431,8 @@
         if (tabId !== 'severe') {
             document.querySelectorAll('.alert-full-text').forEach(el => { el.style.display = 'none'; });
             document.querySelectorAll('.alert-expand-btn').forEach(btn => { btn.textContent = '\u25bc Show more'; });
+            // Reset saved scroll so returning to Severe tab starts fresh
+            window._severeSavedScroll = 0;
         }
         if (tabId === 'specs') {
             drawOrbit();
@@ -1519,6 +1521,9 @@
                     return getNum(a) - getNum(b);
                 });
             if (validImages.length === 0) throw new Error('No valid images');
+            // Images found — make sure section is visible (may have been hidden by a previous no-image WFO)
+            const _wxSec = document.getElementById('wxstory-section');
+            if (_wxSec) _wxSec.style.display = '';
             window._wxStoryImages = validImages;
             window._wxStoryIndex = 0;
             window._wxPaused = (window._wxPaused === true);
@@ -1539,7 +1544,12 @@
                     showImage();
                 }
             }, 5000);
-        } catch(e) { storyImg.src = ''; }
+        } catch(e) {
+            storyImg.src = '';
+            // No images returned (WFO doesn't issue weather stories) — hide the whole section
+            const _wxSecErr = document.getElementById('wxstory-section');
+            if (_wxSecErr) _wxSecErr.style.display = 'none';
+        }
     }
     function wxStoryTogglePause() {
         window._wxPaused = !window._wxPaused;
@@ -2037,10 +2047,17 @@
             }
             const data = await res.json();
             const _expandedAlertIds = new Set();
+            const _savedAlertScrolls = {};
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
-                if (el.style.display === 'block' && el.id) _expandedAlertIds.add(el.id.replace('full-', ''));
+                if (el.style.display === 'block' && el.id) {
+                    const _aid = el.id.replace('full-', '');
+                    _expandedAlertIds.add(_aid);
+                    _savedAlertScrolls[_aid] = el.scrollTop;
+                }
             });
-            const _savedScrollY = window.scrollY;
+            // Persist page scroll so it survives across auto-refreshes while on the severe tab
+            if (typeof window._severeSavedScroll === 'undefined') window._severeSavedScroll = 0;
+            window._severeSavedScroll = window.scrollY;
             stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
@@ -2268,10 +2285,18 @@
                 _expandedAlertIds.forEach(function(id) {
                     const el = document.getElementById('full-' + id);
                     const btn = document.getElementById('btn-' + id);
-                    if (el && btn) { el.style.display = 'block'; btn.textContent = '\u25b2 Show less'; }
+                    if (el && btn) {
+                        el.style.display = 'block';
+                        btn.textContent = '\u25b2 Show less';
+                        // Restore the inner scroll position of each expanded alert text
+                        if (_savedAlertScrolls[id]) el.scrollTop = _savedAlertScrolls[id];
+                    }
                 });
-                // Restore scroll position so auto-refresh doesn't yank the user back to the top
-                if (_savedScrollY > 0) window.scrollTo({ top: _savedScrollY, behavior: 'instant' });
+                // Restore page scroll via rAF — waits for repaint so height is fully settled
+                const _scrollTarget = window._severeSavedScroll || 0;
+                if (_scrollTarget > 0) requestAnimationFrame(function() {
+                    window.scrollTo({ top: _scrollTarget, behavior: 'instant' });
+                });
 
                 if (highestTheme) document.body.classList.add(highestTheme);
                 if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
@@ -3351,7 +3376,7 @@
         if (_dLbl) _dLbl.innerHTML = '\uD83D\uDCA7 Dewpoint Trend (' + (_isMetric() ? '\u00b0C' : '\u00b0F') + ')';
         if (_wLbl) _wLbl.innerHTML = '\uD83D\uDCA8 Wind Gust Trend (' + (_isMetric() ? 'km/h' : 'mph') + ')';
         const pressureVals = hrs.map(function(h) { return h.pressure ? (_isMetric() ? Math.round(h.pressure) : parseFloat((h.pressure * 0.02953).toFixed(2))) : null; });
-        makeChart('chart-pressure', 'line', { data: pressureVals, label: _isMetric() ? 'Pressure (hPa)' : 'Pressure (inHg)', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return v + (_isMetric() ? ' hPa' : ' in'); } });
+        makeChart('chart-pressure', 'line', { data: pressureVals, label: _isMetric() ? 'Pressure (hPa)' : 'Pressure (inHg)', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (_isMetric() ? Math.round(v) + ' hPa' : parseFloat(v.toFixed(2)) + ' in'); } });
         const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return _isMetric() ? parseFloat(TdC.toFixed(1)) : parseFloat((TdC * 9 / 5 + 32).toFixed(1)); });
         makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: _isMetric() ? 'Dewpoint (\u00b0C)' : 'Dewpoint (\u00b0F)', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (Math.round(v * 10) / 10) + '\u00b0'; } });
         const windVals = hrs.map(function(h) { return _isMetric() ? Math.round((h.windGust || h.windSpeed || 0) * 1.60934) : (h.windGust || h.windSpeed || 0); });
