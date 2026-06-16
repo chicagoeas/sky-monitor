@@ -296,7 +296,7 @@
         <div id="coords-panel">
             <input type="number" id="latInput" value="41.8781" step="0.0001">
             <input type="number" id="lonInput" value="-87.6298" step="0.0001">
-            <button class="btn-action" onclick="updateLocation()">SYNC</button>
+            <button class="btn-action" onclick="manualUpdateLocation()">SYNC</button>
             <button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>
         </div>
         <button onclick="toggleSettingsWindow()" style="background:none; border:none; cursor:pointer; font-size:1.5em; opacity:0.5; padding:5px;">&#9881;&#65039;</button>
@@ -1009,7 +1009,7 @@
         document.getElementById('opt-mode-live').classList.toggle('active', mode === 'live');
 
         if (mode === 'coord') {
-            panel.innerHTML = '<input type="number" id="latInput" value="' + lat + '" step="0.0001"><input type="number" id="lonInput" value="' + lon + '" step="0.0001"><button class="btn-action" onclick="updateLocation()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>';
+            panel.innerHTML = '<input type="number" id="latInput" value="' + lat + '" step="0.0001"><input type="number" id="lonInput" value="' + lon + '" step="0.0001"><button class="btn-action" onclick="manualUpdateLocation()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>';
         } else if (mode === 'live') {
             if (!navigator.geolocation) {
                 panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS not available</span>';
@@ -1109,7 +1109,7 @@
                 if (cityEl) cityEl.value = shortName;
                 localStorage.setItem('waddle_city', shortName);
                 dd.style.display = 'none';
-                updateLocation();
+                manualUpdateLocation();
             });
         });
     }
@@ -1131,7 +1131,7 @@
                 localStorage.setItem('waddle_city', shortName);
                 const dd = document.getElementById('city-ac-dropdown');
                 if (dd) dd.style.display = 'none';
-                updateLocation();
+                manualUpdateLocation();
             } else { alert('No results found. Ensure you have not misspelled anything.'); }
         } catch(e) { alert('No results found. Ensure you have not misspelled anything.'); }
     }
@@ -1474,6 +1474,11 @@
             const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
             if (latBox) latBox.value = lat; if (lonBox) lonBox.value = lon;
         }
+    }
+
+    function manualUpdateLocation() {
+        window._locFromGPS = false;
+        updateLocation();
     }
 
     function updateLocation() {
@@ -4198,8 +4203,15 @@
 
     function initReportingMap() {
         if (reportingMap) {
-            reportingMap.setView([parseFloat(lat), parseFloat(lon)], reportingMap.getZoom());
+            const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
+            reportingMap.setView([rawLat, rawLon], reportingMap.getZoom());
             reportingMap.invalidateSize();
+            // If the new location came from GPS, move the report pin to match
+            if (window._locFromGPS) {
+                const offset = applyPrivacyOffset(rawLat, rawLon);
+                setReportPin(offset.la, offset.lo);
+                reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom());
+            }
             return;
         }
         const L_ref = window.L;
