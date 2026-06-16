@@ -808,7 +808,7 @@
 
 <footer style="text-align:center; padding:60px 0 30px 0; font-family:'Segoe UI',sans-serif; color:#777; font-size:0.85em;">
     <p style="font-size:0.85em; margin-top:10px; opacity:0.6; font-weight:600; letter-spacing:0.5px;">Accurate weather, simplified.</p>
-    <p style="font-size:0.65em; margin-top:4px; opacity:0.5;">Powered by TWC, PirateWeather, OpenWeather, Open-Meteo, SPC, NWS, and WU</p>
+    <p style="font-size:0.65em; margin-top:4px; opacity:0.5;">Powered by TWC, PirateWeather, OpenWeather, SPC, NWS, and WU</p>
     <p style="font-size:0.75em; margin-top:12px; opacity:0.45; letter-spacing:0.5px;">&copy; 2026 SkyMonitor. All rights reserved.</p>
 </footer>
 
@@ -2833,7 +2833,7 @@
             const res = await fetch(
                 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
                 '&current=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m' +
-                '&hourly=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m,precipitation_probability' +
+                '&hourly=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m,precipitation_probability,visibility' +
                 '&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&forecast_days=3'
             );
             if (!res.ok) return;
@@ -2959,6 +2959,7 @@
                 var _prMap   = _buildTsMap(_omH.precipitation);
                 var _ccMap   = _buildTsMap(_omH.cloud_cover);
                 var _ppMap   = _buildTsMap(_omH.precipitation_probability);
+                var _visMap  = _buildTsMap(_omH.visibility); // OM returns meters; PW uses miles
 
                 window.pirateHourlyData.forEach(function(h) {
                     var v;
@@ -2973,6 +2974,7 @@
                     if (h.precipIntensity == null)              { v = _lookup(_prMap, h.time);   if (v != null && v >= 0)  h.precipIntensity = v; }
                     if (h.cloudCover == null)                   { v = _lookup(_ccMap, h.time);   if (v != null && v >= 0)  h.cloudCover = v / 100; }
                     if (h.precipProbability == null)            { v = _lookup(_ppMap, h.time);   if (v != null && v >= 0)  h.precipProbability = v / 100; }
+                    if (h.visibility == null)                   { v = _lookup(_visMap, h.time);  if (v != null && v >= 0)  h.visibility = v / 1609.34; } // m → mi
                 });
             }
         } catch(e) { /* silent — best-effort only */ }
