@@ -628,17 +628,24 @@
                     <select id="outlook-center-select" onchange="switchOutlookCenter(this.value)" style="background:transparent; border:none; color:var(--primary); font-weight:bold; font-size:1em; font-family:inherit; cursor:pointer; outline:none; padding:0; margin:0; -webkit-appearance:auto; appearance:auto;">
                         <option value="spc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">SPC</option>
                         <option value="wpc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">WPC</option>
+                        <option value="nhc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">NHC</option>
                     </select>
                     <div id="outlook-title" style="font-weight:bold; color:var(--primary);">DAY 1 CONVECTIVE OUTLOOK</div>
                 </div>
                 <div id="spc-countdown" style="font-size:0.75em; color:var(--warning); font-family:monospace; background:rgba(0,0,0,0.5); padding:3px 8px; border-radius:5px;">Syncing...</div>
             </div>
-            <div class="spc-btn-tabs btn-group">
+            <div class="spc-btn-tabs btn-group" id="spc-day-tabs">
                 <button class="btn-opt active" id="outlook-day1-btn" onclick="switchOutlookDay(1, this)">Day 1</button>
                 <button class="btn-opt" id="outlook-day2-btn" onclick="switchOutlookDay(2, this)">Day 2</button>
                 <button class="btn-opt" id="outlook-day3-btn" onclick="switchOutlookDay(3, this)">Day 3</button>
                 <button class="btn-opt" id="outlook-day4-btn" style="display:none;" onclick="switchOutlookDay(4, this)">Day 4</button>
                 <button class="btn-opt" id="outlook-day5-btn" style="display:none;" onclick="switchOutlookDay(5, this)">Day 5</button>
+            </div>
+            <div class="spc-btn-tabs btn-group" id="nhc-basin-tabs" style="display:none;">
+                <button class="btn-opt active" id="nhc-atl2d-btn" onclick="switchNHCSelection('atl2d', this)">ATL 2-Day</button>
+                <button class="btn-opt" id="nhc-atl5d-btn" onclick="switchNHCSelection('atl5d', this)">ATL 5-Day</button>
+                <button class="btn-opt" id="nhc-epac2d-btn" onclick="switchNHCSelection('epac2d', this)">E.PAC 2-Day</button>
+                <button class="btn-opt" id="nhc-epac5d-btn" onclick="switchNHCSelection('epac5d', this)">E.PAC 5-Day</button>
             </div>
             <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
                 <div style="background:#111; border-radius:15px; overflow:hidden; border:1px solid #333; margin-bottom:20px;">
@@ -885,6 +892,7 @@
     let stationTzOffset = 0; // always in seconds
     let activeSPCDay = 1;
     let activeOutlookCenter = 'spc';
+    let activeNHCSelection = 'atl2d';
     let skyAnimId = null;
     let skyStars = [];
     let moonPhaseVal = 0;
@@ -897,6 +905,7 @@
     window.pirateHourlyData = null;
     window.pirateTimezoneOffset = 0;
     window._locFromGPS = false;
+    window._reportPinInitialized = false;
     window.isOutsideUS = false;
     window.pirateCurrently = null;
     window.pirateAlerts = [];
@@ -1541,7 +1550,25 @@
             img.src = 'https://images.weserv.nl/?url=' + wpcUrl + '&t=' + Date.now();
             lnk.href = 'https://' + wpcUrl;
             if (titleEl) titleEl.innerText = 'DAY ' + day + ' EXCESSIVE RAINFALL OUTLOOK';
-            if (countdown) countdown.style.display = 'none';
+            if (countdown) countdown.style.display = '';
+        } else if (center === 'nhc') {
+            const NHC_URLS = {
+                'atl2d':  'www.nhc.noaa.gov/xgtwo/two_atl_2d0.png',
+                'atl5d':  'www.nhc.noaa.gov/xgtwo/two_atl_5d0.png',
+                'epac2d': 'www.nhc.noaa.gov/xgtwo/two_epac_2d0.png',
+                'epac5d': 'www.nhc.noaa.gov/xgtwo/two_epac_5d0.png'
+            };
+            const NHC_TITLES = {
+                'atl2d':  'ATLANTIC 2-DAY TROPICAL OUTLOOK',
+                'atl5d':  'ATLANTIC 5-DAY TROPICAL OUTLOOK',
+                'epac2d': 'E. PACIFIC 2-DAY TROPICAL OUTLOOK',
+                'epac5d': 'E. PACIFIC 5-DAY TROPICAL OUTLOOK'
+            };
+            const nhcUrl = NHC_URLS[day] || NHC_URLS['atl2d'];
+            img.src = 'https://images.weserv.nl/?url=' + nhcUrl + '&t=' + Date.now();
+            lnk.href = 'https://www.nhc.noaa.gov/gtwo.php';
+            if (titleEl) titleEl.innerText = NHC_TITLES[day] || NHC_TITLES['atl2d'];
+            if (countdown) countdown.style.display = '';
         } else {
             const spcUrl = 'www.spc.noaa.gov/products/outlook/day' + day + 'otlk.png';
             img.src = 'https://images.weserv.nl/?url=' + spcUrl + '&t=' + Date.now();
@@ -1558,22 +1585,40 @@
         const sel = document.getElementById('outlook-center-select');
         if (sel && sel.value !== center) sel.value = center;
 
-        // Show/hide Day 4 & 5 buttons (WPC only)
-        ['4','5'].forEach(function(d) {
-            const b = document.getElementById('outlook-day' + d + '-btn');
-            if (b) b.style.display = center === 'wpc' ? '' : 'none';
-        });
+        // Show the right button row
+        const spcDayTabs = document.getElementById('spc-day-tabs');
+        const nhcBasinTabs = document.getElementById('nhc-basin-tabs');
+        if (spcDayTabs) spcDayTabs.style.display = center === 'nhc' ? 'none' : '';
+        if (nhcBasinTabs) nhcBasinTabs.style.display = center === 'nhc' ? '' : 'none';
 
-        // If currently on Day 4/5 and switching to SPC, fall back to Day 3
-        if (center === 'spc' && activeSPCDay > 3) {
-            activeSPCDay = 3;
-            document.querySelectorAll('.spc-btn-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
-            const d3 = document.getElementById('outlook-day3-btn');
-            if (d3) d3.classList.add('active');
+        if (center !== 'nhc') {
+            // Show/hide Day 4 & 5 buttons (WPC only)
+            ['4','5'].forEach(function(d) {
+                const b = document.getElementById('outlook-day' + d + '-btn');
+                if (b) b.style.display = center === 'wpc' ? '' : 'none';
+            });
+            // If currently on Day 4/5 and switching to SPC, fall back to Day 3
+            if (center === 'spc' && activeSPCDay > 3) {
+                activeSPCDay = 3;
+                document.querySelectorAll('#spc-day-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+                const d3 = document.getElementById('outlook-day3-btn');
+                if (d3) d3.classList.add('active');
+            }
+            updateOutlookMap(center, activeSPCDay);
+            if (center === 'spc') startSPCCountdown(activeSPCDay);
+            else startWPCCountdown(activeSPCDay);
+        } else {
+            updateOutlookMap('nhc', activeNHCSelection);
+            startNHCCountdown();
         }
+    }
 
-        updateOutlookMap(center, activeSPCDay);
-        if (center === 'spc') startSPCCountdown(activeSPCDay);
+    function switchNHCSelection(sel, element) {
+        activeNHCSelection = sel;
+        document.querySelectorAll('#nhc-basin-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+        element.classList.add('active');
+        updateOutlookMap('nhc', sel);
+        startNHCCountdown();
     }
 
     async function updateWeatherStory(wfo) {
@@ -1790,6 +1835,69 @@
         }
         updateSPC();
         spcIntervalId = setInterval(updateSPC, 1000);
+    }
+
+    function startNHCCountdown() {
+        clearInterval(spcIntervalId);
+        const countdownElem = document.getElementById('spc-countdown');
+        if (!countdownElem) return;
+        countdownElem.style.display = '';
+        // NHC issues tropical weather outlooks 4× daily at ~02Z, 08Z, 14Z, 20Z
+        const updateTimes = [2, 8, 14, 20];
+        function updateNHC() {
+            const now = new Date();
+            const currentUTC = now.getUTCHours() + (now.getUTCMinutes() / 60) + (now.getUTCSeconds() / 3600);
+            let nextUpdateHour = updateTimes.find(function(t) { return t > currentUTC; });
+            let nextDate = new Date(now);
+            if (nextUpdateHour === undefined) {
+                nextUpdateHour = updateTimes[0];
+                nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+            }
+            nextDate.setUTCHours(nextUpdateHour, 0, 0, 0);
+            const diff = nextDate.getTime() - Date.now();
+            if (diff <= 0) { countdownElem.innerText = 'Update Imminent...'; return; }
+            const h = Math.floor(diff / (1000 * 60 * 60));
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            const localTimeStr = nextDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const isTomorrow = nextDate.toLocaleDateString() !== now.toLocaleDateString();
+            countdownElem.innerText = 'Next: ' + h + 'h ' + m + 'm ' + s + 's @ ' + localTimeStr + (isTomorrow ? ' Tomorrow' : '');
+        }
+        updateNHC();
+        spcIntervalId = setInterval(updateNHC, 1000);
+    }
+
+    function startWPCCountdown(day) {
+        day = day || 1;
+        clearInterval(spcIntervalId);
+        const countdownElem = document.getElementById('spc-countdown');
+        if (!countdownElem) return;
+        countdownElem.style.display = '';
+        // WPC ERO issuance times (UTC):
+        // Day 1: ~08:30Z and ~20:30Z (twice daily)
+        // Day 2-5: ~08:30Z (once daily)
+        const updateTimes = (day === 1) ? [8.5, 20.5] : [8.5];
+        function updateWPC() {
+            const now = new Date();
+            const currentUTC = now.getUTCHours() + (now.getUTCMinutes() / 60) + (now.getUTCSeconds() / 3600);
+            let nextUpdateHour = updateTimes.find(function(t) { return t > currentUTC; });
+            let nextDate = new Date(now);
+            if (nextUpdateHour === undefined) {
+                nextUpdateHour = updateTimes[0];
+                nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+            }
+            nextDate.setUTCHours(Math.floor(nextUpdateHour), Math.round((nextUpdateHour % 1) * 60), 0, 0);
+            const diff = nextDate.getTime() - Date.now();
+            if (diff <= 0) { countdownElem.innerText = 'Update Imminent...'; return; }
+            const h = Math.floor(diff / (1000 * 60 * 60));
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+            const s = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+            const localTimeStr = nextDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            const isTomorrow = nextDate.toLocaleDateString() !== now.toLocaleDateString();
+            countdownElem.innerText = 'Next: ' + h + 'h ' + m + 'm ' + s + 's @ ' + localTimeStr + (isTomorrow ? ' Tomorrow' : '');
+        }
+        updateWPC();
+        spcIntervalId = setInterval(updateWPC, 1000);
     }
 
     async function fetchWUData(latP, lonP) {
@@ -3557,6 +3665,7 @@
         element.classList.add('active');
         updateOutlookMap(activeOutlookCenter, day);
         if (activeOutlookCenter === 'spc') startSPCCountdown(day);
+        else startWPCCountdown(day);
     }
 
     // ——— TWC FORECAST (v1.0.4: removed windPhrase/precipType/thunderCat; added swipe) ———
@@ -4182,8 +4291,8 @@
         if (!L_ref) { setTimeout(initReportingMap, 500); return; }
 
         const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
-        // Only place the pin at the location if it came from GPS — not manual city/coord input
-        if (window._locFromGPS) {
+        // On very first load always place the pin (so new users see it); after that, only move for GPS
+        if (window._locFromGPS || !window._reportPinInitialized) {
             const offset = applyPrivacyOffset(rawLat, rawLon);
             reportLat = offset.la; reportLon = offset.lo;
             updatePinCoordsDisplay();
@@ -4244,8 +4353,8 @@
         const instrEl = document.getElementById('report-pin-instruction');
         if (instrEl) instrEl.innerText = '\uD83D\uDCCC ' + (isMobile ? 'Double-tap' : 'Double-click') + ' map to pin location';
 
-        // Only create the pin marker if the location came from GPS
-        if (window._locFromGPS && reportLat != null && reportLon != null) {
+        // Always create the pin on first load; thereafter only for GPS-sourced locations
+        if (reportLat != null && reportLon != null) {
             reportPinMarker = L_ref.marker([reportLat, reportLon], { icon: dotIcon, draggable: true, zIndexOffset: 1000 })
                 .bindTooltip('Report location', { permanent: false })
                 .addTo(reportingMap);
@@ -4256,6 +4365,7 @@
                 updatePinCoordsDisplay();
             });
         }
+        window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
 
@@ -4557,8 +4667,14 @@
             await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast()]);
             await fetchAlerts();
             await fetchRiskLevels();
-            updateOutlookMap(activeOutlookCenter, activeSPCDay);
-            if (activeOutlookCenter === 'spc') startSPCCountdown(activeSPCDay);
+            if (activeOutlookCenter === 'nhc') {
+                updateOutlookMap('nhc', activeNHCSelection);
+                startNHCCountdown();
+            } else {
+                updateOutlookMap(activeOutlookCenter, activeSPCDay);
+                if (activeOutlookCenter === 'spc') startSPCCountdown(activeSPCDay);
+                else startWPCCountdown(activeSPCDay);
+            }
             computeThreatLevel();
             fetchNearbyReportsForHome();
             updateLightningEstimate();
