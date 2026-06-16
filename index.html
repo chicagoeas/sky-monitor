@@ -2611,7 +2611,8 @@
             if (_uvWasBad) curr.uvIndex = null;
             if (curr.nearestStormDistance != null && curr.nearestStormDistance < 0) curr.nearestStormDistance = null;
             if (curr.nearestStormBearing != null && curr.nearestStormBearing < 0) curr.nearestStormBearing = null;
-            if (_uvWasBad) _patchUVFromOpenMeteo(); // silently fix UV in the background
+            if (curr.ozone != null && curr.ozone < 0) curr.ozone = null;
+            // _patchUVFromOpenMeteo is called after hourly data is stored below
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
             // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
@@ -2741,9 +2742,19 @@
                 moonPhaseVal = d.daily.data[0].moonPhase || 0;
             }
             if (d.hourly && d.hourly.data) {
-                window.pirateHourlyData = d.hourly.data.slice(0, 72); // 72h is enough; full set bloats memory & SW cache
+                var _rawHourly = d.hourly.data.slice(0, 72); // 72h is enough; full set bloats memory & SW cache
+                var _hourlyHasBadUV = false;
+                _rawHourly.forEach(function(h) {
+                    if (h.uvIndex != null && h.uvIndex < 0) { h.uvIndex = null; _hourlyHasBadUV = true; }
+                    if (h.nearestStormDistance != null && h.nearestStormDistance < 0) h.nearestStormDistance = null;
+                    if (h.nearestStormBearing != null && h.nearestStormBearing < 0) h.nearestStormBearing = null;
+                    if (h.ozone != null && h.ozone < 0) h.ozone = null;
+                });
+                window.pirateHourlyData = _rawHourly;
                 window.pirateTimezoneOffset = d.offset || 0;
                 computeOutdoorScore(window.pirateHourlyData);
+                // Silently patch any bad sentinel values from Open-Meteo
+                if (_uvWasBad || _hourlyHasBadUV) _patchUVFromOpenMeteo();
             }
             updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability ?? 0) * 100);
             // Save current conditions to IndexedDB for offline restore
@@ -2775,23 +2786,53 @@
         }
     }
 
-    // Silently fetch UV index from Open-Meteo and patch the display (called when PW returns -999 UV)
+    // Silently fetch UV index from Open-Meteo and patch both the current display and
+    // all hourly entries in pirateHourlyData that have null/bad values.
     async function _patchUVFromOpenMeteo() {
         try {
-            const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon + '&current=uv_index&timezone=auto');
+            const res = await fetch(
+                'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+                '&current=uv_index&hourly=uv_index&timezone=auto&forecast_days=3'
+            );
             if (!res.ok) return;
             const d = await res.json();
+
+            // — Patch current UV display —
             const uv = d.current?.uv_index;
-            if (uv == null || uv < 0) return;
-            liveUV = uv;
-            document.getElementById('uv-val').innerText = uv;
-            let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
-            if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
-            if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
-            if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
-            if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
-            document.getElementById('uv-val').style.color = uvCol;
-            document.getElementById('uv-desc').innerText = uvDesc;
+            if (uv != null && uv >= 0) {
+                liveUV = uv;
+                document.getElementById('uv-val').innerText = uv;
+                let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
+                if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
+                if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
+                if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
+                if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
+                document.getElementById('uv-val').style.color = uvCol;
+                document.getElementById('uv-desc').innerText = uvDesc;
+            }
+
+            // — Patch hourly UV in pirateHourlyData —
+            if (window.pirateHourlyData && d.hourly?.time && d.hourly?.uv_index) {
+                // Build a unix-timestamp → UV value map from Open-Meteo's columnar hourly data
+                const uvByTs = {};
+                for (let i = 0; i < d.hourly.time.length; i++) {
+                    const ts = Math.round(new Date(d.hourly.time[i]).getTime() / 1000);
+                    const v = d.hourly.uv_index[i];
+                    if (v != null && v >= 0) uvByTs[ts] = v;
+                }
+                window.pirateHourlyData.forEach(function(h) {
+                    if (h.uvIndex == null || h.uvIndex < 0) {
+                        // PirateWeather hour timestamps are exact on the hour — round to nearest
+                        // Open-Meteo hour (also on the hour) with ±30 min tolerance
+                        const rounded = Math.round(h.time / 3600) * 3600;
+                        if (uvByTs[rounded] != null) {
+                            h.uvIndex = uvByTs[rounded];
+                        } else if (uvByTs[h.time] != null) {
+                            h.uvIndex = uvByTs[h.time];
+                        }
+                    }
+                });
+            }
         } catch(e) { /* silent — best-effort only */ }
     }
 
