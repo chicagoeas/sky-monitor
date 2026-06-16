@@ -623,14 +623,26 @@
         </div>
 
         <div id="spc-outlook-section">
-            <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px;">
-                <div id="spc-title" style="font-weight:bold; color:var(--primary);">SPC DAY 1 CONVECTIVE OUTLOOK</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:6px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <!-- Center selector dropdown -->
+                    <div style="position:relative; display:inline-block;">
+                        <button id="outlook-center-btn" onclick="toggleOutlookCenterMenu()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:8px; font-weight:700; cursor:pointer; font-size:0.85em; display:inline-flex; align-items:center; gap:5px; white-space:nowrap;">SPC <span style="font-size:0.7em; opacity:0.8;">▾</span></button>
+                        <div id="outlook-center-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#0b1e2d; border:1px solid rgba(79,195,247,0.3); border-radius:8px; overflow:hidden; z-index:200; min-width:80px; box-shadow:0 4px 16px rgba(0,0,0,0.7);">
+                            <div id="outlook-opt-spc" onclick="switchOutlookCenter('spc')" style="padding:9px 16px; cursor:pointer; font-size:0.85em; font-weight:700; color:#4fc3f7; background:rgba(79,195,247,0.12);">SPC</div>
+                            <div id="outlook-opt-wpc" onclick="switchOutlookCenter('wpc')" style="padding:9px 16px; cursor:pointer; font-size:0.85em; font-weight:600; color:#cfd8dc; border-top:1px solid rgba(255,255,255,0.06);">WPC</div>
+                        </div>
+                    </div>
+                    <div id="outlook-title" style="font-weight:bold; color:var(--primary);">DAY 1 CONVECTIVE OUTLOOK</div>
+                </div>
                 <div id="spc-countdown" style="font-size:0.75em; color:var(--warning); font-family:monospace; background:rgba(0,0,0,0.5); padding:3px 8px; border-radius:5px;">Syncing...</div>
             </div>
             <div class="spc-btn-tabs btn-group">
-                <button class="btn-opt active" onclick="switchSPCDay(1, this)">Day 1</button>
-                <button class="btn-opt" onclick="switchSPCDay(2, this)">Day 2</button>
-                <button class="btn-opt" onclick="switchSPCDay(3, this)">Day 3</button>
+                <button class="btn-opt active" id="outlook-day1-btn" onclick="switchOutlookDay(1, this)">Day 1</button>
+                <button class="btn-opt" id="outlook-day2-btn" onclick="switchOutlookDay(2, this)">Day 2</button>
+                <button class="btn-opt" id="outlook-day3-btn" onclick="switchOutlookDay(3, this)">Day 3</button>
+                <button class="btn-opt" id="outlook-day4-btn" style="display:none;" onclick="switchOutlookDay(4, this)">Day 4</button>
+                <button class="btn-opt" id="outlook-day5-btn" style="display:none;" onclick="switchOutlookDay(5, this)">Day 5</button>
             </div>
             <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
                 <div style="background:#111; border-radius:15px; overflow:hidden; border:1px solid #333; margin-bottom:20px;">
@@ -876,6 +888,7 @@
     let isNightAtStation = false;
     let stationTzOffset = 0; // always in seconds
     let activeSPCDay = 1;
+    let activeOutlookCenter = 'spc';
     let skyAnimId = null;
     let skyStars = [];
     let moonPhaseVal = 0;
@@ -1504,11 +1517,94 @@
 
     async function updateSPCMap(day) {
         day = day || 1;
-        const spcImg = document.getElementById('spc-map');
-        const spcUrl = 'www.spc.noaa.gov/products/outlook/day' + day + 'otlk.png';
-        spcImg.src = 'https://images.weserv.nl/?url=' + spcUrl + '&t=' + new Date().getTime();
-        document.getElementById('spc-link').href = 'https://' + spcUrl;
-        document.getElementById('spc-title').innerText = 'SPC DAY ' + day + ' CONVECTIVE OUTLOOK';
+        updateOutlookMap(activeOutlookCenter, day);
+    }
+
+    function updateOutlookMap(center, day) {
+        day = day || 1;
+        const img = document.getElementById('spc-map');
+        const lnk = document.getElementById('spc-link');
+        const titleEl = document.getElementById('outlook-title');
+        const countdown = document.getElementById('spc-countdown');
+        if (!img) return;
+
+        if (center === 'wpc') {
+            const WPC_URLS = {
+                1: 'www.wpc.ncep.noaa.gov/qpf/94ewbg.gif',
+                2: 'www.wpc.ncep.noaa.gov/qpf/98ewbg.gif',
+                3: 'www.wpc.ncep.noaa.gov/qpf/99ewbg.gif',
+                4: 'www.wpc.ncep.noaa.gov/qpf/ero_d45/images/d4wbg.gif',
+                5: 'www.wpc.ncep.noaa.gov/qpf/ero_d45/images/d5wbg.gif'
+            };
+            const wpcUrl = WPC_URLS[day] || WPC_URLS[1];
+            img.src = 'https://images.weserv.nl/?url=' + wpcUrl + '&t=' + Date.now();
+            lnk.href = 'https://' + wpcUrl;
+            if (titleEl) titleEl.innerText = 'DAY ' + day + ' EXCESSIVE RAINFALL OUTLOOK';
+            if (countdown) countdown.style.display = 'none';
+        } else {
+            const spcUrl = 'www.spc.noaa.gov/products/outlook/day' + day + 'otlk.png';
+            img.src = 'https://images.weserv.nl/?url=' + spcUrl + '&t=' + Date.now();
+            lnk.href = 'https://' + spcUrl;
+            if (titleEl) titleEl.innerText = 'DAY ' + day + ' CONVECTIVE OUTLOOK';
+            if (countdown) countdown.style.display = '';
+        }
+    }
+
+    function toggleOutlookCenterMenu() {
+        const menu = document.getElementById('outlook-center-menu');
+        if (!menu) return;
+        const isOpen = menu.style.display !== 'none';
+        menu.style.display = isOpen ? 'none' : 'block';
+        if (!isOpen) {
+            // Close on outside click
+            setTimeout(function() {
+                document.addEventListener('click', function _closeMenu(e) {
+                    if (!e.target.closest('#outlook-center-menu') && e.target.id !== 'outlook-center-btn') {
+                        const m = document.getElementById('outlook-center-menu');
+                        if (m) m.style.display = 'none';
+                    }
+                    document.removeEventListener('click', _closeMenu);
+                }, { once: false });
+            }, 0);
+        }
+    }
+
+    function switchOutlookCenter(center) {
+        activeOutlookCenter = center;
+        const menu = document.getElementById('outlook-center-menu');
+        if (menu) menu.style.display = 'none';
+
+        // Update button label
+        const btn = document.getElementById('outlook-center-btn');
+        if (btn) btn.innerHTML = center.toUpperCase() + ' <span style="font-size:0.7em; opacity:0.8;">&#9660;</span>';
+
+        // Highlight active option
+        ['spc', 'wpc'].forEach(function(c) {
+            const opt = document.getElementById('outlook-opt-' + c);
+            if (!opt) return;
+            if (c === center) {
+                opt.style.fontWeight = '700'; opt.style.color = '#4fc3f7'; opt.style.background = 'rgba(79,195,247,0.12)';
+            } else {
+                opt.style.fontWeight = '600'; opt.style.color = '#cfd8dc'; opt.style.background = '';
+            }
+        });
+
+        // Show/hide Day 4 & 5 buttons (WPC only)
+        ['4','5'].forEach(function(d) {
+            const b = document.getElementById('outlook-day' + d + '-btn');
+            if (b) b.style.display = center === 'wpc' ? '' : 'none';
+        });
+
+        // If currently on Day 4/5 and switching to SPC, fall back to Day 3
+        if (center === 'spc' && activeSPCDay > 3) {
+            activeSPCDay = 3;
+            document.querySelectorAll('.spc-btn-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+            const d3 = document.getElementById('outlook-day3-btn');
+            if (d3) d3.classList.add('active');
+        }
+
+        updateOutlookMap(center, activeSPCDay);
+        if (center === 'spc') startSPCCountdown(activeSPCDay);
     }
 
     async function updateWeatherStory(wfo) {
@@ -3485,12 +3581,13 @@
         box.style.display = hasRisk ? 'block' : 'none';
     }
 
-    function switchSPCDay(day, element) {
+    function switchSPCDay(day, element) { switchOutlookDay(day, element); }
+    function switchOutlookDay(day, element) {
         activeSPCDay = day;
         document.querySelectorAll('.spc-btn-tabs .btn-opt').forEach(function(btn) { btn.classList.remove('active'); });
         element.classList.add('active');
-        updateSPCMap(day);
-        startSPCCountdown(day);
+        updateOutlookMap(activeOutlookCenter, day);
+        if (activeOutlookCenter === 'spc') startSPCCountdown(day);
     }
 
     // ——— TWC FORECAST (v1.0.4: removed windPhrase/precipType/thunderCat; added swipe) ———
@@ -4484,8 +4581,8 @@
             await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast()]);
             await fetchAlerts();
             await fetchRiskLevels();
-            updateSPCMap(activeSPCDay);
-            startSPCCountdown(activeSPCDay);
+            updateOutlookMap(activeOutlookCenter, activeSPCDay);
+            if (activeOutlookCenter === 'spc') startSPCCountdown(activeSPCDay);
             computeThreatLevel();
             fetchNearbyReportsForHome();
             updateLightningEstimate();
