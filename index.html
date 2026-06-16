@@ -808,7 +808,7 @@
 
 <footer style="text-align:center; padding:60px 0 30px 0; font-family:'Segoe UI',sans-serif; color:#777; font-size:0.85em;">
     <p style="font-size:0.85em; margin-top:10px; opacity:0.6; font-weight:600; letter-spacing:0.5px;">Accurate weather, simplified.</p>
-    <p style="font-size:0.65em; margin-top:4px; opacity:0.5;">Powered by TWC, PirateWeather, OpenWeather, SPC, NWS, and WU</p>
+    <p style="font-size:0.65em; margin-top:4px; opacity:0.5;">Powered by TWC, PirateWeather, OpenWeather, Open-Meteo, SPC, NWS, and WU</p>
     <p style="font-size:0.75em; margin-top:12px; opacity:0.45; letter-spacing:0.5px;">&copy; 2026 SkyMonitor. All rights reserved.</p>
 </footer>
 
@@ -2618,7 +2618,21 @@
             if (curr.nearestStormDistance != null && curr.nearestStormDistance < 0) curr.nearestStormDistance = null;
             if (curr.nearestStormBearing != null && curr.nearestStormBearing < 0) curr.nearestStormBearing = null;
             if (curr.ozone != null && curr.ozone < 0) curr.ozone = null;
-            // _patchUVFromOpenMeteo is called after hourly data is stored below
+            // Extended sentinel sanitization — covers all fields PirateWeather may return as -999
+            var _currSentinelBad = false;
+            if (curr.windSpeed != null && curr.windSpeed < 0)                        { curr.windSpeed = null;           _currSentinelBad = true; }
+            if (curr.windGust != null && curr.windGust < 0)                          { curr.windGust = null;            _currSentinelBad = true; }
+            if (curr.windBearing != null && curr.windBearing < 0)                    { curr.windBearing = null;         _currSentinelBad = true; }
+            if (curr.humidity != null && curr.humidity < 0)                          { curr.humidity = null;            _currSentinelBad = true; }
+            if (curr.dewPoint != null && curr.dewPoint < -200)                       { curr.dewPoint = null;            _currSentinelBad = true; }
+            if (curr.temperature != null && curr.temperature < -200)                 { curr.temperature = null;         _currSentinelBad = true; }
+            if (curr.apparentTemperature != null && curr.apparentTemperature < -200) { curr.apparentTemperature = null; _currSentinelBad = true; }
+            if (curr.pressure != null && curr.pressure < 0)                          { curr.pressure = null;            _currSentinelBad = true; }
+            if (curr.precipIntensity != null && curr.precipIntensity < 0)            { curr.precipIntensity = null;     _currSentinelBad = true; }
+            if (curr.precipProbability != null && curr.precipProbability < 0)        { curr.precipProbability = null;   _currSentinelBad = true; }
+            if (curr.cloudCover != null && curr.cloudCover < 0)                      { curr.cloudCover = null;          _currSentinelBad = true; }
+            if (curr.visibility != null && curr.visibility < 0)                      { curr.visibility = null;          _currSentinelBad = true; }
+            // _patchSentinelsFromOpenMeteo is called after hourly data is stored below
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
             // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
@@ -2750,19 +2764,32 @@
             if (d.hourly && d.hourly.data) {
                 var _rawHourly = d.hourly.data.slice(0, 72); // 72h is enough; full set bloats memory & SW cache
                 var _hourlyHasBadUV = false;
+                var _hourlyHasBadOther = false;
                 _rawHourly.forEach(function(h) {
-                    if (h.uvIndex != null && h.uvIndex < 0) { h.uvIndex = null; _hourlyHasBadUV = true; }
+                    if (h.uvIndex != null && h.uvIndex < 0)                        { h.uvIndex = null;           _hourlyHasBadUV = true; }
                     if (h.nearestStormDistance != null && h.nearestStormDistance < 0) h.nearestStormDistance = null;
-                    if (h.nearestStormBearing != null && h.nearestStormBearing < 0) h.nearestStormBearing = null;
-                    if (h.ozone != null && h.ozone < 0) h.ozone = null;
+                    if (h.nearestStormBearing != null && h.nearestStormBearing < 0)   h.nearestStormBearing = null;
+                    if (h.ozone != null && h.ozone < 0)                              h.ozone = null;
+                    if (h.windSpeed != null && h.windSpeed < 0)                    { h.windSpeed = null;         _hourlyHasBadOther = true; }
+                    if (h.windGust != null && h.windGust < 0)                      { h.windGust = null;          _hourlyHasBadOther = true; }
+                    if (h.windBearing != null && h.windBearing < 0)                { h.windBearing = null;       _hourlyHasBadOther = true; }
+                    if (h.humidity != null && h.humidity < 0)                      { h.humidity = null;          _hourlyHasBadOther = true; }
+                    if (h.dewPoint != null && h.dewPoint < -200)                   { h.dewPoint = null;          _hourlyHasBadOther = true; }
+                    if (h.temperature != null && h.temperature < -200)             { h.temperature = null;       _hourlyHasBadOther = true; }
+                    if (h.apparentTemperature != null && h.apparentTemperature < -200) { h.apparentTemperature = null; _hourlyHasBadOther = true; }
+                    if (h.pressure != null && h.pressure < 0)                      { h.pressure = null;          _hourlyHasBadOther = true; }
+                    if (h.precipIntensity != null && h.precipIntensity < 0)        { h.precipIntensity = null;   _hourlyHasBadOther = true; }
+                    if (h.precipProbability != null && h.precipProbability < 0)    { h.precipProbability = null; _hourlyHasBadOther = true; }
+                    if (h.cloudCover != null && h.cloudCover < 0)                  { h.cloudCover = null;        _hourlyHasBadOther = true; }
+                    if (h.visibility != null && h.visibility < 0)                  { h.visibility = null;        _hourlyHasBadOther = true; }
                 });
                 window.pirateHourlyData = _rawHourly;
                 window.pirateTimezoneOffset = d.offset || 0;
                 computeOutdoorScore(window.pirateHourlyData);
                 // Silently patch any bad sentinel values from Open-Meteo
-                if (_uvWasBad || _hourlyHasBadUV) {
+                if (_uvWasBad || _hourlyHasBadUV || _currSentinelBad || _hourlyHasBadOther) {
                     window._syncPending++;
-                    _patchUVFromOpenMeteo().finally(function() {
+                    _patchSentinelsFromOpenMeteo().finally(function() {
                         window._syncPending = Math.max(0, window._syncPending - 1);
                         window._maybeHideSync();
                     });
@@ -2798,61 +2825,154 @@
         }
     }
 
-    // Silently fetch UV index from Open-Meteo and patch both the current display and
-    // all hourly entries in pirateHourlyData that have null/bad values.
-    async function _patchUVFromOpenMeteo() {
+    // Silently fetch Open-Meteo data and patch any PirateWeather sentinel (-999) fields
+    // in both window.pirateCurrently and window.pirateHourlyData, then re-renders affected UI.
+    // Called only when at least one field was nulled out by the sentinel sanitizer above.
+    async function _patchSentinelsFromOpenMeteo() {
         try {
             const res = await fetch(
                 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-                '&current=uv_index&hourly=uv_index&timezone=auto&forecast_days=3'
+                '&current=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m' +
+                '&hourly=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m,precipitation_probability' +
+                '&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&forecast_days=3'
             );
             if (!res.ok) return;
             const d = await res.json();
+            const omCur = d.current || {};
 
-            // — Patch current UV display —
-            const uv = d.current?.uv_index;
+            // ── Patch window.pirateCurrently in-memory object ──
+            const curr = window.pirateCurrently;
+            if (curr) {
+                if (curr.uvIndex == null && omCur.uv_index != null && omCur.uv_index >= 0)             curr.uvIndex = omCur.uv_index;
+                if (curr.windSpeed == null && omCur.wind_speed_10m != null && omCur.wind_speed_10m >= 0) curr.windSpeed = omCur.wind_speed_10m;
+                if (curr.windGust == null && omCur.wind_gusts_10m != null && omCur.wind_gusts_10m >= 0)  curr.windGust = omCur.wind_gusts_10m;
+                if (curr.windBearing == null && omCur.wind_direction_10m != null && omCur.wind_direction_10m >= 0) curr.windBearing = omCur.wind_direction_10m;
+                if (curr.humidity == null && omCur.relative_humidity_2m != null)                        curr.humidity = omCur.relative_humidity_2m / 100;
+                if (curr.dewPoint == null && omCur.dew_point_2m != null)                                curr.dewPoint = omCur.dew_point_2m;
+                if (curr.temperature == null && omCur.temperature_2m != null)                           curr.temperature = omCur.temperature_2m;
+                if (curr.pressure == null && omCur.surface_pressure != null && omCur.surface_pressure > 0) curr.pressure = omCur.surface_pressure;
+                if (curr.precipIntensity == null && omCur.precipitation != null && omCur.precipitation >= 0) curr.precipIntensity = omCur.precipitation;
+                if (curr.cloudCover == null && omCur.cloud_cover != null && omCur.cloud_cover >= 0)     curr.cloudCover = omCur.cloud_cover / 100;
+            }
+
+            // ── Re-render UV ──
+            const uv = curr && curr.uvIndex != null ? curr.uvIndex : (omCur.uv_index != null && omCur.uv_index >= 0 ? omCur.uv_index : null);
             if (uv != null && uv >= 0) {
                 liveUV = uv;
-                document.getElementById('uv-val').innerText = uv;
-                let uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
-                if (uv >= 3) { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
-                if (uv >= 6) { uvDesc = 'High (Burn: 30m)'; uvCol = '#ff9100'; }
-                if (uv >= 8) { uvDesc = 'Very High (Burn: 15m)'; uvCol = '#ff5252'; }
-                if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
-                document.getElementById('uv-val').style.color = uvCol;
-                document.getElementById('uv-desc').innerText = uvDesc;
-                // Re-run comfort + outdoor score now that liveUV is real — both were computed earlier with UV=0
-                var _pc = window.pirateCurrently;
-                updateSmartComfort(
-                    window.liveTemp || 70, liveFeelsLike,
-                    _pc ? Math.round((_pc.humidity || 0.5) * 100) : 50,
-                    liveWindSpd, _pc ? (_pc.summary || '') : '', uv,
-                    _pc ? ((_pc.precipProbability || 0) * 100) : 0
-                );
+                var _uvEl = document.getElementById('uv-val');
+                if (_uvEl) {
+                    _uvEl.innerText = uv;
+                    var uvDesc = 'Low (No burn risk)', uvCol = '#00e676';
+                    if (uv >= 3)  { uvDesc = 'Moderate (Burn: 45m)'; uvCol = '#ffeb3b'; }
+                    if (uv >= 6)  { uvDesc = 'High (Burn: 30m)';     uvCol = '#ff9100'; }
+                    if (uv >= 8)  { uvDesc = 'Very High (Burn: 15m)';uvCol = '#ff5252'; }
+                    if (uv >= 11) { uvDesc = 'Extreme (Burn: <10m)'; uvCol = '#b71c1c'; }
+                    _uvEl.style.color = uvCol;
+                    var _uvDescEl = document.getElementById('uv-desc');
+                    if (_uvDescEl) _uvDescEl.innerText = uvDesc;
+                }
+            }
+
+            // ── Re-render Wind (only when WU doesn't supply it) ──
+            var _wu = window.wuData;
+            var _wuHasWind = _wu && _wu.windSpeed !== null;
+            if (!_wuHasWind && curr && curr.windSpeed != null && curr.windSpeed >= 0) {
+                liveWindSpd = Math.round(curr.windSpeed);
+                var _windEl = document.getElementById('windVal');
+                if (_windEl) _windEl.innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                setWindCompass(liveWindSpd > 0 && curr.windBearing != null ? curr.windBearing : null);
+            }
+
+            // ── Re-render Temperature (only when WU doesn't supply it) ──
+            var _wuHasTemp = _wu && _wu.temp !== null;
+            if (!_wuHasTemp && curr && curr.temperature != null) {
+                window.liveTemp = Math.round(curr.temperature);
+                (function(){ var _tv = Math.round(curr.temperature); var _te = document.getElementById('tempVal'); if (_te) { _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); } })();
+            }
+
+            // ── Re-render Humidity (only when WU doesn't supply it) ──
+            var _wuHasHum = _wu && _wu.humidity !== null;
+            if (!_wuHasHum && curr && curr.humidity != null) {
+                (function(){ var _hv = Math.round(curr.humidity * 100); var _el = document.getElementById('humVal'); if (_el) { _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); } })();
+            }
+
+            // ── Re-render Pressure ──
+            if (curr && curr.pressure != null && curr.pressure > 0) {
+                var _presIn = (curr.pressure * 0.02953).toFixed(2);
+                var _presEl = document.getElementById('presVal');
+                if (_presEl) _presEl.innerHTML = (_isMetric() ? Math.round(curr.pressure) + ' hPa' : _presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">\u27A1\uFE0F</span>';
+            }
+
+            // ── Recalculate feels-like with any patched temp/wind/humidity ──
+            if (curr) {
+                var _T  = window.liveTemp || 70;
+                var _W  = liveWindSpd;
+                var _RH = curr.humidity != null ? Math.round(curr.humidity * 100) : (parseInt((document.getElementById('humVal') || {}).innerText) || 50);
+                var _fl = _T;
+                if (_T <= 50 && _W >= 3) {
+                    _fl = 35.74 + 0.6215*_T - 35.75*Math.pow(_W,0.16) + 0.4275*_T*Math.pow(_W,0.16);
+                } else if (_T >= 70) {
+                    var _hiSimple = 0.5 * (_T + 61.0 + (_T - 68.0) * 1.2 + _RH * 0.094);
+                    if (_hiSimple >= 80) {
+                        var _hiRoth = -42.379 + 2.04901523*_T + 10.14333127*_RH - 0.22475541*_T*_RH
+                            - 0.00683783*_T*_T - 0.05391317*_RH*_RH + 0.00122874*_T*_T*_RH
+                            + 0.00085282*_T*_RH*_RH - 0.00000199*_T*_T*_RH*_RH;
+                        if (_RH < 13 && _T >= 80 && _T <= 112) _hiRoth -= (13-_RH)/4 * Math.sqrt((17-Math.abs(_T-95))/17);
+                        if (_RH > 85 && _T >= 80 && _T <= 87) _hiRoth += (_RH-85)/10 * (87-_T)/5;
+                        _fl = (_T + _hiRoth) / 2;
+                    } else { _fl = _hiSimple; }
+                }
+                liveFeelsLike = _fl;
+                (function(){ var _fv = Math.round(_fl); var _fe = document.getElementById('feelsVal'); if (_fe) { _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); } })();
+                updateSmartComfort(_T, liveFeelsLike, _RH, liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability || 0) * 100);
                 if (window.pirateHourlyData) computeOutdoorScore(window.pirateHourlyData);
             }
 
-            // — Patch hourly UV in pirateHourlyData —
-            if (window.pirateHourlyData && d.hourly?.time && d.hourly?.uv_index) {
-                // Build a unix-timestamp → UV value map from Open-Meteo's columnar hourly data
-                const uvByTs = {};
-                const _uvTzOffSec = (window.pirateTimezoneOffset || 0) * 3600;
-                for (let i = 0; i < d.hourly.time.length; i++) {
-                    const ts = Math.round(new Date(d.hourly.time[i] + 'Z').getTime() / 1000) - _uvTzOffSec;
-                    const v = d.hourly.uv_index[i];
-                    if (v != null && v >= 0) uvByTs[ts] = v;
-                }
-                window.pirateHourlyData.forEach(function(h) {
-                    if (h.uvIndex == null || h.uvIndex < 0) {
-                        // PirateWeather hour timestamps are exact on the hour — round to nearest
-                        // Open-Meteo hour (also on the hour) with ±30 min tolerance
-                        const rounded = Math.round(h.time / 3600) * 3600;
-                        if (uvByTs[rounded] != null) {
-                            h.uvIndex = uvByTs[rounded];
-                        } else if (uvByTs[h.time] != null) {
-                            h.uvIndex = uvByTs[h.time];
-                        }
+            // ── Patch hourly data ──
+            if (window.pirateHourlyData && d.hourly && d.hourly.time) {
+                var _omH = d.hourly;
+                var _tzOffSec = (window.pirateTimezoneOffset || 0) * 3600;
+
+                // Build a timestamp → value map for each Open-Meteo hourly field
+                function _buildTsMap(fieldArr) {
+                    var map = {};
+                    if (!fieldArr) return map;
+                    for (var i = 0; i < _omH.time.length; i++) {
+                        var ts = Math.round(new Date(_omH.time[i] + 'Z').getTime() / 1000) - _tzOffSec;
+                        if (fieldArr[i] != null) map[ts] = fieldArr[i];
                     }
+                    return map;
+                }
+                function _lookup(map, hTime) {
+                    var rounded = Math.round(hTime / 3600) * 3600;
+                    return (map[rounded] != null) ? map[rounded] : map[hTime];
+                }
+
+                var _uvMap   = _buildTsMap(_omH.uv_index);
+                var _wsMap   = _buildTsMap(_omH.wind_speed_10m);
+                var _wgMap   = _buildTsMap(_omH.wind_gusts_10m);
+                var _wbMap   = _buildTsMap(_omH.wind_direction_10m);
+                var _humMap  = _buildTsMap(_omH.relative_humidity_2m);
+                var _dpMap   = _buildTsMap(_omH.dew_point_2m);
+                var _tMap    = _buildTsMap(_omH.temperature_2m);
+                var _presMap = _buildTsMap(_omH.surface_pressure);
+                var _prMap   = _buildTsMap(_omH.precipitation);
+                var _ccMap   = _buildTsMap(_omH.cloud_cover);
+                var _ppMap   = _buildTsMap(_omH.precipitation_probability);
+
+                window.pirateHourlyData.forEach(function(h) {
+                    var v;
+                    if (h.uvIndex == null || h.uvIndex < 0)    { v = _lookup(_uvMap, h.time);   if (v != null && v >= 0)  h.uvIndex = v; }
+                    if (h.windSpeed == null)                    { v = _lookup(_wsMap, h.time);   if (v != null && v >= 0)  h.windSpeed = v; }
+                    if (h.windGust == null)                     { v = _lookup(_wgMap, h.time);   if (v != null && v >= 0)  h.windGust = v; }
+                    if (h.windBearing == null)                  { v = _lookup(_wbMap, h.time);   if (v != null && v >= 0)  h.windBearing = v; }
+                    if (h.humidity == null)                     { v = _lookup(_humMap, h.time);  if (v != null)            h.humidity = v / 100; }
+                    if (h.dewPoint == null)                     { v = _lookup(_dpMap, h.time);   if (v != null)            h.dewPoint = v; }
+                    if (h.temperature == null)                  { v = _lookup(_tMap, h.time);    if (v != null)            h.temperature = v; }
+                    if (h.pressure == null)                     { v = _lookup(_presMap, h.time); if (v != null && v > 0)   h.pressure = v; }
+                    if (h.precipIntensity == null)              { v = _lookup(_prMap, h.time);   if (v != null && v >= 0)  h.precipIntensity = v; }
+                    if (h.cloudCover == null)                   { v = _lookup(_ccMap, h.time);   if (v != null && v >= 0)  h.cloudCover = v / 100; }
+                    if (h.precipProbability == null)            { v = _lookup(_ppMap, h.time);   if (v != null && v >= 0)  h.precipProbability = v / 100; }
                 });
             }
         } catch(e) { /* silent — best-effort only */ }
