@@ -1403,7 +1403,12 @@
     function updateAtmosphereTheme() {
         const body = document.body;
         if (body.classList.contains('theme-tor') || body.classList.contains('theme-svr') || body.classList.contains('theme-ffw')) return;
-        if (!localRiseTime || !localSetTime) { body.style.background = 'linear-gradient(180deg, #07131d 0%, #000000 100%)'; return; }
+        if (!localRiseTime || !localSetTime) {
+            // Polar region: use _polarState to pick the right gradient instead of always defaulting to night
+            if (window._polarState === 'day') { body.style.background = 'linear-gradient(180deg, #1a3a5a 0%, #07131d 100%)'; }
+            else { body.style.background = 'linear-gradient(180deg, #07131d 0%, #000000 100%)'; }
+            return;
+        }
         const now = new Date().getTime(); const fifteenMins = 15 * 60 * 1000;
         const isGoldenHourMorn = now >= localRiseTime - fifteenMins && now <= localRiseTime + fifteenMins;
         const isGoldenHourEve = now >= localSetTime - fifteenMins && now <= localSetTime + fifteenMins;
@@ -3227,23 +3232,57 @@
             const d = await res.json();
             if (!d || !d.city) throw new Error('OW bad data');
             stationTzOffset = d.city.timezone;
-            localRiseTime = d.city.sunrise * 1000;
-            localSetTime = d.city.sunset * 1000;
-            document.getElementById('riseVal').innerText = formatOffsetTime(d.city.sunrise, d.city.timezone);
-            document.getElementById('setVal').innerText = formatOffsetTime(d.city.sunset, d.city.timezone);
             const nowMs = Date.now();
-            isNightAtStation = nowMs < localRiseTime || nowMs > localSetTime;
+            // Detect polar regions: OpenWeather returns sunrise ≈ sunset when the sun never crosses the horizon
+            (function(rise, set, tz) {
+                var _polar = Math.abs(rise - set) < 120; // within 2 min = no real transit
+                if (_polar) {
+                    var _doy = Math.floor((nowMs - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
+                    var _decl = 23.45 * Math.sin((360 / 365 * (_doy - 81)) * Math.PI / 180);
+                    var _polarDay = (90 - Math.abs(lat - _decl)) > 0;
+                    window._polarState = _polarDay ? 'day' : 'night';
+                    isNightAtStation = !_polarDay;
+                    localRiseTime = 0; localSetTime = 0;
+                    var _lbl = _polarDay ? '\u2600 Midnight Sun' : '\ud83c\udf11 Polar Night';
+                    document.getElementById('riseVal').innerText = _lbl;
+                    document.getElementById('setVal').innerText = _lbl;
+                } else {
+                    window._polarState = null;
+                    localRiseTime = rise * 1000;
+                    localSetTime = set * 1000;
+                    document.getElementById('riseVal').innerText = formatOffsetTime(rise, tz);
+                    document.getElementById('setVal').innerText = formatOffsetTime(set, tz);
+                    isNightAtStation = nowMs < localRiseTime || nowMs > localSetTime;
+                }
+            })(d.city.sunrise, d.city.sunset, d.city.timezone);
             updateAtmosphereTheme();
             SkyDB.set(SkyDB.S.weather, 'openweather', { ts: Date.now(), sunrise: d.city.sunrise, sunset: d.city.sunset, timezone: d.city.timezone });
         } catch(e) {
             SkyDB.get(SkyDB.S.weather, 'openweather').then(function(c) {
                 if (!c) return;
                 stationTzOffset = c.timezone;
-                localRiseTime = c.sunrise * 1000;
-                localSetTime = c.sunset * 1000;
-                document.getElementById('riseVal').innerText = formatOffsetTime(c.sunrise, c.timezone);
-                document.getElementById('setVal').innerText = formatOffsetTime(c.sunset, c.timezone);
-                isNightAtStation = Date.now() < localRiseTime || Date.now() > localSetTime;
+                var _nowMs = Date.now();
+                (function(rise, set, tz) {
+                    var _polar = Math.abs(rise - set) < 120;
+                    if (_polar) {
+                        var _doy = Math.floor((_nowMs - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
+                        var _decl = 23.45 * Math.sin((360 / 365 * (_doy - 81)) * Math.PI / 180);
+                        var _polarDay = (90 - Math.abs(lat - _decl)) > 0;
+                        window._polarState = _polarDay ? 'day' : 'night';
+                        isNightAtStation = !_polarDay;
+                        localRiseTime = 0; localSetTime = 0;
+                        var _lbl = _polarDay ? '\u2600 Midnight Sun' : '\ud83c\udf11 Polar Night';
+                        document.getElementById('riseVal').innerText = _lbl;
+                        document.getElementById('setVal').innerText = _lbl;
+                    } else {
+                        window._polarState = null;
+                        localRiseTime = rise * 1000;
+                        localSetTime = set * 1000;
+                        document.getElementById('riseVal').innerText = formatOffsetTime(rise, tz);
+                        document.getElementById('setVal').innerText = formatOffsetTime(set, tz);
+                        isNightAtStation = _nowMs < localRiseTime || _nowMs > localSetTime;
+                    }
+                })(c.sunrise, c.sunset, c.timezone);
                 updateAtmosphereTheme();
             });
         }
@@ -3428,7 +3467,20 @@
     }
 
     function drawOrbit() {
-        if (!localRiseTime || !localSetTime) return;
+        if (!localRiseTime || !localSetTime) {
+            // Polar region: park the celestial body at a fixed position
+            if (window._polarState) {
+                var _body = document.getElementById('celestial-body');
+                if (window._polarState === 'day') {
+                    _body.style.background = '#ffd54f'; _body.style.boxShadow = '0 0 15px #ffd54f';
+                    _body.style.left = '50%'; _body.style.top = '0%'; // zenith
+                } else {
+                    _body.style.background = '#e0e0e0'; _body.style.boxShadow = '0 0 10px #ffffff';
+                    _body.style.left = '50%'; _body.style.top = '108%'; // below horizon
+                }
+            }
+            return;
+        }
         const now = new Date().getTime(); const body = document.getElementById('celestial-body');
         let isDay = (now > localRiseTime && now < localSetTime); let pct = 0;
         if (isDay) {
