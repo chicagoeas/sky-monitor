@@ -2676,7 +2676,7 @@
             let precip1h = 0;
             if (d.minutely?.data?.length) { precip1h = d.minutely.data.reduce(function(sum, m) { return sum + (Math.min(m.precipIntensity || 0, MAX_PRECIP_INTENSITY) / 60); }, 0); }
             else precip1h = Math.min(d.hourly?.data?.[0]?.precipAccumulation || 0, MAX_PRECIP_INTENSITY);
-            document.getElementById('precip1h').innerText = '1h: ' + precip1h.toFixed(2) + '"';
+            document.getElementById('precip1h').innerText = '1h: ' + (_isMetric() ? (precip1h * 25.4).toFixed(1) + ' mm' : precip1h.toFixed(2) + '"');
             // Hide box when value is effectively zero
             document.getElementById('precip1h').style.display = (precip1h > 0.005) ? '' : 'none';
             livePrecipInt = Math.min(d.currently?.precipIntensity || 0, MAX_PRECIP_INTENSITY);
@@ -2722,7 +2722,7 @@
                 statusTag.style.color = currentDist < 10 ? 'var(--danger)' : currentDist < 25 ? 'var(--warning)' : '#ffd54f';
                 const motionStr = stormTrend === 'approaching' ? 'APPROACHING' : stormTrend === 'moving away' ? 'MOVING AWAY' : 'NEARBY';
                 dirVal.innerText = cardinal ? motionStr + ' \u00b7 FROM ' + cardinal : motionStr;
-                distVal.innerText = Math.round(currentDist) + ' mi';
+                distVal.innerText = _isMetric() ? Math.round(currentDist * 1.60934) + ' km' : Math.round(currentDist) + ' mi';
                 if (stormTrend === 'approaching' && currentDist > 0) {
                     const minutesAway = Math.round((currentDist / stormSpeedEst) * 60);
                     const arrivalTime = new Date(); arrivalTime.setMinutes(arrivalTime.getMinutes() + minutesAway);
@@ -2791,7 +2791,7 @@
                     (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                     (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                     document.getElementById('windVal').innerText  = _isMetric() ? Math.round(c.wind * 1.60934) + ' km/h' : c.wind + ' mph'; setWindCompass(null);
-                    if (c.pressure) document.getElementById('presVal').innerText = c.pressure + '"';
+                    if (c.pressure) document.getElementById('presVal').innerText = _isMetric() ? Math.round(parseFloat(c.pressure) * 33.8639) + ' hPa' : c.pressure + ' inHg';
                     document.getElementById('uv-val').innerText = c.uv || '--';
                 });
             }
@@ -2836,8 +2836,9 @@
             if (window.pirateHourlyData && d.hourly?.time && d.hourly?.uv_index) {
                 // Build a unix-timestamp → UV value map from Open-Meteo's columnar hourly data
                 const uvByTs = {};
+                const _uvTzOffSec = (window.pirateTimezoneOffset || 0) * 3600;
                 for (let i = 0; i < d.hourly.time.length; i++) {
-                    const ts = Math.round(new Date(d.hourly.time[i]).getTime() / 1000);
+                    const ts = Math.round(new Date(d.hourly.time[i] + 'Z').getTime() / 1000) - _uvTzOffSec;
                     const v = d.hourly.uv_index[i];
                     if (v != null && v >= 0) uvByTs[ts] = v;
                 }
@@ -2959,7 +2960,7 @@
 
         // Precipitation 1h (Open-Meteo current gives instantaneous; use hourly[0] accumulation)
         const precip1h = d.hourly?.precipitation?.[0] || 0;
-        document.getElementById('precip1h').innerText = '1h: ' + precip1h.toFixed(2) + '"';
+        document.getElementById('precip1h').innerText = '1h: ' + (_isMetric() ? (precip1h * 25.4).toFixed(1) + ' mm' : precip1h.toFixed(2) + '"');
         document.getElementById('precip1h').style.display = (precip1h > 0.005) ? '' : 'none';
         livePrecipInt = precip1h;
 
@@ -3011,7 +3012,7 @@
         const hourlyRows = [];
         for (let i = 0; i < Math.min(h.time.length, 72); i++) {
             hourlyRows.push({
-                time: new Date(h.time[i]).getTime() / 1000,
+                time: new Date(h.time[i] + 'Z').getTime() / 1000 - (utcOffH * 3600),
                 temperature: h.temperature_2m[i],
                 humidity: (h.relative_humidity_2m[i] || 0) / 100,
                 windSpeed: h.wind_speed_10m[i] || 0,
@@ -3065,7 +3066,7 @@
                 const hour = date.toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
                 const card = document.createElement('div'); card.className = 'forecast-card';
                 const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
-                const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + rainAmt.toFixed(2) + '"</div>' : '';
+                const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + (_isMetric() ? (rainAmt * 25.4).toFixed(1) + ' mm' : rainAmt.toFixed(2) + '"') + '</div>' : '';
                 card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div><div style="font-size:1.6em;">' + (iconMap[h.icon] || '\u2753') + '</div><div style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(h.temperature) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round((h.precipProbability || 0) * 100) + '%</div>' + rainLine;
                 container.appendChild(card);
             });
@@ -3701,8 +3702,8 @@
 
         // ── 6. NWS Alert Parameter Boosters ──────────────────────────────
         // Large hail (NWS-reported max hail size from warning)
-        if (window.alertMaxHailIn >= 3.0)      { score += 2; factorList.push({ label: 'Hail ' + window.alertMaxHailIn.toFixed(1) + '"', color: '#ff5722' }); }
-        else if (window.alertMaxHailIn >= 1.75) { score += 1; factorList.push({ label: 'Hail ' + window.alertMaxHailIn.toFixed(1) + '"', color: '#ff9100' }); }
+        if (window.alertMaxHailIn >= 3.0)      { score += 2; factorList.push({ label: 'Hail ' + (_isMetric() ? (window.alertMaxHailIn * 2.54).toFixed(1) + ' cm' : window.alertMaxHailIn.toFixed(1) + '"'), color: '#ff5722' }); }
+        else if (window.alertMaxHailIn >= 1.75) { score += 1; factorList.push({ label: 'Hail ' + (_isMetric() ? (window.alertMaxHailIn * 2.54).toFixed(1) + ' cm' : window.alertMaxHailIn.toFixed(1) + '"'), color: '#ff9100' }); }
 
         // High wind gust (NWS-reported from warning parameters)
         if (window.alertMaxWindGustMph >= 80)   { score += 2; factorList.push({ label: 'Gust ' + _fmtWind(window.alertMaxWindGustMph), color: '#ff5722' }); }
@@ -4944,6 +4945,7 @@
     // ——— LOAD ALL ———
     async function loadAll() {
         lastSyncTime = new Date();
+        twcMaxFeelsLike = null;
         const sync = document.getElementById('sync-indicator');
         if (sync) sync.style.opacity = '1';
         try {
