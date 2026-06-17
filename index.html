@@ -5134,6 +5134,8 @@
         const userLat = parseFloat(lat), userLon = parseFloat(lon);
         if (isNaN(userLat) || isNaN(userLon)) return;
 
+        const NHC_WORKER_URL = 'https://nhc-active-storms.skymonitor-account.workers.dev/';
+
         const MAX_MI = 2000;
 
         function _haverMi(la1,lo1,la2,lo2){
@@ -5169,143 +5171,22 @@
             return h;
         }
 
-        // ——— NWS description parser — handles NHC advisory AND HLS local-office format ———
-        const NON_NAMES=/^(FORCE|WARNING|WATCH|ADVISORY|CONDITIONS?|WINDS?|SURGES?|DEPRESSION|LOCAL|STATEMENT|ACTIVITY|SEASON|NEAR|ABOUT|CENTER|SUBTROPICAL|REMNANTS?|TROPICAL|HURRICANE|STORM|WARNINGS|WATCHES)$/i;
-        function _parseDesc(raw){
-            if(!raw) return {};
-            const t=raw.replace(/\r?\n/g,' ');
-            const info={};
-            // Storm name: HLS "- NAME...ARTHUR" or "Name: Arthur" first
-            const nHLS=t.match(/(?:^|[\s*\-])\s*NAME\s*[.:…\-]+\s*([A-Za-z]{2,20})\b/i);
-            if(nHLS&&!NON_NAMES.test(nHLS[1])){info.stormName=_tc(nHLS[1]);}
-            else {
-                // NHC advisory: match all "TROPICAL STORM X" / "HURRICANE X" occurrences, take first non-excluded
-                const nAll=t.matchAll(/(?:TROPICAL STORM|HURRICANE|TROPICAL DEPRESSION|TYPHOON)\s+([A-Z]{3,})\b/ig);
-                for(const m of nAll){if(!NON_NAMES.test(m[1])){info.stormName=_tc(m[1]);break;}}
-            }
-            // Lat/lon (NHC advisory format)
-            const ll=t.match(/LATITUDE\s+([\d.]+)\s+(NORTH|SOUTH)[,\s]+LONGITUDE\s+([\d.]+)\s+(EAST|WEST)/i);
-            if(ll){info.lat=parseFloat(ll[1])*(/south/i.test(ll[2])?-1:1);info.lon=parseFloat(ll[3])*(/west/i.test(ll[4])?-1:1);}
-            // Landmark location
-            const loc=t.match(/(\d+)\s+MILES?(?:\s*\([^)]*\))?\s+(NNW|NNE|SSW|SSE|WNW|WSW|ENE|ESE|NW|NE|SW|SE|N|S|E|W)\s+OF\s+([A-Za-z][^.]{3,55}?)(?:\.\.|\.(?!\d)|\s{2,}|$)/i);
-            if(loc){info.locDist=parseInt(loc[1]);info.locDir=loc[2].toUpperCase();info.locLandmark=loc[3].trim().replace(/,?\s*$/,'');}
-            // Wind — "WINDS ARE NEAR 45 MPH" (NHC) or "WINDS 45 MPH" or "WIND...45 MPH" (HLS)
-            const wind=t.match(/MAXIMUM\s+SUSTAINED\s+WINDS?[\s.:…\-]*(?:ARE\s+)?(?:NEAR\s+|OF\s+)?(\d+)\s*MPH/i);
-            if(wind) info.windMph=parseInt(wind[1]);
-            // Pressure — "IS 1001 MB" (NHC) or "...1001 MB" (HLS)
-            const pres=t.match(/MINIMUM\s+CENTRAL\s+PRESSURE[\s.:…\-]*(?:[^.]{0,50}?IS\s+)?(\d{3,4})\s*MB/i);
-            if(pres) info.pressureMb=parseInt(pres[1]);
-            // Movement — "NNE OR 22 DEGREES AT 7 MPH" (NHC) or "NNE AT 7 MPH" (HLS)
-            const movA=t.match(/STORM\s+MOTION\.{0,3}\s*([NSEW]+(?:-[NSEW]+)?)\s+OR\s+\d+\s+DEGREES?\s+AT\s+(\d+)\s+MPH/i);
-            const movB=t.match(/STORM\s+MOTION[\s.:…\-]+([NSEW]+(?:-[NSEW]+)?)\s+AT\s+(\d+)\s+MPH/i);
-            const mov=movA||movB;
-            if(mov){info.movDir=mov[1].toUpperCase();info.movMph=parseInt(mov[2]);}
-            return info;
-        }
-
-        function _catFromWind(mph){
-            if(!mph) return null;
-            if(mph>=157) return {label:'CAT 5',color:'#9c27b0'};
-            if(mph>=130) return {label:'CAT 4',color:'#ff1744'};
-            if(mph>=111) return {label:'CAT 3',color:'#ff5722'};
-            if(mph>=96)  return {label:'CAT 2',color:'#ff9100'};
-            if(mph>=74)  return {label:'CAT 1',color:'#ffd54f'};
-            if(mph>=39)  return {label:'TS',   color:'#4fc3f7'};
-            return {label:'TD',color:'#81c784'};
-        }
-        function _typeLabel(mph,evt){
-            if(mph>=74) return 'Hurricane'; if(mph>=39) return 'Tropical Storm'; if(mph>0) return 'Tropical Depression';
-            if(/hurricane/i.test(evt)) return 'Hurricane'; if(/tropical storm/i.test(evt)) return 'Tropical Storm';
-            if(/storm surge/i.test(evt)) return 'Storm Surge'; return 'Tropical System';
-        }
-        function _nwsCard(s){
-            const info=s.info,wind=info.windMph,cat=_catFromWind(wind),typeLabel=_typeLabel(wind,s.event);
-            const catColor=cat?cat.color:'#4fc3f7',dist=s.dist;
-            const distColor=dist!==null?(dist<300?'#ff1744':dist<700?'#ff9100':'#4fc3f7'):'#4fc3f7';
-            const locText=(info.locDist&&info.locDir&&info.locLandmark)?(info.locDist+' mi '+info.locDir+' of '+_tc(info.locLandmark)):'';
-            const movText=(info.movDir&&info.movMph)?(info.movDir+' '+info.movMph+' mph'):'';
-            const dotColor=wind>=74?'#ff1744':wind>=39?'#ff9100':'#4fc3f7';
-            const stormDisplay=s.name||typeLabel;
-            let h='<div style="background:rgba(0,0,0,0.18);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px 15px;margin-bottom:10px;">';
-            h+='<div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:11px;">';
-            h+='<span style="width:8px;height:8px;border-radius:50%;background:'+dotColor+';flex-shrink:0;margin-top:5px;box-shadow:0 0 7px '+dotColor+';"></span>';
-            h+='<div style="font-size:0.81em;color:#cbd5e1;line-height:1.5;"><span style="font-weight:800;color:'+catColor+';">'+typeLabel+' '+stormDisplay+':</span> ';
-            if(locText){h+='Located '+locText;if(movText) h+=', moving '+movText+'.';}
-            else{const hl=s.headline||s.event;h+=(hl.length>110?hl.substring(0,110)+'\u2026':hl);}
-            h+='</div></div>';
-            h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">';
-            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Category</div>';
-            h+='<div style="font-size:0.86em;font-weight:700;color:'+catColor+';">'+typeLabel+(cat&&cat.label.startsWith('CAT')?' <span style="font-size:0.8em;opacity:0.75;">'+cat.label+'</span>':'')+'</div></div>';
-            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Max. Wind Speed</div>';
-            h+='<div style="font-size:0.86em;font-weight:700;color:'+catColor+';">'+(wind?wind+' mph':'\u2014')+'</div></div>';
-            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Min Pressure</div>';
-            h+='<div style="font-size:0.86em;font-weight:700;color:#e2e8f0;">'+(info.pressureMb?info.pressureMb+' mb':'\u2014')+'</div></div>';
-            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;">';
-            if(dist!==null){h+='<div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Distance</div><div style="font-size:0.86em;font-weight:700;color:'+distColor+';">'+dist.toLocaleString()+' mi</div>';}
-            else{h+='<div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Movement</div><div style="font-size:0.86em;font-weight:700;color:#e2e8f0;">'+(movText||'\u2014')+'</div>';}
-            h+='</div></div>';
-            if(dist!==null&&movText) h+='<div style="margin-top:8px;font-size:0.7em;color:#6b7280;">Movement: '+movText+'</div>';
-            h+='</div>';
-            return h;
-        }
-
-        // ——— PATH 1: NHC direct fetch (accurate, sometimes succeeds past CORS) ———
+        // ——— Cloudflare Worker → NHC CurrentStorms.json (CORS-safe, 5-min edge cache) ———
         try {
-            const nhcRes = await fetch('https://www.nhc.noaa.gov/CurrentStorms.json');
-            if (nhcRes.ok) {
-                const nhcData = await nhcRes.json();
-                function _pc(str){if(!str)return NaN;const m=String(str).match(/([\d.]+)([NSEW])/i);if(!m)return parseFloat(str);return(/[SW]/i.test(m[2]))?-parseFloat(m[1]):parseFloat(m[1]);}
-                const storms=(nhcData.activeStorms||[]).map(s=>Object.assign({},s,{_dist:Math.round(_haverMi(userLat,userLon,_pc(s.lat),_pc(s.lon)))}))
-                    .filter(s=>!isNaN(s._dist)&&s._dist<=MAX_MI).sort((a,b)=>a._dist-b._dist);
-                if (storms.length) {
-                    widget.style.borderColor='rgba(79,195,247,0.18)';
-                    document.getElementById('tropical-storms-list').innerHTML=storms.map(_nhcCard).join('');
-                    widget.style.display='block';
-                    return; // done — no need for NWS fallback
-                }
-                widget.style.display='none'; return; // NHC ok but no storms nearby
+            const res = await fetch(NHC_WORKER_URL);
+            if (!res.ok) { widget.style.display='none'; return; }
+            const nhcData = await res.json();
+            function _pc(str){if(!str)return NaN;const m=String(str).match(/([\d.]+)([NSEW])/i);if(!m)return parseFloat(str);return(/[SW]/i.test(m[2]))?-parseFloat(m[1]):parseFloat(m[1]);}
+            const storms=(nhcData.activeStorms||[]).map(s=>Object.assign({},s,{_dist:Math.round(_haverMi(userLat,userLon,_pc(s.lat),_pc(s.lon)))}))
+                .filter(s=>!isNaN(s._dist)&&s._dist<=MAX_MI).sort((a,b)=>a._dist-b._dist);
+            if (storms.length) {
+                widget.style.borderColor='rgba(79,195,247,0.18)';
+                document.getElementById('tropical-storms-list').innerHTML=storms.map(_nhcCard).join('');
+                widget.style.display='block';
+            } else {
+                widget.style.display='none';
             }
-        } catch(e){}
-
-        // ——— PATH 2: NWS Alerts API — point-based so only fires for user's actual location ———
-        try {
-            const eventTypes='Hurricane Warning,Hurricane Watch,Tropical Storm Warning,Tropical Storm Watch,Hurricane Local Statement,Storm Surge Warning,Storm Surge Watch,Extreme Wind Warning';
-            const res=await fetch(
-                'https://api.weather.gov/alerts/active?status=actual&message_type=alert'
-                +'&point='+userLat.toFixed(4)+','+userLon.toFixed(4)
-                +'&event='+encodeURIComponent(eventTypes),
-                {headers:{'User-Agent':'(SkyMonitor, weather-app)'}}
-            );
-            if(!res.ok){widget.style.display='none';return;}
-            const data=await res.json();
-            const features=data.features||[];
-            if(!features.length){widget.style.display='none';return;}
-
-            const stormMap={};
-            features.forEach(f=>{
-                const p=f.properties;
-                const info=_parseDesc((p.description||'')+' '+(p.instruction||''));
-                const key=info.stormName||(p.event+'_'+p.id.slice(-6));
-                if(!stormMap[key]){stormMap[key]={name:info.stormName||'',event:p.event,headline:p.headline||'',info,dist:null};}
-                else{
-                    const sc=i=>(i.windMph?4:0)+(i.lat?2:0)+(i.pressureMb?1:0)+(i.movDir?1:0);
-                    if(sc(info)>sc(stormMap[key].info)) stormMap[key].info=info;
-                }
-                if(info.lat&&info.lon){
-                    const d=Math.round(_haverMi(userLat,userLon,info.lat,info.lon));
-                    if(stormMap[key].dist===null||d<stormMap[key].dist) stormMap[key].dist=d;
-                }
-            });
-
-            const storms=Object.values(stormMap).sort((a,b)=>(a.dist??99999)-(b.dist??99999));
-            if(!storms.length){widget.style.display='none';return;}
-
-            let border='rgba(79,195,247,0.35)';
-            storms.forEach(s=>{const w=s.info.windMph,d=s.dist;if(w>=74&&d!==null&&d<700)border='rgba(255,23,68,0.5)';else if(w>=39&&d!==null&&d<500&&border==='rgba(79,195,247,0.35)')border='rgba(255,145,0,0.45)';});
-            widget.style.borderColor=border;
-            document.getElementById('tropical-storms-list').innerHTML=storms.map(_nwsCard).join('');
-            widget.style.display='block';
-        } catch(e){widget.style.display='none';}
+        } catch(e){ widget.style.display='none'; }
 
     }
 
