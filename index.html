@@ -625,7 +625,6 @@
         <span id="bz-count" style="display:none;"></span>
         <span id="radar-blip" style="display:none;"></span>
 
-        <div class="sky-hd" style="margin-bottom:10px;">Live Radar</div>
         <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:16px; background:#000; margin-bottom:20px;"></iframe>
 
         <div id="active-risks-box" class="toolkit-box" style="display:none; padding:15px; margin-bottom:20px; border-color:var(--warning);">
@@ -5176,9 +5175,13 @@
             const res = await fetch(NHC_WORKER_URL);
             if (!res.ok) { widget.style.display='none'; return; }
             const nhcData = await res.json();
+            // NHC JSON key can vary — try all known shapes
+            const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
+            console.debug('[SkyMonitor tropical] NHC storms received:', rawStorms.length, rawStorms);
             function _pc(str){if(!str)return NaN;const m=String(str).match(/([\d.]+)([NSEW])/i);if(!m)return parseFloat(str);return(/[SW]/i.test(m[2]))?-parseFloat(m[1]):parseFloat(m[1]);}
-            const storms=(nhcData.activeStorms||[]).map(s=>Object.assign({},s,{_dist:Math.round(_haverMi(userLat,userLon,_pc(s.lat),_pc(s.lon)))}))
+            const storms=rawStorms.map(s=>Object.assign({},s,{_dist:Math.round(_haverMi(userLat,userLon,_pc(s.lat||s.centerLat||s.Lat),_pc(s.lon||s.centerLon||s.Lon)))}))
                 .filter(s=>!isNaN(s._dist)&&s._dist<=MAX_MI).sort((a,b)=>a._dist-b._dist);
+            console.debug('[SkyMonitor tropical] storms within', MAX_MI, 'mi:', storms.map(s=>s.name+' '+s._dist+'mi'));
             if (storms.length) {
                 widget.style.borderColor='rgba(79,195,247,0.18)';
                 document.getElementById('tropical-storms-list').innerHTML=storms.map(_nhcCard).join('');
@@ -5186,7 +5189,7 @@
             } else {
                 widget.style.display='none';
             }
-        } catch(e){ widget.style.display='none'; }
+        } catch(e){ console.warn('[SkyMonitor tropical] fetch/parse error:', e); widget.style.display='none'; }
 
     }
 
