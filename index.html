@@ -5148,17 +5148,13 @@
         try {
             const nhcUrl = 'https://www.nhc.noaa.gov/CurrentStorms.json';
             let data = null;
-            const _proxies = [
-                async () => { const r = await fetch('https://corsproxy.io/?' + nhcUrl); return r.ok ? r.json() : null; },
-                async () => { const r = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(nhcUrl)); return r.ok ? r.json() : null; },
-                async () => { const r = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(nhcUrl)); return r.ok ? r.json() : null; },
-            ];
-            for (const _fn of _proxies) { if (data) break; try { data = await _fn(); } catch(e) {} }
+            try { const r = await fetch('https://corsproxy.io/?' + nhcUrl); if (r.ok) data = await r.json(); } catch(e) {}
             if (!data) { widget.style.display = 'none'; return; }
             const storms = data.activeStorms || [];
             if (!storms.length) { widget.style.display = 'none'; return; }
             const relevant = storms.map(function(s) {
-                const sLat = _parseCoord(s.lat), sLon = _parseCoord(s.lon);
+                const sLat = s.latitudeNumeric ?? _parseCoord(s.latitude || s.lat);
+                const sLon = s.longitudeNumeric ?? _parseCoord(s.longitude || s.lon);
                 const dist = _haverMi(userLat, userLon, sLat, sLon);
                 return Object.assign({}, s, { _dist: Math.round(dist) });
             }).filter(function(s) { return !isNaN(s._dist) && s._dist <= 2000; })
