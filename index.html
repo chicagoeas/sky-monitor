@@ -561,6 +561,12 @@
             Observed at <a id="wuLink" target="_blank" style="color:var(--accent); text-decoration:none;"></a>
         </div>
 
+        <div id="tropical-widget" style="display:none; background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.18); border-radius:16px; padding:16px 18px; margin-bottom:15px;">
+            <div class="sky-hd">🌀 Tropical Activity</div>
+            <div id="tropical-storms-list"></div>
+            <div id="tropical-map" style="height:200px; border-radius:10px; overflow:hidden; margin-top:10px; display:none;"></div>
+        </div>
+
         <div class="sky-hd" style="margin-top:4px;">Minutely Forecast</div>
         <div id="minuteSummary" style="font-size:0.88em; color:var(--accent); margin-top:-8px; margin-bottom:10px;">--</div>
 
@@ -576,11 +582,6 @@
         <div id="twc-section" style="margin-bottom:15px;">
             <div class="sky-hd">Daily Forecast</div>
             <div id="twc-daily-forecast" class="forecast-scroll"></div>
-        </div>
-
-        <div id="tropical-widget" style="display:none; background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.18); border-radius:16px; padding:16px 18px; margin-bottom:15px;">
-            <div class="sky-hd">🌀 Tropical Activity</div>
-            <div id="tropical-storms-list"></div>
         </div>
 
         <div id="outdoor-score-box" style="display:none; background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-top:15px;">
@@ -1806,7 +1807,7 @@
         if (evt.includes('severe thunderstorm watch'))  return 4300 + sevBonus;
         if (evt.includes('watch'))                      return 4000 + sevBonus;
 
-        // ── TIER 5+: Advisories, statements, outlooks ────────────────────
+        // ── TIER 5+: Advisories, statements, outlooks ────────────o��───────
         if (evt.includes('advisory'))  return 3000 + sevBonus;
         if (evt.includes('statement')) return 2000 + sevBonus;
         if (evt.includes('outlook'))   return 1500 + sevBonus;
@@ -5224,8 +5225,43 @@
                 widget.style.borderColor='rgba(79,195,247,0.18)';
                 document.getElementById('tropical-storms-list').innerHTML=storms.map(_nhcCard).join('');
                 widget.style.display='block';
+                // ——— Leaflet mini-map (non-interactive, dark tiles, cone + track + markers) ———
+                const mapEl=document.getElementById('tropical-map');
+                if(mapEl){
+                    mapEl.style.display='block';
+                    if(window._tropMap){try{window._tropMap.remove();}catch(_){}window._tropMap=null;}
+                    mapEl.innerHTML='';
+                    const s0=storms[0];
+                    const sLat0=s0.latitudeNumeric??_pc(s0.latitude??null);
+                    const sLon0=s0.longitudeNumeric??_pc(s0.longitude??null);
+                    const mph0=Math.round((parseInt(s0.intensity)||0)*1.15078);
+                    const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
+                    setTimeout(()=>{
+                        const map=L.map(mapEl,{dragging:false,touchZoom:false,scrollWheelZoom:false,doubleClickZoom:false,keyboard:false,zoomControl:false,attributionControl:false});
+                        window._tropMap=map;
+                        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{subdomains:'abcd',maxZoom:19}).addTo(map);
+                        let bounds=null;
+                        if(s0.conePgn?.coordinates){
+                            const ring=s0.conePgn.coordinates[0].map(c=>[c[1],c[0]]);
+                            const coneL=L.polygon(ring,{color:'#4fc3f7',fillColor:'#4fc3f7',fillOpacity:0.18,weight:1.5,opacity:0.7,interactive:false}).addTo(map);
+                            bounds=coneL.getBounds();
+                        }
+                        if(s0.trackPts?.length>=2){
+                            L.polyline(s0.trackPts.map(c=>[c[1],c[0]]),{color:'#ffffff',weight:2.5,opacity:0.85,dashArray:'7,5',interactive:false}).addTo(map);
+                        }
+                        if(!isNaN(sLat0)&&!isNaN(sLon0)){
+                            L.circleMarker([sLat0,sLon0],{radius:8,color:'#fff',fillColor:cc,fillOpacity:1,weight:2,interactive:false}).addTo(map);
+                        }
+                        L.circleMarker([userLat,userLon],{radius:5,color:'#fff',fillColor:'#7dd3fc',fillOpacity:0.9,weight:1.5,interactive:false}).addTo(map);
+                        if(bounds){map.fitBounds(bounds,{padding:[12,12]});}else if(!isNaN(sLat0)&&!isNaN(sLon0)){map.setView([sLat0,sLon0],6);}
+                        map.invalidateSize();
+                    },60);
+                }
             } else {
                 widget.style.display='none';
+                if(window._tropMap){try{window._tropMap.remove();}catch(_){}window._tropMap=null;}
+                const mapEl=document.getElementById('tropical-map');
+                if(mapEl)mapEl.style.display='none';
             }
         } catch(e){ console.warn('[SkyMonitor tropical] fetch/parse error:', e); widget.style.display='none'; }
 
