@@ -778,17 +778,28 @@
         <div class="toolkit-box">
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span>&#128506; LIVE REPORTING MAP</span>
-                <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
+                <div style="display:flex; gap:6px;">
+                    <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
+                    <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
+                </div>
             </div>
 
             <div id="reporting-map"></div>
 
-            <!-- 2×2 toggle button grid below map -->
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:9px;">
-                <button id="radar-toggle-btn" onclick="toggleReportingRadar()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:6px 8px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#128225; Radar ON</button>
-                <button id="alerts-toggle-btn" onclick="toggleAlertPolygons()" style="background:rgba(255,145,0,0.15); border:1px solid #ff9100; color:#ff9100; padding:6px 8px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#9888;&#65039; Alerts ON</button>
-                <button id="lsr-toggle-btn" onclick="toggleLSR()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:6px 8px; border-radius:6px; font-size:0.75em; cursor:pointer;">&#128204; LSR ON</button>
-                <div></div>
+            <!-- Layer settings panel (hidden until gear tapped) -->
+            <div id="map-settings-panel" style="display:none; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:8px; border:1px solid rgba(255,255,255,0.08);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:0.82em; color:#ccc;">&#128225; Radar overlay</span>
+                    <label class="ios-toggle"><input type="checkbox" id="radar-toggle-cb" checked onchange="toggleReportingRadar()"><span class="ios-toggle-track"></span></label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert polygons</span>
+                    <label class="ios-toggle"><input type="checkbox" id="alerts-toggle-cb" checked onchange="toggleAlertPolygons()"><span class="ios-toggle-track"></span></label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.82em; color:#ccc;">&#128204; Local Storm Reports</span>
+                    <label class="ios-toggle"><input type="checkbox" id="lsr-toggle-cb" checked onchange="toggleLSR()"><span class="ios-toggle-track"></span></label>
+                </div>
             </div>
 
             <!-- Sub-controls row -->
@@ -4639,34 +4650,33 @@
     }
 
     let lsrVisible = localStorage.getItem('report_lsr_on') === '1';
+    function toggleMapSettings() {
+        const panel = document.getElementById('map-settings-panel');
+        const btn = document.getElementById('map-settings-btn');
+        if (!panel) return;
+        const open = panel.style.display === 'none' || panel.style.display === '';
+        panel.style.display = open ? 'block' : 'none';
+        if (btn) btn.style.background = open ? 'rgba(79,195,247,0.35)' : 'rgba(79,195,247,0.15)';
+    }
+
     function toggleLSR() {
-        if (!lsrLayer || !reportingMap) return;
-        lsrVisible = !lsrVisible;
+        const cb = document.getElementById('lsr-toggle-cb');
+        if (!lsrLayer || !reportingMap) { if (cb) cb.checked = lsrVisible; return; }
+        lsrVisible = cb ? cb.checked : !lsrVisible;
+        if (cb) cb.checked = lsrVisible;
         localStorage.setItem('report_lsr_on', lsrVisible ? '1' : '0');
-        const btn = document.getElementById('lsr-toggle-btn');
-        if (lsrVisible) {
-            reportingMap.addLayer(lsrLayer);
-            if (btn) { btn.textContent = '\uD83D\uDCCC LSR ON'; btn.style.opacity = '1'; }
-        } else {
-            reportingMap.removeLayer(lsrLayer);
-            if (btn) { btn.textContent = '\uD83D\uDCCC LSR OFF'; btn.style.opacity = '0.45'; }
-        }
+        if (lsrVisible) { reportingMap.addLayer(lsrLayer); }
+        else { reportingMap.removeLayer(lsrLayer); }
     }
 
     function toggleAlertPolygons() {
-        if (!alertPolygonLayer || !reportingMap) return;
-        const btn = document.getElementById('alerts-toggle-btn');
-        if (alertsVisible) {
-            reportingMap.removeLayer(alertPolygonLayer);
-            alertsVisible = false;
-            localStorage.setItem('report_alerts_on', '0');
-            if (btn) { btn.textContent = '\u26A0\uFE0F Alerts OFF'; btn.style.opacity = '0.45'; }
-        } else {
-            alertPolygonLayer.addTo(reportingMap);
-            alertsVisible = true;
-            localStorage.setItem('report_alerts_on', '1');
-            if (btn) { btn.textContent = '\u26A0\uFE0F Alerts ON'; btn.style.opacity = '1'; }
-        }
+        const cb = document.getElementById('alerts-toggle-cb');
+        if (!alertPolygonLayer || !reportingMap) { if (cb) cb.checked = alertsVisible; return; }
+        alertsVisible = cb ? cb.checked : !alertsVisible;
+        if (cb) cb.checked = alertsVisible;
+        localStorage.setItem('report_alerts_on', alertsVisible ? '1' : '0');
+        if (alertsVisible) { alertPolygonLayer.addTo(reportingMap); }
+        else { reportingMap.removeLayer(alertPolygonLayer); }
     }
 
     function updatePinCoordsDisplay() {
@@ -4706,19 +4716,13 @@
     }
 
     function toggleReportingRadar() {
-        if (!reportingRadarLayer || !reportingMap) return;
-        const btn = document.getElementById('radar-toggle-btn');
-        if (radarVisible) {
-            reportingMap.removeLayer(reportingRadarLayer);
-            radarVisible = false;
-            localStorage.setItem('report_radar_on', '0');
-            if (btn) { btn.textContent = '\uD83D\uDCE1 Radar OFF'; btn.style.opacity = '0.5'; }
-        } else {
-            reportingRadarLayer.addTo(reportingMap);
-            radarVisible = true;
-            localStorage.setItem('report_radar_on', '1');
-            if (btn) { btn.textContent = '\uD83D\uDCE1 Radar ON'; btn.style.opacity = '1'; }
-        }
+        const cb = document.getElementById('radar-toggle-cb');
+        if (!reportingRadarLayer || !reportingMap) { if (cb) cb.checked = radarVisible; return; }
+        radarVisible = cb ? cb.checked : !radarVisible;
+        if (cb) cb.checked = radarVisible;
+        localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
+        if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
+        else { reportingMap.removeLayer(reportingRadarLayer); }
     }
 
     function findMeReporting() {
@@ -4801,21 +4805,21 @@
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
         lsrLayer = L_ref.layerGroup().addTo(reportingMap);
 
-        // Restore saved toggle state
+        // Restore saved toggle state — sync iOS toggle checkboxes
         if (!radarVisible) {
             reportingMap.removeLayer(reportingRadarLayer);
-            const rb = document.getElementById('radar-toggle-btn');
-            if (rb) { rb.textContent = '\uD83D\uDCE1 Radar OFF'; rb.style.opacity = '0.5'; }
+            const cb = document.getElementById('radar-toggle-cb');
+            if (cb) cb.checked = false;
         }
         if (!alertsVisible) {
             reportingMap.removeLayer(alertPolygonLayer);
-            const ab = document.getElementById('alerts-toggle-btn');
-            if (ab) { ab.textContent = '\u26A0\uFE0F Alerts OFF'; ab.style.opacity = '0.45'; }
+            const cb = document.getElementById('alerts-toggle-cb');
+            if (cb) cb.checked = false;
         }
         if (!lsrVisible) {
             reportingMap.removeLayer(lsrLayer);
-            const lb = document.getElementById('lsr-toggle-btn');
-            if (lb) { lb.textContent = '\uD83D\uDCCC LSR OFF'; lb.style.opacity = '0.45'; }
+            const cb = document.getElementById('lsr-toggle-cb');
+            if (cb) cb.checked = false;
         }
         userReportLayer = L_ref.markerClusterGroup({
             maxClusterRadius: 40,
