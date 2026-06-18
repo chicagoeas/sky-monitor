@@ -5135,7 +5135,7 @@
 
         const NHC_WORKER_URL = 'https://nhc-active-storms.skymonitor-account.workers.dev/';
 
-        const MAX_MI = 2000;
+        const MAX_MI = 500;
 
         function _haverMi(la1,lo1,la2,lo2){
             const R=3958.8,dLat=(la2-la1)*Math.PI/180,dLon=(lo2-lo1)*Math.PI/180;
@@ -5151,22 +5151,43 @@
             const typeLabel=clsMap[s.classification]||(mph>=74?'Hurricane':mph>=39?'Tropical Storm':'Tropical System');
             const catLabel=mph>=157?'CAT 5':mph>=130?'CAT 4':mph>=111?'CAT 3':mph>=96?'CAT 2':mph>=74?'CAT 1':'';
             const catColor=mph>=130?'#ff1744':mph>=111?'#ff5722':mph>=96?'#ff9100':mph>=74?'#ffd54f':mph>=39?'#4fc3f7':'#81c784';
-            const distColor=s._dist<300?'#ff1744':s._dist<700?'#ff9100':'#4fc3f7';
+            const distColor=!isNaN(s._dist)?(s._dist<300?'#ff1744':s._dist<700?'#ff9100':'#4fc3f7'):'#4fc3f7';
             const hdl=s.headline?(s.headline.length>110?s.headline.substring(0,110)+'\u2026':s.headline):'';
+            // Pressure from NHC JSON (field "pressure", "0" means unknown)
+            const pressureMb=parseInt(s.pressure)||0;
+            // Movement from NHC JSON fields movementDir (degrees) + movementSpeed (mph or kt)
+            const movDir=s.movementDir!=null?s.movementDir:null;
+            const movSpd=parseInt(s.movementSpeed)||0;
+            function _deg2comp(d){const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];return dirs[Math.round((d%360)/22.5)%16];}
+            const movText=(movDir!==null&&movSpd)?(_deg2comp(movDir)+' '+movSpd+' mph'):'';
+
             let h='<div style="background:rgba(0,0,0,0.18);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px 15px;margin-bottom:10px;">';
             h+='<div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:11px;">';
             h+='<span style="width:8px;height:8px;border-radius:50%;background:'+distColor+';flex-shrink:0;margin-top:5px;box-shadow:0 0 7px '+distColor+';"></span>';
             h+='<div style="font-size:0.81em;color:#cbd5e1;line-height:1.5;"><span style="font-weight:800;color:'+catColor+';">'+typeLabel+' '+(s.name||'')+':</span> '+(hdl||'Active tropical system.')+'</div></div>';
             h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">';
+            // Category
             h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Category</div>';
             h+='<div style="font-size:0.86em;font-weight:700;color:'+catColor+';">'+typeLabel+(catLabel?' <span style="font-size:0.8em;opacity:0.75;">'+catLabel+'</span>':'')+'</div></div>';
+            // Max wind
             h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Max. Wind Speed</div>';
             h+='<div style="font-size:0.86em;font-weight:700;color:'+catColor+';">'+(mph?mph+' mph':'\u2014')+'</div></div>';
+            // Distance
             h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Distance</div>';
-            h+='<div style="font-size:0.86em;font-weight:700;color:'+distColor+';">'+s._dist.toLocaleString()+' mi</div></div>';
-            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Min Pressure</div>';
-            h+='<div style="font-size:0.86em;font-weight:700;color:#e2e8f0;">\u2014</div></div>';
+            h+='<div style="font-size:0.86em;font-weight:700;color:'+distColor+';">'+(isNaN(s._dist)?'\u2014':s._dist.toLocaleString()+' mi')+'</div></div>';
+            // 4th cell: Min Pressure if available, else Movement
+            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;">';
+            if(pressureMb>0){
+                h+='<div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Min Pressure</div>';
+                h+='<div style="font-size:0.86em;font-weight:700;color:#e2e8f0;">'+pressureMb+' mb</div>';
+            } else {
+                h+='<div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Movement</div>';
+                h+='<div style="font-size:0.86em;font-weight:700;color:#e2e8f0;">'+(movText||'\u2014')+'</div>';
+            }
             h+='</div></div>';
+            // If pressure was shown, add movement as footer
+            if(pressureMb>0&&movText) h+='<div style="margin-top:8px;font-size:0.7em;color:#6b7280;">Movement: '+movText+'</div>';
+            h+='</div>';
             return h;
         }
 
@@ -5175,19 +5196,26 @@
             const res = await fetch(NHC_WORKER_URL);
             if (!res.ok) { widget.style.display='none'; return; }
             const nhcData = await res.json();
-            // NHC JSON key can vary — try all known shapes
             const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
-            console.debug('[SkyMonitor tropical] NHC storms received:', rawStorms.length);
-            if (rawStorms[0]) console.debug('[SkyMonitor tropical] storm[0] keys:', JSON.stringify(rawStorms[0]));
+            // Point-in-polygon (ray casting) — checks if user is inside the NHC 5-day cone
+            function _pip(lat, lon, pgn) {
+                const vs = pgn.coordinates[0];
+                let inside = false;
+                for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+                    const xi = vs[i][0], yi = vs[i][1], xj = vs[j][0], yj = vs[j][1];
+                    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+                }
+                return inside;
+            }
             function _pc(str){if(!str)return NaN;const m=String(str).match(/([\d.]+)([NSEW])/i);if(!m)return parseFloat(str);return(/[SW]/i.test(m[2]))?-parseFloat(m[1]):parseFloat(m[1]);}
-            const storms=rawStorms.map(s=>{
-                // Try every known lat/lon field name the NHC JSON has used
-                const sLat=_pc(s.lat??s.centerLat??s.Lat??s.latitude??s.stormLat??null);
-                const sLon=_pc(s.lon??s.centerLon??s.Lon??s.longitude??s.stormLon??null);
-                const dist=Math.round(_haverMi(userLat,userLon,sLat,sLon));
-                console.debug('[SkyMonitor tropical]',s.name,'lat=',s.lat,'lon=',s.lon,'→ parsed',sLat,sLon,'dist=',dist);
-                return Object.assign({},s,{_dist:dist});
-            }).filter(s=>isNaN(s._dist)||s._dist<=MAX_MI).sort((a,b)=>(isNaN(a._dist)?MAX_MI:a._dist)-(isNaN(b._dist)?MAX_MI:b._dist));
+            const storms = rawStorms.map(s => {
+                const sLat = _pc(s.lat ?? s.centerLat ?? s.Lat ?? null);
+                const sLon = _pc(s.lon ?? s.centerLon ?? s.Lon ?? null);
+                return Object.assign({}, s, { _dist: Math.round(_haverMi(userLat, userLon, sLat, sLon)) });
+            }).filter(s => {
+                if (s.conePgn) return _pip(userLat, userLon, s.conePgn); // exact cone check
+                return !isNaN(s._dist) && s._dist <= MAX_MI;             // fallback if cone unavailable
+            }).sort((a, b) => (isNaN(a._dist) ? MAX_MI : a._dist) - (isNaN(b._dist) ? MAX_MI : b._dist));
             if (storms.length) {
                 widget.style.borderColor='rgba(79,195,247,0.18)';
                 document.getElementById('tropical-storms-list').innerHTML=storms.map(_nhcCard).join('');
