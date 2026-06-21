@@ -1353,7 +1353,7 @@
     }
 
     function _isMetric() { return localStorage.getItem('unit_system') === 'metric'; }
-    function _fmtTemp(f) { return _isMetric() ? Math.round((f - 32) * 5 / 9) + '\u00b0C' : Math.round(f) + '\u00b0'; }
+    function _fmtTemp(f) { return _isMetric() ? Math.round((f - 32) * 5 / 9) + '\u00b0' : Math.round(f) + '\u00b0'; }
     function _fmtWind(mph) { return _isMetric() ? Math.round(mph * 1.60934) + ' km/h' : Math.round(mph) + ' mph'; }
     function _convertNarrativeToMetric(text) {
         if (!_isMetric() || !text) return text;
@@ -2030,11 +2030,26 @@
 
     // ——— ALERT STACK (v1.0.4 fixes) ———
 
+    function _pirateAlertColor(severity) {
+        switch ((severity || '').toLowerCase()) {
+            case 'extreme':  return '#7f0000';
+            case 'severe':   return '#b71c1c';
+            case 'moderate': return '#e65100';
+            case 'minor':    return '#388e3c';
+            default:         return '#546e7a';
+        }
+    }
+
     async function renderPirateAlerts(stack, banner) {
         const alerts = window.pirateAlerts || [];
         if (!alerts.length) { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; return; }
         window.alertTranslationCache = window.alertTranslationCache || {};
-        banner.style.display = 'block'; banner.style.background = '#e65100';
+        const _severityRank = { 'extreme': 4, 'severe': 3, 'moderate': 2, 'minor': 1 };
+        const _topSeverity = alerts.reduce(function(top, a) {
+            return (_severityRank[(a.severity || '').toLowerCase()] || 0) > (_severityRank[(top.severity || '').toLowerCase()] || 0) ? a : top;
+        }, alerts[0]);
+        const _bannerColor = _pirateAlertColor(_topSeverity.severity);
+        banner.style.display = 'block'; banner.style.background = _bannerColor;
         banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '');
         stack.innerHTML = '';
         const _doTranslate = localStorage.getItem('alerts_language') === 'en';
@@ -2075,7 +2090,8 @@
             const isTruncated = desc.length > 140;
             const shortDesc = isTruncated ? desc.slice(0, 140) + '...' : desc;
             const pwId = 'pw-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
-            stack.innerHTML += '<div class="alert-card" style="background:#e65100; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><br><small>' + escapeHtml(shortDesc) + (expires ? '<br>Expires: ' + escapeHtml(expires) : '') + '</small>' + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button><div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
+            const _cardColor = _pirateAlertColor(alert.severity);
+            stack.innerHTML += '<div class="alert-card" style="background:' + _cardColor + '; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><br><small>' + escapeHtml(shortDesc) + (expires ? '<br>Expires: ' + escapeHtml(expires) : '') + '</small>' + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button><div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
         }
     }
 
@@ -2713,7 +2729,7 @@
             // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
             let temp = useWU ? wu.temp : curr.temperature;
             window.liveTemp = Math.round(temp);
-            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
             liveUV = curr.uvIndex || 0;
             const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
             const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
@@ -2752,7 +2768,7 @@
                 }
                 liveFeelsLike = fl;
             })();
-            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
             const presIn = (curr.pressure * 0.02953).toFixed(2);
             let trend = '\u27A1\uFE0F';
             if (lastPressureMb !== null && curr.pressure !== null) {
@@ -2889,9 +2905,9 @@
                 // Both live sources unavailable — restore from IndexedDB cache
                 SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
                     if (!c) return;
-                    (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                    (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                     (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                    (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                    (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                     document.getElementById('windVal').innerText  = _isMetric() ? Math.round(c.wind * 1.60934) + ' km/h' : c.wind + ' mph'; setWindCompass(null);
                     if (c.pressure) document.getElementById('presVal').innerText = _isMetric() ? Math.round(parseFloat(c.pressure) * 33.8639) + ' hPa' : c.pressure + ' inHg';
                     document.getElementById('uv-val').innerText = c.uv || '--';
@@ -2962,7 +2978,7 @@
             var _wuHasTemp = _wu && _wu.temp !== null;
             if (!_wuHasTemp && curr && curr.temperature != null) {
                 window.liveTemp = Math.round(curr.temperature);
-                (function(){ var _tv = Math.round(curr.temperature); var _te = document.getElementById('tempVal'); if (_te) { _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); } })();
+                (function(){ var _tv = Math.round(curr.temperature); var _te = document.getElementById('tempVal'); if (_te) { _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); } })();
             }
 
             // ── Re-render Humidity (only when WU doesn't supply it) ──
@@ -2998,7 +3014,7 @@
                     } else { _fl = _hiSimple; }
                 }
                 liveFeelsLike = _fl;
-                (function(){ var _fv = Math.round(_fl); var _fe = document.getElementById('feelsVal'); if (_fe) { _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); } })();
+                (function(){ var _fv = Math.round(_fl); var _fe = document.getElementById('feelsVal'); if (_fe) { _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); } })();
                 updateSmartComfort(_T, liveFeelsLike, _RH, liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability || 0) * 100);
                 if (window.pirateHourlyData) computeOutdoorScore(window.pirateHourlyData);
             }
@@ -3118,7 +3134,7 @@
         // Temperature
         const temp = fakeCurr.temperature;
         window.liveTemp = Math.round(temp);
-        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
         liveUV = fakeCurr.uvIndex || 0;
 
         // Wind
@@ -3149,7 +3165,7 @@
             }
             liveFeelsLike = fl;
         })();
-        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
 
         // Pressure
         const presIn = (cur.surface_pressure * 0.02953).toFixed(2);
@@ -3454,7 +3470,7 @@
             // the entire NWS override; update each field only when it is available.
             if (_nwsNeedsOverride && !window.isOutsideUS && nwsObsTempF !== null) {
                 window.liveTemp = Math.round(nwsObsTempF);
-                (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0C' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                 if (nwsObsHumidity !== null) {
                     (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                 }
@@ -3491,7 +3507,7 @@
                     }
                     liveFeelsLike = fl;
                 })();
-                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0C' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                 var _pw = window.pirateCurrently;
                 var _rhForComfort = (nwsObsHumidity !== null) ? Math.round(nwsObsHumidity) : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
                 updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, _rhForComfort, liveWindSpd,
@@ -4270,7 +4286,7 @@
             const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
             const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer'; card.style.position = 'relative';
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
-            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + (_isMetric() && high !== '--' ? Math.round((high-32)*5/9) + '\u00b0C' : high + '\u00b0') + ' / <span style="color:white">' + (_isMetric() && low !== '--' ? Math.round((low-32)*5/9) + '\u00b0C' : low + '\u00b0') + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + (_isMetric() ? (precipAmt * 25.4).toFixed(1) + ' mm' : precipAmt.toFixed(2) + '"') : '') + '</div>' : '');
+            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (iconNum ? iconNum : '50') + '.svg" alt="icon" style="width:48px;display:block;margin:auto;"><div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + (_isMetric() && high !== '--' ? Math.round((high-32)*5/9) + '\u00b0' : high + '\u00b0') + ' / <span style="color:white">' + (_isMetric() && low !== '--' ? Math.round((low-32)*5/9) + '\u00b0' : low + '\u00b0') + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + (_isMetric() ? (precipAmt * 25.4).toFixed(1) + ' mm' : precipAmt.toFixed(2) + '"') : '') + '</div>' : '');
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
@@ -4335,7 +4351,7 @@
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + (_isMetric() ? (snowQpf[part] * 25.4).toFixed(1) + ' mm' : snowQpf[part] + '"') + '</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0C' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0C' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (_isMetric() ? (qpf[part] * 25.4).toFixed(1) + ' mm' : qpf[part] + '"') : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (_isMetric() ? (qpf[part] * 25.4).toFixed(1) + ' mm' : qpf[part] + '"') : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
