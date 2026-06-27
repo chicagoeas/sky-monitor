@@ -348,10 +348,10 @@
             </div>
         </div>
         <div class="settings-row">
-            <span class="settings-label">Page Swiping</span>
+            <span class="settings-label">Unit System</span>
             <div class="btn-group">
-                <button id="opt-swipe-on" class="btn-opt active" onclick="setSwipeSetting(true)">ON</button>
-                <button id="opt-swipe-off" class="btn-opt" onclick="setSwipeSetting(false)">OFF</button>
+                <button id="opt-unit-imperial" class="btn-opt active" onclick="setUnitSystem('imperial')">IMPERIAL</button>
+                <button id="opt-unit-metric" class="btn-opt" onclick="setUnitSystem('metric')">METRIC</button>
             </div>
         </div>
         <div class="settings-row" id="notif-settings-row">
@@ -397,10 +397,10 @@
             </div>
         </div>
         <div class="settings-row">
-            <span class="settings-label">Unit System</span>
+            <span class="settings-label">Page Swiping</span>
             <div class="btn-group">
-                <button id="opt-unit-imperial" class="btn-opt active" onclick="setUnitSystem('imperial')">IMPERIAL</button>
-                <button id="opt-unit-metric" class="btn-opt" onclick="setUnitSystem('metric')">METRIC</button>
+                <button id="opt-swipe-on" class="btn-opt active" onclick="setSwipeSetting(true)">ON</button>
+                <button id="opt-swipe-off" class="btn-opt" onclick="setSwipeSetting(false)">OFF</button>
             </div>
         </div>
         <div class="settings-row" style="margin-bottom:0;">
@@ -1013,6 +1013,7 @@
     window.alertHasConsiderableHail = false;
     window.alertHasConsiderableWind = false;
     window.alertHasCatastrophicFlood = false;
+    window.alertHasConsiderableFlood = false;
     window.alertHasObservedCertainty = false;
     // v1.0.4: Modal-open flag disables tab swipe
     window._modalOpen = false;
@@ -2306,6 +2307,7 @@
         window.alertHasConsiderableHail = false;
         window.alertHasConsiderableWind = false;
         window.alertHasCatastrophicFlood = false;
+        window.alertHasConsiderableFlood = false;
         window.alertHasObservedCertainty = false;
         window.activeHeatWarning = false;
 
@@ -2418,13 +2420,26 @@
                     const complexity = localStorage.getItem('data_complexity') || 'normal';
                     if (complexity === 'specific') {
                         const params2 = p.parameters || {}; const keys = Object.keys(params2);
-                        const start = keys.indexOf('eventMotionDescription'); const end = keys.indexOf('BLOCKCHANNEL');
-                        if (start !== -1 && end !== -1 && end > start) {
-                            keys.slice(start + 1, end).forEach(function(key) {
-                                const value = params2[key]?.[0]; if (!value) return;
-                                const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, function(str) { return str.toUpperCase(); });
-                                extraDetails += '<div>' + escapeHtml(label) + ': ' + escapeHtml(value) + '</div>';
-                            });
+                        const evtCheck = (p.event || '').toLowerCase();
+                        if (evtCheck.includes('flash flood')) {
+                            // Flash flood specific parameters
+                            const _FFW_CAUSE_MAP = { ER:'Excessive Rainfall', SM:'Snowmelt', RS:'Rain + Snowmelt', DM:'Dam/Levee Failure', DR:'Dam Floodgate Release', GO:'Glacier Lake Outburst', IJ:'Ice Jam', IC:'Rain/Ice/Snowpack Combo', FS:'Upstream Flooding' };
+                            const _ffSev    = (params2.floodSeverityCategory && params2.floodSeverityCategory[0]) || '';
+                            const _ffCause  = (params2.floodImmediateCause && params2.floodImmediateCause[0]) || '';
+                            const _ffRecord = (params2.floodRecordStatus && params2.floodRecordStatus[0]) || '';
+                            if (_ffSev)    extraDetails += '<div>Flood Severity: ' + escapeHtml(_ffSev.charAt(0).toUpperCase() + _ffSev.slice(1).toLowerCase()) + '</div>';
+                            if (_ffCause)  extraDetails += '<div>Cause: ' + escapeHtml(_FFW_CAUSE_MAP[_ffCause.toUpperCase()] || _ffCause) + '</div>';
+                            if (_ffRecord) extraDetails += '<div>Record Status: ' + escapeHtml(_ffRecord.charAt(0).toUpperCase() + _ffRecord.slice(1).toLowerCase()) + '</div>';
+                        } else {
+                            // Convective (TOR/SVR) parameters — slice between motion and channel keys
+                            const start = keys.indexOf('eventMotionDescription'); const end = keys.indexOf('BLOCKCHANNEL');
+                            if (start !== -1 && end !== -1 && end > start) {
+                                keys.slice(start + 1, end).forEach(function(key) {
+                                    const value = params2[key]?.[0]; if (!value) return;
+                                    const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, function(str) { return str.toUpperCase(); });
+                                    extraDetails += '<div>' + escapeHtml(label) + ': ' + escapeHtml(value) + '</div>';
+                                });
+                            }
                         }
                     }
                     const evt = p.event.toLowerCase();
@@ -2469,10 +2484,11 @@
                         const torPoss = (ap.tornadoPossible && ap.tornadoPossible[0]) || '';
                         if (torPoss.toUpperCase() === 'YES' || desc.includes('TORNADO POSSIBLE') || desc.includes('TORNADO THREAT')) window.alertHasTornadoPossible = true;
                     }
-                    // Flash flood catastrophic designation
+                    // Flash flood severity tags
                     if (evt.includes('flash flood')) {
                         const floodSev = (ap.floodSeverityCategory && ap.floodSeverityCategory[0]) || '';
                         if (floodSev.toUpperCase().includes('CATASTROPHIC') || desc.includes('CATASTROPHIC FLOOD')) window.alertHasCatastrophicFlood = true;
+                        if (floodSev.toUpperCase().includes('CONSIDERABLE') || desc.includes('CONSIDERABLE FLOODING')) window.alertHasConsiderableFlood = true;
                     }
 
                     const isTorEmergency = desc.includes('TORNADO EMERGENCY');
@@ -3758,6 +3774,7 @@
             return 'A confirmed tornado is on the ground near your location. Take immediate shelter in an interior room on the lowest floor of a sturdy building.';
         }
         if (flags.destructiveSVR) return 'A Destructive Severe Thunderstorm Warning is in effect. Catastrophic wind damage and very large hail are occurring or imminent. Stay away from windows and take shelter now.';
+        if (flags.considerableFFW) return 'A Flash Flood Warning with Considerable flooding impacts is in effect. Life-threatening flooding may be occurring. Move to higher ground immediately — do not wait for official evacuation orders.';
         if (flags.torWarning) {
             if (flags.night) return 'A tornado warning is in effect for your area. Nighttime tornadoes are especially deadly — take cover now even without visible warning signs.';
             return 'A tornado warning is in effect for your area. Move immediately to an interior room on the lowest floor of a sturdy building.';
@@ -4040,11 +4057,13 @@
         // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency ONLY.
         const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE;
 
-        // CRITICAL: Confirmed (OBSERVED) tornado on the ground, or Destructive SVR.
+        // CRITICAL: Confirmed (OBSERVED) tornado on the ground, Destructive SVR,
+        // or a Considerable/Catastrophic Flash Flood Warning (below FFE threshold).
         // Explicitly excludes anything already life-threatening.
         const _isCritical = !_isLifeThreatening && (
             (window.activeTornadoWarning && window.activeTornadoObserved) ||
-            window.activeSVRDestructive
+            window.activeSVRDestructive ||
+            ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) && !window.activeFFE)
         );
 
         // DANGEROUS: Any other short-fused warning (radar-indicated tornado, standard SVR,
@@ -4070,7 +4089,8 @@
             pdsTor:         window.activePDSTornado,
             ffe:            window.activeFFE,
             torObserved:    window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
-            destructiveSVR: window.activeSVRDestructive && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            destructiveSVR:   window.activeSVRDestructive && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            considerableFFW:  (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) && !window.activeFFE,
             torWarning:     window.activeTornadoWarning && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
             night:          isNightAtStation,
             heavyRain:      livePrecipInt >= 0.15,
