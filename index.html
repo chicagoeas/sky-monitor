@@ -245,7 +245,9 @@
         .threat-tier-active { background: rgba(255,145,0,0.10);    border-color: #ff9100; }
         .threat-tier-sig    { background: rgba(255,87,34,0.10);    border-color: #ff5722; }
         .threat-tier-danger { background: rgba(255,23,68,0.12);    border-color: #ff1744; }
+        .threat-tier-critical { background: rgba(117,5,5,0.20);   border-color: #750505; animation: criticalPulse 2s infinite; }
         .threat-tier-life   { background: rgba(156,39,176,0.15);   border-color: #e040fb; animation: lifePulse 2s infinite; }
+        @keyframes criticalPulse { 0% { box-shadow: 0 0 0 0 rgba(117,5,5,0.8); } 70% { box-shadow: 0 0 0 14px rgba(117,5,5,0); } 100% { box-shadow: 0 0 0 0 rgba(117,5,5,0); } }
         @keyframes lifePulse { 0% { box-shadow: 0 0 0 0 rgba(224,64,251,0.7); } 70% { box-shadow: 0 0 0 14px rgba(224,64,251,0); } 100% { box-shadow: 0 0 0 0 rgba(224,64,251,0); } }
 
         .analytics-canvas-wrap { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.07); }
@@ -3752,9 +3754,10 @@
         if (flags.pdsTor) return 'A Particularly Dangerous Situation (PDS) Tornado Warning is in effect. This is a RARE, LIFE-THREATENING event. TAKE COVER NOW.';
         if (flags.ffe) return 'A FLASH FLOOD EMERGENCY is occurring. Life-threatening flooding is imminent or occuring. SEEK HIGHER GROUND immediately — do not wait.';
         if (flags.torObserved) {
-            if (flags.night) return 'A confirmed tornado is on the ground nearby. Tornadoes are extremely difficult to see and confirm at night. Take shelter immediately in an interior room.';
-            return 'A confirmed tornado is on the ground near your location. Take immediate shelter in an interior, lowest-level room.';
+            if (flags.night) return 'A confirmed tornado is on the ground nearby. Tornadoes are nearly impossible to see at night — take shelter immediately in the lowest interior room of a sturdy building. Do not wait.';
+            return 'A confirmed tornado is on the ground near your location. Take immediate shelter in an interior room on the lowest floor of a sturdy building.';
         }
+        if (flags.destructiveSVR) return 'A Destructive Severe Thunderstorm Warning is in effect. Catastrophic wind damage and very large hail are occurring or imminent. Stay away from windows and take shelter now.';
         if (flags.torWarning) {
             if (flags.night) return 'A tornado warning is in effect for your area. Nighttime tornadoes are especially deadly — take cover now even without visible warning signs.';
             return 'A tornado warning is in effect for your area. Move immediately to an interior room on the lowest floor of a sturdy building.';
@@ -3764,19 +3767,20 @@
         if (cats.length >= 3) return 'Multiple simultaneous hazards are active: ' + cats.join(', ') + '. This is a complex weather event — follow all active NWS guidance.';
         // Single-dominant hazard
         if (hazardCats.tropical) return 'Tropical weather hazards are active. Hurricane-force conditions may include devastating winds, surge, and flooding. Follow evacuation orders.';
-        if (hazardCats.convective && tier === 'DANGEROUS') return 'Severe convective weather is active near you, with potential for large hail, damaging winds, or brief tornadoes. Be prepared to take shelter immediately if a warning is issued for your area.';
+        if (hazardCats.convective && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Severe convective weather is active near you, with potential for large hail, damaging winds, or tornadoes. Take shelter immediately.';
         if (hazardCats.convective) return 'Thunderstorm watches or hazards are in effect. Be prepared to shelter quickly if conditions deteriorate.';
         if (hazardCats.flood && flags.heavyRain) return 'Active flooding combined with heavy rainfall creates an extremely dangerous situation. Avoid all low-lying areas and roadways.';
-        if (hazardCats.flood && tier === 'DANGEROUS') return 'Flash flooding is developing or imminent. Avoid flooded roads and low-lying areas — turn around, don\'t drown.';
+        if (hazardCats.flood && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Flash flooding is developing or imminent. Avoid flooded roads and low-lying areas — turn around, don\'t drown.';
         if (hazardCats.flood) return 'Flooding conditions are possible. Stay aware of developing rainfall and avoid flood-prone roads and low-lying areas.';
-        if (hazardCats.winter && tier === 'DANGEROUS') return 'Extreme winter conditions are occurring. Blizzard or ice storm conditions may cause dangerous travel and power outages.';
+        if (hazardCats.winter && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Extreme winter conditions are occurring. Blizzard or ice storm conditions may cause dangerous travel and power outages.';
         if (hazardCats.winter) return 'Winter weather alerts are in effect. Expect hazardous travel and reduced visibility from snow, ice, or freezing rain.';
-        if (hazardCats.wind && tier === 'DANGEROUS') return 'Dangerous wind conditions are active. Secure loose objects, avoid travel, and stay away from trees and power lines.';
+        if (hazardCats.wind && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Dangerous wind conditions are active. Secure loose objects, avoid travel, and stay away from trees and power lines.';
         if (hazardCats.wind) return 'Elevated wind hazards are in the area. Gusty winds may cause localized damage and difficult driving conditions.';
         if (hazardCats.heat) return 'Extreme heat conditions are dangerous. Limit outdoor exposure, stay hydrated, and check on vulnerable individuals.';
         if (hazardCats.fire) return 'Critical fire weather conditions exist. Extreme fire behavior is possible — follow evacuation orders and air quality guidance.';
         // Tier fallbacks
         if (tier === 'LIFE THREATENING') return 'A life-threatening weather situation is ongoing. Take immediate protective action and follow all NWS instructions.';
+        if (tier === 'CRITICAL') return 'A critical weather situation is occurring near you. Significant harm or death is possible — take shelter immediately and monitor NWS updates closely.';
         if (tier === 'DANGEROUS') return 'Hazardous conditions are active near you. Remain sheltered and closely monitor NWS alerts for updates.';
         if (tier === 'SIGNIFICANT') return 'Significantly elevated weather concerns are in effect. High-impact conditions are possible — stay alert and be ready to act quickly.';
         if (tier === 'ACTIVE WEATHER') return 'Active weather alerts are in effect for your area. Stay weather-aware and be ready to act if conditions worsen.';
@@ -4030,34 +4034,51 @@
         if (window.activeFFE)              score = Math.max(score, 16);
 
         // ── 11. Tier Classification ───────────────────────────────────────
-        // LIFE THREATENING and DANGEROUS are flag-driven, not score-driven.
-        const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeSVRDestructive || window.activeFFE;
+        // LIFE THREATENING, CRITICAL, and DANGEROUS are strictly flag-driven.
+        // No score, no matter how high, can reach these tiers — only specific alert types can.
+
+        // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency ONLY.
+        const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE;
+
+        // CRITICAL: Confirmed (OBSERVED) tornado on the ground, or Destructive SVR.
+        // Explicitly excludes anything already life-threatening.
+        const _isCritical = !_isLifeThreatening && (
+            (window.activeTornadoWarning && window.activeTornadoObserved) ||
+            window.activeSVRDestructive
+        );
+
+        // DANGEROUS: Any other short-fused warning (radar-indicated tornado, standard SVR,
+        // flash flood warning, snow squall, extreme wind, dust storm).
         const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
-        const _hasDangerousWarning = !_isLifeThreatening && (window.activeAlertEvents || []).some(function(e) {
+        const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (window.activeAlertEvents || []).some(function(e) {
             var el = e.toLowerCase();
             return _SHORT_FUSED.some(function(w) { return el.includes(w); });
         });
-        let tier, tierClass, emoji;
-        if (_isLifeThreatening)        { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life';   emoji = '\uD83D\uDFE3'; }
-        else if (_hasDangerousWarning) { tier = 'DANGEROUS';        tierClass = 'threat-tier-danger'; emoji = '\uD83D\uDD34'; }
-        else if (score >= 8)           { tier = 'SIGNIFICANT';      tierClass = 'threat-tier-sig';    emoji = '\uD83D\uDD36'; }
-        else if (score >= 5)           { tier = 'ACTIVE WEATHER';   tierClass = 'threat-tier-active'; emoji = '\uD83D\uDFE0'; }
-        else if (score >= 3)           { tier = 'ELEVATED';         tierClass = 'threat-tier-elev';   emoji = '\uD83D\uDFE1'; }
-        else                           { tier = 'LOW';              tierClass = 'threat-tier-low';    emoji = '\uD83D\uDFE2'; }
+
+        let tier, tierClass, emoji, badgeColor;
+        if (_isLifeThreatening)        { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life';     emoji = '\uD83D\uDFE3'; badgeColor = '#e040fb'; }
+        else if (_isCritical)          { tier = 'CRITICAL';         tierClass = 'threat-tier-critical'; emoji = '\uD83D\uDD34'; badgeColor = '#ff4444'; }
+        else if (_hasDangerousWarning) { tier = 'DANGEROUS';        tierClass = 'threat-tier-danger';   emoji = '\uD83D\uDD34'; badgeColor = '#ff1744'; }
+        else if (score >= 8)           { tier = 'SIGNIFICANT';      tierClass = 'threat-tier-sig';      emoji = '\uD83D\uDD36'; badgeColor = '#ff5722'; }
+        else if (score >= 5)           { tier = 'ACTIVE WEATHER';   tierClass = 'threat-tier-active';   emoji = '\uD83D\uDFE0'; badgeColor = '#ff9100'; }
+        else if (score >= 3)           { tier = 'ELEVATED';         tierClass = 'threat-tier-elev';     emoji = '\uD83D\uDFE1'; badgeColor = '#ffeb3b'; }
+        else                           { tier = 'LOW';              tierClass = 'threat-tier-low';      emoji = '\uD83D\uDFE2'; badgeColor = '#00e676'; }
 
         // ── 12. Smart Contextual Description ─────────────────────────────
         const descFlags = {
-            torEmergency: window.activeTornadoEmergency,
-            pdsTor:       window.activePDSTornado,
-            ffe:          window.activeFFE,
-            torObserved:  window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
-            torWarning:   window.activeTornadoWarning && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
-            night:        isNightAtStation,
-            heavyRain:    livePrecipInt >= 0.15,
+            torEmergency:   window.activeTornadoEmergency,
+            pdsTor:         window.activePDSTornado,
+            ffe:            window.activeFFE,
+            torObserved:    window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            destructiveSVR: window.activeSVRDestructive && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            torWarning:     window.activeTornadoWarning && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            night:          isNightAtStation,
+            heavyRain:      livePrecipInt >= 0.15,
         };
 
         box.className = 'toolkit-box threat-box ' + tierClass;
         badge.textContent = emoji + ' ' + tier;
+        badge.style.color = badgeColor;
         descEl.textContent = buildThreatDescription(tier, hazardCats, descFlags);
         factors.innerHTML = factorList.map(function(f) {
             return '<span style="background:' + f.color + '22;color:' + f.color + ';border:1px solid ' + f.color + '44;padding:3px 8px;border-radius:6px;font-size:0.7em;font-weight:bold;">' + escapeHtml(f.label) + '</span>';
