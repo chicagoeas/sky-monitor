@@ -2505,30 +2505,7 @@
         var _nwsPop1h = _getNWSPoP(0, 1);  // 0–100
         var _nwsPop3h = _getNWSPoP(0, 3);
         var _nwsPop6h = _getNWSPoP(0, 6);
-        // Fall back to pirateHourlyData only when NWS PoP is unavailable (outside US / API down)
-        if (_nwsPop1h === null && window.pirateHourlyData && window.pirateHourlyData.length) {
-            var _nowSec = Math.floor(Date.now() / 1000);
-            var _upcoming = window.pirateHourlyData.filter(function(h) {
-                return h.time >= _nowSec - 1800 && h.time < _nowSec + 7 * 3600;
-            });
-            var _pQpf1h = 0, _pQpf3h = 0, _pQpf6h = 0;
-            _upcoming.forEach(function(h, idx) {
-                var prob = Math.max(h.precipProbability || 0, 0.05);
-                var expected = (h.precipIntensity || 0) * prob;
-                if (idx === 0) _pQpf1h += expected;
-                if (idx < 3)   _pQpf3h += expected;
-                if (idx < 6)   _pQpf6h += expected;
-            });
-            var _pirateForecast = 0;
-            if      (_pQpf1h >= 1.0)  _pirateForecast = Math.max(_pirateForecast, 68);
-            else if (_pQpf1h >= 0.5)  _pirateForecast = Math.max(_pirateForecast, 44);
-            else if (_pQpf1h >= 0.25) _pirateForecast = Math.max(_pirateForecast, 26);
-            if      (_pQpf3h >= 2.0)  _pirateForecast = Math.max(_pirateForecast, 60);
-            else if (_pQpf3h >= 1.0)  _pirateForecast = Math.max(_pirateForecast, 40);
-            if      (_pQpf6h >= 2.0)  _pirateForecast = Math.max(_pirateForecast, 40);
-            else if (_pQpf6h >= 1.0)  _pirateForecast = Math.max(_pirateForecast, 24);
-            forecastScore = Math.max(forecastScore, _pirateForecast);
-        } else if (_nwsPop1h !== null) {
+        if (_nwsPop1h !== null) {
             // NWS PoP available — cross-multiply with already-computed NWS QPF
             var _pop1 = _nwsPop1h / 100, _pop3 = (_nwsPop3h || 0) / 100, _pop6 = (_nwsPop6h || 0) / 100;
             var _nwsForecast = 0;
@@ -2562,27 +2539,14 @@
         else if (evts.some(function(e) { return e.includes('flood warning'); }))            alertScore = 45;
         else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) alertScore = 25;
 
-        // 5. Near-term precip probability boost — NWS official PoP primary, PirateWeather fallback
+        // 5. Near-term precip probability boost — NWS official PoP only
         var forecastProbBoost = 0;
         var _pop3hPct = _getNWSPoP(0, 3); // NWS avg PoP (0–100) for next 3h
         if (_pop3hPct !== null) {
-            // NWS PoP available
             var _pop3hFrac = _pop3hPct / 100;
             if      (_pop3hFrac >= 0.85) forecastProbBoost = 8;
             else if (_pop3hFrac >= 0.65) forecastProbBoost = 5;
             else if (_pop3hFrac >= 0.45) forecastProbBoost = 2;
-        } else if (window.pirateHourlyData && window.pirateHourlyData.length) {
-            // Outside US or NWS unavailable — fall back to PirateWeather hourly
-            var _npSec = Math.floor(Date.now() / 1000);
-            var _next3h = window.pirateHourlyData.filter(function(h) {
-                return h.time >= _npSec && h.time < _npSec + 3 * 3600;
-            });
-            if (_next3h.length) {
-                var _avgProb = _next3h.reduce(function(s, h) { return s + (h.precipProbability || 0); }, 0) / _next3h.length;
-                if      (_avgProb >= 0.85) forecastProbBoost = 8;
-                else if (_avgProb >= 0.65) forecastProbBoost = 5;
-                else if (_avgProb >= 0.45) forecastProbBoost = 2;
-            }
         }
 
         // 6. Spring season amplifier (snowmelt + rain compound risk)
@@ -5155,9 +5119,37 @@
             alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
         }
 
+        // Build hourly rows from NWS QPF/PoP data (preferred), fall back to PirateWeather
+        var _nwsAvail = window.nwsQPFValues && window.nwsQPFValues.length > 0;
+        var sourceHours = [];
+        if (_nwsAvail) {
+            for (var _hi = 0; _hi < 72; _hi++) {
+                var _hqpf = _getNWSQPF(_hi, 1);          // inches for this 1-hour slot
+                var _hpop = _getNWSPoP(_hi, 1);           // 0–100 or null
+                var _hpopFrac = _hpop !== null ? _hpop / 100 : 0;
+                // Stop once we've gone past meaningful data
+                if (_hi >= 48 && _hqpf === 0 && _hpopFrac === 0) break;
+                sourceHours.push({
+                    time: Math.floor((Date.now() + _hi * 3600000) / 1000),
+                    precipIntensity: _hqpf,       // in/hr equivalent
+                    precipProbability: _hpopFrac
+                });
+            }
+        } else if (window.pirateHourlyData) {
+            sourceHours = window.pirateHourlyData;
+        }
+
+        if (!sourceHours.length) {
+            document.getElementById('flood-modal-inner').innerHTML =
+                '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
+                + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:16px;padding-right:28px;">\uD83C\uDF0A HOURLY FLOOD IMPACT</div>'
+                + '<div style="color:#888;font-size:0.85em;">NWS forecast data not yet loaded. Try again in a moment.</div>';
+            return;
+        }
+
         // Group hours by local day
         var days = {};
-        window.pirateHourlyData.forEach(function(h) {
+        sourceHours.forEach(function(h) {
             if (h.time < currentUnix - 1800) return;
             var key = new Date((h.time + offsetHours * 3600) * 1000).toISOString().split('T')[0];
             if (!days[key]) days[key] = [];
