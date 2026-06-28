@@ -2496,13 +2496,31 @@
         var mo = new Date().getMonth();
         var seasonBonus = (mo >= 2 && mo <= 4) ? 8 : 0;
 
-        // Weighted total — intensity dominates per user spec
-        var raw = intensityScore  * 0.50
-                + forecastScore   * 0.25
+        // Weighted total — alerts now carry meaningful weight alongside intensity
+        var raw = intensityScore  * 0.40
+                + forecastScore   * 0.20
                 + antecedentScore * 0.15
-                + alertScore      * 0.10
+                + alertScore      * 0.25
                 + seasonBonus;
         var score = Math.round(Math.min(100, Math.max(0, raw)));
+
+        // Alert-based minimum floors — an active NWS warning always guarantees its tier,
+        // regardless of current rainfall rate. A FFW issued by NWS means flooding IS
+        // occurring or imminent; rainfall rate alone should not be able to suppress it.
+        if (window.activeFFE) {
+            score = 100;
+        } else if (evts.some(function(e) { return e.includes('flash flood warning'); })) {
+            // Considerable/Catastrophic FFW → floor at SEVERE
+            if (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) {
+                score = Math.max(score, 80);
+            } else {
+                score = Math.max(score, 65); // Standard FFW → solidly HIGH
+            }
+        } else if (evts.some(function(e) { return e.includes('flood warning'); })) {
+            score = Math.max(score, 50); // Flood Warning → minimum HIGH
+        } else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) {
+            score = Math.max(score, 30); // Watch/Advisory → minimum ELEVATED
+        }
 
         // Tier
         var tier;
