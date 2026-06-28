@@ -1504,6 +1504,9 @@
     // v1.0.4 FIX: NWS text rendered as HTML with bullet lists
     function formatNWSText(raw) {
         if (!raw) return '';
+        // Strip leading WFO product identifier line (e.g. "FFWLMK", "TORLOT") —
+        // exactly 6 uppercase letters alone on the first non-empty line.
+        raw = raw.replace(/^[A-Z]{6}\r?\n/, '');
         const lines = raw.split('\n');
         let html = '';
         let inList = false;
@@ -2675,7 +2678,8 @@
             precipProb = (precipProb !== undefined && !isNaN(precipProb)) ? Number(precipProb) : 0;
             cond = cond ? cond.toLowerCase() : 'clear';
             let word = 'FAIR', color = '#ffffff', reason = '';
-            if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + _fmtTemp(feelsLike) + ', Stay Hydrated'; }
+            if (feelsLike > 110) { word = 'SCORCHING'; color = '#b71c1c'; reason = 'Heat Index ' + _fmtTemp(feelsLike) + ', Dangerous Heat'; }
+            else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + _fmtTemp(feelsLike) + ', Stay Hydrated'; }
             else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + _fmtTemp(feelsLike); }
             else if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + '), Sunscreen Required'; }
             else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm')) && precipProb >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H) + '% humidity'; }
@@ -4476,7 +4480,8 @@
         const H2 = (h.humidity ?? 0.5) * 100; const W = h.windSpeed ?? 0; const uv = h.uvIndex ?? 0;
         const cond = (h.summary ?? h.icon ?? '').toLowerCase();
         let word = 'FAIR', color = '#ffffff', reason = '';
-        if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + _fmtTemp(feelsLike); }
+        if (feelsLike > 110) { word = 'SCORCHING'; color = '#b71c1c'; reason = 'Heat Index ' + _fmtTemp(feelsLike) + ', Dangerous Heat'; }
+        else if (feelsLike > 95) { word = 'OPPRESSIVE'; color = '#ff5252'; reason = 'Heat Index ' + _fmtTemp(feelsLike); }
         else if (uv > 7) { word = 'INTENSE'; color = '#ff7043'; reason = 'High UV (' + uv + ')'; }
         else if ((cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm') || cond.includes('sleet')) && (h.precipProbability ?? 0) * 100 >= 30) { word = 'DAMP'; color = '#4fc3f7'; reason = 'Rain, ' + Math.round(H2) + '% hum'; }
         else if (feelsLike < 32) { word = 'BITING'; color = '#b0bec5'; reason = 'Wind Chill ' + _fmtTemp(feelsLike); }
