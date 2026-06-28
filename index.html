@@ -2419,27 +2419,50 @@
                     const p = f.properties; let extraDetails = '';
                     const complexity = localStorage.getItem('data_complexity') || 'normal';
                     if (complexity === 'specific') {
-                        const params2 = p.parameters || {}; const keys = Object.keys(params2);
+                        const params2 = p.parameters || {};
                         const evtCheck = (p.event || '').toLowerCase();
-                        if (evtCheck.includes('flash flood')) {
-                            // Flash flood specific parameters
-                            const _FFW_CAUSE_MAP = { ER:'Excessive Rainfall', SM:'Snowmelt', RS:'Rain + Snowmelt', DM:'Dam/Levee Failure', DR:'Dam Floodgate Release', GO:'Glacier Lake Outburst', IJ:'Ice Jam', IC:'Rain/Ice/Snowpack Combo', FS:'Upstream Flooding' };
-                            const _ffDmg    = (params2.flashFloodDamageThreat && params2.flashFloodDamageThreat[0]) || '';
-                            const _ffCause  = (params2.floodImmediateCause && params2.floodImmediateCause[0]) || '';
-                            const _ffRecord = (params2.floodRecordStatus && params2.floodRecordStatus[0]) || '';
-                            if (_ffDmg)    extraDetails += '<div>Flood Damage Threat: ' + escapeHtml(_ffDmg.charAt(0).toUpperCase() + _ffDmg.slice(1).toLowerCase()) + '</div>';
-                            if (_ffCause)  extraDetails += '<div>Cause: ' + escapeHtml(_FFW_CAUSE_MAP[_ffCause.toUpperCase()] || _ffCause) + '</div>';
-                            if (_ffRecord) extraDetails += '<div>Record Status: ' + escapeHtml(_ffRecord.charAt(0).toUpperCase() + _ffRecord.slice(1).toLowerCase()) + '</div>';
-                        } else {
-                            // Convective (TOR/SVR) parameters — slice between motion and channel keys
-                            const start = keys.indexOf('eventMotionDescription'); const end = keys.indexOf('BLOCKCHANNEL');
-                            if (start !== -1 && end !== -1 && end > start) {
-                                keys.slice(start + 1, end).forEach(function(key) {
-                                    const value = params2[key]?.[0]; if (!value) return;
-                                    const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, function(str) { return str.toUpperCase(); });
-                                    extraDetails += '<div>' + escapeHtml(label) + ': ' + escapeHtml(value) + '</div>';
-                                });
-                            }
+                        const _FFW_CAUSE_MAP = { ER:'Excessive Rainfall', SM:'Snowmelt', RS:'Rain + Snowmelt', DM:'Dam/Levee Failure', DR:'Dam Floodgate Release', GO:'Glacier Lake Outburst', IJ:'Ice Jam', IC:'Rain/Ice/Snowpack Combo', FS:'Upstream Flooding' };
+                        // Each row: [paramKey, Display Label, optional value transform fn]
+                        // Listed in display order. Only shown if NWS includes the parameter.
+                        var _PARAM_LIST = null;
+                        if (evtCheck.includes('tornado warning')) {
+                            _PARAM_LIST = [
+                                ['eventMotionDescription', 'Storm Motion'],
+                                ['tornadoDetection',       'Tornado Detection'],
+                                ['tornadoDamageThreat',    'Damage Threat'],
+                                ['maxHailSize',            'Max Hail Size',  function(v) { return v + '"'; }],
+                                ['hailThreat',             'Hail Threat'],
+                                ['maxWindGust',            'Max Wind Gust'],
+                                ['windThreat',             'Wind Threat'],
+                                ['waterspoutDetection',    'Waterspout'],
+                            ];
+                        } else if (evtCheck.includes('severe thunderstorm')) {
+                            _PARAM_LIST = [
+                                ['eventMotionDescription',    'Storm Motion'],
+                                ['thunderstormDamageThreat',  'Damage Threat'],
+                                ['maxHailSize',               'Max Hail Size', function(v) { return v + '"'; }],
+                                ['hailThreat',                'Hail Threat'],
+                                ['maxWindGust',               'Max Wind Gust'],
+                                ['windThreat',                'Wind Threat'],
+                                ['tornadoPossible',           'Tornado Possible'],
+                                ['tornadoDetection',          'Tornado Detection'],
+                                ['waterspoutDetection',       'Waterspout'],
+                            ];
+                        } else if (evtCheck.includes('flash flood')) {
+                            _PARAM_LIST = [
+                                ['flashFloodDamageThreat', 'Flood Damage Threat'],
+                                ['floodImmediateCause',    'Cause',           function(v) { return _FFW_CAUSE_MAP[v.toUpperCase()] || v; }],
+                                ['floodRecordStatus',      'Record Status'],
+                                ['floodSeverityCategory',  'Severity Category'],
+                            ];
+                        }
+                        if (_PARAM_LIST) {
+                            _PARAM_LIST.forEach(function(row) {
+                                var rawVal = params2[row[0]] && params2[row[0]][0];
+                                if (!rawVal) return;
+                                var displayVal = row[2] ? row[2](rawVal) : (rawVal.charAt(0).toUpperCase() + rawVal.slice(1).toLowerCase());
+                                extraDetails += '<div>' + escapeHtml(row[1]) + ': ' + escapeHtml(displayVal) + '</div>';
+                            });
                         }
                     }
                     const evt = p.event.toLowerCase();
