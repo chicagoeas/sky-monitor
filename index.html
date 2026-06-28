@@ -618,25 +618,21 @@
             <div id="twc-daily-forecast" class="forecast-scroll"></div>
         </div>
 
-        <div id="score-combo-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-top:15px;">
-            <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; display:flex; align-items:center; gap:4px;">
-                <span id="score-header-icon" style="color:var(--success);">&#127754;</span>
-                <select id="score-mode-select" style="display:none; background:transparent; border:none; border-bottom:1px solid rgba(255,255,255,0.22); color:var(--success); font-size:1em; font-weight:900; text-transform:uppercase; letter-spacing:1px; cursor:pointer; padding:0 3px;" onchange="onScoreModeChange()">
-                    <option value="outdoor">OUTDOOR</option>
-                    <option value="flood">FLOOD</option>
-                </select>
-                <span id="score-header-label" style="color:var(--success);">FLOOD</span>
-                <span id="score-header-suffix" style="color:var(--success);">&nbsp;IMPACT</span>
+        <!-- Outdoor Score — daytime only (6 AM – 6 PM) -->
+        <div id="outdoor-score-box" style="display:none; background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-top:15px;">
+            <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; color:var(--success);">&#127807; OUTDOOR SCORE</div>
+            <div style="display:flex; align-items:baseline; gap:6px;">
+                <span id="outdoor-score-val" style="font-size:2.5em; font-weight:900; color:var(--accent);">--</span>
+                <span style="font-size:1em; color:#888;">/100</span>
             </div>
-            <!-- Outdoor section — shown only 6 AM–6 PM when in outdoor mode -->
-            <div id="outdoor-score-section" style="display:none;">
-                <div style="display:flex; align-items:baseline; gap:6px;">
-                    <span id="outdoor-score-val" style="font-size:2.5em; font-weight:900; color:var(--accent);">--</span>
-                    <span style="font-size:1em; color:#888;">/100</span>
-                </div>
-                <div id="outdoor-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px;"></div>
+            <div id="outdoor-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px;"></div>
+        </div>
+        <!-- Flood Impact — always visible, tap for hourly modal -->
+        <div id="flood-score-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-top:12px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for hourly flood forecast">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; color:var(--success);">&#127754; FLOOD IMPACT</div>
+                <div style="font-size:0.62em; color:#445566; letter-spacing:0.5px; font-weight:700;">HOURLY &#8250;</div>
             </div>
-            <!-- Flood section — always visible -->
             <div id="flood-score-section">
                 <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;">
                     <span id="flood-score-tier" style="font-size:1.5em; font-weight:900; color:#00e676;">LOW</span>
@@ -2154,31 +2150,13 @@
         const _stationNowMs = Date.now() + (stationTzOffset * 1000);
         const currentHour = new Date(_stationNowMs).getUTCHours();
         const _isDaytime = currentHour >= 6 && currentHour < 18;
+        var _oBox = document.getElementById('outdoor-score-box');
         if (!_isDaytime) {
-            var _selN = document.getElementById('score-mode-select');
-            var _oSecN = document.getElementById('outdoor-score-section');
-            if (_selN) { _selN.style.display = 'none'; if (_selN.value === 'outdoor') _selN.value = 'flood'; }
-            if (_oSecN) _oSecN.style.display = 'none';
-            var _lblN = document.getElementById('score-header-label'); if (_lblN) _lblN.style.display = '';
-            var _sfxN = document.getElementById('score-header-suffix'); if (_sfxN) _sfxN.innerText = '\u00a0IMPACT';
-            var _icoN = document.getElementById('score-header-icon');   if (_icoN) _icoN.innerText = '\uD83C\uDF0A';
+            if (_oBox) _oBox.style.display = 'none';
             return;
         }
-        // Daytime: show dropdown, hide static label
-        var _sel = document.getElementById('score-mode-select');
-        if (_sel) {
-            _sel.style.display = '';
-            if (!_sel.dataset.initialized) { _sel.value = localStorage.getItem('sm_score_mode') || 'outdoor'; _sel.dataset.initialized = '1'; }
-        }
-        var _lbl = document.getElementById('score-header-label'); if (_lbl) _lbl.style.display = 'none';
-        var _mode = (_sel && _sel.value) || 'outdoor';
-        if (_mode === 'flood') return;
-        var _oSec = document.getElementById('outdoor-score-section'); if (_oSec) _oSec.style.display = 'block';
-        var _fSec = document.getElementById('flood-score-section');   if (_fSec) _fSec.style.display = 'none';
-        var _sfx  = document.getElementById('score-header-suffix');   if (_sfx)  _sfx.innerText = '\u00a0SCORE';
-        var _ico  = document.getElementById('score-header-icon');     if (_ico)  _ico.innerText = '\uD83C\uDF3F';
-        var _box  = document.getElementById('score-combo-box');
-        if (_box) { _box.style.background = 'rgba(0,230,118,0.07)'; _box.style.borderColor = 'rgba(0,230,118,0.25)'; }
+        // Daytime: show the outdoor score box
+        if (_oBox) _oBox.style.display = 'block';
         const now = Math.floor(Date.now() / 1000);
         const todayHours = hourlyData.filter(function(h) {
             return h.time + 3600 > now && h.time <= now + 12 * 3600;
@@ -2396,29 +2374,7 @@
         computeFloodImpact();
     }
 
-    function onScoreModeChange() {
-        var sel = document.getElementById('score-mode-select');
-        var mode = sel ? sel.value : 'outdoor';
-        localStorage.setItem('sm_score_mode', mode);
-        var oSec = document.getElementById('outdoor-score-section');
-        var fSec = document.getElementById('flood-score-section');
-        var sfx  = document.getElementById('score-header-suffix');
-        var ico  = document.getElementById('score-header-icon');
-        var box  = document.getElementById('score-combo-box');
-        if (mode === 'flood') {
-            if (oSec) oSec.style.display = 'none';
-            if (fSec) fSec.style.display = 'block';
-            if (sfx)  sfx.innerText = '\u00a0IMPACT';
-            if (ico)  ico.innerText = '\uD83C\uDF0A';
-            computeFloodImpact();
-        } else {
-            if (oSec) oSec.style.display = 'block';
-            if (fSec) fSec.style.display = 'none';
-            if (sfx)  sfx.innerText = '\u00a0SCORE';
-            if (ico)  ico.innerText = '\uD83C\uDF3F';
-            if (box)  { box.style.background = 'rgba(0,230,118,0.07)'; box.style.borderColor = 'rgba(0,230,118,0.25)'; }
-        }
-    }
+    function onScoreModeChange() { /* no-op — outdoor and flood are now separate boxes */ }
 
     function _setFloodDisplay(score, tier) {
         var COLORS = {
@@ -2432,10 +2388,56 @@
         var valEl  = document.getElementById('flood-score-val');
         if (tierEl) { tierEl.innerText = tier; tierEl.style.color = c.text; }
         if (valEl)  { valEl.innerText  = score; valEl.style.color = c.text; }
-        // Update box accent color to match flood tier (only when flood section is active)
-        var mode = (document.getElementById('score-mode-select') || {}).value || 'flood';
-        var box  = document.getElementById('score-combo-box');
-        if (box && mode !== 'outdoor') { box.style.background = c.bg; box.style.borderColor = c.border; }
+        var box = document.getElementById('flood-score-box');
+        if (box) { box.style.background = c.bg; box.style.borderColor = c.border; }
+        // Keep the HOURLY label color in sync with tier
+        var hourlyLbl = box && box.querySelector('[style*="HOURLY"]');
+        if (hourlyLbl) hourlyLbl.style.color = c.text;
+    }
+
+    // General rolling accumulation helper — supports any window size (hours)
+    function _getRollingNh(hours) {
+        try {
+            var KEY = 'sm_precip_cache';
+            var now = Math.floor(Date.now() / 1000);
+            var cache = [];
+            try { cache = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch(e) {}
+            var recent = cache.filter(function(e) { return e.t >= now - hours * 3600; });
+            if (recent.length < 2) return 0;
+            var total = 0;
+            for (var i = 1; i < recent.length; i++) {
+                var dt = (recent[i].t - recent[i-1].t) / 3600;
+                total += ((recent[i].v + recent[i-1].v) / 2) * dt;
+            }
+            return Math.max(0, total);
+        } catch(e) { return 0; }
+    }
+
+    // Compute a per-hour flood risk score for the hourly modal
+    // antecedent24 = pre-computed 24h accumulated rainfall (in)
+    function _computeHourFloodScore(h, antecedent24) {
+        var intensity = h.precipIntensity || 0;
+        var prob      = Math.max(h.precipProbability || 0, 0.05);
+        // Expected weighted intensity
+        var expected  = intensity * prob;
+        var iScore;
+        if      (expected >= 2.0)  iScore = 100;
+        else if (expected >= 1.5)  iScore = 88;
+        else if (expected >= 1.0)  iScore = 72;
+        else if (expected >= 0.5)  iScore = 52;
+        else if (expected >= 0.25) iScore = 35;
+        else if (expected >= 0.1)  iScore = 18;
+        else if (expected >= 0.01) iScore = Math.round(prob * 14);
+        else                       iScore = Math.round(prob * 5);
+        // Antecedent saturation contribution
+        var aScore;
+        if      (antecedent24 >= 3.0) aScore = 55;
+        else if (antecedent24 >= 2.0) aScore = 38;
+        else if (antecedent24 >= 1.5) aScore = 24;
+        else if (antecedent24 >= 1.0) aScore = 14;
+        else if (antecedent24 >= 0.5) aScore = 7;
+        else                          aScore = 0;
+        return Math.round(Math.min(100, Math.max(0, iScore * 0.65 + aScore * 0.35)));
     }
 
     function computeFloodImpact() {
@@ -2449,7 +2451,7 @@
             return;
         }
 
-        // 1. Intensity score — dominant weight ("highest impact with quickly falling rain")
+        // 1. Live intensity score
         var intensityScore;
         if      (lpi >= 1.5)  intensityScore = 90;
         else if (lpi >= 1.0)  intensityScore = 75;
@@ -2459,7 +2461,7 @@
         else if (lpi >= 0.01) intensityScore = 8;
         else                  intensityScore = 0;
 
-        // 2. Forecast QPF from NWS official gridpoint (rate-sensitive: 1h bucket weighted highest)
+        // 2. NWS official gridpoint QPF (most authoritative forecast source)
         var qpf1h = _getNWSQPF(0, 1);
         var qpf3h = _getNWSQPF(0, 3);
         var qpf6h = _getNWSQPF(0, 6);
@@ -2474,7 +2476,32 @@
         else if (qpf6h >= 1.0)  forecastScore = Math.max(forecastScore, 30);
         else if (qpf6h >= 0.5)  forecastScore = Math.max(forecastScore, 15);
 
-        // 3. Antecedent 24h total — saturated ground amplifies risk
+        // 2b. Supplement QPF with hourly forecast data (probability-weighted expected accumulation)
+        if (window.pirateHourlyData && window.pirateHourlyData.length) {
+            var _nowSec = Math.floor(Date.now() / 1000);
+            var _upcoming = window.pirateHourlyData.filter(function(h) {
+                return h.time >= _nowSec - 1800 && h.time < _nowSec + 7 * 3600;
+            });
+            var _pQpf1h = 0, _pQpf3h = 0, _pQpf6h = 0;
+            _upcoming.forEach(function(h, idx) {
+                var prob = Math.max(h.precipProbability || 0, 0.05);
+                var expected = (h.precipIntensity || 0) * prob;
+                if (idx === 0) _pQpf1h += expected;
+                if (idx < 3)   _pQpf3h += expected;
+                if (idx < 6)   _pQpf6h += expected;
+            });
+            var _pirateForecast = 0;
+            if      (_pQpf1h >= 1.0) _pirateForecast = Math.max(_pirateForecast, 68);
+            else if (_pQpf1h >= 0.5) _pirateForecast = Math.max(_pirateForecast, 44);
+            else if (_pQpf1h >= 0.25) _pirateForecast = Math.max(_pirateForecast, 26);
+            if      (_pQpf3h >= 2.0) _pirateForecast = Math.max(_pirateForecast, 60);
+            else if (_pQpf3h >= 1.0) _pirateForecast = Math.max(_pirateForecast, 40);
+            if      (_pQpf6h >= 2.0) _pirateForecast = Math.max(_pirateForecast, 40);
+            else if (_pQpf6h >= 1.0) _pirateForecast = Math.max(_pirateForecast, 24);
+            forecastScore = Math.max(forecastScore, _pirateForecast);
+        }
+
+        // 3. Antecedent 24h rainfall — saturated ground compounds all rain events
         var past24h = _getRolling24h();
         var antecedentScore;
         if      (past24h >= 3.0) antecedentScore = 60;
@@ -2484,7 +2511,16 @@
         else if (past24h >= 0.5) antecedentScore = 10;
         else                     antecedentScore = 0;
 
-        // 4. Active NWS flood alerts
+        // 3b. 48h antecedent — deeply waterlogged soil dramatically amplifies risk
+        var past48h = _getRollingNh(48);
+        var antecedent48Score;
+        if      (past48h >= 6.0) antecedent48Score = 30;
+        else if (past48h >= 4.0) antecedent48Score = 20;
+        else if (past48h >= 2.5) antecedent48Score = 12;
+        else if (past48h >= 1.5) antecedent48Score = 6;
+        else                     antecedent48Score = 0;
+
+        // 4. Active NWS flood alerts (raw weight; hard floors applied below)
         var evts = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
         var alertScore = 0;
         if (window.activeFFE)                                                               alertScore = 100;
@@ -2492,30 +2528,44 @@
         else if (evts.some(function(e) { return e.includes('flood warning'); }))            alertScore = 45;
         else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) alertScore = 25;
 
-        // 5. Spring season amplifier (Chicago snowmelt + rain compound risk)
+        // 5. Near-term precip probability boost from hourly forecast
+        var forecastProbBoost = 0;
+        if (window.pirateHourlyData && window.pirateHourlyData.length) {
+            var _npSec = Math.floor(Date.now() / 1000);
+            var _next3h = window.pirateHourlyData.filter(function(h) {
+                return h.time >= _npSec && h.time < _npSec + 3 * 3600;
+            });
+            if (_next3h.length) {
+                var _avgProb = _next3h.reduce(function(s, h) { return s + (h.precipProbability || 0); }, 0) / _next3h.length;
+                if      (_avgProb >= 0.85) forecastProbBoost = 8;
+                else if (_avgProb >= 0.65) forecastProbBoost = 5;
+                else if (_avgProb >= 0.45) forecastProbBoost = 2;
+            }
+        }
+
+        // 6. Spring season amplifier (snowmelt + rain compound risk)
         var mo = new Date().getMonth();
         var seasonBonus = (mo >= 2 && mo <= 4) ? 8 : 0;
 
-        // Weighted total — alerts now carry meaningful weight alongside intensity
-        var raw = intensityScore  * 0.40
-                + forecastScore   * 0.20
-                + antecedentScore * 0.15
-                + alertScore      * 0.25
+        // Weighted total — alert carries 25%, live intensity 38%, QPF 20%, antecedent 17%
+        var raw = intensityScore    * 0.38
+                + forecastScore     * 0.20
+                + antecedentScore   * 0.12
+                + antecedent48Score * 0.05
+                + alertScore        * 0.25
+                + forecastProbBoost
                 + seasonBonus;
         var score = Math.round(Math.min(100, Math.max(0, raw)));
 
-        // Alert-based minimum floors — an active NWS warning always guarantees its tier,
-        // regardless of current rainfall rate. A FFW issued by NWS means flooding IS
-        // occurring or imminent; rainfall rate alone should not be able to suppress it.
+        // Hard minimum floors — a government-issued warning always guarantees its tier.
+        // NWS issues a FFW only when flooding IS occurring or imminent; rainfall rate
+        // at the sensor cannot suppress that signal.
         if (window.activeFFE) {
             score = 100;
         } else if (evts.some(function(e) { return e.includes('flash flood warning'); })) {
-            // Considerable/Catastrophic FFW → floor at SEVERE
-            if (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) {
-                score = Math.max(score, 80);
-            } else {
-                score = Math.max(score, 65); // Standard FFW → solidly HIGH
-            }
+            score = (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood)
+                ? Math.max(score, 80)   // Considerable/Catastrophic FFW → SEVERE
+                : Math.max(score, 65);  // Standard FFW → solidly HIGH
         } else if (evts.some(function(e) { return e.includes('flood warning'); })) {
             score = Math.max(score, 50); // Flood Warning → minimum HIGH
         } else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) {
@@ -2531,26 +2581,31 @@
 
         _setFloodDisplay(score, tier);
 
-        // Contextual description
+        // Rich contextual description — most specific driver wins
         var desc;
         if (tier === 'SEVERE') {
-            if (lpi >= 1.0)        desc = 'Extremely heavy rain falling now (' + lpi.toFixed(2) + '\u201d/hr) — storm drains likely overwhelmed. Check your basement immediately.';
-            else if (qpf1h >= 1.0) desc = 'Over an inch of rain forecast in the next hour. Move valuables from basement and run your sump pump now.';
-            else if (alertScore >= 70) desc = 'Flash Flood Warning in effect. Basement flooding risk is very high — move valuables upstairs now.';
-            else                   desc = 'Multiple high-impact factors active. Basement flooding risk is severe.';
+            if      (lpi >= 1.0)               desc = 'Extremely heavy rain now (' + lpi.toFixed(2) + '\u201d/hr) — storm drains overwhelmed. Check basement immediately.';
+            else if (window.activeFFE)          desc = 'Flash Flood Emergency in effect. Life-threatening flooding is occurring. Move to higher ground NOW.';
+            else if (alertScore >= 70 && (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood))
+                                               desc = 'Flash Flood Warning (Considerable/Catastrophic impacts). Basement flooding very likely — act now.';
+            else if (qpf1h >= 1.0)             desc = 'NWS forecasts ' + qpf1h.toFixed(2) + '\u201d in the next hour. Run sump pump and move valuables upstairs now.';
+            else                               desc = 'Multiple severe flood factors active. Basement risk is critical.';
         } else if (tier === 'HIGH') {
-            if (lpi >= 0.5)        desc = 'Heavy rain falling now (' + lpi.toFixed(2) + '\u201d/hr). Storm drains may be under stress — monitor your basement.';
-            else if (qpf3h >= 1.0) desc = Math.round(qpf3h * 100) / 100 + '\u201d of rain expected in 3 hrs. Be ready to act if water enters the basement.';
-            else if (past24h >= 2.0) desc = 'Ground already saturated (' + past24h.toFixed(1) + '\u201d in 24h) — even moderate rain elevates basement risk.';
-            else                   desc = 'Elevated combination of rain and forecast. Keep an eye on your basement.';
+            if      (lpi >= 0.5)               desc = 'Heavy rain now (' + lpi.toFixed(2) + '\u201d/hr). Storm drains under stress — monitor basement closely.';
+            else if (alertScore >= 65)         desc = 'Flash Flood Warning in effect. Flooding is occurring or imminent — monitor basement and be ready to act.';
+            else if (qpf3h >= 1.0)             desc = qpf3h.toFixed(2) + '\u201d of rain expected in 3 hrs. Be ready to act if water enters basement.';
+            else if (past24h >= 2.0)           desc = 'Ground saturated (' + past24h.toFixed(1) + '\u201d in 24h) — even moderate rain now poses HIGH basement risk.';
+            else if (past48h >= 3.5)           desc = 'Soil deeply saturated from extended rainfall (' + past48h.toFixed(1) + '\u201d in 48h). Basement risk elevated.';
+            else                               desc = 'Elevated combination of rain and forecast. Monitor basement and clear sump pump.';
         } else if (tier === 'ELEVATED') {
-            if (qpf6h >= 0.5)      desc = Math.round(qpf6h * 100) / 100 + '\u201d possible in 6 hrs — worth monitoring if your basement is vulnerable.';
-            else if (past24h >= 1.0) desc = 'Soil partially saturated from recent rain (' + past24h.toFixed(1) + '\u201d). Additional rain will have higher impact than usual.';
-            else                   desc = 'Minor flood risk factors present. No immediate concern but conditions worth watching.';
+            if      (qpf6h >= 0.5)             desc = qpf6h.toFixed(2) + '\u201d forecast in 6 hrs — worth monitoring if your basement is vulnerable.';
+            else if (past24h >= 1.0)           desc = 'Soil partially saturated (' + past24h.toFixed(1) + '\u201d last 24h). Additional rain will have above-normal impact.';
+            else if (forecastProbBoost >= 5)   desc = 'High rain probability forecast in the next 3 hours. Watch conditions.';
+            else                               desc = 'Minor flood risk factors present. No immediate concern, but conditions worth watching.';
         } else {
-            if (lpi > 0)           desc = 'Light rain (' + lpi.toFixed(2) + '\u201d/hr) — well below basement flooding threshold.';
-            else if (qpf6h > 0.1)  desc = 'Small amounts of rain possible but no significant flooding threat.';
-            else                   desc = 'No significant flood factors. Basement risk is minimal.';
+            if      (lpi > 0)                  desc = 'Light rain (' + lpi.toFixed(2) + '\u201d/hr) — well below basement flooding threshold.';
+            else if (qpf6h > 0.1)              desc = 'Light rain possible but no significant flooding threat.';
+            else                               desc = 'No significant flood factors. Basement risk is minimal.';
         }
         if (descEl) descEl.innerText = desc;
     }
@@ -5001,6 +5056,147 @@
                 if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 2) {
                     const newIdx = Math.max(0, Math.min(dayKeys.length - 1, (window._uvDayIdx || 0) + (dx < 0 ? 1 : -1)));
                     const btn = document.getElementById('uv-tab-' + newIdx);
+                    if (btn) btn.click();
+                }
+            }, { passive: true });
+        }
+    }
+
+    // ── Hourly Flood Impact Modal ───────────────────────────────────────────────
+    function openFloodModal() {
+        if (!window.pirateHourlyData || !window.pirateHourlyData.length) { alert('Hourly data not yet loaded.'); return; }
+        setModalOpen(true);
+        var modal = document.getElementById('flood-modal');
+        if (!modal) {
+            modal = document.createElement('div'); modal.id = 'flood-modal';
+            modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.78);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            modal.innerHTML = '<div id="flood-modal-inner" style="background:#071a28;color:#fff;border-radius:20px;max-width:390px;width:93vw;padding:24px;position:relative;box-shadow:0 16px 40px #000a;max-height:88vh;overflow-y:auto;"></div>';
+            document.body.appendChild(modal);
+            modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } });
+        }
+        modal.style.display = 'flex';
+
+        var FLOOD_COLORS = {
+            LOW:      '#00e676',
+            ELEVATED: '#ffeb3b',
+            HIGH:     '#ff9100',
+            SEVERE:   '#ff1744'
+        };
+        function _floodTier(s) {
+            if (s >= 75) return 'SEVERE';
+            if (s >= 50) return 'HIGH';
+            if (s >= 25) return 'ELEVATED';
+            return 'LOW';
+        }
+        function _floodIcon(tier) {
+            if (tier === 'SEVERE')   return '\uD83D\uDEA8';
+            if (tier === 'HIGH')     return '\u26A0\uFE0F';
+            if (tier === 'ELEVATED') return '\uD83D\uDCA7';
+            return '\u2714\uFE0F';
+        }
+
+        var offsetHours = window.pirateTimezoneOffset || 0;
+        var currentUnix = Math.floor(Date.now() / 1000);
+        var antecedent24 = _getRolling24h();
+        var past48h = _getRollingNh(48);
+        var evts = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        var hasFFW = window.activeFFE || evts.some(function(e) { return e.includes('flash flood warning'); });
+        var hasFloodWarn = !hasFFW && evts.some(function(e) { return e.includes('flood warning'); });
+        var hasWatch = !hasFFW && !hasFloodWarn && evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); });
+
+        // Build alert banner HTML
+        var alertHtml = '';
+        if (window.activeFFE) {
+            alertHtml = '<div style="background:#b71c1c;border:2px solid #fff;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-weight:900;font-size:0.85em;letter-spacing:0.5px;text-transform:uppercase;">\uD83D\uDEA8 Flash Flood Emergency — Life-threatening flooding occurring. Move to higher ground NOW.</div>';
+        } else if (hasFFW) {
+            var ffwLabel = (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 'Flash Flood Warning (Considerable/Catastrophic)' : 'Flash Flood Warning in effect';
+            alertHtml = '<div style="background:rgba(0,188,212,0.15);border:1px solid #00bcd4;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\u26A0\uFE0F ' + ffwLabel + '</div>';
+        } else if (hasFloodWarn) {
+            alertHtml = '<div style="background:rgba(255,152,0,0.12);border:1px solid #ff9800;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Warning in effect</div>';
+        } else if (hasWatch) {
+            alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
+        }
+
+        // Soil saturation summary
+        var satColor = antecedent24 >= 2.0 ? '#ff9100' : antecedent24 >= 1.0 ? '#ffeb3b' : '#00e676';
+        var satLabel = antecedent24 >= 3.0 ? 'Saturated' : antecedent24 >= 2.0 ? 'Very Wet' : antecedent24 >= 1.0 ? 'Wet' : antecedent24 >= 0.25 ? 'Moist' : 'Dry';
+        var satHtml = '<div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-radius:10px;padding:9px 13px;margin-bottom:12px;font-size:0.8em;">'
+            + '<span style="color:' + satColor + ';font-weight:900;font-size:1.05em;">\uD83C\uDF3E</span>'
+            + '<span style="color:#aaa;">Soil: <strong style="color:' + satColor + ';">' + satLabel + '</strong> — ' + antecedent24.toFixed(2) + '&Prime; last 24h'
+            + (past48h > 0 ? ', ' + past48h.toFixed(2) + '&Prime; last 48h' : '') + '</span></div>';
+
+        // Group hours by local day
+        var days = {};
+        window.pirateHourlyData.forEach(function(h) {
+            if (h.time < currentUnix - 1800) return;
+            var key = new Date((h.time + offsetHours * 3600) * 1000).toISOString().split('T')[0];
+            if (!days[key]) days[key] = [];
+            days[key].push(h);
+        });
+        var dayKeys = Object.keys(days).slice(0, 3);
+
+        function buildFloodDayContent(key) {
+            var hours = days[key];
+            if (!hours || !hours.length) return '<div style="opacity:0.5;padding:10px;">No data.</div>';
+            // Find peak score in this day to anchor bar scale
+            var scores = hours.map(function(h) { return _computeHourFloodScore(h, antecedent24); });
+            return hours.map(function(h, idx) {
+                var score = scores[idx];
+                var tier  = _floodTier(score);
+                var col   = FLOOD_COLORS[tier];
+                var icon  = _floodIcon(tier);
+                var barPct = Math.min(score, 100);
+                var prob  = Math.round((h.precipProbability || 0) * 100);
+                var intensity = h.precipIntensity || 0;
+                var intStr = intensity >= 0.01 ? intensity.toFixed(2) + '\u201d/hr' : 'trace';
+                var hrLabel = new Date((h.time + offsetHours * 3600) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);">'
+                    + '<div style="min-width:44px;font-size:0.75em;color:#aaa;text-align:right;">' + hrLabel + '</div>'
+                    + '<div style="min-width:28px;font-size:1.15em;text-align:center;">' + icon + '</div>'
+                    + '<div style="flex:1;">'
+                    +   '<div style="background:rgba(255,255,255,0.08);border-radius:4px;height:7px;overflow:hidden;margin-bottom:4px;">'
+                    +     '<div style="background:' + col + ';width:' + barPct + '%;height:100%;border-radius:4px;transition:width 0.4s;"></div>'
+                    +   '</div>'
+                    +   '<div style="font-size:0.72em;display:flex;justify-content:space-between;align-items:center;">'
+                    +     '<span style="font-weight:900;color:' + col + ';">' + tier + ' &nbsp;<span style="font-weight:400;opacity:0.85;">' + score + '/100</span></span>'
+                    +     '<span style="opacity:0.55;">' + prob + '% / ' + intStr + '</span>'
+                    +   '</div>'
+                    + '</div></div>';
+            }).join('');
+        }
+
+        window._floodDayIdx = 0;
+        window._floodDayHtml = {};
+        dayKeys.forEach(function(k) { window._floodDayHtml[k] = buildFloodDayContent(k); });
+
+        var tabHtml = dayKeys.map(function(key, i) {
+            var lbl = i === 0 ? 'Today' : new Date(key + 'T12:00:00Z').toLocaleDateString([], { weekday: 'short' });
+            return '<button id="flood-tab-' + i + '" onclick="(function(idx){document.querySelectorAll(\'#flood-day-tabs .btn-opt\').forEach(function(b){b.classList.remove(\'active\')});document.getElementById(\'flood-tab-\'+idx).classList.add(\'active\');document.getElementById(\'flood-hours\').innerHTML=window._floodDayHtml[\'' + key + '\']; window._floodDayIdx=idx;})(' + i + ')" class="btn-opt' + (i === 0 ? ' active' : '') + '">' + lbl + '</button>';
+        }).join('');
+
+        document.getElementById('flood-modal-inner').innerHTML =
+            '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
+            + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:12px;padding-right:28px;">\uD83C\uDF0A HOURLY FLOOD IMPACT</div>'
+            + alertHtml
+            + satHtml
+            + '<div id="flood-day-tabs" class="btn-group spc-btn-tabs" style="margin-bottom:12px;">' + tabHtml + '</div>'
+            + '<div style="font-size:0.68em;color:#556;display:flex;justify-content:space-between;margin-bottom:6px;padding:0 2px;"><span>Score = intensity &times; probability + soil saturation</span><span>NWS alerts set minimums</span></div>'
+            + '<div id="flood-hours">' + (window._floodDayHtml[dayKeys[0]] || '') + '</div>';
+
+        // Swipe between day tabs
+        var inner = document.getElementById('flood-modal-inner');
+        if (!inner._swipeAttached) {
+            inner._swipeAttached = true;
+            var fTouchX = 0, fTouchY = 0, fWasScrolling = false;
+            inner.addEventListener('touchstart', function(e) { fTouchX = e.touches[0].clientX; fTouchY = e.touches[0].clientY; fWasScrolling = false; }, { passive: true });
+            inner.addEventListener('touchmove', function(e) { if (Math.abs(e.touches[0].clientY - fTouchY) > Math.abs(e.touches[0].clientX - fTouchX) + 5) fWasScrolling = true; }, { passive: true });
+            inner.addEventListener('touchend', function(e) {
+                if (!swipeEnabled || fWasScrolling) return;
+                var dx = e.changedTouches[0].clientX - fTouchX;
+                var dy = e.changedTouches[0].clientY - fTouchY;
+                if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 2) {
+                    var newIdx = Math.max(0, Math.min(dayKeys.length - 1, (window._floodDayIdx || 0) + (dx < 0 ? 1 : -1)));
+                    var btn = document.getElementById('flood-tab-' + newIdx);
                     if (btn) btn.click();
                 }
             }, { passive: true });
