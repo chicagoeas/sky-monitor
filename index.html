@@ -2427,23 +2427,42 @@
                         // Each row: [paramKey, Display Label, optional value transform fn]
                         // Listed in display order. Only shown if NWS includes the parameter.
                         // Source: https://vlab.noaa.gov/web/nws-common-alerting-protocol/cap-documentation
+                        // Parses raw NWS eventMotionDescription into human-readable form.
+                        // Input: "2026-06-28t00:57:00-00:00...storm...277deg...14kt...36.08,-85.2"
+                        // Output: "W at 16 mph"
+                        function _parseMotion(v) {
+                            var degM = v.match(/(\d+)deg/i); var ktM = v.match(/(\d+)kt/i);
+                            if (!degM || !ktM) return v;
+                            var deg = parseInt(degM[1]); var mph = Math.round(parseInt(ktM[1]) * 1.15078);
+                            var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+                            return dirs[Math.round(deg / 22.5) % 16] + ' at ' + mph + ' mph';
+                        }
+                        // Maps hail diameter (inches) to NWS standard size reference.
+                        // Thresholds match closest standard size; rounds up to next reference.
+                        var _HAIL_REF = [[0.25,'Pea'],[0.50,'Marble'],[0.75,'Penny'],[0.88,'Nickel'],[1.00,'Quarter'],[1.25,'Half Dollar'],[1.50,'Ping Pong Ball'],[1.75,'Golf Ball'],[2.00,'Hen Egg'],[2.50,'Baseball'],[2.75,'Tea Cup'],[3.00,'Grapefruit'],[4.00,'Softball']];
+                        function _parseHail(v) {
+                            var inches = parseFloat(v); if (isNaN(inches)) return v + '"';
+                            var ref = _HAIL_REF[0][1];
+                            for (var i = 0; i < _HAIL_REF.length; i++) { if (inches >= _HAIL_REF[i][0]) ref = _HAIL_REF[i][1]; }
+                            return inches.toFixed(2) + '" (' + ref + ')';
+                        }
                         var _PARAM_LIST = null;
                         if (evtCheck.includes('tornado warning')) {
                             // Confirmed NWS CAP params for Tornado Warnings
                             _PARAM_LIST = [
-                                ['eventMotionDescription', 'Storm Motion'],
+                                ['eventMotionDescription', 'Storm Motion',  _parseMotion],
                                 ['tornadoDetection',       'Tornado Detection'],   // RADAR INDICATED / OBSERVED
                                 ['tornadoDamageThreat',    'Damage Threat'],       // CONSIDERABLE (PDS) / CATASTROPHIC (Emergency)
-                                ['maxHailSize',            'Hail Size',     function(v) { return v + '"'; }],
+                                ['maxHailSize',            'Hail Size',     _parseHail],
                                 ['windGust',               'Wind Gust'],           // e.g. "65 MPH"
                                 ['waterspoutDetection',    'Waterspout'],          // OBSERVED / POSSIBLE
                             ];
                         } else if (evtCheck.includes('severe thunderstorm')) {
                             // Confirmed NWS CAP params for Severe Thunderstorm Warnings
                             _PARAM_LIST = [
-                                ['eventMotionDescription',   'Storm Motion'],
+                                ['eventMotionDescription',   'Storm Motion',  _parseMotion],
                                 ['thunderstormDamageThreat', 'Damage Threat'],     // CONSIDERABLE / DESTRUCTIVE
-                                ['maxHailSize',              'Hail Size',   function(v) { return v + '"'; }],
+                                ['maxHailSize',              'Hail Size',   _parseHail],
                                 ['hailThreat',               'Hail Threat'],       // RADAR INDICATED / OBSERVED
                                 ['windGust',                 'Wind Gust'],         // e.g. "60 MPH"
                                 ['windThreat',               'Wind Threat'],       // RADAR INDICATED / OBSERVED
