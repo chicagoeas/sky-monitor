@@ -2363,6 +2363,36 @@
         return totalMm / 25.4; // mm → inches
     }
 
+    // Average NWS probability of precipitation (0–100) for a time window.
+    // Uses window.nwsPopValues fetched alongside QPF from the gridpoints endpoint.
+    function _getNWSPoP(hoursAhead, windowHours) {
+        var vals = window.nwsPopValues || [];
+        if (!vals.length) return null; // null = data unavailable (caller falls back)
+        var now = Date.now();
+        var startMs = now + hoursAhead * 3600000;
+        var endMs   = startMs + windowHours * 3600000;
+        var weightedSum = 0, totalWeight = 0;
+        vals.forEach(function(entry) {
+            if (entry.value == null) return;
+            var vtStr = entry.validTime || '';
+            var slashIdx = vtStr.indexOf('/');
+            if (slashIdx < 0) return;
+            var entryStart = new Date(vtStr.slice(0, slashIdx)).getTime();
+            if (isNaN(entryStart)) return;
+            var durMatch = vtStr.slice(slashIdx + 1).match(/PT(\d+(?:\.\d+)?)H/i);
+            var durMs = (durMatch ? parseFloat(durMatch[1]) : 1) * 3600000;
+            var entryEnd = entryStart + durMs;
+            var overlapStart = Math.max(entryStart, startMs);
+            var overlapEnd   = Math.min(entryEnd,   endMs);
+            if (overlapEnd > overlapStart) {
+                var w = (overlapEnd - overlapStart) / durMs;
+                weightedSum += entry.value * w;
+                totalWeight += w;
+            }
+        });
+        return totalWeight > 0 ? weightedSum / totalWeight : null;
+    }
+
     async function fetchNWSQPF(office, gridX, gridY) {
         if (!office || gridX == null || gridY == null) { computeFloodImpact(); return; }
         try {
@@ -2370,7 +2400,8 @@
             if (!res.ok) { window.nwsQPFValues = []; computeFloodImpact(); return; }
             var data = await res.json();
             window.nwsQPFValues = (data.properties && data.properties.quantitativePrecipitation && data.properties.quantitativePrecipitation.values) || [];
-        } catch(e) { window.nwsQPFValues = []; }
+            window.nwsPopValues = (data.properties && data.properties.probabilityOfPrecipitation && data.properties.probabilityOfPrecipitation.values) || [];
+        } catch(e) { window.nwsQPFValues = []; window.nwsPopValues = []; }
         computeFloodImpact();
     }
 
@@ -2476,8 +2507,14 @@
         else if (qpf6h >= 1.0)  forecastScore = Math.max(forecastScore, 30);
         else if (qpf6h >= 0.5)  forecastScore = Math.max(forecastScore, 15);
 
-        // 2b. Supplement QPF with hourly forecast data (probability-weighted expected accumulation)
-        if (window.pirateHourlyData && window.pirateHourlyData.length) {
+        // 2b. Supplement NWS QPF with official NWS probability of precipitation.
+        // Cross-multiplying QPF amount × PoP surfaces events where high confidence +
+        // moderate accumulation is more meaningful than low-confidence heavy QPF.
+        var _nwsPop1h = _getNWSPoP(0, 1);  // 0–100
+        var _nwsPop3h = _getNWSPoP(0, 3);
+        var _nwsPop6h = _getNWSPoP(0, 6);
+        // Fall back to pirateHourlyData only when NWS PoP is unavailable (outside US / API down)
+        if (_nwsPop1h === null && window.pirateHourlyData && window.pirateHourlyData.length) {
             var _nowSec = Math.floor(Date.now() / 1000);
             var _upcoming = window.pirateHourlyData.filter(function(h) {
                 return h.time >= _nowSec - 1800 && h.time < _nowSec + 7 * 3600;
@@ -2491,14 +2528,34 @@
                 if (idx < 6)   _pQpf6h += expected;
             });
             var _pirateForecast = 0;
-            if      (_pQpf1h >= 1.0) _pirateForecast = Math.max(_pirateForecast, 68);
-            else if (_pQpf1h >= 0.5) _pirateForecast = Math.max(_pirateForecast, 44);
+            if      (_pQpf1h >= 1.0)  _pirateForecast = Math.max(_pirateForecast, 68);
+            else if (_pQpf1h >= 0.5)  _pirateForecast = Math.max(_pirateForecast, 44);
             else if (_pQpf1h >= 0.25) _pirateForecast = Math.max(_pirateForecast, 26);
-            if      (_pQpf3h >= 2.0) _pirateForecast = Math.max(_pirateForecast, 60);
-            else if (_pQpf3h >= 1.0) _pirateForecast = Math.max(_pirateForecast, 40);
-            if      (_pQpf6h >= 2.0) _pirateForecast = Math.max(_pirateForecast, 40);
-            else if (_pQpf6h >= 1.0) _pirateForecast = Math.max(_pirateForecast, 24);
+            if      (_pQpf3h >= 2.0)  _pirateForecast = Math.max(_pirateForecast, 60);
+            else if (_pQpf3h >= 1.0)  _pirateForecast = Math.max(_pirateForecast, 40);
+            if      (_pQpf6h >= 2.0)  _pirateForecast = Math.max(_pirateForecast, 40);
+            else if (_pQpf6h >= 1.0)  _pirateForecast = Math.max(_pirateForecast, 24);
             forecastScore = Math.max(forecastScore, _pirateForecast);
+        } else if (_nwsPop1h !== null) {
+            // NWS PoP available — cross-multiply with already-computed NWS QPF
+            var _pop1 = _nwsPop1h / 100, _pop3 = (_nwsPop3h || 0) / 100, _pop6 = (_nwsPop6h || 0) / 100;
+            var _nwsForecast = 0;
+            // 1-hour window: QPF × PoP gives probability-weighted expected in
+            var _exp1 = qpf1h * _pop1;
+            if      (_exp1 >= 1.0)  _nwsForecast = Math.max(_nwsForecast, 75);
+            else if (_exp1 >= 0.5)  _nwsForecast = Math.max(_nwsForecast, 55);
+            else if (_exp1 >= 0.25) _nwsForecast = Math.max(_nwsForecast, 35);
+            else if (_pop1 >= 0.7)  _nwsForecast = Math.max(_nwsForecast, 20); // high conf even if QPF modest
+            // 3-hour window
+            var _exp3 = qpf3h * _pop3;
+            if      (_exp3 >= 2.0) _nwsForecast = Math.max(_nwsForecast, 65);
+            else if (_exp3 >= 1.0) _nwsForecast = Math.max(_nwsForecast, 45);
+            else if (_exp3 >= 0.5) _nwsForecast = Math.max(_nwsForecast, 28);
+            // 6-hour window
+            var _exp6 = qpf6h * _pop6;
+            if      (_exp6 >= 2.0) _nwsForecast = Math.max(_nwsForecast, 45);
+            else if (_exp6 >= 1.0) _nwsForecast = Math.max(_nwsForecast, 28);
+            forecastScore = Math.max(forecastScore, _nwsForecast);
         }
 
         // 3. Antecedent 24h rainfall — saturated ground compounds all rain events
@@ -2528,9 +2585,17 @@
         else if (evts.some(function(e) { return e.includes('flood warning'); }))            alertScore = 45;
         else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) alertScore = 25;
 
-        // 5. Near-term precip probability boost from hourly forecast
+        // 5. Near-term precip probability boost — NWS official PoP primary, PirateWeather fallback
         var forecastProbBoost = 0;
-        if (window.pirateHourlyData && window.pirateHourlyData.length) {
+        var _pop3hPct = _getNWSPoP(0, 3); // NWS avg PoP (0–100) for next 3h
+        if (_pop3hPct !== null) {
+            // NWS PoP available
+            var _pop3hFrac = _pop3hPct / 100;
+            if      (_pop3hFrac >= 0.85) forecastProbBoost = 8;
+            else if (_pop3hFrac >= 0.65) forecastProbBoost = 5;
+            else if (_pop3hFrac >= 0.45) forecastProbBoost = 2;
+        } else if (window.pirateHourlyData && window.pirateHourlyData.length) {
+            // Outside US or NWS unavailable — fall back to PirateWeather hourly
             var _npSec = Math.floor(Date.now() / 1000);
             var _next3h = window.pirateHourlyData.filter(function(h) {
                 return h.time >= _npSec && h.time < _npSec + 3 * 3600;
