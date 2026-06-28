@@ -3810,37 +3810,53 @@
 
     // Context-aware description builder
     function buildThreatDescription(tier, hazardCats, flags) {
-        // Tornado sub-types
+        // ── Tier 1: Life-Threatening (most severe first) ──────────────────
         if (flags.torEmergency) return 'A TORNADO EMERGENCY is in progress — an extremely rare, catastrophic situation. TAKE COVER in the lowest interior room IMMEDIATELY.';
         if (flags.pdsTor) return 'A Particularly Dangerous Situation (PDS) Tornado Warning is in effect. This is a RARE, LIFE-THREATENING event. TAKE COVER NOW.';
-        if (flags.ffe) return 'A FLASH FLOOD EMERGENCY is occurring. Life-threatening flooding is imminent or occuring. SEEK HIGHER GROUND immediately — do not wait.';
+        if (flags.ffe) return 'A FLASH FLOOD EMERGENCY is occurring. Life-threatening flooding is imminent or occurring. SEEK HIGHER GROUND immediately — do not wait.';
+        if (flags.stormSurgeWarning) return 'A Storm Surge Warning is in effect. Life-threatening inundation from rising water is possible. Follow all evacuation orders immediately — do not wait.';
+        if (flags.hurricaneWarning) return 'A Hurricane Warning is in effect for your area. Prepare for potentially catastrophic wind, storm surge, and flooding. Complete preparations and follow evacuation orders now.';
+        // ── Tier 2: Critical ──────────────────────────────────────────────
         if (flags.torObserved) {
             if (flags.night) return 'A confirmed tornado is on the ground nearby. Tornadoes are nearly impossible to see at night — take shelter immediately in the lowest interior room of a sturdy building. Do not wait.';
             return 'A confirmed tornado is on the ground near your location. Take immediate shelter in an interior room on the lowest floor of a sturdy building.';
         }
         if (flags.destructiveSVR) return 'A Destructive Severe Thunderstorm Warning is in effect. Catastrophic wind damage and very large hail are occurring or imminent. Stay away from windows and take shelter now.';
         if (flags.considerableFFW) return 'A Flash Flood Warning with Considerable flooding impacts is in effect. Life-threatening flooding may be occurring. Move to higher ground immediately — do not wait for official evacuation orders.';
+        // ── Tier 3: Dangerous warnings ────────────────────────────────────
         if (flags.torWarning) {
             if (flags.night) return 'A tornado warning is in effect for your area. Nighttime tornadoes are especially deadly — take cover now even without visible warning signs.';
             return 'A tornado warning is in effect for your area. Move immediately to an interior room on the lowest floor of a sturdy building.';
         }
-        // Multi-hazard
+        if (flags.blizzardWarning) return 'A Blizzard Warning is in effect. Whiteout conditions, dangerous wind chills, and heavy snow will make travel life-threatening. Stay indoors and off roads until the storm passes.';
+        if (flags.iceStormWarning) return 'An Ice Storm Warning is in effect. Significant ice accumulation will make travel treacherous and cause widespread power outages. Avoid all travel and stay off roads.';
+        if (flags.extremeWindWarning) return 'An Extreme Wind Warning is in effect. Damaging hurricane-force winds are imminent. Take shelter in an interior room away from windows immediately.';
+        if (flags.dustStormWarning) return 'A Dust Storm Warning is in effect. Near-zero visibility may occur suddenly. If driving, pull off the road, turn off your lights, and wait for conditions to improve.';
+        if (flags.snowSquallWarning) return 'A Snow Squall Warning is in effect. Sudden whiteout conditions and rapidly accumulating snow will make roads immediately dangerous. Reduce speed and increase following distance.';
+        // ── Tier 4: Specific warnings (less severe) ───────────────────────
+        if (flags.winterStormWarning) return 'A Winter Storm Warning is in effect. Heavy snow, sleet, or freezing rain will create hazardous travel conditions. Avoid unnecessary travel.';
+        if (flags.windChillWarning) return 'A Wind Chill Warning is in effect. Dangerously cold wind chills may cause frostbite on exposed skin in minutes. Limit time outdoors and dress in layers.';
+        if (flags.highWindWarning) return 'A High Wind Warning is in effect. Damaging winds may knock down trees and power lines and make driving difficult. Secure loose outdoor items.';
+        // ── Multi-hazard check (before single-category fallbacks) ─────────
         const cats = Object.keys(hazardCats);
-        if (cats.length >= 3) return 'Multiple simultaneous hazards are active: ' + cats.join(', ') + '. This is a complex weather event — follow all active NWS guidance.';
-        // Single-dominant hazard
-        if (hazardCats.tropical) return 'Tropical weather hazards are active. Hurricane-force conditions may include devastating winds, surge, and flooding. Follow evacuation orders.';
+        if (cats.length >= 3) return 'Multiple simultaneous hazards are active. This is a complex weather event — follow all active NWS guidance closely.';
+        // ── Single-category fallbacks ─────────────────────────────────────
+        if (hazardCats.tropical) return 'Tropical weather hazards are active. Hurricane-force conditions may include devastating winds, surge, and flooding. Follow all evacuation orders.';
         if (hazardCats.convective && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Severe convective weather is active near you, with potential for large hail, damaging winds, or tornadoes. Take shelter immediately.';
+        if (flags.tornadoWatch) return 'A Tornado Watch is in effect. Conditions are favorable for tornadoes. Have a shelter plan ready and stay tuned to NWS updates.';
+        if (flags.svrWatch) return 'A Severe Thunderstorm Watch is in effect. Large hail and damaging winds are possible. Be ready to move to shelter quickly if warnings are issued.';
         if (hazardCats.convective) return 'Thunderstorm watches or hazards are in effect. Be prepared to shelter quickly if conditions deteriorate.';
         if (hazardCats.flood && flags.heavyRain) return 'Active flooding combined with heavy rainfall creates an extremely dangerous situation. Avoid all low-lying areas and roadways.';
         if (hazardCats.flood && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Flash flooding is developing or imminent. Avoid flooded roads and low-lying areas — turn around, don\'t drown.';
         if (hazardCats.flood) return 'Flooding conditions are possible. Stay aware of developing rainfall and avoid flood-prone roads and low-lying areas.';
-        if (hazardCats.winter && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Extreme winter conditions are occurring. Blizzard or ice storm conditions may cause dangerous travel and power outages.';
         if (hazardCats.winter) return 'Winter weather alerts are in effect. Expect hazardous travel and reduced visibility from snow, ice, or freezing rain.';
-        if (hazardCats.wind && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Dangerous wind conditions are active. Secure loose objects, avoid travel, and stay away from trees and power lines.';
         if (hazardCats.wind) return 'Elevated wind hazards are in the area. Gusty winds may cause localized damage and difficult driving conditions.';
-        if (hazardCats.heat) return 'Extreme heat conditions are dangerous. Limit outdoor exposure, stay hydrated, and check on vulnerable individuals.';
+        if (flags.extremeHeatWarning) return 'An Extreme Heat Warning is in effect — dangerously high temperatures pose a life-threatening risk. Stay indoors in air conditioning, drink plenty of water, and check on elderly neighbors and pets.';
+        if (flags.heatAdvisory) return 'A Heat Advisory is in effect. Hot temperatures and humidity may cause fatigue or heat illness, especially for those without air conditioning. Stay hydrated and limit prolonged outdoor activity.';
+        if (hazardCats.heat) return 'Elevated heat conditions are in the area. Limit outdoor exposure, stay hydrated, and check on vulnerable individuals.';
         if (hazardCats.fire) return 'Critical fire weather conditions exist. Extreme fire behavior is possible — follow evacuation orders and air quality guidance.';
-        // Tier fallbacks
+        if (flags.denseFogAdvisory) return 'A Dense Fog Advisory is in effect. Visibility may drop below a quarter mile. Slow down, use low-beam headlights, and allow extra following distance.';
+        // ── Tier fallbacks ────────────────────────────────────────────────
         if (tier === 'LIFE THREATENING') return 'A life-threatening weather situation is ongoing. Take immediate protective action and follow all NWS instructions.';
         if (tier === 'CRITICAL') return 'A critical weather situation is occurring near you. Significant harm or death is possible — take shelter immediately and monitor NWS updates closely.';
         if (tier === 'DANGEROUS') return 'Hazardous conditions are active near you. Remain sheltered and closely monitor NWS alerts for updates.';
@@ -3974,11 +3990,9 @@
             ];
             if (_NEVER_SCORE.some(function(s) { return evtLower.includes(s); })) return;
 
-            // ── Watches that haven't started yet are future-outlook, not current threats ──
-            if (evtLower.includes('watch')) {
-                var _onsetMs = (window.activeAlertOnsets || {})[evtName] || 0;
-                if (_onsetMs > 0 && _onsetMs > Date.now()) return;
-            }
+            // ── Any alert not yet in effect should not influence threat level ──
+            var _onsetMs = (window.activeAlertOnsets || {})[evtName] || 0;
+            if (_onsetMs > 0 && _onsetMs > Date.now()) return;
 
             for (var i = 0; i < ALERT_TABLE.length; i++) {
                 var row = ALERT_TABLE[i];
@@ -4129,16 +4143,38 @@
         else                           { tier = 'LOW';              tierClass = 'threat-tier-low';      emoji = '\uD83D\uDFE2'; badgeColor = '#00e676'; }
 
         // ── 12. Smart Contextual Description ─────────────────────────────
+        const _activeEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        const _activeNow = function(kw) { return _activeEvtsLower.some(function(e) { var ms = (window.activeAlertOnsets || {})[e] || 0; return e.includes(kw) && (!ms || ms <= Date.now()); }); };
         const descFlags = {
-            torEmergency:   window.activeTornadoEmergency,
-            pdsTor:         window.activePDSTornado,
-            ffe:            window.activeFFE,
-            torObserved:    window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
-            destructiveSVR:   window.activeSVRDestructive && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
-            considerableFFW:  (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) && !window.activeFFE,
-            torWarning:     window.activeTornadoWarning && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
-            night:          isNightAtStation,
-            heavyRain:      livePrecipInt >= 0.15,
+            torEmergency:       window.activeTornadoEmergency,
+            pdsTor:             window.activePDSTornado,
+            ffe:                window.activeFFE,
+            torObserved:        window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            destructiveSVR:     window.activeSVRDestructive && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            considerableFFW:    (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) && !window.activeFFE,
+            torWarning:         window.activeTornadoWarning && !window.activeTornadoObserved && !window.activePDSTornado && !window.activeTornadoEmergency,
+            night:              isNightAtStation,
+            heavyRain:          livePrecipInt >= 0.15,
+            // Heat
+            extremeHeatWarning: _activeNow('extreme heat warning'),
+            heatAdvisory:       _activeNow('heat advisory') && !_activeNow('extreme heat warning'),
+            // Winter — specific before generic
+            blizzardWarning:    _activeNow('blizzard warning'),
+            iceStormWarning:    _activeNow('ice storm warning'),
+            winterStormWarning: _activeNow('winter storm warning') && !_activeNow('blizzard warning') && !_activeNow('ice storm warning'),
+            windChillWarning:   _activeNow('wind chill warning'),
+            snowSquallWarning:  _activeNow('snow squall warning'),
+            // Wind
+            extremeWindWarning: _activeNow('extreme wind warning'),
+            highWindWarning:    _activeNow('high wind warning') && !_activeNow('extreme wind warning'),
+            // Watches
+            tornadoWatch:       _activeNow('tornado watch'),
+            svrWatch:           _activeNow('severe thunderstorm watch') && !_activeNow('tornado watch'),
+            // Other
+            dustStormWarning:   _activeNow('dust storm warning'),
+            denseFogAdvisory:   _activeNow('dense fog advisory'),
+            hurricaneWarning:   _activeNow('hurricane warning') || _activeNow('hurricane local statement'),
+            stormSurgeWarning:  _activeNow('storm surge warning'),
         };
 
         box.className = 'toolkit-box threat-box ' + tierClass;
