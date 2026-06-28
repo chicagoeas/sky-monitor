@@ -627,22 +627,6 @@
             </div>
             <div id="outdoor-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px;"></div>
         </div>
-        <!-- Flood Impact — always visible, tap for hourly modal -->
-        <div id="flood-score-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-top:12px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for hourly flood forecast">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; color:var(--success);">&#127754; FLOOD IMPACT</div>
-                <div style="font-size:0.62em; color:#445566; letter-spacing:0.5px; font-weight:700;">HOURLY &#8250;</div>
-            </div>
-            <div id="flood-score-section">
-                <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;">
-                    <span id="flood-score-tier" style="font-size:1.5em; font-weight:900; color:#00e676;">LOW</span>
-                    <span style="font-size:1em; color:#555;">—</span>
-                    <span id="flood-score-val" style="font-size:1.5em; font-weight:900; color:#00e676;">0</span>
-                    <span style="font-size:0.85em; color:#888;">/100</span>
-                </div>
-                <div id="flood-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px; line-height:1.4;">Calculating…</div>
-            </div>
-        </div>
 
         <div id="nearby-reports-widget" style="display:none; background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.18); border-radius:15px; padding:14px 18px; margin-top:15px;">
             <div style="font-size:0.7em; font-weight:900; color:var(--primary); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">&#128205; NEARBY USER REPORTS <span style="font-weight:400; color:#556677; font-size:0.85em;">(BETA)</span></div>
@@ -678,6 +662,23 @@
         <span id="radar-blip" style="display:none;"></span>
 
         <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:16px; background:#000; margin-bottom:20px;"></iframe>
+
+        <!-- Flood Impact — moved to severe tab -->
+        <div id="flood-score-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-bottom:20px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for hourly flood forecast">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; color:var(--success);">&#127754; FLOOD IMPACT</div>
+                <div style="font-size:0.62em; color:#445566; letter-spacing:0.5px; font-weight:700;">HOURLY &#8250;</div>
+            </div>
+            <div id="flood-score-section">
+                <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;">
+                    <span id="flood-score-tier" style="font-size:1.5em; font-weight:900; color:#00e676;">LOW</span>
+                    <span style="font-size:1em; color:#555;">—</span>
+                    <span id="flood-score-val" style="font-size:1.5em; font-weight:900; color:#00e676;">0</span>
+                    <span style="font-size:0.85em; color:#888;">/100</span>
+                </div>
+                <div id="flood-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px; line-height:1.4;">Calculating…</div>
+            </div>
+        </div>
 
         <div id="active-risks-box" class="toolkit-box" style="display:none; padding:15px; margin-bottom:20px; border-color:var(--warning);">
             <div class="toolkit-header" style="color:var(--warning);"><span>&#9888;&#65039; ACTIVE LOCAL RISKS &#9888;&#65039;</span></div>
@@ -2445,8 +2446,7 @@
     }
 
     // Compute a per-hour flood risk score for the hourly modal
-    // antecedent24 = pre-computed 24h accumulated rainfall (in)
-    function _computeHourFloodScore(h, antecedent24) {
+    function _computeHourFloodScore(h) {
         var intensity = h.precipIntensity || 0;
         var prob      = Math.max(h.precipProbability || 0, 0.05);
         // Expected weighted intensity
@@ -2460,15 +2460,7 @@
         else if (expected >= 0.1)  iScore = 18;
         else if (expected >= 0.01) iScore = Math.round(prob * 14);
         else                       iScore = Math.round(prob * 5);
-        // Antecedent saturation contribution
-        var aScore;
-        if      (antecedent24 >= 3.0) aScore = 55;
-        else if (antecedent24 >= 2.0) aScore = 38;
-        else if (antecedent24 >= 1.5) aScore = 24;
-        else if (antecedent24 >= 1.0) aScore = 14;
-        else if (antecedent24 >= 0.5) aScore = 7;
-        else                          aScore = 0;
-        return Math.round(Math.min(100, Math.max(0, iScore * 0.65 + aScore * 0.35)));
+        return Math.round(Math.min(100, Math.max(0, iScore)));
     }
 
     function computeFloodImpact() {
@@ -2558,24 +2550,9 @@
             forecastScore = Math.max(forecastScore, _nwsForecast);
         }
 
-        // 3. Antecedent 24h rainfall — saturated ground compounds all rain events
+        // Past rainfall (used in descriptions)
         var past24h = _getRolling24h();
-        var antecedentScore;
-        if      (past24h >= 3.0) antecedentScore = 60;
-        else if (past24h >= 2.0) antecedentScore = 42;
-        else if (past24h >= 1.5) antecedentScore = 28;
-        else if (past24h >= 1.0) antecedentScore = 18;
-        else if (past24h >= 0.5) antecedentScore = 10;
-        else                     antecedentScore = 0;
-
-        // 3b. 48h antecedent — deeply waterlogged soil dramatically amplifies risk
         var past48h = _getRollingNh(48);
-        var antecedent48Score;
-        if      (past48h >= 6.0) antecedent48Score = 30;
-        else if (past48h >= 4.0) antecedent48Score = 20;
-        else if (past48h >= 2.5) antecedent48Score = 12;
-        else if (past48h >= 1.5) antecedent48Score = 6;
-        else                     antecedent48Score = 0;
 
         // 4. Active NWS flood alerts (raw weight; hard floors applied below)
         var evts = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
@@ -2612,12 +2589,10 @@
         var mo = new Date().getMonth();
         var seasonBonus = (mo >= 2 && mo <= 4) ? 8 : 0;
 
-        // Weighted total — alert carries 25%, live intensity 38%, QPF 20%, antecedent 17%
-        var raw = intensityScore    * 0.38
-                + forecastScore     * 0.20
-                + antecedentScore   * 0.12
-                + antecedent48Score * 0.05
-                + alertScore        * 0.25
+        // Weighted total — alert carries 30%, live intensity 45%, QPF 25%
+        var raw = intensityScore    * 0.45
+                + forecastScore     * 0.25
+                + alertScore        * 0.30
                 + forecastProbBoost
                 + seasonBonus;
         var score = Math.round(Math.min(100, Math.max(0, raw)));
@@ -5162,8 +5137,6 @@
 
         var offsetHours = window.pirateTimezoneOffset || 0;
         var currentUnix = Math.floor(Date.now() / 1000);
-        var antecedent24 = _getRolling24h();
-        var past48h = _getRollingNh(48);
         var evts = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
         var hasFFW = window.activeFFE || evts.some(function(e) { return e.includes('flash flood warning'); });
         var hasFloodWarn = !hasFFW && evts.some(function(e) { return e.includes('flood warning'); });
@@ -5182,14 +5155,6 @@
             alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
         }
 
-        // Soil saturation summary
-        var satColor = antecedent24 >= 2.0 ? '#ff9100' : antecedent24 >= 1.0 ? '#ffeb3b' : '#00e676';
-        var satLabel = antecedent24 >= 3.0 ? 'Saturated' : antecedent24 >= 2.0 ? 'Very Wet' : antecedent24 >= 1.0 ? 'Wet' : antecedent24 >= 0.25 ? 'Moist' : 'Dry';
-        var satHtml = '<div style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.04);border-radius:10px;padding:9px 13px;margin-bottom:12px;font-size:0.8em;">'
-            + '<span style="color:' + satColor + ';font-weight:900;font-size:1.05em;">\uD83C\uDF3E</span>'
-            + '<span style="color:#aaa;">Soil: <strong style="color:' + satColor + ';">' + satLabel + '</strong> — ' + antecedent24.toFixed(2) + '&Prime; last 24h'
-            + (past48h > 0 ? ', ' + past48h.toFixed(2) + '&Prime; last 48h' : '') + '</span></div>';
-
         // Group hours by local day
         var days = {};
         window.pirateHourlyData.forEach(function(h) {
@@ -5204,7 +5169,7 @@
             var hours = days[key];
             if (!hours || !hours.length) return '<div style="opacity:0.5;padding:10px;">No data.</div>';
             // Find peak score in this day to anchor bar scale
-            var scores = hours.map(function(h) { return _computeHourFloodScore(h, antecedent24); });
+            var scores = hours.map(function(h) { return _computeHourFloodScore(h); });
             return hours.map(function(h, idx) {
                 var score = scores[idx];
                 var tier  = _floodTier(score);
@@ -5243,9 +5208,7 @@
             '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
             + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:12px;padding-right:28px;">\uD83C\uDF0A HOURLY FLOOD IMPACT</div>'
             + alertHtml
-            + satHtml
             + '<div id="flood-day-tabs" class="btn-group spc-btn-tabs" style="margin-bottom:12px;">' + tabHtml + '</div>'
-            + '<div style="font-size:0.68em;color:#556;display:flex;justify-content:space-between;margin-bottom:6px;padding:0 2px;"><span>Score = intensity &times; probability + soil saturation</span><span>NWS alerts set minimums</span></div>'
             + '<div id="flood-hours">' + (window._floodDayHtml[dayKeys[0]] || '') + '</div>';
 
         // Swipe between day tabs
