@@ -2427,6 +2427,8 @@
                         // Each row: [paramKey, Display Label, optional value transform fn]
                         // Listed in display order. Only shown if NWS includes the parameter.
                         // Source: https://vlab.noaa.gov/web/nws-common-alerting-protocol/cap-documentation
+                        // Normalize: some NWS offices send maxWindGust, others send windGust — unify to windGust
+                        if (!params2.windGust && params2.maxWindGust) params2.windGust = params2.maxWindGust;
                         // Parses raw NWS eventMotionDescription into human-readable form.
                         // Input: "2026-06-28t00:57:00-00:00...storm...277deg...14kt...36.08,-85.2"
                         // Output: "W at 16 mph"
@@ -2438,45 +2440,64 @@
                             return dirs[Math.round(deg / 22.5) % 16] + ' at ' + mph + ' mph';
                         }
                         // Maps hail diameter (inches) to NWS standard size reference.
-                        // Thresholds match closest standard size; rounds up to next reference.
                         var _HAIL_REF = [[0.25,'Pea'],[0.50,'Marble'],[0.75,'Penny'],[0.88,'Nickel'],[1.00,'Quarter'],[1.25,'Half Dollar'],[1.50,'Ping Pong Ball'],[1.75,'Golf Ball'],[2.00,'Hen Egg'],[2.50,'Baseball'],[2.75,'Tea Cup'],[3.00,'Grapefruit'],[4.00,'Softball']];
                         function _parseHail(v) {
-                            // NWS sends either "0.75" or "Up to .75"" — extract the number either way
                             var m = v.match(/(\d*\.?\d+)/); if (!m) return v;
                             var inches = parseFloat(m[1]); if (isNaN(inches)) return v;
                             var ref = _HAIL_REF[0][1];
                             for (var i = 0; i < _HAIL_REF.length; i++) { if (inches >= _HAIL_REF[i][0]) ref = _HAIL_REF[i][1]; }
                             return inches.toFixed(2) + '" (' + ref + ')';
                         }
+                        // Parses NWS windGust value — may be "60 MPH", "Up to 60 MPH", or just "60"
+                        function _parseWindGust(v) {
+                            var m = v.match(/(\d+)/); if (!m) return v;
+                            return m[1] + ' mph';
+                        }
                         var _PARAM_LIST = null;
                         if (evtCheck.includes('tornado warning')) {
                             // Confirmed NWS CAP params for Tornado Warnings
                             _PARAM_LIST = [
-                                ['eventMotionDescription', 'Storm Motion',  _parseMotion],
-                                ['tornadoDetection',       'Tornado Detection'],   // RADAR INDICATED / OBSERVED
-                                ['tornadoDamageThreat',    'Damage Threat'],       // CONSIDERABLE (PDS) / CATASTROPHIC (Emergency)
-                                ['maxHailSize',            'Hail Size',     _parseHail],
-                                ['windGust',               'Wind Gust'],           // e.g. "65 MPH"
-                                ['waterspoutDetection',    'Waterspout'],          // OBSERVED / POSSIBLE
+                                ['eventMotionDescription', 'Storm Motion',     _parseMotion],
+                                ['tornadoDetection',       'Tornado Detection'],  // RADAR INDICATED / OBSERVED
+                                ['tornadoDamageThreat',    'Damage Threat'],      // CONSIDERABLE (PDS) / CATASTROPHIC (Emergency)
+                                ['maxHailSize',            'Hail Size',           _parseHail],
+                                ['windGust',               'Wind Gust',           _parseWindGust],
+                                ['waterspoutDetection',    'Waterspout'],         // OBSERVED / POSSIBLE
                             ];
                         } else if (evtCheck.includes('severe thunderstorm')) {
                             // Confirmed NWS CAP params for Severe Thunderstorm Warnings
                             _PARAM_LIST = [
-                                ['eventMotionDescription',   'Storm Motion',  _parseMotion],
-                                ['thunderstormDamageThreat', 'Damage Threat'],     // CONSIDERABLE / DESTRUCTIVE
-                                ['maxHailSize',              'Hail Size',   _parseHail],
-                                ['hailThreat',               'Hail Threat'],       // RADAR INDICATED / OBSERVED
-                                ['windGust',                 'Wind Gust'],         // e.g. "60 MPH"
-                                ['windThreat',               'Wind Threat'],       // RADAR INDICATED / OBSERVED
-                                ['tornadoPossible',          'Tornado Possible'],  // YES / NO
-                                ['tornadoDetection',         'Tornado Detection'], // POSSIBLE (when on SVR)
-                                ['waterspoutDetection',      'Waterspout'],        // OBSERVED / POSSIBLE
+                                ['eventMotionDescription',   'Storm Motion',     _parseMotion],
+                                ['thunderstormDamageThreat', 'Damage Threat'],    // CONSIDERABLE / DESTRUCTIVE
+                                ['maxHailSize',              'Hail Size',         _parseHail],
+                                ['hailThreat',               'Hail Threat'],      // RADAR INDICATED / OBSERVED
+                                ['windGust',                 'Wind Gust',         _parseWindGust],
+                                ['windThreat',               'Wind Threat'],      // RADAR INDICATED / OBSERVED
+                                ['tornadoPossible',          'Tornado Possible'], // YES / NO
+                                ['tornadoDetection',         'Tornado Detection'],// POSSIBLE (when on SVR)
+                                ['waterspoutDetection',      'Waterspout'],       // OBSERVED / POSSIBLE
+                            ];
+                        } else if (evtCheck.includes('special weather statement')) {
+                            // Confirmed NWS CAP params for Special Weather Statements (SPS).
+                            // SPS offices tag the same convective params as SVR/TOR when applicable.
+                            // tornadoDetection=POSSIBLE is used for landspout / weak tornado situations.
+                            // Source: vlab.noaa.gov/web/nws-common-alerting-protocol/cap-documentation
+                            _PARAM_LIST = [
+                                ['eventMotionDescription',   'Storm Motion',     _parseMotion],
+                                ['tornadoDetection',         'Tornado Detection'],// POSSIBLE (landspout / weak tornado)
+                                ['tornadoPossible',          'Tornado Possible'], // YES / NO
+                                ['thunderstormDamageThreat', 'Damage Threat'],    // CONSIDERABLE / DESTRUCTIVE
+                                ['maxHailSize',              'Hail Size',         _parseHail],
+                                ['hailThreat',               'Hail Threat'],      // RADAR INDICATED / OBSERVED
+                                ['windGust',                 'Wind Gust',         _parseWindGust],
+                                ['windThreat',               'Wind Threat'],      // RADAR INDICATED / OBSERVED
+                                ['waterspoutDetection',      'Waterspout'],       // OBSERVED / POSSIBLE
                             ];
                         } else if (evtCheck.includes('flash flood')) {
                             // Confirmed NWS CAP params for Flash Flood Warnings
                             _PARAM_LIST = [
-                                ['flashFloodDetection',    'Detection'],           // RADAR INDICATED / RADAR AND GAUGE INDICATED / OBSERVED
-                                ['flashFloodDamageThreat', 'Flood Damage Threat'], // CONSIDERABLE / CATASTROPHIC
+                                ['flashFloodDetection',    'Detection'],          // RADAR INDICATED / RADAR AND GAUGE INDICATED / OBSERVED
+                                ['flashFloodDamageThreat', 'Flood Damage Threat'],// CONSIDERABLE / CATASTROPHIC
                             ];
                         }
                         if (_PARAM_LIST) {
@@ -3848,6 +3869,11 @@
         if (flags.tornadoWatch) return 'A Tornado Watch is in effect. Conditions are favorable for tornadoes. Have a shelter plan ready and stay tuned to NWS updates.';
         if (flags.svrWatch) return 'A Severe Thunderstorm Watch is in effect. Large hail and damaging winds are possible. Be ready to move to shelter quickly if warnings are issued.';
         if (hazardCats.convective) return 'Thunderstorm watches or hazards are in effect. Be prepared to shelter quickly if conditions deteriorate.';
+        if (flags.coastalFloodWarning) return 'A Coastal Flood Warning is in effect. Ocean or bay water is inundating coastal areas. Stay away from the shoreline, move vehicles and valuables to higher ground, and follow all local evacuation orders.';
+        if (flags.coastalFloodAdvisory) return 'A Coastal Flood Advisory is in effect. Minor flooding of low-lying coastal areas is expected at high tide. Avoid vulnerable shoreline areas and secure waterfront property.';
+        if (flags.floodWarning && flags.heavyRain) return 'A Flood Warning is in effect and heavy rain is falling. Rivers or streams are rising to flood stage — stay away from waterways and do not attempt to cross flooded roads.';
+        if (flags.floodWarning) return 'A Flood Warning is in effect. Rivers or streams are at or approaching flood stage. Avoid low-lying areas near waterways and do not drive through flooded roads — turn around, don\'t drown.';
+        if (flags.floodAdvisory) return 'A Flood Advisory is in effect. Minor flooding is occurring or possible in low-lying and flood-prone areas. Motorists should avoid flooded roadways.';
         if (hazardCats.flood && flags.heavyRain) return 'Active flooding combined with heavy rainfall creates an extremely dangerous situation. Avoid all low-lying areas and roadways.';
         if (hazardCats.flood && (tier === 'DANGEROUS' || tier === 'CRITICAL')) return 'Flash flooding is developing or imminent. Avoid flooded roads and low-lying areas — turn around, don\'t drown.';
         if (hazardCats.flood) return 'Flooding conditions are possible. Stay aware of developing rainfall and avoid flood-prone roads and low-lying areas.';
@@ -4175,6 +4201,11 @@
             // Watches
             tornadoWatch:       _activeNow('tornado watch'),
             svrWatch:           _activeNow('severe thunderstorm watch') && !_activeNow('tornado watch'),
+            // Flood — specific before generic (coastal > river > flash > advisory)
+            coastalFloodWarning:  _activeNow('coastal flood warning'),
+            coastalFloodAdvisory: _activeNow('coastal flood advisory') && !_activeNow('coastal flood warning'),
+            floodWarning:         _activeNow('flood warning') && !_activeNow('flash flood warning') && !_activeNow('coastal flood warning'),
+            floodAdvisory:        _activeNow('flood advisory') && !_activeNow('flood warning') && !_activeNow('flash flood warning'),
             // Other
             dustStormWarning:   _activeNow('dust storm warning'),
             denseFogAdvisory:   _activeNow('dense fog advisory'),
