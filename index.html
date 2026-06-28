@@ -2441,7 +2441,9 @@
                         // Thresholds match closest standard size; rounds up to next reference.
                         var _HAIL_REF = [[0.25,'Pea'],[0.50,'Marble'],[0.75,'Penny'],[0.88,'Nickel'],[1.00,'Quarter'],[1.25,'Half Dollar'],[1.50,'Ping Pong Ball'],[1.75,'Golf Ball'],[2.00,'Hen Egg'],[2.50,'Baseball'],[2.75,'Tea Cup'],[3.00,'Grapefruit'],[4.00,'Softball']];
                         function _parseHail(v) {
-                            var inches = parseFloat(v); if (isNaN(inches)) return v + '"';
+                            // NWS sends either "0.75" or "Up to .75"" — extract the number either way
+                            var m = v.match(/(\d*\.?\d+)/); if (!m) return v;
+                            var inches = parseFloat(m[1]); if (isNaN(inches)) return v;
                             var ref = _HAIL_REF[0][1];
                             for (var i = 0; i < _HAIL_REF.length; i++) { if (inches >= _HAIL_REF[i][0]) ref = _HAIL_REF[i][1]; }
                             return inches.toFixed(2) + '" (' + ref + ')';
@@ -4144,7 +4146,10 @@
 
         // ── 12. Smart Contextual Description ─────────────────────────────
         const _activeEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
-        const _activeNow = function(kw) { return _activeEvtsLower.some(function(e) { var ms = (window.activeAlertOnsets || {})[e] || 0; return e.includes(kw) && (!ms || ms <= Date.now()); }); };
+        // Build lowercase-keyed onset map — activeAlertOnsets stores keys with original casing
+        const _onsetsByLower = {};
+        Object.keys(window.activeAlertOnsets || {}).forEach(function(k) { _onsetsByLower[k.toLowerCase()] = window.activeAlertOnsets[k]; });
+        const _activeNow = function(kw) { return _activeEvtsLower.some(function(e) { var ms = _onsetsByLower[e] || 0; return e.includes(kw) && (!ms || ms <= Date.now()); }); };
         const descFlags = {
             torEmergency:       window.activeTornadoEmergency,
             pdsTor:             window.activePDSTornado,
