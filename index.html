@@ -2222,15 +2222,47 @@
         const scores = todayHours.map(scoreHour);
         const scoreEl = document.getElementById('outdoor-score-val');
         const descEl = document.getElementById('outdoor-score-desc');
-        // If active tornado or SVR warning, outdoor score is 0
-        if (window.activeTornadoWarning || window.activeSVRWarning) {
+       // Only suppress score for alerts that are CURRENTLY IN EFFECT (onset has passed)
+        function _outdoorAlertNow(kw) {
+            var onsets = window.activeAlertOnsets || {};
+            return (window.activeAlertEvents || []).some(function(e) {
+                var ms = onsets[e] || 0;
+                return e.toLowerCase().includes(kw) && (!ms || ms <= Date.now());
+            });
+        }
+        if (_outdoorAlertNow('tornado warning') || _outdoorAlertNow('severe thunderstorm warning')) {
             if (scoreEl) scoreEl.innerText = 0;
-            if (descEl) descEl.innerText = 'Not recommended — active severe weather warning';
+            if (descEl) descEl.innerText = 'Dangerous to be outside — active severe weather warning';
             return;
         }
-        if (window.activeHeatWarning) {
+        if (_outdoorAlertNow('blizzard warning') || _outdoorAlertNow('winter storm warning') || _outdoorAlertNow('ice storm warning') || _outdoorAlertNow('snow squall warning')) {
             if (scoreEl) scoreEl.innerText = 0;
-            if (descEl) descEl.innerText = 'Not recommended — active extreme heat warning';
+            if (descEl) descEl.innerText = 'Not recommended — severe winter weather occurring';
+            return;
+        }
+        if (_outdoorAlertNow('extreme heat warning')) {
+            if (scoreEl) scoreEl.innerText = 0;
+            if (descEl) descEl.innerText = 'Not recommended — extremely hot conditions occurring';
+            return;
+        }
+        if (_outdoorAlertNow('extreme cold warning')) {
+            if (scoreEl) scoreEl.innerText = 0;
+            if (descEl) descEl.innerText = 'Not recommended — extremely cold conditions occurring';
+            return;
+        }
+        if (_outdoorAlertNow('heat advisory')) {
+            if (scoreEl) scoreEl.innerText = 25;
+            if (descEl) descEl.innerText = 'Not recommended — uncomfortably hot conditions occurring';
+            return;
+        }
+        if (_outdoorAlertNow('cold weather advisory')) {
+            if (scoreEl) scoreEl.innerText = 25;
+            if (descEl) descEl.innerText = 'Not recommended — uncomfortably cold conditions occurring';
+            return;
+        }
+        if (_outdoorAlertNow('air quality alert') || _outdoorAlertNow('dense smoke advisory')) {
+            if (scoreEl) scoreEl.innerText = 25;
+            if (descEl) descEl.innerText = 'Not recommended — poor air quality or heavy smoke';
             return;
         }
         // Weighted average: closer hours count more (first 4h weight 3, next 4h weight 2, last 4h weight 1)
