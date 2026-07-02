@@ -6610,5 +6610,33 @@
         });
     };
 </script>
+
+<script>
+    // Dynamic Type bridge — probes iOS system body font size (respects user's text size
+    // preference) and applies it to the root so rem/em values scale accordingly.
+    // At the default iOS text size this reads 17px, so (17/17)*100 = 100% — nothing changes.
+    // At larger sizes the root scales up proportionally; clamp() caps on large display
+    // elements prevent them from growing beyond their default pixel size.
+    function _applyDynType() {
+        var p = document.createElement('span');
+        p.style.cssText = 'font:-apple-system-body;position:absolute;top:-9999px;visibility:hidden;pointer-events:none;';
+        document.body.appendChild(p);
+        var sz = parseFloat(window.getComputedStyle(p).fontSize);
+        document.body.removeChild(p);
+        if (sz > 0) {
+            document.documentElement.style.fontSize = (sz / 17 * 100).toFixed(2) + '%';
+        }
+    }
+    // Run on load and again whenever the app returns to foreground (user may have
+    // changed their text size while the app was backgrounded).
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _applyDynType);
+    } else {
+        _applyDynType();
+    }
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') _applyDynType();
+    });
+</script>
 </body>
 </html>
