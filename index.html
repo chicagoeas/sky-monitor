@@ -2520,7 +2520,11 @@
 
     function computeFloodImpact() {
         var descEl = document.getElementById('flood-score-desc');
-        var lpi = Math.max(0, window.livePrecipInt || 0); // in/hr
+        // US: NWS station observed 1h precip is the authoritative rain rate (actual
+        // measured rainfall). Only fall back to PirateWeather/OM when the NWS station
+        // did not report a value (null = sensor gap, not zero rain).
+        var _nwsPrecipAvail = !window.isOutsideUS && window.nwsObsPrecip1h != null;
+        var lpi = Math.max(0, _nwsPrecipAvail ? window.nwsObsPrecip1h : (window.livePrecipInt || 0));
 
         // Hard rule: >2 in/hr → instant SEVERE 100
         if (lpi > 2.0) {
@@ -2553,6 +2557,27 @@
         if      (qpf6h >= 2.0)  forecastScore = Math.max(forecastScore, 45);
         else if (qpf6h >= 1.0)  forecastScore = Math.max(forecastScore, 30);
         else if (qpf6h >= 0.5)  forecastScore = Math.max(forecastScore, 15);
+
+        // 2a-obs. NWS station observed 3h/6h accumulations (US only) — actual measured
+        // rainfall beats forecast QPF for capturing ongoing events. These raise the
+        // forecastScore floor when observed rain exceeds what QPF predicted.
+        if (!window.isOutsideUS) {
+            var _obs3h = window.nwsObsPrecip3h;
+            var _obs6h = window.nwsObsPrecip6h;
+            if (_obs3h != null) {
+                if      (_obs3h >= 3.0)  forecastScore = Math.max(forecastScore, 85);
+                else if (_obs3h >= 2.0)  forecastScore = Math.max(forecastScore, 70);
+                else if (_obs3h >= 1.0)  forecastScore = Math.max(forecastScore, 52);
+                else if (_obs3h >= 0.5)  forecastScore = Math.max(forecastScore, 35);
+                else if (_obs3h >= 0.25) forecastScore = Math.max(forecastScore, 20);
+            }
+            if (_obs6h != null) {
+                if      (_obs6h >= 4.0)  forecastScore = Math.max(forecastScore, 75);
+                else if (_obs6h >= 2.5)  forecastScore = Math.max(forecastScore, 58);
+                else if (_obs6h >= 1.5)  forecastScore = Math.max(forecastScore, 42);
+                else if (_obs6h >= 0.75) forecastScore = Math.max(forecastScore, 25);
+            }
+        }
 
         // 2b. Supplement NWS QPF with official NWS probability of precipitation.
         // Cross-multiplying QPF amount × PoP surfaces events where high confidence +
@@ -3988,6 +4013,16 @@
                 if (_tmpH != null) nwsObsHumidity = _tmpH;
                 if (_tmpW != null) nwsObsWindMph = _tmpW * 0.621371;
                 if (_tmpWD != null) nwsObsWindDir = _tmpWD;
+                // Precipitation — NWS obs always returns mm regardless of locale; convert to inches.
+                // These become the authoritative rain-rate inputs for the US flood score.
+                var _p1 = op.precipitationLastHour   != null ? op.precipitationLastHour.value   : null;
+                var _p3 = op.precipitationLast3Hours != null ? op.precipitationLast3Hours.value : null;
+                var _p6 = op.precipitationLast6Hours != null ? op.precipitationLast6Hours.value : null;
+                window.nwsObsPrecip1h = (_p1 != null && _p1 >= 0) ? _p1 / 25.4 : null;
+                window.nwsObsPrecip3h = (_p3 != null && _p3 >= 0) ? _p3 / 25.4 : null;
+                window.nwsObsPrecip6h = (_p6 != null && _p6 >= 0) ? _p6 / 25.4 : null;
+                // Feed NWS obs into the rolling antecedent cache and refresh the flood score.
+                if (window.nwsObsPrecip1h !== null) { _updatePrecipCache(window.nwsObsPrecip1h); computeFloodImpact(); }
             } catch(obsErr) { /* observation fetch failed — will fall back below */ }
             if (!nwsCond) {
                 // Truly no NWS conditions — fall back to PirateWeather
