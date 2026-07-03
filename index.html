@@ -5300,8 +5300,9 @@
         setModalOpen(true);
         var modal = document.getElementById('flood-modal');
         if (!modal) {
-            modal = document.createElement('div'); modal.id = 'flood-modal';
-            modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.78);z-index:9999;display:flex;align-items:center;justify-content:center;';
+            modal = document.createElement('divar _pwAvailEarly  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
+        var _nwsAvailEarly = window.nwsQPFValues && window.nwsQPFValues.length > 0;
+        if (!_pwAvailEarly && !_nwsAvailEarlyion:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.78);z-index:9999;display:flex;align-items:center;justify-content:center;';
             modal.innerHTML = '<div id="flood-modal-inner" style="background:#071a28;color:#fff;border-radius:20px;max-width:390px;width:93vw;padding:24px;position:relative;box-shadow:0 16px 40px #000a;max-height:88vh;overflow-y:auto;"></div>';
             document.body.appendChild(modal);
             modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } });
@@ -5352,24 +5353,44 @@
         var sourceHours = [];
         if (_nwsAvail) {
             for (var _hi = 0; _hi < 72; _hi++) {
-                var _hqpf = _getNWSQPF(_hi, 1);          // inches for this 1-hour slot
-                var _hpop = _getNWSPoP(_hi, 1);           // 0–100 or null
+                var _hqpf.
+        // Rain INTENSITY source: PirateWeather hourly precipIntensity — radar-downscaled,
+        // convection-aware, true per-hour rate. NWS gridpoint QPF is a smoothed 6-hour
+        // accumulation product (PT6H) that slices to ~0.09"/hr even for heavy convective
+        // storms and is unsuitable as an hourly intensity signal.
+        // Rain PROBABILITY source: NWS PoP when available (authoritative), PW as fallback.
+        var _nwsAvail = window.nwsQPFValues && window.nwsQPFValues.length > 0;
+        var _pwAvail  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
+        var sourceHours = [];
+        if (_pwAvail) {
+            var _nowSec = Math.floor(Date.now() / 1000);
+            sourceHours = window.pirateHourlyData
+                .filter(function(h) { return h.time >= _nowSec - 1800; }) // drop stale past entries before PoP overlay
+                .map(function(h) {
+                    // Only overlay NWS PoP for future hours — past entries keep PW probability.
+                    // Use Math.floor so hour-0 covers "now through the next full hour" and
+                    // avoids drifting into the wrong NWS PoP window near hour boundaries.
+                    var _hoursAhead = Math.floor((h.time - _nowSec) / 3600);
+                    var _nwsPop = (_nwsAvail && _hoursAhead >= 0) ? _getNWSPoP(_hoursAhead, 1) : null;
+                    return {
+                        time: h.time,
+                        precipIntensity:   h.precipIntensity   || 0,
+                        precipProbability: _nwsPop !== null ? _nwsPop / 100 : (h.precipProbability || 0)
+                    };
+                });
+        } else if (_nwsAvail) {
+            // PirateWeather unavailable — fall back to NWS QPF (6h smoothed, less precise)
+            for (var _hi = 0; _hi < 72; _hi++) {
+                var _hqpf    = _getNWSQPF(_hi, 1);
+                var _hpop    = _getNWSPoP(_hi, 1);
                 var _hpopFrac = _hpop !== null ? _hpop / 100 : 0;
-                // Stop once we've gone past meaningful data
                 if (_hi >= 48 && _hqpf === 0 && _hpopFrac === 0) break;
                 sourceHours.push({
                     time: Math.floor((Date.now() + _hi * 3600000) / 1000),
-                    precipIntensity: _hqpf,       // in/hr equivalent
+                    precipIntensity:   _hqpf,
                     precipProbability: _hpopFrac
                 });
-            }
-        } else if (window.pirateHourlyData) {
-            sourceHours = window.pirateHourlyData;
-        }
-
-        if (!sourceHours.length) {
-            document.getElementById('flood-modal-inner').innerHTML =
-                '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
+            }right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
                 + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:16px;padding-right:28px;">\uD83C\uDF0A HOURLY FLOOD IMPACT</div>'
                 + '<div style="color:#888;font-size:0.85em;">NWS forecast data not yet loaded. Try again in a moment.</div>';
             return;
