@@ -4021,8 +4021,11 @@
                 window.nwsObsPrecip1h = (_p1 != null && _p1 >= 0) ? _p1 / 25.4 : null;
                 window.nwsObsPrecip3h = (_p3 != null && _p3 >= 0) ? _p3 / 25.4 : null;
                 window.nwsObsPrecip6h = (_p6 != null && _p6 >= 0) ? _p6 / 25.4 : null;
-                // Feed NWS obs into the rolling antecedent cache and refresh the flood score.
-                if (window.nwsObsPrecip1h !== null) { _updatePrecipCache(window.nwsObsPrecip1h); computeFloodImpact(); }
+                // Feed NWS 1h obs into the rolling antecedent cache when available.
+                if (window.nwsObsPrecip1h !== null) _updatePrecipCache(window.nwsObsPrecip1h);
+                // Recompute flood score whenever any obs precip value arrived — 3h/6h
+                // observed floors apply even if the 1h sensor returned null.
+                if (window.nwsObsPrecip1h !== null || window.nwsObsPrecip3h !== null || window.nwsObsPrecip6h !== null) computeFloodImpact();
             } catch(obsErr) { /* observation fetch failed — will fall back below */ }
             if (!nwsCond) {
                 // Truly no NWS conditions — fall back to PirateWeather
@@ -5296,7 +5299,9 @@
 
     // ── Hourly Flood Impact Modal ───────────────────────────────────────────────
     function openFloodModal() {
-        if (!window.pirateHourlyData || !window.pirateHourlyData.length) { alert('Hourly data not yet loaded.'); return; }
+        var _pwAvailEarly  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
+        var _nwsAvailEarly = window.nwsQPFValues && window.nwsQPFValues.length > 0;
+        if (!_pwAvailEarly && !_nwsAvailEarly) { alert('Hourly data not yet loaded.'); return; }
         setModalOpen(true);
         var modal = document.getElementById('flood-modal');
         if (!modal) {
@@ -5347,24 +5352,44 @@
             alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
         }
 
-        // Build hourly rows from NWS QPF/PoP data (preferred), fall back to PirateWeather
+        // Build hourly rows.
+        // Rain INTENSITY source: PirateWeather hourly precipIntensity — radar-downscaled,
+        // convection-aware, true per-hour rate. NWS gridpoint QPF is a smoothed 6-hour
+        // accumulation product (PT6H) that slices to ~0.09"/hr even for heavy convective
+        // storms and is unsuitable as an hourly intensity signal.
+        // Rain PROBABILITY source: NWS PoP when available (authoritative), PW as fallback.
         var _nwsAvail = window.nwsQPFValues && window.nwsQPFValues.length > 0;
+        var _pwAvail  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
         var sourceHours = [];
-        if (_nwsAvail) {
+        if (_pwAvail) {
+            var _nowSec = Math.floor(Date.now() / 1000);
+            sourceHours = window.pirateHourlyData
+                .filter(function(h) { return h.time >= _nowSec - 1800; }) // drop stale past entries before PoP overlay
+                .map(function(h) {
+                    // Only overlay NWS PoP for future hours — past entries keep PW probability.
+                    // Use Math.floor so hour-0 covers "now through the next full hour" and
+                    // avoids drifting into the wrong NWS PoP window near hour boundaries.
+                    var _hoursAhead = Math.floor((h.time - _nowSec) / 3600);
+                    var _nwsPop = (_nwsAvail && _hoursAhead >= 0) ? _getNWSPoP(_hoursAhead, 1) : null;
+                    return {
+                        time: h.time,
+                        precipIntensity:   h.precipIntensity   || 0,
+                        precipProbability: _nwsPop !== null ? _nwsPop / 100 : (h.precipProbability || 0)
+                    };
+                });
+        } else if (_nwsAvail) {
+            // PirateWeather unavailable — fall back to NWS QPF (6h smoothed, less precise)
             for (var _hi = 0; _hi < 72; _hi++) {
-                var _hqpf = _getNWSQPF(_hi, 1);          // inches for this 1-hour slot
-                var _hpop = _getNWSPoP(_hi, 1);           // 0–100 or null
+                var _hqpf    = _getNWSQPF(_hi, 1);
+                var _hpop    = _getNWSPoP(_hi, 1);
                 var _hpopFrac = _hpop !== null ? _hpop / 100 : 0;
-                // Stop once we've gone past meaningful data
                 if (_hi >= 48 && _hqpf === 0 && _hpopFrac === 0) break;
                 sourceHours.push({
                     time: Math.floor((Date.now() + _hi * 3600000) / 1000),
-                    precipIntensity: _hqpf,       // in/hr equivalent
+                    precipIntensity:   _hqpf,
                     precipProbability: _hpopFrac
                 });
             }
-        } else if (window.pirateHourlyData) {
-            sourceHours = window.pirateHourlyData;
         }
 
         if (!sourceHours.length) {
@@ -6016,16 +6041,23 @@
             }).sort(function(a, b) { return new Date(b.time) - new Date(a.time); }).slice(0, 5);
             if (!nearby.length) { widget.style.display = 'none'; return; }
             const REPORT_EMOJIS_HOME = {
-                'Rotation':'\uD83C\uDF00','Tornado / Funnel Cloud':'\uD83C\uDF2A\uFE0F',
-                'Thunderstorm':'\u26C8\uFE0F','Wind Damage':'\uD83D\uDCA8',
-                'Flooding':'\uD83C\uDF0A','Flash Flood':'\uD83C\uDF0A',
-                'Hail':'\uD83C\uDF28\uFE0F','Lightning Strike':'\u26A1',
-                'Rain':'\uD83C\uDF27\uFE0F','Other':'\uD83D\uDCCC'
+                'Rain':'\uD83C\uDF27\uFE0F','Thunderstorm':'\u26C8\uFE0F',
+                'Wind Damage':'\uD83D\uDCA8','Flooding':'\uD83C\uDF0A',
+                'Flash Flood':'\uD83C\uDF0A',
+                'Tornado / Funnel Cloud':'\uD83C\uDF2A\uFE0F',
+                'Rotation':'\uD83C\uDF00',
+                'Lightning Strike':'\u26A1','Lightning':'\u26A1',
+                'Fog / Low Visibility':'\uD83C\uDF2B\uFE0F',
+                'Fog':'\uD83C\uDF2B\uFE0F','Low Visibility':'\uD83D\uDC41\uFE0F',
+                'Snow Squall':'\uD83C\uDF28\uFE0F','Dust Storm':'\uD83C\uDF2A\uFE0F',
+                'Heavy Snow':'\u2744\uFE0F','Ice / Freezing Rain':'\uD83E\uDDCA',
+                'Blizzard Conditions':'\uD83C\uDF28\uFE0F','Other':'\uD83D\uDCCC'
             };
             function reportEmoji(type) {
                 if (!type) return '\uD83D\uDFE2';
-                for (var k in REPORT_EMOJIS_HOME) { if (type.includes(k)) return REPORT_EMOJIS_HOME[k]; }
-                return '\uD83D\uDFE2';
+                if (type.startsWith('Hail')) return '\uD83C\uDF28\uFE0F';
+                if (type.startsWith('Winter')) return '\u2744\uFE0F';
+                return REPORT_EMOJIS_HOME[type] || '\uD83D\uDFE2';
             }
             // Classify severity for widget styling and minute summary
             var _hasTornado  = nearby.some(function(r) { return r.type && (r.type.includes('Tornado') || r.type.includes('Funnel')); });
