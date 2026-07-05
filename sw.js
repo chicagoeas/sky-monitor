@@ -2,7 +2,7 @@
 // Bump CACHE_VERSION whenever you deploy a breaking change.
 // All three sub-caches share the same version prefix so a single bump clears
 // everything consistently.
-const CACHE_VERSION = 'skymonitor-v1.1.5';
+const CACHE_VERSION = 'skymonitor-v1.1.6';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;   // CDN libs — cache-first
 const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small icons — cache-on-use
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;  // HTML + same-origin — network-first
@@ -212,6 +212,60 @@ self.addEventListener('fetch', (e) => {
     return;
 });
 
+// ─── App icon badge (iOS 16.4+ / installed PWAs only) ────────────────────────
+// The Badging API count is not tracked by the browser itself, so we persist
+// our own running "unread alert" counter in IndexedDB (localStorage is not
+// available inside a service worker). The counter survives SW restarts and
+// is reset to 0 whenever the user opens/focuses the app.
+const BADGE_DB_NAME = 'skymonitor-badge';
+const BADGE_STORE = 'kv';
+
+function _openBadgeDb() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(BADGE_DB_NAME, 1);
+        req.onupgradeneeded = () => {
+            if (!req.result.objectStoreNames.contains(BADGE_STORE)) {
+                req.result.createObjectStore(BADGE_STORE);
+            }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+async function getBadgeCount() {
+    try {
+        const db = await _openBadgeDb();
+        return await new Promise((resolve) => {
+            const tx = db.transaction(BADGE_STORE, 'readonly');
+            const getReq = tx.objectStore(BADGE_STORE).get('count');
+            getReq.onsuccess = () => resolve(getReq.result || 0);
+            getReq.onerror = () => resolve(0);
+        });
+    } catch (_) {
+        return 0;
+    }
+}
+
+async function setBadgeCount(n) {
+    try {
+        const db = await _openBadgeDb();
+        await new Promise((resolve) => {
+            const tx = db.transaction(BADGE_STORE, 'readwrite');
+            tx.objectStore(BADGE_STORE).put(n, 'count');
+            tx.oncomplete = resolve;
+            tx.onerror = resolve;
+        });
+    } catch (_) {}
+}
+
+async function clearAppBadge() {
+    await setBadgeCount(0);
+    if ('clearAppBadge' in navigator) {
+        try { await navigator.clearAppBadge(); } catch (_) {}
+    }
+}
+
 // ─── Push notifications ───────────────────────────────────────────────────────
 self.addEventListener('push', (e) => {
     let data = {};
@@ -235,7 +289,16 @@ self.addEventListener('push', (e) => {
         timestamp: data.timestamp || Date.now(),
         data: { url: targetUrl },
     };
-    e.waitUntil(self.registration.showNotification(title, options));
+    e.waitUntil(
+        (async () => {
+            await self.registration.showNotification(title, options);
+            if ('setAppBadge' in navigator) {
+                const count = (await getBadgeCount()) + 1;
+                await setBadgeCount(count);
+                try { await navigator.setAppBadge(count); } catch (_) {}
+            }
+        })()
+    );
 });
 
 // ─── Notification click ───────────────────────────────────────────────────────
@@ -243,14 +306,26 @@ self.addEventListener('notificationclick', (e) => {
     e.notification.close();
     const url = (e.notification.data && e.notification.data.url) ? e.notification.data.url : BASE_URL;
     e.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        (async () => {
+            await clearAppBadge();
+            const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
             for (const client of clientList) {
                 if (client.url.includes(self.location.origin) && 'focus' in client) {
                     const navPromise = ('navigate' in client) ? client.navigate(url) : Promise.resolve(client);
-                    return navPromise.then(() => client.focus());
+                    await navPromise;
+                    return client.focus();
                 }
             }
             if (self.clients.openWindow) return self.clients.openWindow(url);
-        })
+        })()
     );
+});
+
+// ─── Messages from the page (e.g. app opened/focused) ────────────────────────
+// The page posts CLEAR_BADGE whenever it becomes visible so the badge doesn't
+// linger after the user has already seen the alerts inside the app.
+self.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'CLEAR_BADGE') {
+        e.waitUntil(clearAppBadge());
+    }
 });
