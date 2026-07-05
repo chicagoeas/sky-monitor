@@ -6448,6 +6448,23 @@
     // ——— PWA SERVICE WORKER + PUSH NOTIFICATIONS (v1.1.0) ———
     var _swReg = null;
 
+    // ——— APP ICON BADGE (iOS 16.4+ home-screen PWAs) ———
+    // Clears the little red number on the home-screen icon whenever the user
+    // opens or returns to the app, and tells the service worker to reset its
+    // own running unread-alert counter so future pushes start from 0 again.
+    function _clearAppBadge() {
+        if ('clearAppBadge' in navigator) {
+            navigator.clearAppBadge().catch(function() {});
+        }
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_BADGE' });
+        }
+    }
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') _clearAppBadge();
+    });
+    window.addEventListener('focus', _clearAppBadge);
+
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
             navigator.serviceWorker.register('./sw.js').then(function(reg) {
@@ -6455,6 +6472,7 @@
                 if ('PushManager' in window) {
                     setTimeout(checkNotifStatus, 1500);
                 }
+                _clearAppBadge();
             }).catch(function() {});
 
             // Evict large weather API responses from SW cache — only the app shell should persist.
