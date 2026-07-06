@@ -2058,7 +2058,8 @@
                         windSpeed: obs.imperial?.windSpeed ?? null,
                         windDir: obs.winddir ?? null,
                         precipRate: obs.imperial?.precipRate ?? null,
-                        precipTotal: obs.imperial?.precipTotal ?? null
+                        precipTotal: obs.imperial?.precipTotal ?? null,
+                        elev: obs.imperial?.elev ?? null
                     };
                 } catch(e) { return null; }
             }));
@@ -3264,6 +3265,7 @@
             // Never compare WU against PirateWeather — Pirate can be significantly lagged.
             const useWU = wuAvailable;
             window.wuData = wu || null;
+            window.wuElevFt = (wu && wu.elev != null) ? wu.elev : null;
             window.wuNeighborData = wuStations.slice(1); // [PWS2, PWS3] — used by fetchNWSChain
             window.wuDeviates = false; // reset; fetchNWSChain sets this after multi-tier QC
             const wuStationEl = document.getElementById('wuStation');
@@ -4082,26 +4084,7 @@
             let nwsObsWindMph = null;
             let nwsObsWindDir = null;
             try {
-                // Run NWS observation and user-location elevation fetch in parallel.
-                // Elevation is cached by lat/lon — only re-fetched when location changes.
-                var _needsElev = window.userElevFt == null || window._userElevLat !== lat || window._userElevLon !== lon;
-                // allSettled — elevation failure must never suppress the NWS observation fetch.
-                const [_obsSettled, _elevSettled] = await Promise.allSettled([
-                    fetch(primaryStation.id + '/observations/latest'),
-                    _needsElev ? fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lat + '&longitude=' + lon) : Promise.resolve(null)
-                ]);
-                if (_obsSettled.status === 'rejected') throw _obsSettled.reason;
-                const obsRes = _obsSettled.value;
-                if (_elevSettled.status === 'fulfilled' && _elevSettled.value) {
-                    try {
-                        const _elevData = await _elevSettled.value.json();
-                        if (_elevData && _elevData.elevation && _elevData.elevation[0] != null) {
-                            window.userElevFt = _elevData.elevation[0] * 3.28084;
-                            window._userElevLat = lat;
-                            window._userElevLon = lon;
-                        }
-                    } catch(e) {}
-                }
+                const obsRes = await fetch(primaryStation.id + '/observations/latest');
                 const obs = obsRes.ok ? await obsRes.json() : null;
                 const op = obs?.properties || {};
                 nwsCond = (op.textDescription || '').trim();
@@ -4129,8 +4112,11 @@
                 // Display always shows the raw nwsObsTempF; only QC uses nwsObsTempFAdj.
                 window.nwsLapseCorrection = null;
                 const _nwsElevFt = (elevMeters != null) ? elevMeters * 3.28084 : null;
-                if (nwsObsTempF !== null && _nwsElevFt !== null && window.userElevFt != null) {
-                    const _lapseDelta = (_nwsElevFt - window.userElevFt) * (3.5 / 1000);
+                // Compare PWS station elevation directly against NWS station elevation.
+                // Both values come from the obs APIs themselves — no external fetch needed.
+                // Standard environmental lapse rate: 3.5°F per 1000 ft (~6.5°C per 1000 m).
+                if (nwsObsTempF !== null && _nwsElevFt !== null && window.wuElevFt != null) {
+                    const _lapseDelta = (_nwsElevFt - window.wuElevFt) * (3.5 / 1000);
                     if (Math.abs(_lapseDelta) >= 0.5) {
                         nwsObsTempFAdj = nwsObsTempF + _lapseDelta;
                         window.nwsLapseCorrection = _lapseDelta;
