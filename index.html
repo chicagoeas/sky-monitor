@@ -1017,6 +1017,11 @@
     window.pirateCurrently = null;
     window.pirateAlerts = [];
     window.wuDeviates = false;
+    // Hysteresis state for PWS trust — persists across refresh cycles.
+    // status: 'trusted' | 'suspect'
+    // passCount: consecutive cycles that passed the tighter recovery threshold while suspect
+    // suspectSince: timestamp (ms) when the station was first flagged
+    window.wuTrustState = { status: 'trusted', passCount: 0, suspectSince: null };
     window.chartInstances = {};
     window.activeAlertWatches = [];
     window.activeStormWarning = false;
@@ -3967,20 +3972,31 @@
         var panel = document.getElementById('pws-qc-panel');
         if (!panel) return;
         function fmt(val, unit) { return (val !== null && val !== undefined) ? Math.round(val) + unit : '--'; }
+        var _ts = window.wuTrustState || { status: 'trusted', passCount: 0 };
+        var _isSuspect = _ts.status === 'suspect';
+        var _isRecovering = _isSuspect && _ts.passCount > 0;
+        // Source label reflects hysteresis state, not just the raw cycle result
         var source = 'PWS1 (nearest)';
         if (!pws1) source = 'NWS Obs / PirateWeather (no PWS data)';
         else if (hardFail) source = 'NWS Obs (hard-fail: neighborhood drift suspected)';
-        else if (deviatesNeighbors && nwsTemp !== null && !window.isOutsideUS) source = 'NWS Obs (PWS1 outlier vs neighbors)';
-        else if (deviatesNeighbors && (neighborRef && neighborRef.temp !== null)) source = 'Neighbor median (PWS1 suspect, NWS unavailable)';
-        else if (deviatesNeighbors) source = 'PirateWeather (PWS1 suspect, all fallbacks unavailable)';
+        else if (_isSuspect && nwsTemp !== null && !window.isOutsideUS) source = 'NWS Obs (PWS1 suspect' + (_isRecovering ? ', recovering' : '') + ')';
+        else if (_isSuspect && neighborRef && neighborRef.temp !== null) source = 'Neighbor median (PWS1 suspect' + (_isRecovering ? ', recovering' : '') + ', NWS unavailable)';
+        else if (_isSuspect) source = 'PirateWeather (PWS1 suspect, all fallbacks unavailable)';
         else if (window.isOutsideUS) source = 'PirateWeather (outside US)';
         var rows = '';
-        var pws1Ok = pws1 && !deviatesNeighbors && !hardFail;
-        var pws1Color = !pws1 ? '#9e9e9e' : pws1Ok ? '#00e676' : '#ff7043';
+        var pws1Ok = pws1 && !_isSuspect && !hardFail;
+        var pws1Color = !pws1 ? '#9e9e9e' : pws1Ok ? '#00e676' : _isRecovering ? '#ffb74d' : '#ff7043';
+        var pws1StatusText = 'Unavailable';
+        if (pws1) {
+            if (hardFail)         pws1StatusText = 'Hard fail';
+            else if (_isRecovering) pws1StatusText = 'Recovering (' + _ts.passCount + '/2)';
+            else if (_isSuspect)  pws1StatusText = 'Suspect';
+            else                  pws1StatusText = 'Trusted ✓';
+        }
         rows += '<tr><td style="padding:3px 0; color:' + pws1Color + ';">⬤ PWS1 <small style="opacity:0.55;">' + (pws1 ? pws1.stationId : '—') + '</small></td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pws1 && pws1.temp, '°F') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pws1 && pws1.humidity, '%') + '</td>'
-              + '<td style="font-size:0.78em; color:' + pws1Color + ';">' + (pws1 ? (hardFail ? 'Hard fail' : deviatesNeighbors ? 'Outlier' : 'Trusted ✓') : 'Unavailable') + '</td></tr>';
+              + '<td style="font-size:0.78em; color:' + pws1Color + ';">' + pws1StatusText + '</td></tr>';
         (neighbors || []).forEach(function(n, i) {
             rows += '<tr><td style="padding:3px 0; color:#90caf9;">⬤ PWS' + (i + 2) + ' <small style="opacity:0.55;">' + (n.stationId || '—') + '</small></td>'
                   + '<td style="text-align:right; padding-right:8px;">' + fmt(n.temp, '°F') + '</td>'
@@ -3993,14 +4009,16 @@
                   + '<td style="text-align:right; padding-right:8px;">' + fmt(neighborRef.humidity, '%') + '</td>'
                   + '<td></td></tr>';
         }
-        var nwsActive = (hardFail || deviatesNeighbors) && nwsTemp !== null && !window.isOutsideUS;
+        // Use hysteresis state (_isSuspect) for row highlighting so the panel stays
+        // consistent during recovery cycles where raw deviatesNeighbors may have cleared.
+        var nwsActive = (hardFail || _isSuspect) && nwsTemp !== null && !window.isOutsideUS;
         var nwsColor = nwsActive ? '#ffd54f' : '#9e9e9e';
         rows += '<tr><td style="padding:3px 0; color:' + nwsColor + ';">⬤ NWS Obs</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsTemp, '°F') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsHum, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + nwsColor + ';">' + (window.isOutsideUS ? 'N/A (outside US)' : nwsTemp !== null ? (nwsActive ? 'Override ✓' : 'Standby') : 'Unavailable') + '</td></tr>';
         var pirateTemp = window.pirateCurrently && window.pirateCurrently.temperature !== null ? window.pirateCurrently.temperature : null;
-        var pirateActive = !pws1 || (deviatesNeighbors && !nwsActive && !(neighborRef && neighborRef.temp !== null)) || window.isOutsideUS;
+        var pirateActive = !pws1 || (_isSuspect && !nwsActive && !(neighborRef && neighborRef.temp !== null)) || window.isOutsideUS;
         var pirateColor = pirateActive ? '#ffd54f' : '#9e9e9e';
         rows += '<tr><td style="padding:3px 0; color:' + pirateColor + ';">⬤ PirateWeather</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pirateTemp, '°F') + '</td>'
@@ -4112,12 +4130,12 @@
                 if (nwsIcon) { document.getElementById('weatherIcon').src = nwsIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                 else document.getElementById('weatherIcon').style.display = 'none';
             }
-            // ── Multi-tier PWS quality control ────────────────────────────────────────
-            // Tier 1 (primary): Compare PWS1 vs neighbor PWSs (PWS2/3) — same microclimate.
-            //   Threshold: >5°F or >10% rh deviation from neighbor median → PWS1 outlier.
-            //   If no neighbors: fall back to direct NWS comparison at the same threshold.
-            // Tier 2 (guard): NWS hard-fail check (wider ±10°F / ±20% rh).
-            //   Catches correlated neighborhood drift that fools the neighbor check.
+            // ── Multi-tier PWS quality control with hysteresis ────────────────────────
+            // Trip thresholds (trusted → suspect): >5°F / >10% rh vs neighbor median, or
+            //   >10°F / >20% rh vs NWS obs (hard-fail, catches correlated neighborhood drift).
+            // Recovery thresholds (suspect → trusted): <3°F / <6% rh — tighter than trip.
+            //   Requires 2 consecutive clean cycles before the station is trusted again.
+            //   This prevents oscillation when solar bias fades gradually (e.g. 89→87→84°F).
             // Fallback chain: NWS obs → neighbor median (if not hard-fail) → PirateWeather.
             const _wu = window.wuData;
             const _wuAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
@@ -4133,7 +4151,7 @@
                     const _nhDiff = (_neighborRef.humidity !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - _neighborRef.humidity) : 0;
                     _wuDeviatesFromNeighbors = (_ntDiff > 5) || (_neighborRef.humidity !== null && _nhDiff > 10);
                 } else if (nwsObsTempF !== null) {
-                    // Tier 1b: no neighbors available — fall back to original NWS comparison
+                    // Tier 1b: no neighbors available — fall back to direct NWS comparison
                     const _tDiff = Math.abs(_wu.temp - nwsObsTempF);
                     const _hDiff = (nwsObsHumidity !== null) ? Math.abs(_wu.humidity - nwsObsHumidity) : 0;
                     _wuDeviatesFromNeighbors = (_tDiff > 5) || (nwsObsHumidity !== null && _hDiff > 10);
@@ -4145,7 +4163,44 @@
                     _wuHardFail = (_ntDiffNWS > 10) || (nwsObsHumidity !== null && _nhDiffNWS > 20);
                 }
             }
-            window.wuDeviates = _wuDeviatesFromNeighbors || _wuHardFail || !_wuAvail;
+
+            // ── Hysteresis: update persistent trust state ─────────────────────────────
+            var _ts = window.wuTrustState;
+            var _rawFailed = _wuDeviatesFromNeighbors || _wuHardFail || !_wuAvail;
+
+            if (_rawFailed) {
+                // Any failure immediately marks the station suspect and resets the pass counter.
+                if (_ts.status === 'trusted') _ts.suspectSince = Date.now();
+                _ts.status = 'suspect';
+                _ts.passCount = 0;
+            } else if (_ts.status === 'suspect') {
+                // Attempt recovery using the tighter threshold against the best available reference.
+                var _refTemp = (_neighborRef.temp !== null) ? _neighborRef.temp : nwsObsTempF;
+                var _refHum  = (_neighborRef.humidity !== null) ? _neighborRef.humidity : nwsObsHumidity;
+                // Require at least a temperature reference — if both neighbor and NWS are
+                // unavailable we have nothing to compare against, so don't credit a pass.
+                if (_refTemp === null) {
+                    // No reference available this cycle; hold position without resetting.
+                } else {
+                    var _recoverTempOk = Math.abs(_wu.temp - _refTemp) <= 3;
+                    var _recoverHumOk  = (_refHum === null) || (_wu.humidity === null) || (Math.abs(_wu.humidity - _refHum) <= 6);
+                    if (_recoverTempOk && _recoverHumOk) {
+                        _ts.passCount++;
+                        if (_ts.passCount >= 2) {
+                            // Two consecutive clean cycles — restore trust.
+                            _ts.status = 'trusted';
+                            _ts.passCount = 0;
+                            _ts.suspectSince = null;
+                        }
+                    } else {
+                        // Failed recovery threshold — reset counter, stay suspect.
+                        _ts.passCount = 0;
+                    }
+                }
+            }
+            // else: trusted and raw check passed — nothing to update.
+
+            window.wuDeviates = (_ts.status === 'suspect') || !_wuAvail;
 
             // Choose override source
             const _nwsNeedsOverride = window.wuDeviates;
