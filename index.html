@@ -4049,6 +4049,11 @@
             if (!pointsRes.ok) { window.isOutsideUS = true; applyInternationalMode(); return; }
             window.isOutsideUS = false; applyUSMode();
             const p = await pointsRes.json();
+            // Elevation of the user's requested coordinate (meters), returned by the NWS
+            // /points/ endpoint — used for lapse-rate correction when comparing NWS obs
+            // (which may be from a much higher station) against local PWS readings.
+            const _userLocElevFt = (p.properties?.elevation?.value != null)
+                ? p.properties.elevation.value * 3.28084 : null;
             const wfo = p.properties.cwa;
             document.getElementById('wfo-label').innerText = wfo;
             // Store NWS grid coordinates for QPF (quantitative precip forecast) fetch
@@ -4112,11 +4117,13 @@
                 // Display always shows the raw nwsObsTempF; only QC uses nwsObsTempFAdj.
                 window.nwsLapseCorrection = null;
                 const _nwsElevFt = (elevMeters != null) ? elevMeters * 3.28084 : null;
-                // Compare PWS station elevation directly against NWS station elevation.
-                // Both values come from the obs APIs themselves — no external fetch needed.
-                // Standard environmental lapse rate: 3.5°F per 1000 ft (~6.5°C per 1000 m).
-                if (nwsObsTempF !== null && _nwsElevFt !== null && window.wuElevFt != null) {
-                    const _lapseDelta = (_nwsElevFt - window.wuElevFt) * (3.5 / 1000);
+                // Lapse-rate correction: adjust NWS obs temperature to the user's elevation
+                // before comparing it to the PWS. Uses the elevation of the user's exact
+                // coordinate from the NWS /points/ response (already fetched above), with the
+                // PWS station elevation as a fallback. Standard lapse rate: 3.5°F / 1000 ft.
+                const _refElevFt = (_userLocElevFt != null) ? _userLocElevFt : window.wuElevFt;
+                if (nwsObsTempF !== null && _nwsElevFt !== null && _refElevFt != null) {
+                    const _lapseDelta = (_nwsElevFt - _refElevFt) * (3.5 / 1000);
                     if (Math.abs(_lapseDelta) >= 0.5) {
                         nwsObsTempFAdj = nwsObsTempF + _lapseDelta;
                         window.nwsLapseCorrection = _lapseDelta;
