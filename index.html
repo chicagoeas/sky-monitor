@@ -6709,13 +6709,31 @@
     // At larger sizes the root scales up proportionally; clamp() caps on large display
     // elements prevent them from growing beyond their default pixel size.
     function _applyDynType() {
+        // -apple-system-body is a WebKit-only system font keyword. On non-WebKit
+        // browsers (Chrome/Edge/Firefox on desktop, etc.) it's invalid, and the
+        // probe span silently falls back to an unrelated computed size — which is
+        // how desktop ended up with a tiny root font-size. Restrict this probe to
+        // iOS/iPadOS Safari, where Dynamic Type actually applies. iPadOS Safari
+        // reports a desktop-style "Macintosh" user agent, so touch support is used
+        // to distinguish real iPads from actual desktop Macs.
+        var isIOS = /iPhone|iPod|iPad/.test(navigator.userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (!isIOS) {
+            document.documentElement.style.fontSize = '';
+            return;
+        }
         var p = document.createElement('span');
         p.style.cssText = 'font:-apple-system-body;position:absolute;top:-9999px;visibility:hidden;pointer-events:none;';
         document.body.appendChild(p);
         var sz = parseFloat(window.getComputedStyle(p).fontSize);
         document.body.removeChild(p);
-        if (sz > 0) {
+        // Sanity guard: valid iOS Dynamic Type sizes range roughly from 14px
+        // (xSmall) to 53px (AX5). Anything outside that means the probe failed,
+        // so fall back to the default 100% instead of applying a bogus scale.
+        if (sz >= 14 && sz <= 53) {
             document.documentElement.style.fontSize = (sz / 17 * 100).toFixed(2) + '%';
+        } else {
+            document.documentElement.style.fontSize = '';
         }
     }
     // Run on load and again whenever the app returns to foreground (user may have
