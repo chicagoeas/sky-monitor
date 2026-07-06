@@ -1028,6 +1028,9 @@
     window.activeFFE = false;
     // v1.0.5: Full per-alert-type scoring
     window.activeAlertEvents = [];
+    // Per-event expiry timestamps (ms) — lets hourly scoring know exactly which
+    // hours a warning like a Flash Flood Warning is actually in effect for.
+    window.activeAlertExpires = {};
     window.activeSVRDestructive = false;
     window.activeTornadoObserved = false;
     // v1.0.6: Extended threat intelligence
@@ -2511,6 +2514,38 @@
         } catch(e) { return 0; }
     }
 
+    // Given a forecast hour's unix time (seconds), find the highest flood-alert
+    // score floor from any active alert whose onset/expiry window covers that hour.
+    // This makes an active Flash Flood Warning (e.g. 8pm–10pm) keep boosting every
+    // hour it's in effect in the hourly modal, not just the current hour.
+    function _getHourAlertFloor(hourUnixSec) {
+        var hourMs   = hourUnixSec * 1000;
+        var hourEndMs = hourMs + 3600000;
+        var onsets   = window.activeAlertOnsets || {};
+        var expires  = window.activeAlertExpires || {};
+        var evts     = window.activeAlertEvents || [];
+        var floor = 0;
+        evts.forEach(function(evtName) {
+            var evtLower = evtName.toLowerCase();
+            if (!evtLower.includes('flood')) return;
+            var onsetMs  = onsets[evtName] || 0;
+            var expireMs = expires[evtName] || 0;
+            // Alert must have started by the end of this hour, and not have expired
+            // before this hour begins. Missing onset/expiry (0) is treated as "always".
+            if (onsetMs && onsetMs > hourEndMs) return;
+            if (expireMs && expireMs <= hourMs) return;
+            if (evtLower.includes('flash flood warning')) {
+                var f = window.activeFFE ? 100 : ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 80 : 65);
+                floor = Math.max(floor, f);
+            } else if (evtLower.includes('flood warning')) {
+                floor = Math.max(floor, 50);
+            } else if (evtLower.includes('flood watch') || evtLower.includes('flood advisory')) {
+                floor = Math.max(floor, 30);
+            }
+        });
+        return floor;
+    }
+
     // Compute a per-hour flood risk score for the hourly modal
     function _computeHourFloodScore(h) {
         var intensity = h.precipIntensity || 0;
@@ -2526,16 +2561,22 @@
         else if (expected >= 0.1)  iScore = 18;
         else if (expected >= 0.01) iScore = Math.round(prob * 14);
         else                       iScore = Math.round(prob * 5);
-        return Math.round(Math.min(100, Math.max(0, iScore)));
+        // A government-issued flood alert active during this specific hour guarantees
+        // at least its tier's floor for that hour, until its onset/expiry window passes.
+        var alertFloor = _getHourAlertFloor(h.time);
+        return Math.round(Math.min(100, Math.max(0, iScore, alertFloor)));
     }
 
     function computeFloodImpact() {
         var descEl = document.getElementById('flood-score-desc');
-        // US: NWS station observed 1h precip is the authoritative rain rate (actual
-        // measured rainfall). Only fall back to PirateWeather/OM when the NWS station
-        // did not report a value (null = sensor gap, not zero rain).
+        // US: NWS station observed 1h precip is a real gauge reading, but a single
+        // ASOS station's "last hour" total resets on the hour and can badly undercount
+        // during high wind (tipping-bucket undercatch) or simply read stale mid-storm —
+        // e.g. showing ~0.36"/hr mid-typhoon while radar/live intensity is far higher.
+        // Take whichever signal reads higher rather than trusting the gauge exclusively,
+        // so a lagging/undercounting station can never suppress a real live rain rate.
         var _nwsPrecipAvail = !window.isOutsideUS && window.nwsObsPrecip1h != null;
-        var lpi = Math.max(0, _nwsPrecipAvail ? window.nwsObsPrecip1h : (window.livePrecipInt || 0));
+        var lpi = Math.max(0, _nwsPrecipAvail ? Math.max(window.nwsObsPrecip1h, window.livePrecipInt || 0) : (window.livePrecipInt || 0));
 
         // Hard rule: >2 in/hr → instant SEVERE 100
         if (lpi > 2.0) {
@@ -2718,6 +2759,7 @@
         window.activeAlertWatches = [];
         window.activeHighImpactWatches = [];
         window.activeAlertOnsets = {};
+        window.activeAlertExpires = {};
         window.activeStormWarning = false;
         window.activeTornadoWarning = false;
         window.activeSVRWarning = false;
@@ -2946,6 +2988,9 @@
                     if (!window.activeAlertEvents.includes(p.event)) window.activeAlertEvents.push(p.event);
                     // Store onset time so computeThreatLevel can skip future-outlook watches
                     window.activeAlertOnsets[p.event] = p.onset ? new Date(p.onset).getTime() : 0;
+                    // Store expiry time so hourly scoring knows exactly when this alert stops applying
+                    var _pExpRaw = p.ends || p.expires;
+                    window.activeAlertExpires[p.event] = _pExpRaw ? new Date(_pExpRaw).getTime() : 0;
                     // v1.0.4: Track TOR vs SVR separately for smarter threat level
                     if (evt.includes('tornado warning')) {
                         window.activeTornadoWarning = true; window.activeStormWarning = true;
