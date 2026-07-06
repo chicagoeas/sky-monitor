@@ -1017,11 +1017,6 @@
     window.pirateCurrently = null;
     window.pirateAlerts = [];
     window.wuDeviates = false;
-    // Hysteresis state for PWS trust — persists across refresh cycles.
-    // status: 'trusted' | 'suspect'
-    // passCount: consecutive cycles that passed the tighter recovery threshold while suspect
-    // suspectSince: timestamp (ms) when the station was first flagged
-    window.wuTrustState = { status: 'trusted', passCount: 0, suspectSince: null };
     window.chartInstances = {};
     window.activeAlertWatches = [];
     window.activeStormWarning = false;
@@ -2034,36 +2029,45 @@
         spcIntervalId = setInterval(updateWPC, 1000);
     }
 
-    // Fetch up to 3 nearest PWS stations in parallel.
-    // Returns an array ordered by proximity: [PWS1, PWS2, PWS3]. May be shorter or empty.
+    // Fetch the nearest WU PWS station that passes WU's own quality control.
+    // Uses qcStatus from the location/near response (1 = pass, -1 = fail) to
+    // select the best station without any further neighbor comparison needed.
+    // Returns an array with the single best station, or [] if none are available.
     async function fetchWUMulti(latP, lonP) {
         try {
             const locRes = await fetch('https://api.weather.com/v3/location/near?geocode=' + latP + ',' + lonP + '&product=pws&format=json&apiKey=' + TWC_API_KEY);
             if (!locRes.ok) return [];
             const locData = await locRes.json();
             const stationIds = locData?.location?.stationIdentifier || locData?.location?.stationId;
+            const qcStatuses = locData?.location?.qcStatus;
             if (!stationIds?.length) return [];
-            const ids = stationIds.slice(0, 3);
-            const results = await Promise.all(ids.map(async function(stationId) {
-                try {
-                    const obsRes = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + stationId + '&format=json&units=e&apiKey=' + TWC_API_KEY);
-                    if (!obsRes.ok) return null;
-                    const obsData = await obsRes.json();
-                    const obs = obsData?.observations?.[0];
-                    if (!obs) return null;
-                    return {
-                        stationId,
-                        temp: obs.imperial?.temp ?? null,
-                        humidity: obs.humidity ?? null,
-                        windSpeed: obs.imperial?.windSpeed ?? null,
-                        windDir: obs.winddir ?? null,
-                        precipRate: obs.imperial?.precipRate ?? null,
-                        precipTotal: obs.imperial?.precipTotal ?? null,
-                        elev: obs.imperial?.elev ?? null
-                    };
-                } catch(e) { return null; }
-            }));
-            return results.filter(Boolean);
+            // Pick the first station that WU marks as QC-passing (qcStatus === 1).
+            // Three cases:
+            //   qcStatus absent/empty → no QC data, fall back to nearest station (index 0)
+            //   qcStatus present, all -1  → every nearby station failed WU QC; return []
+            //                               so the caller falls back to NWS obs / PirateWeather
+            //   qcStatus present, at least one 1 → use that station
+            const hasQCData = Array.isArray(qcStatuses) && qcStatuses.length > 0;
+            let bestIdx = hasQCData ? qcStatuses.findIndex(function(s) { return s === 1; }) : 0;
+            if (hasQCData && bestIdx === -1) return []; // all stations failed WU QC
+            const stationId = stationIds[bestIdx];
+            try {
+                const obsRes = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + stationId + '&format=json&units=e&apiKey=' + TWC_API_KEY);
+                if (!obsRes.ok) return [];
+                const obsData = await obsRes.json();
+                const obs = obsData?.observations?.[0];
+                if (!obs) return [];
+                return [{
+                    stationId,
+                    temp: obs.imperial?.temp ?? null,
+                    humidity: obs.humidity ?? null,
+                    windSpeed: obs.imperial?.windSpeed ?? null,
+                    windDir: obs.winddir ?? null,
+                    precipRate: obs.imperial?.precipRate ?? null,
+                    precipTotal: obs.imperial?.precipTotal ?? null,
+                    elev: obs.imperial?.elev ?? null
+                }];
+            } catch(e) { return []; }
         } catch(e) { return []; }
     }
     // Compatibility shim — existing callers that expect a single-station object
@@ -2177,8 +2181,7 @@
             startWeatherFX(summary); startSkyFX(summary);
         }
         // Populate the QC panel for international locations (NWS unavailable)
-        var _intNeighbors = (window.wuNeighborData || []).filter(function(n) { return n && n.temp !== null; });
-        _renderPWSQCPanel(window.wuData || null, _intNeighbors, _pwsNeighborMedian(_intNeighbors), null, null, false, false);
+        _renderPWSQCPanel(window.wuData || null, null, null);
     }
 
     function applyUSMode() {
@@ -3259,15 +3262,12 @@
             const wuStations = await fetchWUMulti(lat, lon);
             const wu = wuStations[0] || null;
             const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
-            // PWS1 is always the primary source. fetchNWSChain runs multi-tier QC:
-            // Tier 1: Compare PWS1 vs neighbor PWSs (PWS2/3) — same microclimate, ±5°F / ±10% rh.
-            // Tier 2: NWS hard-fail guard (±10°F / ±20% rh) — catches correlated neighborhood drift.
-            // Never compare WU against PirateWeather — Pirate can be significantly lagged.
+            // fetchWUMulti already selected the nearest qcStatus=1 (WU-validated) station.
+            // fetchNWSChain will fall back to NWS obs if wuData is null.
             const useWU = wuAvailable;
             window.wuData = wu || null;
             window.wuElevFt = (wu && wu.elev != null) ? wu.elev : null;
-            window.wuNeighborData = wuStations.slice(1); // [PWS2, PWS3] — used by fetchNWSChain
-            window.wuDeviates = false; // reset; fetchNWSChain sets this after multi-tier QC
+            window.wuDeviates = false; // reset; fetchNWSChain sets this based on wuData availability
             const wuStationEl = document.getElementById('wuStation');
             const wuLinkEl = document.getElementById('wuLink');
             if (useWU && wu.stationId) {
@@ -3958,76 +3958,33 @@
         }
     }
 
-    // Returns the median temp and humidity from an array of neighbor PWS objects.
-    function _pwsNeighborMedian(neighbors) {
-        var validTemps = neighbors.filter(function(n) { return n && n.temp !== null; }).map(function(n) { return n.temp; });
-        var validHums  = neighbors.filter(function(n) { return n && n.humidity !== null; }).map(function(n) { return n.humidity; });
-        function median(arr) {
-            if (!arr.length) return null;
-            var s = arr.slice().sort(function(a, b) { return a - b; });
-            var m = Math.floor(s.length / 2);
-            return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2;
-        }
-        return { temp: median(validTemps), humidity: median(validHums) };
-    }
-
-    // Renders the PWS QC diagnostic panel showing all source readings side-by-side.
-    function _renderPWSQCPanel(pws1, neighbors, neighborRef, nwsTemp, nwsHum, deviatesNeighbors, hardFail) {
+    // Renders the PWS QC diagnostic panel.
+    // pws1 is the WU-QC-passing station (or null), nwsTemp/nwsHum are raw NWS obs values.
+    function _renderPWSQCPanel(pws1, nwsTemp, nwsHum) {
         var panel = document.getElementById('pws-qc-panel');
         if (!panel) return;
         function fmt(val, unit) { return (val !== null && val !== undefined) ? Math.round(val) + unit : '--'; }
-        var _ts = window.wuTrustState || { status: 'trusted', passCount: 0 };
-        var _isSuspect = _ts.status === 'suspect';
-        var _isRecovering = _isSuspect && _ts.passCount > 0;
-        // Source label reflects hysteresis state, not just the raw cycle result
-        var source = 'PWS1 (nearest)';
-        if (!pws1) source = 'NWS Obs / PirateWeather (no PWS data)';
-        else if (hardFail) source = 'NWS Obs (hard-fail: neighborhood drift suspected)';
-        else if (_isSuspect && nwsTemp !== null && !window.isOutsideUS) source = 'NWS Obs (PWS1 suspect' + (_isRecovering ? ', recovering' : '') + ')';
-        else if (_isSuspect && neighborRef && neighborRef.temp !== null) source = 'Neighbor median (PWS1 suspect' + (_isRecovering ? ', recovering' : '') + ', NWS unavailable)';
-        else if (_isSuspect) source = 'PirateWeather (PWS1 suspect, all fallbacks unavailable)';
-        else if (window.isOutsideUS) source = 'PirateWeather (outside US)';
-        var rows = '';
-        var pws1Ok = pws1 && !_isSuspect && !hardFail;
-        var pws1Color = !pws1 ? '#9e9e9e' : pws1Ok ? '#00e676' : _isRecovering ? '#ffb74d' : '#ff7043';
-        var pws1StatusText = 'Unavailable';
-        if (pws1) {
-            if (hardFail)         pws1StatusText = 'Hard fail';
-            else if (_isRecovering) pws1StatusText = 'Recovering (' + _ts.passCount + '/2)';
-            else if (_isSuspect)  pws1StatusText = 'Suspect';
-            else                  pws1StatusText = 'Trusted ✓';
+        var source = 'PWS (WU QC ✓)';
+        if (!pws1) {
+            if (window.isOutsideUS) source = 'PirateWeather (outside US)';
+            else if (nwsTemp !== null) source = 'NWS Obs (no QC-passing PWS nearby)';
+            else source = 'PirateWeather (no PWS or NWS data)';
         }
-        rows += '<tr><td style="padding:3px 0; color:' + pws1Color + ';">⬤ PWS1 <small style="opacity:0.55;">' + (pws1 ? pws1.stationId : '—') + '</small></td>'
+        var rows = '';
+        var pws1Color = pws1 ? '#00e676' : '#9e9e9e';
+        var pws1StatusText = pws1 ? 'WU QC ✓' : 'None nearby';
+        rows += '<tr><td style="padding:3px 0; color:' + pws1Color + ';">⬤ PWS <small style="opacity:0.55;">' + (pws1 ? pws1.stationId : '—') + '</small></td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pws1 && pws1.temp, '°F') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pws1 && pws1.humidity, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + pws1Color + ';">' + pws1StatusText + '</td></tr>';
-        (neighbors || []).forEach(function(n, i) {
-            rows += '<tr><td style="padding:3px 0; color:#90caf9;">⬤ PWS' + (i + 2) + ' <small style="opacity:0.55;">' + (n.stationId || '—') + '</small></td>'
-                  + '<td style="text-align:right; padding-right:8px;">' + fmt(n.temp, '°F') + '</td>'
-                  + '<td style="text-align:right; padding-right:8px;">' + fmt(n.humidity, '%') + '</td>'
-                  + '<td style="font-size:0.78em; color:#90caf9;">Neighbor</td></tr>';
-        });
-        if (neighbors && neighbors.length > 0 && neighborRef) {
-            rows += '<tr style="opacity:0.7;"><td style="padding:3px 0; color:#b39ddb;">  Neighbor median</td>'
-                  + '<td style="text-align:right; padding-right:8px;">' + fmt(neighborRef.temp, '°F') + '</td>'
-                  + '<td style="text-align:right; padding-right:8px;">' + fmt(neighborRef.humidity, '%') + '</td>'
-                  + '<td></td></tr>';
-        }
-        // Use hysteresis state (_isSuspect) for row highlighting so the panel stays
-        // consistent during recovery cycles where raw deviatesNeighbors may have cleared.
-        var nwsActive = (hardFail || _isSuspect) && nwsTemp !== null && !window.isOutsideUS;
+        var nwsActive = !pws1 && nwsTemp !== null && !window.isOutsideUS;
         var nwsColor = nwsActive ? '#ffd54f' : '#9e9e9e';
-        // Show lapse rate correction annotation when elevation difference is significant
-        var _lapseCorr = window.nwsLapseCorrection;
-        var _lapseNote = (_lapseCorr != null && Math.abs(_lapseCorr) >= 0.5)
-            ? ' <small style="opacity:0.55; font-style:italic;">elev adj ' + (_lapseCorr > 0 ? '+' : '') + Math.round(_lapseCorr) + '°F</small>'
-            : '';
-        rows += '<tr><td style="padding:3px 0; color:' + nwsColor + ';">⬤ NWS Obs' + _lapseNote + '</td>'
+        rows += '<tr><td style="padding:3px 0; color:' + nwsColor + ';">⬤ NWS Obs</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsTemp, '°F') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsHum, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + nwsColor + ';">' + (window.isOutsideUS ? 'N/A (outside US)' : nwsTemp !== null ? (nwsActive ? 'Override ✓' : 'Standby') : 'Unavailable') + '</td></tr>';
         var pirateTemp = window.pirateCurrently && window.pirateCurrently.temperature !== null ? window.pirateCurrently.temperature : null;
-        var pirateActive = !pws1 || (_isSuspect && !nwsActive && !(neighborRef && neighborRef.temp !== null)) || window.isOutsideUS;
+        var pirateActive = !pws1 && (window.isOutsideUS || nwsTemp === null);
         var pirateColor = pirateActive ? '#ffd54f' : '#9e9e9e';
         rows += '<tr><td style="padding:3px 0; color:' + pirateColor + ';">⬤ PirateWeather</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pirateTemp, '°F') + '</td>'
@@ -4052,8 +4009,6 @@
             // Elevation of the user's requested coordinate (meters), returned by the NWS
             // /points/ endpoint — used for lapse-rate correction when comparing NWS obs
             // (which may be from a much higher station) against local PWS readings.
-            const _userLocElevFt = (p.properties?.elevation?.value != null)
-                ? p.properties.elevation.value * 3.28084 : null;
             const wfo = p.properties.cwa;
             document.getElementById('wfo-label').innerText = wfo;
             // Store NWS grid coordinates for QPF (quantitative precip forecast) fetch
@@ -4084,7 +4039,6 @@
             let nwsCond = '';
             let nwsIcon = null;
             let nwsObsTempF = null;
-            let nwsObsTempFAdj = null; // lapse-rate-corrected temp used for QC comparisons only
             let nwsObsHumidity = null;
             let nwsObsWindMph = null;
             let nwsObsWindDir = null;
@@ -4109,27 +4063,6 @@
                 if (_tmpH != null) nwsObsHumidity = _tmpH;
                 if (_tmpW != null) nwsObsWindMph = _tmpW * 0.621371;
                 if (_tmpWD != null) nwsObsWindDir = _tmpWD;
-                // Apply elevation lapse rate correction to NWS temp for QC comparisons only.
-                // A high-altitude NWS station (e.g. a ridge) will read colder than a valley PWS
-                // for purely physical reasons, not because the PWS is wrong. Correcting for the
-                // elevation difference before comparing prevents false overrides.
-                // Standard environmental lapse rate: 3.5°F per 1000 ft (~6.5°C per 1000 m).
-                // Display always shows the raw nwsObsTempF; only QC uses nwsObsTempFAdj.
-                window.nwsLapseCorrection = null;
-                const _nwsElevFt = (elevMeters != null) ? elevMeters * 3.28084 : null;
-                // Lapse-rate correction: adjust NWS obs temperature to the user's elevation
-                // before comparing it to the PWS. Uses the elevation of the user's exact
-                // coordinate from the NWS /points/ response (already fetched above), with the
-                // PWS station elevation as a fallback. Standard lapse rate: 3.5°F / 1000 ft.
-                const _refElevFt = (_userLocElevFt != null) ? _userLocElevFt : window.wuElevFt;
-                if (nwsObsTempF !== null && _nwsElevFt !== null && _refElevFt != null) {
-                    const _lapseDelta = (_nwsElevFt - _refElevFt) * (3.5 / 1000);
-                    if (Math.abs(_lapseDelta) >= 0.5) {
-                        nwsObsTempFAdj = nwsObsTempF + _lapseDelta;
-                        window.nwsLapseCorrection = _lapseDelta;
-                    }
-                }
-                if (nwsObsTempFAdj === null) nwsObsTempFAdj = nwsObsTempF;
                 // Precipitation — NWS obs always returns mm regardless of locale; convert to inches.
                 // These become the authoritative rain-rate inputs for the US flood score.
                 var _p1 = op.precipitationLastHour   != null ? op.precipitationLastHour.value   : null;
@@ -4166,89 +4099,18 @@
                 if (nwsIcon) { document.getElementById('weatherIcon').src = nwsIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                 else document.getElementById('weatherIcon').style.display = 'none';
             }
-            // ── Multi-tier PWS quality control with hysteresis ────────────────────────
-            // Trip thresholds (trusted → suspect): >5°F / >10% rh vs neighbor median, or
-            //   >10°F / >20% rh vs NWS obs (hard-fail, catches correlated neighborhood drift).
-            // Recovery thresholds (suspect → trusted): <3°F / <6% rh — tighter than trip.
-            //   Requires 2 consecutive clean cycles before the station is trusted again.
-            //   This prevents oscillation when solar bias fades gradually (e.g. 89→87→84°F).
-            // Fallback chain: NWS obs → neighbor median (if not hard-fail) → PirateWeather.
+            // ── PWS quality control — WU qcStatus ────────────────────────────────────
+            // fetchWUMulti already selected a qcStatus=1 (WU-validated) station, or null
+            // if none passed WU's own QC. Trust it directly — no neighbor comparison needed.
             const _wu = window.wuData;
             const _wuAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
-            const _neighbors = (window.wuNeighborData || []).filter(function(n) { return n && n.temp !== null; });
-            const _neighborRef = _pwsNeighborMedian(_neighbors);
-            let _wuDeviatesFromNeighbors = false;
-            let _wuHardFail = false;
+            window.wuDeviates = !_wuAvail;
 
-            if (_wuAvail) {
-                if (_neighborRef.temp !== null) {
-                    // Tier 1a: neighbor comparison — primary signal
-                    const _ntDiff = Math.abs(_wu.temp - _neighborRef.temp);
-                    const _nhDiff = (_neighborRef.humidity !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - _neighborRef.humidity) : 0;
-                    _wuDeviatesFromNeighbors = (_ntDiff > 5) || (_neighborRef.humidity !== null && _nhDiff > 10);
-                } else if (nwsObsTempFAdj !== null) {
-                    // Tier 1b: no neighbors available — fall back to direct NWS comparison.
-                    // Use elevation-corrected value so a high-altitude station isn't penalised.
-                    const _tDiff = Math.abs(_wu.temp - nwsObsTempFAdj);
-                    const _hDiff = (nwsObsHumidity !== null) ? Math.abs(_wu.humidity - nwsObsHumidity) : 0;
-                    _wuDeviatesFromNeighbors = (_tDiff > 5) || (nwsObsHumidity !== null && _hDiff > 10);
-                }
-                // Tier 2: NWS hard-fail guard — wider threshold regardless of neighbor result.
-                // Also uses the elevation-corrected value.
-                if (nwsObsTempFAdj !== null) {
-                    const _ntDiffNWS = Math.abs(_wu.temp - nwsObsTempFAdj);
-                    const _nhDiffNWS = (nwsObsHumidity !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - nwsObsHumidity) : 0;
-                    _wuHardFail = (_ntDiffNWS > 10) || (nwsObsHumidity !== null && _nhDiffNWS > 20);
-                }
-            }
-
-            // ── Hysteresis: update persistent trust state ─────────────────────────────
-            var _ts = window.wuTrustState;
-            var _rawFailed = _wuDeviatesFromNeighbors || _wuHardFail || !_wuAvail;
-
-            if (_rawFailed) {
-                // Any failure immediately marks the station suspect and resets the pass counter.
-                if (_ts.status === 'trusted') _ts.suspectSince = Date.now();
-                _ts.status = 'suspect';
-                _ts.passCount = 0;
-            } else if (_ts.status === 'suspect') {
-                // Attempt recovery using the tighter threshold against the best available reference.
-                var _refTemp = (_neighborRef.temp !== null) ? _neighborRef.temp : nwsObsTempFAdj;
-                var _refHum  = (_neighborRef.humidity !== null) ? _neighborRef.humidity : nwsObsHumidity;
-                // Require at least a temperature reference — if both neighbor and NWS are
-                // unavailable we have nothing to compare against, so don't credit a pass.
-                if (_refTemp === null) {
-                    // No reference available this cycle; hold position without resetting.
-                } else {
-                    var _recoverTempOk = Math.abs(_wu.temp - _refTemp) <= 3;
-                    var _recoverHumOk  = (_refHum === null) || (_wu.humidity === null) || (Math.abs(_wu.humidity - _refHum) <= 6);
-                    if (_recoverTempOk && _recoverHumOk) {
-                        _ts.passCount++;
-                        if (_ts.passCount >= 2) {
-                            // Two consecutive clean cycles — restore trust.
-                            _ts.status = 'trusted';
-                            _ts.passCount = 0;
-                            _ts.suspectSince = null;
-                        }
-                    } else {
-                        // Failed recovery threshold — reset counter, stay suspect.
-                        _ts.passCount = 0;
-                    }
-                }
-            }
-            // else: trusted and raw check passed — nothing to update.
-
-            window.wuDeviates = (_ts.status === 'suspect') || !_wuAvail;
-
-            // Choose override source
-            const _nwsNeedsOverride = window.wuDeviates;
-            const _useNWSFallback = _nwsNeedsOverride && !window.isOutsideUS && nwsObsTempF !== null;
-            // Neighbor median: only when PWS1 fails neighbor check but NOT a hard-fail
-            // (hard-fail means the whole neighborhood may be correlated — don't trust neighbors either)
-            const _useNeighborMedian = _nwsNeedsOverride && !_useNWSFallback && !_wuHardFail && _neighborRef.temp !== null;
+            // Fallback chain: QC-passing PWS → NWS obs → PirateWeather
+            const _useNWSFallback = !_wuAvail && !window.isOutsideUS && nwsObsTempF !== null;
 
             // Update the source QC diagnostic panel
-            _renderPWSQCPanel(_wu, _neighbors, _neighborRef, nwsObsTempF, nwsObsHumidity, _wuDeviatesFromNeighbors, _wuHardFail);
+            _renderPWSQCPanel(_wu, nwsObsTempF, nwsObsHumidity);
 
             // Only temperature is required — NWS ASOS stations (e.g. O'Hare) often return
             // null for relativeHumidity (calculated field). A null humidity must NOT block
@@ -4297,44 +4159,8 @@
                 var _rhForComfort = (nwsObsHumidity !== null) ? Math.round(nwsObsHumidity) : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
                 updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, _rhForComfort, liveWindSpd,
                     _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
-            } else if (_useNeighborMedian) {
-                // PWS1 is an outlier but NWS is unavailable — use neighbor median as a
-                // better-than-PirateWeather fallback (neighbors share the same microclimate)
-                var _nmt = Math.round(_neighborRef.temp);
-                window.liveTemp = _nmt;
-                (function(){ var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_nmt-32)*5/9) + '\u00b0' : _nmt + '\u00b0'; _te.style.color = colorFeelsLike(_nmt); })();
-                if (_neighborRef.humidity !== null) {
-                    (function(){ var _hv = Math.round(_neighborRef.humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                }
-                document.getElementById('wuStation').style.display = 'none';
-                (function() {
-                    var T = _neighborRef.temp, W = liveWindSpd, fl = T;
-                    var RH = (_neighborRef.humidity !== null) ? _neighborRef.humidity : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
-                    if (T <= 50 && W >= 3) {
-                        fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
-                    } else if (T >= 70) {
-                        var hiSimple2 = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
-                        if (hiSimple2 >= 80) {
-                            var hiRoth2 = -42.379 + 2.04901523*T + 10.14333127*RH
-                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
-                               + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
-                               - 0.00000199*T*T*RH*RH;
-                            if (RH < 13 && T >= 80 && T <= 112)
-                                hiRoth2 -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
-                            if (RH > 85 && T >= 80 && T <= 87)
-                                hiRoth2 += (RH - 85) / 10 * (87 - T) / 5;
-                            fl = (T + hiRoth2) / 2;
-                        } else { fl = hiSimple2; }
-                    }
-                    liveFeelsLike = fl;
-                })();
-                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-                var _pw2 = window.pirateCurrently;
-                var _rhForComfort2 = (_neighborRef.humidity !== null) ? Math.round(_neighborRef.humidity) : 50;
-                updateSmartComfort(_nmt, liveFeelsLike, _rhForComfort2, liveWindSpd,
-                    _pw2 ? (_pw2.summary || '') : '', liveUV, _pw2 ? ((_pw2.precipProbability || 0) * 100) : 0);
             } else if (_wuAvail && !window.wuDeviates) {
-                // PWS1 passed QC — overwrite the PirateWeather baseline that fetchPirate()
+                // PWS passed WU QC — overwrite the PirateWeather baseline that fetchPirate()
                 // laid down with the actual trusted station values. Single render, no flash.
                 var _wuT = _wu.temp, _wuH = _wu.humidity;
                 window.liveTemp = Math.round(_wuT);
