@@ -2514,10 +2514,17 @@
         } catch(e) { return 0; }
     }
 
-    // Given a forecast hour's unix time (seconds), find the highest flood-alert
-    // score floor from any active alert whose onset/expiry window covers that hour.
-    // This makes an active Flash Flood Warning (e.g. 8pm–10pm) keep boosting every
-    // hour it's in effect in the hourly modal, not just the current hour.
+    // Given a forecast hour's unix time (seconds), find the flood-alert score floor
+    // from an active Flash Flood Warning/Emergency whose onset/expiry window covers
+    // that hour. This makes an active FFW (e.g. 8pm–10pm) keep boosting every hour
+    // it's in effect in the hourly modal, not just the current hour.
+    // Scoped to Flash Flood Warning/Emergency ONLY — these are the alerts NWS issues
+    // specifically because of heavy rainfall, so they belong in a rain-rate-based
+    // hourly score. Plain Flood Warnings (river/drainage, not rain-rate dependent)
+    // and Flood Watches/Advisories (precautionary, often span a full day or more)
+    // are intentionally excluded here — flooring every hour of a long watch window
+    // regardless of that hour's actual forecast rain made the hourly list look
+    // permanently elevated even at trace rain rates.
     function _getHourAlertFloor(hourUnixSec) {
         var hourMs   = hourUnixSec * 1000;
         var hourEndMs = hourMs + 3600000;
@@ -2527,21 +2534,15 @@
         var floor = 0;
         evts.forEach(function(evtName) {
             var evtLower = evtName.toLowerCase();
-            if (!evtLower.includes('flood')) return;
+            if (!evtLower.includes('flash flood warning')) return;
             var onsetMs  = onsets[evtName] || 0;
             var expireMs = expires[evtName] || 0;
             // Alert must have started by the end of this hour, and not have expired
             // before this hour begins. Missing onset/expiry (0) is treated as "always".
             if (onsetMs && onsetMs > hourEndMs) return;
             if (expireMs && expireMs <= hourMs) return;
-            if (evtLower.includes('flash flood warning')) {
-                var f = window.activeFFE ? 100 : ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 80 : 65);
-                floor = Math.max(floor, f);
-            } else if (evtLower.includes('flood warning')) {
-                floor = Math.max(floor, 50);
-            } else if (evtLower.includes('flood watch') || evtLower.includes('flood advisory')) {
-                floor = Math.max(floor, 30);
-            }
+            var f = window.activeFFE ? 100 : ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 80 : 65);
+            floor = Math.max(floor, f);
         });
         return floor;
     }
@@ -2569,14 +2570,19 @@
 
     function computeFloodImpact() {
         var descEl = document.getElementById('flood-score-desc');
-        // US: NWS station observed 1h precip is a real gauge reading, but a single
-        // ASOS station's "last hour" total resets on the hour and can badly undercount
-        // during high wind (tipping-bucket undercatch) or simply read stale mid-storm —
-        // e.g. showing ~0.36"/hr mid-typhoon while radar/live intensity is far higher.
-        // Take whichever signal reads higher rather than trusting the gauge exclusively,
-        // so a lagging/undercounting station can never suppress a real live rain rate.
-        var _nwsPrecipAvail = !window.isOutsideUS && window.nwsObsPrecip1h != null;
-        var lpi = Math.max(0, _nwsPrecipAvail ? Math.max(window.nwsObsPrecip1h, window.livePrecipInt || 0) : (window.livePrecipInt || 0));
+        // US: NWS station observed precip is a real gauge reading, but the single
+        // "last hour" figure can read anomalously low right after a reporting reset
+        // or gap even while the storm is sustained (e.g. ~0.36"/hr mid-typhoon while
+        // the 3h/6h totals — and/or live radar intensity — show much heavier rain).
+        // Also derive an hourly-equivalent rate from the 3h/6h observed totals so a
+        // single bad/low 1h reading can't mask a sustained heavy-rain event, and take
+        // whichever signal (1h obs, 3h avg, 6h avg, live intensity) reads highest.
+        var _nws1h   = window.nwsObsPrecip1h;
+        var _nws3hAvg = window.nwsObsPrecip3h != null ? window.nwsObsPrecip3h / 3 : null;
+        var _nws6hAvg = window.nwsObsPrecip6h != null ? window.nwsObsPrecip6h / 6 : null;
+        var _nwsPrecipAvail = !window.isOutsideUS && (_nws1h != null || _nws3hAvg != null || _nws6hAvg != null);
+        var _nwsBest = Math.max(_nws1h || 0, _nws3hAvg || 0, _nws6hAvg || 0);
+        var lpi = Math.max(0, _nwsPrecipAvail ? Math.max(_nwsBest, window.livePrecipInt || 0) : (window.livePrecipInt || 0));
 
         // Hard rule: >2 in/hr → instant SEVERE 100
         if (lpi > 2.0) {
