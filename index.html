@@ -3301,17 +3301,19 @@
             // _patchSentinelsFromOpenMeteo is called after hourly data is stored below
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
-            // When WU deviates, use Pirate as placeholder — fetchNWSChain will replace with NWS obs (US only)
-            let temp = useWU ? wu.temp : curr.temperature;
+            // Always render PirateWeather as the initial baseline — fetchNWSChain resolves
+            // the final QC-trusted source (PWS1, NWS obs, or neighbor median) and overwrites
+            // once, after QC completes. This prevents briefly showing a bad PWS value on screen.
+            let temp = curr.temperature;
             window.liveTemp = Math.round(temp);
             (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
             liveUV = curr.uvIndex || 0;
-            const windSpeed = (useWU && wu.windSpeed !== null) ? wu.windSpeed : curr.windSpeed;
-            const windDir = (useWU && wu.windDir !== null) ? wu.windDir : curr.windBearing;
+            const windSpeed = curr.windSpeed;
+            const windDir = curr.windBearing;
             liveWindSpd = Math.round(windSpeed);
             document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
             setWindCompass(liveWindSpd > 0 && windDir !== null ? windDir : null);
-            let humidity = useWU ? wu.humidity : curr.humidity * 100;
+            let humidity = curr.humidity * 100;
             (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
             // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
             (function() {
@@ -4013,7 +4015,12 @@
         // consistent during recovery cycles where raw deviatesNeighbors may have cleared.
         var nwsActive = (hardFail || _isSuspect) && nwsTemp !== null && !window.isOutsideUS;
         var nwsColor = nwsActive ? '#ffd54f' : '#9e9e9e';
-        rows += '<tr><td style="padding:3px 0; color:' + nwsColor + ';">⬤ NWS Obs</td>'
+        // Show lapse rate correction annotation when elevation difference is significant
+        var _lapseCorr = window.nwsLapseCorrection;
+        var _lapseNote = (_lapseCorr != null && Math.abs(_lapseCorr) >= 0.5)
+            ? ' <small style="opacity:0.55; font-style:italic;">elev adj ' + (_lapseCorr > 0 ? '+' : '') + Math.round(_lapseCorr) + '°F</small>'
+            : '';
+        rows += '<tr><td style="padding:3px 0; color:' + nwsColor + ';">⬤ NWS Obs' + _lapseNote + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsTemp, '°F') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsHum, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + nwsColor + ';">' + (window.isOutsideUS ? 'N/A (outside US)' : nwsTemp !== null ? (nwsActive ? 'Override ✓' : 'Standby') : 'Unavailable') + '</td></tr>';
@@ -4070,11 +4077,31 @@
             let nwsCond = '';
             let nwsIcon = null;
             let nwsObsTempF = null;
+            let nwsObsTempFAdj = null; // lapse-rate-corrected temp used for QC comparisons only
             let nwsObsHumidity = null;
             let nwsObsWindMph = null;
             let nwsObsWindDir = null;
             try {
-                const obsRes = await fetch(primaryStation.id + '/observations/latest');
+                // Run NWS observation and user-location elevation fetch in parallel.
+                // Elevation is cached by lat/lon — only re-fetched when location changes.
+                var _needsElev = window.userElevFt == null || window._userElevLat !== lat || window._userElevLon !== lon;
+                // allSettled — elevation failure must never suppress the NWS observation fetch.
+                const [_obsSettled, _elevSettled] = await Promise.allSettled([
+                    fetch(primaryStation.id + '/observations/latest'),
+                    _needsElev ? fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lat + '&longitude=' + lon) : Promise.resolve(null)
+                ]);
+                if (_obsSettled.status === 'rejected') throw _obsSettled.reason;
+                const obsRes = _obsSettled.value;
+                if (_elevSettled.status === 'fulfilled' && _elevSettled.value) {
+                    try {
+                        const _elevData = await _elevSettled.value.json();
+                        if (_elevData && _elevData.elevation && _elevData.elevation[0] != null) {
+                            window.userElevFt = _elevData.elevation[0] * 3.28084;
+                            window._userElevLat = lat;
+                            window._userElevLon = lon;
+                        }
+                    } catch(e) {}
+                }
                 const obs = obsRes.ok ? await obsRes.json() : null;
                 const op = obs?.properties || {};
                 nwsCond = (op.textDescription || '').trim();
@@ -4094,6 +4121,22 @@
                 if (_tmpH != null) nwsObsHumidity = _tmpH;
                 if (_tmpW != null) nwsObsWindMph = _tmpW * 0.621371;
                 if (_tmpWD != null) nwsObsWindDir = _tmpWD;
+                // Apply elevation lapse rate correction to NWS temp for QC comparisons only.
+                // A high-altitude NWS station (e.g. a ridge) will read colder than a valley PWS
+                // for purely physical reasons, not because the PWS is wrong. Correcting for the
+                // elevation difference before comparing prevents false overrides.
+                // Standard environmental lapse rate: 3.5°F per 1000 ft (~6.5°C per 1000 m).
+                // Display always shows the raw nwsObsTempF; only QC uses nwsObsTempFAdj.
+                window.nwsLapseCorrection = null;
+                const _nwsElevFt = (elevMeters != null) ? elevMeters * 3.28084 : null;
+                if (nwsObsTempF !== null && _nwsElevFt !== null && window.userElevFt != null) {
+                    const _lapseDelta = (_nwsElevFt - window.userElevFt) * (3.5 / 1000);
+                    if (Math.abs(_lapseDelta) >= 0.5) {
+                        nwsObsTempFAdj = nwsObsTempF + _lapseDelta;
+                        window.nwsLapseCorrection = _lapseDelta;
+                    }
+                }
+                if (nwsObsTempFAdj === null) nwsObsTempFAdj = nwsObsTempF;
                 // Precipitation — NWS obs always returns mm regardless of locale; convert to inches.
                 // These become the authoritative rain-rate inputs for the US flood score.
                 var _p1 = op.precipitationLastHour   != null ? op.precipitationLastHour.value   : null;
@@ -4150,15 +4193,17 @@
                     const _ntDiff = Math.abs(_wu.temp - _neighborRef.temp);
                     const _nhDiff = (_neighborRef.humidity !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - _neighborRef.humidity) : 0;
                     _wuDeviatesFromNeighbors = (_ntDiff > 5) || (_neighborRef.humidity !== null && _nhDiff > 10);
-                } else if (nwsObsTempF !== null) {
-                    // Tier 1b: no neighbors available — fall back to direct NWS comparison
-                    const _tDiff = Math.abs(_wu.temp - nwsObsTempF);
+                } else if (nwsObsTempFAdj !== null) {
+                    // Tier 1b: no neighbors available — fall back to direct NWS comparison.
+                    // Use elevation-corrected value so a high-altitude station isn't penalised.
+                    const _tDiff = Math.abs(_wu.temp - nwsObsTempFAdj);
                     const _hDiff = (nwsObsHumidity !== null) ? Math.abs(_wu.humidity - nwsObsHumidity) : 0;
                     _wuDeviatesFromNeighbors = (_tDiff > 5) || (nwsObsHumidity !== null && _hDiff > 10);
                 }
-                // Tier 2: NWS hard-fail guard — wider threshold regardless of neighbor result
-                if (nwsObsTempF !== null) {
-                    const _ntDiffNWS = Math.abs(_wu.temp - nwsObsTempF);
+                // Tier 2: NWS hard-fail guard — wider threshold regardless of neighbor result.
+                // Also uses the elevation-corrected value.
+                if (nwsObsTempFAdj !== null) {
+                    const _ntDiffNWS = Math.abs(_wu.temp - nwsObsTempFAdj);
                     const _nhDiffNWS = (nwsObsHumidity !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - nwsObsHumidity) : 0;
                     _wuHardFail = (_ntDiffNWS > 10) || (nwsObsHumidity !== null && _nhDiffNWS > 20);
                 }
@@ -4175,7 +4220,7 @@
                 _ts.passCount = 0;
             } else if (_ts.status === 'suspect') {
                 // Attempt recovery using the tighter threshold against the best available reference.
-                var _refTemp = (_neighborRef.temp !== null) ? _neighborRef.temp : nwsObsTempF;
+                var _refTemp = (_neighborRef.temp !== null) ? _neighborRef.temp : nwsObsTempFAdj;
                 var _refHum  = (_neighborRef.humidity !== null) ? _neighborRef.humidity : nwsObsHumidity;
                 // Require at least a temperature reference — if both neighbor and NWS are
                 // unavailable we have nothing to compare against, so don't credit a pass.
@@ -4295,6 +4340,43 @@
                 var _rhForComfort2 = (_neighborRef.humidity !== null) ? Math.round(_neighborRef.humidity) : 50;
                 updateSmartComfort(_nmt, liveFeelsLike, _rhForComfort2, liveWindSpd,
                     _pw2 ? (_pw2.summary || '') : '', liveUV, _pw2 ? ((_pw2.precipProbability || 0) * 100) : 0);
+            } else if (_wuAvail && !window.wuDeviates) {
+                // PWS1 passed QC — overwrite the PirateWeather baseline that fetchPirate()
+                // laid down with the actual trusted station values. Single render, no flash.
+                var _wuT = _wu.temp, _wuH = _wu.humidity;
+                window.liveTemp = Math.round(_wuT);
+                (function(){ var _tv = Math.round(_wuT); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _hv = Math.round(_wuH); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+                if (_wu.windSpeed !== null) {
+                    liveWindSpd = Math.round(_wu.windSpeed);
+                    document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                    setWindCompass(liveWindSpd > 0 && _wu.windDir !== null ? _wu.windDir : null);
+                }
+                document.getElementById('wuStation').style.display = 'block';
+                (function() {
+                    var T = _wuT, W = liveWindSpd, RH = _wuH, fl = T;
+                    if (T <= 50 && W >= 3) {
+                        fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
+                    } else if (T >= 70) {
+                        var hiSimple3 = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
+                        if (hiSimple3 >= 80) {
+                            var hiRoth3 = -42.379 + 2.04901523*T + 10.14333127*RH
+                               - 0.22475541*T*RH - 0.00683783*T*T - 0.05391317*RH*RH
+                               + 0.00122874*T*T*RH + 0.00085282*T*RH*RH
+                               - 0.00000199*T*T*RH*RH;
+                            if (RH < 13 && T >= 80 && T <= 112)
+                                hiRoth3 -= (13 - RH) / 4 * Math.sqrt((17 - Math.abs(T - 95)) / 17);
+                            if (RH > 85 && T >= 80 && T <= 87)
+                                hiRoth3 += (RH - 85) / 10 * (87 - T) / 5;
+                            fl = (T + hiRoth3) / 2;
+                        } else { fl = hiSimple3; }
+                    }
+                    liveFeelsLike = fl;
+                })();
+                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                var _pw3 = window.pirateCurrently;
+                updateSmartComfort(Math.round(_wuT), liveFeelsLike, Math.round(_wuH), liveWindSpd,
+                    _pw3 ? (_pw3.summary || '') : '', liveUV, _pw3 ? ((_pw3.precipProbability || 0) * 100) : 0);
             }
             try {
                 const afdList = await (await fetch('https://api.weather.gov/products/types/AFD/locations/' + wfo)).json();
