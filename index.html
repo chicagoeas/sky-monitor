@@ -4107,11 +4107,18 @@
                 if (nwsIcon) { document.getElementById('weatherIcon').src = nwsIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                 else document.getElementById('weatherIcon').style.display = 'none';
             }
-            // ── PWS quality control — WU qcStatus ────────────────────────────────────
-            // fetchWUMulti already selected a qcStatus=1 (WU-validated) station, or null
-            // if none passed WU's own QC. Trust it directly — no neighbor comparison needed.
+            // ── PWS quality control — WU qcStatus + PirateWeather sanity check ─────
+            // fetchWUMulti selected the nearest qcStatus=1 (or 0) station, filtering out
+            // confirmed-bad (-1) stations. However qcStatus does NOT catch solar radiation
+            // bias — a poorly-shielded sensor can read 20°F high and still pass WU's QC.
+            // Second guard: if the PWS temp deviates from PirateWeather by more than 15°F
+            // we treat it as suspect and fall through to the NWS obs / PirateWeather chain.
             const _wu = window.wuData;
-            const _wuAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
+            const _pwNow = window.pirateCurrently;
+            const _pwTemp = (_pwNow && _pwNow.temperature != null) ? _pwNow.temperature : null;
+            const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
+            const _wuSolarBias = _wuRawAvail && _pwTemp !== null && Math.abs(_wu.temp - _pwTemp) > 15;
+            const _wuAvail = _wuRawAvail && !_wuSolarBias;
             window.wuDeviates = !_wuAvail;
 
             // Fallback chain: QC-passing PWS → NWS obs → PirateWeather
