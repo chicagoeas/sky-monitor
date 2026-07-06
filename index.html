@@ -1873,12 +1873,23 @@
         var torPoss = ((ap.tornadoPossible            && ap.tornadoPossible[0])            || '').toUpperCase();
         var sevBonus = { 'Extreme': 40, 'Severe': 30, 'Moderate': 20, 'Minor': 10 }[p.severity] || 0;
 
+        // ── TIER 0: Absolute top — nothing outranks an Extreme Wind Warning ──
+        // Extreme Wind Warnings are exceptionally rare and mean destructive,
+        // hurricane-force winds are imminent within minutes. They must sort
+        // above every other alert type, including tornado emergencies.
+        if (evt.includes('extreme wind warning'))                                              return 20000;
+
         // ── TIER 1: Life-threatening emergencies ─────────────────────────
         // Civil/authority emergencies are the absolute top — issued by officials for imminent threats
         if (EMERGENCY_TYPES.some(function(em) { return evt.includes(em); }))                   return 16000;
         if (evt.includes('tornado warning')  && desc.includes('TORNADO EMERGENCY'))            return 15000;
         if (evt.includes('flash flood')      && desc.includes('FLASH FLOOD EMERGENCY'))        return 14000;
         if (evt.includes('tornado warning')  && desc.includes('PARTICULARLY DANGEROUS SITUATION')) return 13000;
+        // Typhoon / Hurricane / Tsunami Warnings are life-threatening, large-scale
+        // events — they must outrank routine short-fused warnings like a Flash
+        // Flood Warning (a real Guam case had a Flash Flood Warning displayed
+        // above an active Typhoon Warning, which is backwards).
+        if (evt.includes('typhoon warning') || evt.includes('hurricane warning') || evt.includes('tsunami warning')) return 12500;
 
         // ── TIER 2: Imminent-threat warnings ─────────────────────────────
         if (evt.includes('tornado warning')  && torDet.includes('OBSERVED'))                   return 12000;
@@ -4416,6 +4427,9 @@
         if (flags.ffe) return 'A FLASH FLOOD EMERGENCY is occurring. Life-threatening flooding is imminent or occurring. SEEK HIGHER GROUND immediately — do not wait.';
         if (flags.stormSurgeWarning) return 'A Storm Surge Warning is in effect. Life-threatening inundation from rising water is possible. Follow all evacuation orders immediately — do not wait.';
         if (flags.hurricaneWarning) return 'A Hurricane Warning is in effect for your area. Prepare for potentially catastrophic wind, storm surge, and flooding. Complete preparations and follow evacuation orders now.';
+        if (flags.typhoonWarning) return 'A TYPHOON WARNING is in effect for your area. This is a life-threatening situation — catastrophic winds, storm surge, and flooding are expected. Complete all preparations and follow evacuation orders immediately.';
+        if (flags.tsunamiWarning) return 'A TSUNAMI WARNING is in effect. Life-threatening waves and flooding are possible along the coast. Move immediately to high ground or inland — do not wait to see the wave before moving.';
+        if (flags.extremeWindWarning) return 'An EXTREME WIND WARNING is in effect. Life-threatening, hurricane-force winds are imminent or occurring. Take shelter immediately in an interior room away from windows.';
         // ── Tier 2: Critical ──────────────────────────────────────────────
         if (flags.torObserved) {
             if (flags.night) return 'A confirmed tornado is on the ground nearby. Tornadoes are nearly impossible to see at night — take shelter immediately in the lowest interior room of a sturdy building. Do not wait.';
@@ -4430,7 +4444,6 @@
         }
         if (flags.blizzardWarning) return 'A Blizzard Warning is in effect. Whiteout conditions, dangerous wind chills, and heavy snow will make travel life-threatening. Stay indoors and off roads until the storm passes.';
         if (flags.iceStormWarning) return 'An Ice Storm Warning is in effect. Significant ice accumulation will make travel treacherous and cause widespread power outages. Avoid all travel and stay off roads.';
-        if (flags.extremeWindWarning) return 'An Extreme Wind Warning is in effect. Damaging hurricane-force winds are imminent. Take shelter in an interior room away from windows immediately.';
         if (flags.dustStormWarning) return 'A Dust Storm Warning is in effect. Near-zero visibility may occur suddenly. If driving, pull off the road, turn off your lights, and wait for conditions to improve.';
         if (flags.snowSquallWarning) return 'A Snow Squall Warning is in effect. Sudden whiteout conditions and rapidly accumulating snow will make roads immediately dangerous. Reduce speed and increase following distance.';
         // ── Tier 4: Specific warnings (less severe) ───────────────────────
@@ -4717,9 +4730,17 @@
         // ── 11. Tier Classification ───────────────────────────────────────
         // LIFE THREATENING, CRITICAL, and DANGEROUS are strictly flag-driven.
         // No score, no matter how high, can reach these tiers — only specific alert types can.
+        const _tierEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        const _hasExtremeWindWarning = _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
+        const _hasTyphoonWarning     = _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
+        const _hasHurricaneWarningNow = _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
+        const _hasTsunamiWarning     = _tierEvtsLower.some(function(e) { return e.includes('tsunami warning'); });
 
-        // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency ONLY.
-        const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE;
+        // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency,
+        // Extreme Wind Warning, and Typhoon/Hurricane/Tsunami Warning — these are all
+        // instant, no-score-needed life-threatening situations.
+        const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE ||
+            _hasExtremeWindWarning || _hasTyphoonWarning || _hasHurricaneWarningNow || _hasTsunamiWarning;
 
         // CRITICAL: Confirmed (OBSERVED) tornado on the ground, Destructive SVR,
         // or a Considerable/Catastrophic Flash Flood Warning (below FFE threshold).
@@ -4787,6 +4808,8 @@
             dustStormWarning:   _activeNow('dust storm warning'),
             denseFogAdvisory:   _activeNow('dense fog advisory'),
             hurricaneWarning:   _activeNow('hurricane warning') || _activeNow('hurricane local statement'),
+            typhoonWarning:     _activeNow('typhoon warning'),
+            tsunamiWarning:     _activeNow('tsunami warning'),
             stormSurgeWarning:  _activeNow('storm surge warning'),
         };
 
