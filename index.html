@@ -2030,9 +2030,9 @@
     }
 
     // Fetch the nearest WU PWS station that passes WU's own quality control.
-    // Uses qcStatus from the location/near response (1 = pass, -1 = fail) to
-    // select the best station without any further neighbor comparison needed.
-    // Returns an array with the single best station, or [] if none are available.
+    // Uses qcStatus from the location/near response to select the best primary
+    // station and up to 2 qcStatus≥0 neighbors for median comparison in fetchNWSChain.
+    // Returns [primary, ...neighbors], or [] if the primary fetch fails.
     async function fetchWUMulti(latP, lonP) {
         try {
             const locRes = await fetch('https://api.weather.com/v3/location/near?geocode=' + latP + ',' + lonP + '&product=pws&format=json&apiKey=' + TWC_API_KEY);
@@ -2058,24 +2058,34 @@
                 if (bestIdx === -1) bestIdx = qcStatuses.findIndex(function(s) { return s === 0; }); // accept unevaluated
                 if (bestIdx === -1) return []; // all stations confirmed bad by WU QC
             }
-            const stationId = stationIds[bestIdx];
-            try {
-                const obsRes = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + stationId + '&format=json&units=e&apiKey=' + TWC_API_KEY);
-                if (!obsRes.ok) return [];
-                const obsData = await obsRes.json();
-                const obs = obsData?.observations?.[0];
-                if (!obs) return [];
-                return [{
-                    stationId,
-                    temp: obs.imperial?.temp ?? null,
-                    humidity: obs.humidity ?? null,
-                    windSpeed: obs.imperial?.windSpeed ?? null,
-                    windDir: obs.winddir ?? null,
-                    precipRate: obs.imperial?.precipRate ?? null,
-                    precipTotal: obs.imperial?.precipTotal ?? null,
-                    elev: obs.imperial?.elev ?? null
-                }];
-            } catch(e) { return []; }
+            // Also pick up to 2 neighbor stations (qcStatus ≥ 0) for median comparison.
+            const neighborIndices = [];
+            if (hasQCData) {
+                for (let i = 0; i < stationIds.length && neighborIndices.length < 2; i++) {
+                    if (i !== bestIdx && qcStatuses[i] !== -1) neighborIndices.push(i);
+                }
+            } else {
+                for (let i = 0; i < Math.min(stationIds.length, 5) && neighborIndices.length < 2; i++) {
+                    if (i !== bestIdx) neighborIndices.push(i);
+                }
+            }
+            const _fetchObs = async function(sid) {
+                try {
+                    const r = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + sid + '&format=json&units=e&apiKey=' + TWC_API_KEY);
+                    if (!r.ok) return null;
+                    const d = await r.json();
+                    const o = d?.observations?.[0];
+                    if (!o) return null;
+                    return { stationId: sid, temp: o.imperial?.temp ?? null, humidity: o.humidity ?? null,
+                             windSpeed: o.imperial?.windSpeed ?? null, windDir: o.winddir ?? null,
+                             precipRate: o.imperial?.precipRate ?? null, precipTotal: o.imperial?.precipTotal ?? null,
+                             elev: o.imperial?.elev ?? null };
+                } catch(e) { return null; }
+            };
+            const indicesToFetch = [bestIdx, ...neighborIndices];
+            const obsResults = await Promise.all(indicesToFetch.map(function(i) { return _fetchObs(stationIds[i]); }));
+            if (!obsResults[0]) return []; // primary station fetch failed
+            return obsResults.filter(function(r) { return r !== null; });
         } catch(e) { return []; }
     }
     // Compatibility shim — existing callers that expect a single-station object
@@ -3270,10 +3280,10 @@
             const wuStations = await fetchWUMulti(lat, lon);
             const wu = wuStations[0] || null;
             const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
-            // fetchWUMulti already selected the nearest qcStatus=1 (WU-validated) station.
-            // fetchNWSChain will fall back to NWS obs if wuData is null.
+            // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
             const useWU = wuAvailable;
             window.wuData = wu || null;
+            window.wuNeighborData = wuStations.slice(1).filter(function(s) { return s != null; });
             window.wuElevFt = (wu && wu.elev != null) ? wu.elev : null;
             window.wuDeviates = false; // reset; fetchNWSChain sets this based on wuData availability
             const wuStationEl = document.getElementById('wuStation');
@@ -4042,6 +4052,19 @@
             document.getElementById('meta-name').innerText = primaryStation.properties.name;
             document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
             document.getElementById('meta-elev').innerText = elevMeters ? (_isMetric() ? Math.round(elevMeters) + ' m' : Math.round(elevMeters * 3.28084) + ' ft') : 'N/A';
+            // Fetch the user's location elevation for NWS obs lapse-rate correction.
+            // Cached by coordinate so it refetches automatically on location changes.
+            const _elevCacheKey = lat.toFixed(4) + ',' + lon.toFixed(4);
+            if (window.userLocElevFt == null || window._userLocElevKey !== _elevCacheKey) {
+                try {
+                    const _eRes = await fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lat + '&longitude=' + lon);
+                    if (_eRes.ok) {
+                        const _eData = await _eRes.json();
+                        const _eM = _eData?.elevation?.[0];
+                        if (_eM != null) { window.userLocElevFt = _eM * 3.28084; window._userLocElevKey = _elevCacheKey; }
+                    }
+                } catch(e) {}
+            }
             const PW_ICON_MAP = { 'clear-day':'https://api.weather.gov/icons/land/day/skc?size=medium','clear-night':'https://api.weather.gov/icons/land/night/skc?size=medium','rain':'https://api.weather.gov/icons/land/day/rain?size=medium','snow':'https://api.weather.gov/icons/land/day/snow?size=medium','sleet':'https://api.weather.gov/icons/land/day/sleet?size=medium','wind':'https://api.weather.gov/icons/land/day/wind_bkn?size=medium','fog':'https://api.weather.gov/icons/land/day/fog?size=medium','cloudy':'https://api.weather.gov/icons/land/day/ovc?size=medium','partly-cloudy-day':'https://api.weather.gov/icons/land/day/few?size=medium','partly-cloudy-night':'https://api.weather.gov/icons/land/night/few?size=medium','thunderstorm':'https://api.weather.gov/icons/land/day/tsra?size=medium' };
             const PW_ICON_TO_TEXT = { 'clear-day':'Clear','clear-night':'Clear','rain':'Rain','snow':'Snow','sleet':'Sleet','wind':'Windy','fog':'Fog','cloudy':'Cloudy','partly-cloudy-day':'Partly Cloudy','partly-cloudy-night':'Partly Cloudy','thunderstorm':'Thunderstorm' };
             let nwsCond = '';
@@ -4107,25 +4130,56 @@
                 if (nwsIcon) { document.getElementById('weatherIcon').src = nwsIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                 else document.getElementById('weatherIcon').style.display = 'none';
             }
-            // ── PWS quality control — WU qcStatus + PirateWeather sanity check ─────
-            // fetchWUMulti selected the nearest qcStatus=1 (or 0) station, filtering out
-            // confirmed-bad (-1) stations. However qcStatus does NOT catch solar radiation
-            // bias — a poorly-shielded sensor can read 20°F high and still pass WU's QC.
-            // Second guard: if the PWS temp deviates from PirateWeather by more than 15°F
-            // we treat it as suspect and fall through to the NWS obs / PirateWeather chain.
+            // ── PWS quality control — neighbor median comparison ─────────────────────
+            // fetchWUMulti fetched the primary station + up to 2 qcStatus≥0 neighbors.
+            // Compare primary against their median: >5°F or >10% RH → reject.
+            // When no neighbors arrived, fall back to PirateWeather ±15°F as a backstop.
             const _wu = window.wuData;
+            const _neighbors = (window.wuNeighborData || []).filter(function(n) { return n && n.temp !== null; });
+            const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
+            // Neighbor medians
+            let _neighborMedianTemp = null, _neighborMedianHum = null;
+            if (_neighbors.length > 0) {
+                const _nT = _neighbors.map(function(n){ return n.temp; }).filter(function(t){ return t !== null; }).sort(function(a,b){ return a-b; });
+                const _nH = _neighbors.map(function(n){ return n.humidity; }).filter(function(h){ return h !== null; }).sort(function(a,b){ return a-b; });
+                const _med = function(a) { var m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m-1] + a[m]) / 2; };
+                if (_nT.length) _neighborMedianTemp = _med(_nT);
+                if (_nH.length) _neighborMedianHum  = _med(_nH);
+            }
+            let _wuDevFromNeighbors = false;
+            if (_wuRawAvail && _neighborMedianTemp !== null) {
+                const _tDiff = Math.abs(_wu.temp - _neighborMedianTemp);
+                const _hDiff = (_neighborMedianHum !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - _neighborMedianHum) : 0;
+                _wuDevFromNeighbors = (_tDiff > 5) || (_neighborMedianHum !== null && _hDiff > 10);
+            }
+            // No neighbors → PirateWeather backstop (catches solar bias when alone)
             const _pwNow = window.pirateCurrently;
             const _pwTemp = (_pwNow && _pwNow.temperature != null) ? _pwNow.temperature : null;
-            const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
-            const _wuSolarBias = _wuRawAvail && _pwTemp !== null && Math.abs(_wu.temp - _pwTemp) > 15;
-            const _wuAvail = _wuRawAvail && !_wuSolarBias;
+            const _wuDevFromPirate = _wuRawAvail && _neighborMedianTemp === null
+                                     && _pwTemp !== null && Math.abs(_wu.temp - _pwTemp) > 15;
+            const _wuAvail = _wuRawAvail && !_wuDevFromNeighbors && !_wuDevFromPirate;
             window.wuDeviates = !_wuAvail;
             // Hide the "Observed at KXXX" label whenever the PWS is rejected —
             // regardless of which fallback branch we end up in below.
             if (window.wuDeviates) document.getElementById('wuStation').style.display = 'none';
 
-            // Fallback chain: QC-passing PWS → NWS obs → PirateWeather
-            const _useNWSFallback = !_wuAvail && !window.isOutsideUS && nwsObsTempF !== null;
+            // ── NWS obs lapse-rate correction ────────────────────────────────────────
+            // NWS ASOS stations in mountainous areas can sit thousands of feet above the
+            // user's location, producing a large systematic cold bias in the fallback.
+            // Correct using standard environmental lapse rate: 3.5°F per 1000 ft.
+            // corrected = raw + (nwsStationElevFt − userElevFt) × 3.5/1000
+            let nwsObsTempFAdj = nwsObsTempF;
+            if (nwsObsTempF !== null) {
+                const _nwsElevFt  = (elevMeters != null) ? elevMeters * 3.28084 : null;
+                const _userElevFt = (window.userLocElevFt != null) ? window.userLocElevFt : window.wuElevFt;
+                if (_nwsElevFt !== null && _userElevFt != null) {
+                    const _lapseDelta = (_nwsElevFt - _userElevFt) * (3.5 / 1000);
+                    if (Math.abs(_lapseDelta) >= 0.5) nwsObsTempFAdj = nwsObsTempF + _lapseDelta;
+                }
+            }
+
+            // Fallback chain: QC-passing PWS → NWS obs (lapse-corrected) → PirateWeather
+            const _useNWSFallback = !_wuAvail && !window.isOutsideUS && nwsObsTempFAdj !== null;
 
             // Update the source QC diagnostic panel
             _renderPWSQCPanel(_wu, nwsObsTempF, nwsObsHumidity);
@@ -4134,8 +4188,8 @@
             // null for relativeHumidity (calculated field). A null humidity must NOT block
             // the entire NWS override; update each field only when it is available.
             if (_useNWSFallback) {
-                window.liveTemp = Math.round(nwsObsTempF);
-                (function(){ var _tv = Math.round(nwsObsTempF); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                window.liveTemp = Math.round(nwsObsTempFAdj);
+                (function(){ var _tv = Math.round(nwsObsTempFAdj); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
                 if (nwsObsHumidity !== null) {
                     (function(){ var _hv = Math.round(nwsObsHumidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                 }
@@ -4145,9 +4199,9 @@
                     document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
                     setWindCompass(liveWindSpd > 0 && nwsObsWindDir !== null ? nwsObsWindDir : null);
                 }
-                // Recalculate feels-like with NWS values using the same NWS formulae
+                // Recalculate feels-like with lapse-corrected NWS temp
                 (function() {
-                    var T = nwsObsTempF, W = liveWindSpd, fl = T;
+                    var T = nwsObsTempFAdj, W = liveWindSpd, fl = T;
                     // Fall back to current displayed humidity if NWS didn't provide it
                     var _humEl = document.getElementById('humVal');
                     var _humFallback = (_humEl && _humEl.innerText) ? parseInt(_humEl.innerText) : 50;
@@ -4175,7 +4229,7 @@
                 (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
                 var _pw = window.pirateCurrently;
                 var _rhForComfort = (nwsObsHumidity !== null) ? Math.round(nwsObsHumidity) : (parseInt((document.getElementById('humVal')||{}).innerText) || 50);
-                updateSmartComfort(Math.round(nwsObsTempF), liveFeelsLike, _rhForComfort, liveWindSpd,
+                updateSmartComfort(Math.round(nwsObsTempFAdj), liveFeelsLike, _rhForComfort, liveWindSpd,
                     _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0);
             } else if (_wuAvail && !window.wuDeviates) {
                 // PWS passed WU QC — overwrite the PirateWeather baseline that fetchPirate()
