@@ -2042,14 +2042,22 @@
             const qcStatuses = locData?.location?.qcStatus;
             if (!stationIds?.length) return [];
             // Pick the first station that WU marks as QC-passing (qcStatus === 1).
-            // Three cases:
-            //   qcStatus absent/empty → no QC data, fall back to nearest station (index 0)
-            //   qcStatus present, all -1  → every nearby station failed WU QC; return []
-            //                               so the caller falls back to NWS obs / PirateWeather
-            //   qcStatus present, at least one 1 → use that station
+            // qcStatus values:  1 = confirmed pass,  0 = not yet evaluated,  -1 = confirmed fail
+            // Selection priority:
+            //   qcStatus absent/empty → no QC data at all; fall back to nearest station (index 0)
+            //   qcStatus present, ≥1 station with value 1 → use the nearest confirmed-pass station
+            //   qcStatus present, no 1 but ≥1 station with value 0 → use the nearest unevaluated station
+            //   qcStatus present, all -1 → every nearby station confirmed bad; return []
+            //                              so the caller falls back to NWS obs / PirateWeather
             const hasQCData = Array.isArray(qcStatuses) && qcStatuses.length > 0;
-            let bestIdx = hasQCData ? qcStatuses.findIndex(function(s) { return s === 1; }) : 0;
-            if (hasQCData && bestIdx === -1) return []; // all stations failed WU QC
+            let bestIdx;
+            if (!hasQCData) {
+                bestIdx = 0; // no QC data — use nearest
+            } else {
+                bestIdx = qcStatuses.findIndex(function(s) { return s === 1; });   // prefer confirmed-pass
+                if (bestIdx === -1) bestIdx = qcStatuses.findIndex(function(s) { return s === 0; }); // accept unevaluated
+                if (bestIdx === -1) return []; // all stations confirmed bad by WU QC
+            }
             const stationId = stationIds[bestIdx];
             try {
                 const obsRes = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + stationId + '&format=json&units=e&apiKey=' + TWC_API_KEY);
