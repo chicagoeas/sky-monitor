@@ -2030,45 +2030,47 @@
     }
 
     // Fetch the nearest WU PWS station that passes WU's own quality control.
-    // Uses qcStatus from the location/near response to select the best primary
-    // station and up to 2 qcStatus≥0 neighbors for median comparison in fetchNWSChain.
-    // Returns [primary, ...neighbors], or [] if the primary fetch fails.
+    // Always picks the nearest PWS (index 0 — API returns stations in distance order) as primary.
+    // qcStatus is intentionally NOT used for primary selection: WU computes it against its own
+    // reference stations, which produces false failures for islands, peninsulas, and other
+    // geographically isolated locations (e.g. Avalon on Catalina Island picks a mainland station
+    // 12 miles away instead of the correct island station). Our own neighbor comparison in
+    // fetchNWSChain is the actual QC — qcStatus is only a soft tie-breaker for neighbor ranking.
+    // Neighbors are filtered to ≤5 miles so isolated primaries get no neighbors and fall back
+    // to the PirateWeather backstop rather than comparing against climatologically unrelated stations.
     async function fetchWUMulti(latP, lonP) {
         try {
             const locRes = await fetch('https://api.weather.com/v3/location/near?geocode=' + latP + ',' + lonP + '&product=pws&format=json&apiKey=' + TWC_API_KEY);
             if (!locRes.ok) return [];
             const locData = await locRes.json();
             const stationIds = locData?.location?.stationIdentifier || locData?.location?.stationId;
-            const qcStatuses = locData?.location?.qcStatus;
             if (!stationIds?.length) return [];
-            // Pick the first station that WU marks as QC-passing (qcStatus === 1).
-            // qcStatus values:  1 = confirmed pass,  0 = not yet evaluated,  -1 = confirmed fail
-            // Selection priority:
-            //   qcStatus absent/empty → no QC data at all; fall back to nearest station (index 0)
-            //   qcStatus present, ≥1 station with value 1 → use the nearest confirmed-pass station
-            //   qcStatus present, no 1 but ≥1 station with value 0 → use the nearest unevaluated station
-            //   qcStatus present, all -1 → every nearby station confirmed bad; return []
-            //                              so the caller falls back to NWS obs / PirateWeather
-            const hasQCData = Array.isArray(qcStatuses) && qcStatuses.length > 0;
-            let bestIdx;
-            if (!hasQCData) {
-                bestIdx = 0; // no QC data — use nearest
-            } else {
-                bestIdx = qcStatuses.findIndex(function(s) { return s === 1; });   // prefer confirmed-pass
-                if (bestIdx === -1) bestIdx = qcStatuses.findIndex(function(s) { return s === 0; }); // accept unevaluated
-                if (bestIdx === -1) return []; // all stations confirmed bad by WU QC
+            const qcStatuses  = locData?.location?.qcStatus   || [];
+            const stationLats = locData?.location?.latitude   || [];
+            const stationLons = locData?.location?.longitude  || [];
+            // Haversine distance in miles
+            const _dist = function(la1, lo1, la2, lo2) {
+                const R = 3958.8, dLat = (la2-la1)*Math.PI/180, dLon = (lo2-lo1)*Math.PI/180;
+                const a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+                          Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*
+                          Math.sin(dLon/2)*Math.sin(dLon/2);
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            };
+            // Neighbor candidates: skip confirmed-bad (qcStatus=-1) and stations >5 mi away.
+            // Sort: qcStatus=1 first, then qcStatus=0, then by original index (= distance order).
+            const MAX_NEIGHBOR_MI = 5;
+            const neighborCandidates = [];
+            for (let i = 1; i < stationIds.length; i++) {
+                if (qcStatuses.length && qcStatuses[i] === -1) continue; // skip confirmed-bad neighbors
+                if (stationLats[i] != null && stationLons[i] != null &&
+                    _dist(latP, lonP, stationLats[i], stationLons[i]) > MAX_NEIGHBOR_MI) continue;
+                neighborCandidates.push(i);
             }
-            // Also pick up to 2 neighbor stations (qcStatus ≥ 0) for median comparison.
-            const neighborIndices = [];
-            if (hasQCData) {
-                for (let i = 0; i < stationIds.length && neighborIndices.length < 2; i++) {
-                    if (i !== bestIdx && qcStatuses[i] !== -1) neighborIndices.push(i);
-                }
-            } else {
-                for (let i = 0; i < Math.min(stationIds.length, 5) && neighborIndices.length < 2; i++) {
-                    if (i !== bestIdx) neighborIndices.push(i);
-                }
-            }
+            neighborCandidates.sort(function(a, b) {
+                const qa = qcStatuses[a] ?? 0, qb = qcStatuses[b] ?? 0;
+                return qa !== qb ? qb - qa : a - b; // prefer higher qcStatus, then closer
+            });
+            const neighborIndices = neighborCandidates.slice(0, 2);
             const _fetchObs = async function(sid) {
                 try {
                     const r = await fetch('https://api.weather.com/v2/pws/observations/current?stationId=' + sid + '&format=json&units=e&apiKey=' + TWC_API_KEY);
@@ -2082,8 +2084,7 @@
                              elev: o.imperial?.elev ?? null };
                 } catch(e) { return null; }
             };
-            const indicesToFetch = [bestIdx, ...neighborIndices];
-            const obsResults = await Promise.all(indicesToFetch.map(function(i) { return _fetchObs(stationIds[i]); }));
+            const obsResults = await Promise.all([0, ...neighborIndices].map(function(i) { return _fetchObs(stationIds[i]); }));
             if (!obsResults[0]) return []; // primary station fetch failed
             return obsResults.filter(function(r) { return r !== null; });
         } catch(e) { return []; }
