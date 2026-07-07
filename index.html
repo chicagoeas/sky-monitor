@@ -2742,7 +2742,15 @@
                 utcOffSec:   utcOffSec,
                 startIdx:    idx
             };
-            window.omFloodRate = (m15.precipitation[idx] || 0) * 4;
+            // Smooth over 3 slots (prev, current, next) to dampen HRRR single-slot
+            // spike artifacts (e.g. 1.9" in one 15-min bucket → 7.5"/hr display).
+            // A real sustained heavy rain event will show elevated values across
+            // multiple consecutive slots and still score correctly.
+            var _sIdx = [idx - 1, idx, idx + 1].filter(function(i) { return i >= 0 && i < m15.precipitation.length; });
+            var _sAvg = _sIdx.reduce(function(s, i) { return s + (m15.precipitation[i] || 0); }, 0) / _sIdx.length;
+            // Cap at 3 in/hr — legitimate extreme events are well below this;
+            // anything higher is almost certainly a model glitch (HRRR).
+            window.omFloodRate = Math.min(_sAvg * 4, 3.0);
             computeFloodImpact();
         } catch(e) { console.warn('[SkyMonitor OM15] fetch error:', e); }
     }
@@ -5712,7 +5720,11 @@
         function buildFlood15Row(i) {
             var slotUtcMs  = new Date(omTimes[i] + 'Z').getTime() - omUtcOff * 1000;
             var slotUnixS  = Math.floor(slotUtcMs / 1000);
-            var rateHr     = (omPrecip[i] || 0) * 4;          // 15-min accum × 4 → in/hr
+            // 3-slot rolling average + 3 in/hr cap — matches the omFloodRate smoothing
+            // so modal rows are consistent with the headline score (no HRRR spike display).
+            var _mIdx  = [i - 1, i, i + 1].filter(function(j) { return j >= 0 && j < omPrecip.length; });
+            var _mAvg  = _mIdx.reduce(function(s, j) { return s + (omPrecip[j] || 0); }, 0) / _mIdx.length;
+            var rateHr = Math.min(_mAvg * 4, 3.0);            // 15-min accum × 4 → in/hr, capped at 3.0
             var probPct    = omProb[i] != null ? omProb[i] : 0; // already 0-100
             var h          = { time: slotUnixS, precipIntensity: rateHr, precipProbability: probPct / 100 };
             var score      = _computeHourFloodScore(h);
