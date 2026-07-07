@@ -2932,46 +2932,69 @@
         if (descEl) descEl.innerText = desc;
 
         // ── Look-ahead: warn about imminent elevated conditions ───────────────
-        // If the current moment is calm (score=0 or low) but the next 2 hours
-        // contain an upcoming HIGH/SEVERE window, override the headline so the
-        // user sees a proactive "Watch for severe rain at 12:00–12:30 AM" warning
-        // rather than a misleading 0/100 when bad rain is minutes away.
+        // Scans next 4 slots (1 hour). Fires only when ≥2 *consecutive* slots
+        // score ≥ HIGH — single-slot HRRR spikes can't trigger it. Displayed
+        // score is discounted to 80% of raw to signal forecast vs. observed.
         var _laOmD = window.omMinutely15Data;
         if (_laOmD && _laOmD.time && _laOmD.precipitation && _laOmD.startIdx != null) {
-            var _laUtcOff = _laOmD.utcOffSec || 0;
-            var _laCurIdx = _laOmD.startIdx;
-            var _laScanEnd = Math.min(_laCurIdx + 9, _laOmD.time.length); // up to 8 future slots
+            var _laCurIdx  = _laOmD.startIdx;
+            var _laScanEnd = Math.min(_laCurIdx + 5, _laOmD.time.length); // slots +1 … +4
+
+            // Score each future slot with the same 3-slot smoothing + 3"/hr cap
             var _laScores = [];
             for (var _lai = _laCurIdx + 1; _lai < _laScanEnd; _lai++) {
-                var _laNeigh = [_lai - 1, _lai, _lai + 1].filter(function(j) { return j >= 0 && j < _laOmD.precipitation.length; });
+                var _laNeigh = [_lai - 1, _lai, _lai + 1].filter(function(j) {
+                    return j >= 0 && j < _laOmD.precipitation.length;
+                });
                 var _laAvg  = _laNeigh.reduce(function(s, j) { return s + (_laOmD.precipitation[j] || 0); }, 0) / _laNeigh.length;
                 var _laRate = Math.min(_laAvg * 4, 3.0);
                 var _laProb = (_laOmD.probability[_lai] != null ? _laOmD.probability[_lai] : 0) / 100;
-                var _laS   = _computeHourFloodScore({ precipIntensity: _laRate, precipProbability: _laProb, time: 0 });
-                _laScores.push({ i: _lai, s: _laS });
+                _laScores.push({
+                    i: _lai,
+                    s: _computeHourFloodScore({ precipIntensity: _laRate, precipProbability: _laProb, time: 0 })
+                });
             }
-            // Find peak upcoming slot
-            var _laPeak = _laScores.reduce(function(best, x) { return x.s > best.s ? x : best; }, { i: -1, s: 0 });
-            // Only override if upcoming peak beats current score and is at least HIGH
-            if (_laPeak.s > score && _laPeak.s >= 50) {
-                // Find contiguous elevated window (slots scoring >= HIGH floor of 50)
-                var _laElev = _laScores.filter(function(x) { return x.s >= 50; });
-                var _laFirst = _laElev[0].i;
-                var _laLast  = _laElev[_laElev.length - 1].i;
-                // Format start and end times — OM time strings are local (no Z);
-                // appending Z and rendering as UTC gives correct local display.
-                function _laFmtSlot(idx) {
-                    return new Date(new Date(_laOmD.time[idx] + 'Z').getTime())
-                        .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+
+            // Find the longest consecutive run of slots scoring ≥ 50 (HIGH)
+            var _laRunLen = 0, _laRunStart = 0, _laRunPeak = 0;
+            var _laBestLen = 0, _laBestStart = 0, _laBestPeak = 0;
+            for (var _lci = 0; _lci < _laScores.length; _lci++) {
+                if (_laScores[_lci].s >= 50) {
+                    if (_laRunLen === 0) { _laRunStart = _lci; _laRunPeak = 0; }
+                    _laRunLen++;
+                    _laRunPeak = Math.max(_laRunPeak, _laScores[_lci].s);
+                    if (_laRunLen > _laBestLen || (_laRunLen === _laBestLen && _laRunPeak > _laBestPeak)) {
+                        _laBestLen = _laRunLen; _laBestStart = _laRunStart; _laBestPeak = _laRunPeak;
+                    }
+                } else {
+                    _laRunLen = 0;
                 }
-                var _laT1 = _laFmtSlot(_laFirst);
-                // End time = start of the slot AFTER the last elevated one (+15 min)
-                var _laEndMs = new Date(_laOmD.time[_laLast] + 'Z').getTime() + 15 * 60 * 1000;
-                var _laT2   = new Date(_laEndMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-                var _laTier = _laPeak.s >= 75 ? 'SEVERE' : 'HIGH';
-                var _laVerb = _laPeak.s >= 75 ? 'Severe rain' : 'Heavy rain';
-                _setFloodDisplay(_laPeak.s, _laTier);
-                if (descEl) descEl.innerText = '\u26a0\ufe0f Watch: ' + _laVerb + ' expected ' + _laT1 + '\u2013' + _laT2 + ' \u2014 tap for 15-min details.';
+            }
+
+            // Gate: ≥2 consecutive elevated slots AND beats current score
+            if (_laBestLen >= 2 && _laBestPeak > score) {
+                // _laScores indices → omMinutely15Data indices
+                var _laFirstI  = _laScores[_laBestStart].i;
+                var _laLastI   = _laScores[_laBestStart + _laBestLen - 1].i;
+
+                // OM times are local strings (no Z); appending Z + rendering as
+                // UTC is the correct local-time display (same trick as the modal).
+                var _laFmtSlot = function(omIdx) {
+                    return new Date(_laOmD.time[omIdx] + 'Z')
+                        .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+                };
+                var _laT1    = _laFmtSlot(_laFirstI);
+                var _laEndMs = new Date(_laOmD.time[_laLastI] + 'Z').getTime() + 15 * 60 * 1000;
+                var _laT2    = new Date(_laEndMs)
+                    .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+
+                // 80% discount signals this is a forecast, not observed rain
+                var _laDiscount = Math.round(_laBestPeak * 0.8);
+                var _laTier = _laDiscount >= 75 ? 'SEVERE' : _laDiscount >= 50 ? 'HIGH' : 'ELEVATED';
+                var _laVerb = _laBestPeak >= 75 ? 'Severe rain' : 'Heavy rain';
+                _setFloodDisplay(_laDiscount, _laTier);
+                if (descEl) descEl.innerText = '\u26a0\ufe0f Forecast: ' + _laVerb + ' expected '
+                    + _laT1 + '\u2013' + _laT2 + ' \u2014 tap for 15-min details.';
             }
         }
     }
