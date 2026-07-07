@@ -2190,6 +2190,13 @@
         document.getElementById('wfo-label').innerText = 'N/A (Outside US)';
         if (window.pirateCurrently) {
             const summary = window.pirateCurrently.summary || 'Clear';
+            const pwTemp = window.pirateCurrently.temperature;
+            // Restore PirateWeather temp — fetchNWSChain resets tempVal to '--' before calling
+            // this, so we must explicitly repopulate it for international locations.
+            if (pwTemp != null) {
+                window.liveTemp = Math.round(pwTemp);
+                (function(){ var _tv = Math.round(pwTemp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+            }
             document.getElementById('conditionText').innerText = summary;
             document.getElementById('weatherIcon').style.display = 'none';
             document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
@@ -4020,6 +4027,9 @@
     }
 
     async function fetchNWSChain() {
+        // Hold temp at '--' while the chain resolves so the user never sees a
+        // flash of the PirateWeather baseline before QC and lapse correction finish.
+        (function(){ var _te = document.getElementById('tempVal'); _te.innerText = '--'; _te.style.color = ''; })();
         try {
             const pointsRes = await fetch('https://api.weather.gov/points/' + lat + ',' + lon);
             if (!pointsRes.ok) { window.isOutsideUS = true; applyInternationalMode(); return; }
@@ -4119,8 +4129,11 @@
                 if (fbCond) {
                     currentCondition = fbCond;
                     document.getElementById('conditionText').innerText = fbCond;
-                    document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
-                    document.getElementById('meta-name').innerText = 'PirateWeather API';
+                    // Only condition text comes from PirateWeather here — temperature still
+                    // comes from PWS or NWS obs. Don't relabel the station; leave stationName
+                    // as-is so it reflects the actual temperature source. meta-name records
+                    // that the condition string came from PirateWeather.
+                    document.getElementById('meta-name').innerText = 'PirateWeather API (condition)';
                     const fbIcon = pw.icon ? PW_ICON_MAP[pw.icon] : null;
                     if (fbIcon) { document.getElementById('weatherIcon').src = fbIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                     else document.getElementById('weatherIcon').style.display = 'none';
@@ -4180,12 +4193,13 @@
             // Correct using standard environmental lapse rate: 3.5°F per 1000 ft.
             // corrected = raw + (nwsStationElevFt − userElevFt) × 3.5/1000
             let nwsObsTempFAdj = nwsObsTempF;
+            let _lapseApplied = false;
             if (nwsObsTempF !== null) {
                 const _nwsElevFt  = (elevMeters != null) ? elevMeters * 3.28084 : null;
                 const _userElevFt = (window.userLocElevFt != null) ? window.userLocElevFt : window.wuElevFt;
                 if (_nwsElevFt !== null && _userElevFt != null) {
                     const _lapseDelta = (_nwsElevFt - _userElevFt) * (3.5 / 1000);
-                    if (Math.abs(_lapseDelta) >= 0.5) nwsObsTempFAdj = nwsObsTempF + _lapseDelta;
+                    if (Math.abs(_lapseDelta) >= 0.5) { nwsObsTempFAdj = nwsObsTempF + _lapseDelta; _lapseApplied = true; }
                 }
             }
 
@@ -4284,6 +4298,21 @@
                 updateSmartComfort(Math.round(_wuT), liveFeelsLike, Math.round(_wuH), liveWindSpd,
                     _pw3 ? (_pw3.summary || '') : '', liveUV, _pw3 ? ((_pw3.precipProbability || 0) * 100) : 0);
             }
+            // Safety net: if neither PWS nor NWS obs provided a temp (both unavailable),
+            // tempVal is still '--' from the reset at the top of this function.
+            // Restore PirateWeather so the display is never permanently empty.
+            (function() {
+                var _te = document.getElementById('tempVal');
+                if (_te && _te.innerText === '--') {
+                    var _pw = window.pirateCurrently;
+                    if (_pw && _pw.temperature != null) {
+                        var _tv = Math.round(_pw.temperature);
+                        window.liveTemp = _tv;
+                        _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0';
+                        _te.style.color = colorFeelsLike(_tv);
+                    }
+                }
+            })();
             try {
                 const afdList = await (await fetch('https://api.weather.gov/products/types/AFD/locations/' + wfo)).json();
                 if (afdList['@graph'] && afdList['@graph'].length > 0) {
@@ -4305,6 +4334,8 @@
                 wfo:         document.getElementById('wfo-label').innerText
             });
         } catch(e) {
+            // NWS chain failed — restore cached station metadata and condition text,
+            // then ensure temperature is not left stuck at '--'.
             SkyDB.get(SkyDB.S.weather, 'nws_obs').then(function(c) {
                 if (!c) return;
                 document.getElementById('stationName').innerText = c.stationName || '';
@@ -4320,6 +4351,20 @@
                     document.getElementById('weatherIcon').style.display = 'block';
                 }
             });
+            // If tempVal is still '--' (chain threw before any temp write), restore
+            // from PirateWeather so the user doesn't see a permanently empty display.
+            (function() {
+                var _te = document.getElementById('tempVal');
+                if (_te && _te.innerText === '--') {
+                    var _pw = window.pirateCurrently;
+                    if (_pw && _pw.temperature != null) {
+                        var _tv = Math.round(_pw.temperature);
+                        window.liveTemp = _tv;
+                        _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0';
+                        _te.style.color = colorFeelsLike(_tv);
+                    }
+                }
+            })();
         }
     }
 
