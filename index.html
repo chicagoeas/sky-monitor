@@ -4136,7 +4136,16 @@
             // Compare primary against their median: >5°F or >10% RH → reject.
             // When no neighbors arrived, fall back to PirateWeather ±15°F as a backstop.
             const _wu = window.wuData;
-            const _neighbors = (window.wuNeighborData || []).filter(function(n) { return n && n.temp !== null; });
+            // Filter neighbors: drop any whose temp deviates >20°F from PirateWeather —
+            // a glitching neighbor (e.g. 0°F in summer) would otherwise corrupt the median
+            // and cause a good primary to be falsely rejected.
+            const _pwNowPre = window.pirateCurrently;
+            const _pwTempPre = (_pwNowPre && _pwNowPre.temperature != null) ? _pwNowPre.temperature : null;
+            const _neighbors = (window.wuNeighborData || []).filter(function(n) {
+                if (!n || n.temp === null) return false;
+                if (_pwTempPre !== null && Math.abs(n.temp - _pwTempPre) > 20) return false;
+                return true;
+            });
             const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
             // Neighbor medians
             let _neighborMedianTemp = null, _neighborMedianHum = null;
