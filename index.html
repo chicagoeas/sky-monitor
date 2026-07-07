@@ -103,7 +103,7 @@
         }
         #coords-panel input {
             background: none; border: none; border-bottom: 1px solid var(--primary);
-            color: white; padding: 5px; width: 80px; text-align: center; outline: none;
+            color: white; padding: 5px; width: 175px; text-align: center; outline: none;
         }
         #coords-panel.city-mode { background: none; border: none; padding: 0; min-width: 0; display: flex; }
         .btn-action { background: var(--primary); color: #07131d; border: none; padding: 6px 12px; border-radius: 15px; font-weight: bold; cursor: pointer; }
@@ -326,8 +326,7 @@
 
     <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
         <div id="coords-panel">
-            <input type="number" id="latInput" value="41.8781" step="0.0001">
-            <input type="number" id="lonInput" value="-87.6298" step="0.0001">
+            <input type="text" id="coordInput" value="41.8781, -87.6298" placeholder="lat, lon" autocomplete="off">
             <button class="btn-action" onclick="manualUpdateLocation()">SYNC</button>
             <button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>
         </div>
@@ -1125,11 +1124,9 @@
         document.getElementById('opt-mode-live').classList.toggle('active', mode === 'live');
 
         if (mode === 'coord') {
-            panel.innerHTML = '<input type="number" id="latInput" value="' + lat + '" step="0.0001"><input type="number" id="lonInput" value="' + lon + '" step="0.0001"><button class="btn-action" onclick="manualUpdateLocation()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>';
-            ['latInput','lonInput'].forEach(function(id) {
-                var el = document.getElementById(id);
-                if (el) el.addEventListener('keydown', function(e) { if (e.key === 'Enter') manualUpdateLocation(); });
-            });
+            panel.innerHTML = '<input type="text" id="coordInput" value="' + lat + ', ' + lon + '" placeholder="lat, lon" autocomplete="off"><button class="btn-action" onclick="manualUpdateLocation()">SYNC</button><button class="btn-action btn-gps" onclick="getLocation()">&#128205; GPS</button>';
+            var _ci = document.getElementById('coordInput');
+            if (_ci) _ci.addEventListener('keydown', function(e) { if (e.key === 'Enter') manualUpdateLocation(); });
         } else if (mode === 'live') {
             if (!navigator.geolocation) {
                 panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS not available</span>';
@@ -1244,8 +1241,8 @@
             if (data && data.length > 0) {
                 lat = parseFloat(parseFloat(data[0].lat).toFixed(4));
                 lon = parseFloat(parseFloat(data[0].lon).toFixed(4));
-                const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
-                if (latBox) latBox.value = lat; if (lonBox) lonBox.value = lon;
+                const _cb = document.getElementById('coordInput');
+                if (_cb) _cb.value = lat + ', ' + lon;
                 var shortName = data[0].display_name.split(',')[0].trim();
                 if (cityEl) cityEl.value = shortName;
                 localStorage.setItem('waddle_city', shortName);
@@ -1612,8 +1609,11 @@
     }
 
     function updateLocation() {
-        const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
-        if (latBox && lonBox && latBox.value && lonBox.value) { lat = parseFloat(latBox.value); lon = parseFloat(lonBox.value); }
+        const coordBox = document.getElementById('coordInput');
+        if (coordBox && coordBox.value) {
+            const _parts = coordBox.value.split(',').map(function(s) { return parseFloat(s.trim()); });
+            if (_parts.length >= 2 && !isNaN(_parts[0]) && !isNaN(_parts[1])) { lat = _parts[0]; lon = _parts[1]; }
+        }
         saveLoc();
         document.getElementById('stationName').innerText = 'LOADING LOCATION...';
         document.getElementById('conditionText').innerText = '--';
@@ -1640,8 +1640,8 @@
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(p => {
                 lat = parseFloat(p.coords.latitude.toFixed(4)); lon = parseFloat(p.coords.longitude.toFixed(4));
-                const latBox = document.getElementById('latInput'); const lonBox = document.getElementById('lonInput');
-                if (latBox) latBox.value = lat; if (lonBox) lonBox.value = lon;
+                const _cb2 = document.getElementById('coordInput');
+                if (_cb2) _cb2.value = lat + ', ' + lon;
                 const cityBox = document.getElementById('cityInput');
                 if (cityBox) cityBox.value = '';
                 window._locFromGPS = true;
