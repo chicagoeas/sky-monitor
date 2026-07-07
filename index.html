@@ -4767,12 +4767,21 @@
         if (hazardCats.heat) return 'Elevated heat conditions are in the area. Limit outdoor exposure, stay hydrated, and check on vulnerable individuals.';
         if (hazardCats.fire) return 'Critical fire weather conditions exist. Extreme fire behavior is possible — follow evacuation orders and air quality guidance.';
         if (flags.denseFogAdvisory) return 'A Dense Fog Advisory is in effect. Visibility may drop below a quarter mile. Slow down, use low-beam headlights, and allow extra following distance.';
+        // ── Observed-condition descriptions (no alerts required) ─────────
+        // These fire before the generic tier fallbacks so a score driven purely by
+        // observed wind / storm proximity never claims "alerts are in effect."
+        if (liveWindSpd >= 58) return 'Dangerously high winds observed (' + _fmtWind(liveWindSpd) + '). Secure loose outdoor items, avoid driving high-profile vehicles, and stay away from trees and power lines.';
+        if (liveWindSpd >= 40) return 'Strong winds observed (' + _fmtWind(liveWindSpd) + '). Gusty conditions may cause localized damage and make driving difficult, especially for high-profile vehicles.';
+        if (liveWindSpd >= 30) return 'Breezy to windy conditions observed (' + _fmtWind(liveWindSpd) + '). Use caution outdoors and secure lightweight objects.';
+        var _stDist = window.currentStormDist;
+        if (_stDist !== null && _stDist !== undefined && _stDist < 5) return 'A storm cell is very close by. Lightning and gusty winds are possible — stay indoors and away from windows until it passes.';
+        if (_stDist !== null && _stDist !== undefined && _stDist < 15) return 'A storm cell is nearby. Monitor conditions and be ready to shelter quickly if it approaches.';
         // ── Tier fallbacks ────────────────────────────────────────────────
         if (tier === 'LIFE THREATENING') return 'A life-threatening weather situation is ongoing. Take immediate protective action and follow all NWS instructions.';
         if (tier === 'CRITICAL') return 'A critical weather situation is occurring near you. Significant harm or death is possible — take shelter immediately and monitor NWS updates closely.';
         if (tier === 'DANGEROUS') return 'Hazardous conditions are active near you. Remain sheltered and closely monitor NWS alerts for updates.';
         if (tier === 'SIGNIFICANT') return 'Significantly elevated weather concerns are in effect. High-impact conditions are possible — stay alert and be ready to act quickly.';
-        if (tier === 'ACTIVE WEATHER') return 'Active weather alerts are in effect for your area. Stay weather-aware and be ready to act if conditions worsen.';
+        if (tier === 'ACTIVE WEATHER') return 'Elevated weather conditions are present. Stay weather-aware and be ready to act if conditions worsen.';
         if (tier === 'ELEVATED') return 'Weather concerns are present today. Monitor forecasts and have a plan ready in case conditions deteriorate.';
         return 'No significant weather hazards detected. Conditions are currently calm.';
     }
@@ -5066,7 +5075,7 @@
         else if (score >= 3)           { tier = 'ELEVATED';         tierClass = 'threat-tier-elev';     emoji = '\uD83D\uDFE1'; badgeColor = '#ffeb3b'; }
         else                           { tier = 'LOW';              tierClass = 'threat-tier-low';      emoji = '\uD83D\uDFE2'; badgeColor = '#00e676'; }
 
-        // ── 12. Smart Contextual Description ────────────nt�────────────────
+        // ── 12. Smart Contextual Description ─────────────────────────────
         const _activeEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
         // Build lowercase-keyed onset map — activeAlertOnsets stores keys with original casing
         const _onsetsByLower = {};
