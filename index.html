@@ -4312,8 +4312,10 @@
             let nwsObsHumidity = null;
             let nwsObsWindMph = null;
             let nwsObsWindDir = null;
+            var _obsEndpointFailed = false;
             try {
                 const obsRes = await fetch(primaryStation.id + '/observations/latest');
+                if (!obsRes.ok) _obsEndpointFailed = true;
                 const obs = obsRes.ok ? await obsRes.json() : null;
                 const op = obs?.properties || {};
                 nwsCond = (op.textDescription || '').trim();
@@ -4346,7 +4348,7 @@
                 // Recompute flood score whenever any obs precip value arrived — 3h/6h
                 // observed floors apply even if the 1h sensor returned null.
                 if (window.nwsObsPrecip1h !== null || window.nwsObsPrecip3h !== null || window.nwsObsPrecip6h !== null) computeFloodImpact();
-            } catch(obsErr) { /* observation fetch failed — will fall back below */ }
+            } catch(obsErr) { _obsEndpointFailed = true; /* observation fetch failed — will fall back below */ }
             if (!nwsCond) {
                 // Truly no NWS conditions — fall back to PirateWeather
                 const pw = window.pirateCurrently;
@@ -4377,11 +4379,10 @@
                 else document.getElementById('weatherIcon').style.display = 'none';
             }
             // If the obs endpoint returned nothing at all (404 or fully empty payload) —
-            // no condition, no temp, no humidity, no wind, no precip — PirateWeather is
-            // the sole data source. Relabel so the user knows the NWS station is dark.
-            if (!nwsCond && nwsObsTempF === null && nwsObsHumidity === null &&
-                nwsObsWindMph === null && window.nwsObsPrecip1h === null &&
-                window.nwsObsPrecip3h === null && window.nwsObsPrecip6h === null) {
+            // If the obs endpoint returned a non-2xx response (e.g. 404 — station has no
+            // data on record) or the fetch threw entirely, PirateWeather is the sole source.
+            // Relabel so the user knows the NWS station is dark rather than showing its name.
+            if (_obsEndpointFailed) {
                 document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
             }
             // ── PWS quality control — neighbor median comparison ─────────────────────
