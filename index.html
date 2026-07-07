@@ -4418,12 +4418,15 @@
             if (_wuRawAvail && _neighborMedianTemp !== null) {
                 const _tDiff = Math.abs(_wu.temp - _neighborMedianTemp);
                 const _hDiff = (_neighborMedianHum !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - _neighborMedianHum) : 0;
-                _wuDevFromNeighbors = (_tDiff > 5) || (_neighborMedianHum !== null && _hDiff > 10);
+                // 8°F / 15% RH threshold — tight enough to catch solar-biased sensors
+                // while allowing normal urban microclimate variation (shading, pavement
+                // heat, lake-breeze gradients) which routinely produces 5-7°F differences
+                // between nearby stations without indicating a bad sensor.
+                _wuDevFromNeighbors = (_tDiff > 8) || (_neighborMedianHum !== null && _hDiff > 15);
             }
-            // If the closest station failed neighbor QC, promote the neighbor that sits
-            // closest to the consensus median — it's more representative of the area.
-            // This handles dense urban microclimates (e.g. rooftop heat-sinks, lake-effect
-            // zones) where stationIds[0] is simply the nearest point, not the best one.
+            // If the primary is a clear outlier (>8°F from consensus), promote the neighbor
+            // closest to the median instead — and update wuData so downstream code and the
+            // "Observed at" label both reflect the station actually being used.
             if (_wuDevFromNeighbors && _neighbors.length > 0 && _neighborMedianTemp !== null) {
                 let _bestNeighbor = null, _bestDiff = Infinity;
                 for (var _ni = 0; _ni < _neighbors.length; _ni++) {
@@ -4432,9 +4435,9 @@
                     var _nd = Math.abs(_nb.temp - _neighborMedianTemp);
                     if (_nd < _bestDiff) { _bestDiff = _nd; _bestNeighbor = _nb; }
                 }
-                if (_bestNeighbor !== null && _bestDiff <= 5) {
-                    // Promoted neighbor agrees with the consensus — use it instead.
+                if (_bestNeighbor !== null && _bestDiff <= 8) {
                     _wu = _bestNeighbor;
+                    window.wuData = _bestNeighbor;
                     _wuDevFromNeighbors = false;
                 }
             }
