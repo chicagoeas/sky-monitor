@@ -671,7 +671,7 @@
         <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:16px; background:#000; margin-bottom:20px;"></iframe>
 
         <!-- Flood Impact — moved to severe tab -->
-        <div id="flood-score-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-bottom:20px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for hourly flood forecast">
+        <div id="flood-score-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-bottom:20px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for 15-min flood forecast">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                 <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; color:var(--success);">&#127754; FLOOD IMPACT</div>
                 <div style="font-size:0.62em; color:#445566; letter-spacing:0.5px; font-weight:700;">HOURLY &#8250;</div>
@@ -2707,14 +2707,14 @@
         return Math.round(Math.min(100, Math.max(0, iScore, alertFloor)));
     }
 
-    // Fetches Open-Meteo 15-minute precipitation and stores the current rain rate
-    // exclusively for the FLOOD IMPACT score. Touches nothing else (no timeline,
-    // no precip1h badge, no livePrecipInt — those stay owned by PirateWeather/OM fallback).
+    // Fetches Open-Meteo 15-minute precipitation for FLOOD IMPACT only.
+    // Stores current-slot rain rate in window.omFloodRate and full data in
+    // window.omMinutely15Data for the modal. Touches nothing else.
     async function fetchOMPrecip15() {
         try {
             const res = await fetch(
                 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-                '&minutely_15=precipitation' +
+                '&minutely_15=precipitation,precipitation_probability' +
                 '&precipitation_unit=inch&timezone=auto'
             );
             if (!res.ok) return;
@@ -2722,10 +2722,11 @@
             const m15 = d.minutely_15;
             if (!m15 || !m15.time || !m15.precipitation) return;
 
-            // Find the current 15-min slot.
             // OM returns local time strings (no 'Z'); treat as UTC then subtract the offset.
             const utcOffSec = d.utc_offset_seconds || 0;
             const nowMs = Date.now();
+
+            // Find the current 15-min slot.
             let idx = 0;
             for (let i = 0; i < m15.time.length; i++) {
                 const slotUtcMs = new Date(m15.time[i] + 'Z').getTime() - utcOffSec * 1000;
@@ -2733,10 +2734,17 @@
                 else break;
             }
 
-            // 15-min accumulation × 4 → in/hr. Stored separately so nothing else is disturbed.
+            // Store full dataset for the modal and current rate for the flood score.
+            window.omMinutely15Data = {
+                time:        m15.time,
+                precipitation:        m15.precipitation,
+                probability: m15.precipitation_probability || [],
+                utcOffSec:   utcOffSec,
+                startIdx:    idx
+            };
             window.omFloodRate = (m15.precipitation[idx] || 0) * 4;
             computeFloodImpact();
-        } catch(e) {}
+        } catch(e) { console.warn('[SkyMonitor OM15] fetch error:', e); }
     }
 
     function computeFloodImpact() {
@@ -5629,7 +5637,7 @@
         }
     }
 
-    // ── Hourly Flood Impact Modal ───────────────────────────────────────────────
+    // ── Hourly Flood Impact Modal ────────────────────────────────────────di�──────
     function openFloodModal() {
         var _pwAvailEarly  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
         var _nwsAvailEarly = window.nwsQPFValues && window.nwsQPFValues.length > 0;
@@ -5684,106 +5692,72 @@
             alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
         }
 
-        // Build hourly rows.
-        // Rain INTENSITY source: PirateWeather hourly precipIntensity — radar-downscaled,
-        // convection-aware, true per-hour rate. NWS gridpoint QPF is a smoothed 6-hour
-        // accumulation product (PT6H) that slices to ~0.09"/hr even for heavy convective
-        // storms and is unsuitable as an hourly intensity signal.
-        // Rain PROBABILITY source: NWS PoP when available (authoritative), PW as fallback.
-        var _nwsAvail = window.nwsQPFValues && window.nwsQPFValues.length > 0;
-        var _pwAvail  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
-        var sourceHours = [];
-        if (_pwAvail) {
-            var _nowSec = Math.floor(Date.now() / 1000);
-            sourceHours = window.pirateHourlyData
-                .filter(function(h) { return h.time >= _nowSec - 1800; }) // drop stale past entries before PoP overlay
-                .map(function(h) {
-                    // Only overlay NWS PoP for future hours — past entries keep PW probability.
-                    // Use Math.floor so hour-0 covers "now through the next full hour" and
-                    // avoids drifting into the wrong NWS PoP window near hour boundaries.
-                    var _hoursAhead = Math.floor((h.time - _nowSec) / 3600);
-                    var _nwsPop = (_nwsAvail && _hoursAhead >= 0) ? _getNWSPoP(_hoursAhead, 1) : null;
-                    return {
-                        time: h.time,
-                        precipIntensity:   h.precipIntensity   || 0,
-                        precipProbability: _nwsPop !== null ? _nwsPop / 100 : (h.precipProbability || 0)
-                    };
-                });
-        } else if (_nwsAvail) {
-            // PirateWeather unavailable — fall back to NWS QPF (6h smoothed, less precise)
-            for (var _hi = 0; _hi < 72; _hi++) {
-                var _hqpf    = _getNWSQPF(_hi, 1);
-                var _hpop    = _getNWSPoP(_hi, 1);
-                var _hpopFrac = _hpop !== null ? _hpop / 100 : 0;
-                if (_hi >= 48 && _hqpf === 0 && _hpopFrac === 0) break;
-                sourceHours.push({
-                    time: Math.floor((Date.now() + _hi * 3600000) / 1000),
-                    precipIntensity:   _hqpf,
-                    precipProbability: _hpopFrac
-                });
-            }
-        }
-
-        if (!sourceHours.length) {
+        // ── 15-min OM data (preferred) ────────────────────────────────────
+        var omData = window.omMinutely15Data;
+        if (!omData) {
             document.getElementById('flood-modal-inner').innerHTML =
                 '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
-                + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:16px;padding-right:28px;">\uD83C\uDF0A HOURLY FLOOD IMPACT</div>'
-                + '<div style="color:#888;font-size:0.85em;">NWS forecast data not yet loaded. Try again in a moment.</div>';
+                + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:16px;padding-right:28px;">\uD83C\uDF0A 15-MIN FLOOD IMPACT</div>'
+                + '<div style="color:#888;font-size:0.85em;">15-min data not yet loaded. Try again in a moment.</div>';
             return;
         }
 
-        // Group hours by local day
-        var days = {};
-        sourceHours.forEach(function(h) {
-            if (h.time < currentUnix - 1800) return;
-            var key = new Date((h.time + offsetHours * 3600) * 1000).toISOString().split('T')[0];
-            if (!days[key]) days[key] = [];
-            days[key].push(h);
-        });
-        var dayKeys = Object.keys(days).slice(0, 3);
+        var omUtcOff  = omData.utcOffSec || 0;
+        var omStart   = omData.startIdx  || 0;
+        var omTimes   = omData.time;
+        var omPrecip  = omData.precipitation;
+        var omProb    = omData.probability;
 
-        function buildFloodDayContent(key) {
-            var hours = days[key];
-            if (!hours || !hours.length) return '<div style="opacity:0.5;padding:10px;">No data.</div>';
-            // Find peak score in this day to anchor bar scale
-            var scores = hours.map(function(h) { return _computeHourFloodScore(h); });
-            return hours.map(function(h, idx) {
-                var score = scores[idx];
-                var tier  = _floodTier(score);
-                var col   = FLOOD_COLORS[tier];
-                var icon  = _floodIcon(tier);
-                var barPct = Math.min(score, 100);
-                var prob  = Math.round((h.precipProbability || 0) * 100);
-                var intensity = h.precipIntensity || 0;
-                var intStr = intensity >= 0.01 ? intensity.toFixed(2) + '\u201d/hr' : 'trace';
-                var hrLabel = new Date((h.time + offsetHours * 3600) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
-                return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);">'
-                    + '<div style="min-width:44px;font-size:0.75em;color:#aaa;text-align:right;">' + hrLabel + '</div>'
-                    + '<div style="min-width:28px;font-size:1.15em;text-align:center;">' + icon + '</div>'
-                    + '<div style="flex:1;">'
-                    +   '<div style="background:rgba(255,255,255,0.08);border-radius:4px;height:7px;overflow:hidden;margin-bottom:4px;">'
-                    +     '<div style="background:' + col + ';width:' + barPct + '%;height:100%;border-radius:4px;transition:width 0.4s;"></div>'
-                    +   '</div>'
-                    +   '<div style="font-size:0.72em;display:flex;justify-content:space-between;align-items:center;">'
-                    +     '<span style="font-weight:900;color:' + col + ';">' + tier + ' &nbsp;<span style="font-weight:400;opacity:0.85;">' + score + '/100</span></span>'
-                    +     '<span style="opacity:0.55;">' + prob + '% / ' + intStr + '</span>'
-                    +   '</div>'
-                    + '</div></div>';
-            }).join('');
+        // Build a row for a single 15-min slot
+        function buildFlood15Row(i) {
+            var slotUtcMs  = new Date(omTimes[i] + 'Z').getTime() - omUtcOff * 1000;
+            var slotUnixS  = Math.floor(slotUtcMs / 1000);
+            var rateHr     = (omPrecip[i] || 0) * 4;          // 15-min accum × 4 → in/hr
+            var probPct    = omProb[i] != null ? omProb[i] : 0; // already 0-100
+            var h          = { time: slotUnixS, precipIntensity: rateHr, precipProbability: probPct / 100 };
+            var score      = _computeHourFloodScore(h);
+            var tier       = _floodTier(score);
+            var col        = FLOOD_COLORS[tier];
+            var icon       = _floodIcon(tier);
+            var barPct     = Math.min(score, 100);
+            var intStr     = rateHr >= 0.01 ? rateHr.toFixed(2) + '\u201d/hr' : 'trace';
+            // Display in station-local time: shift by utcOffset then render as UTC so
+            // browser timezone doesn't interfere (same trick as the rest of the app).
+            var timeLabel  = new Date(slotUtcMs + omUtcOff * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
+            return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.06);">'
+                + '<div style="min-width:50px;font-size:0.73em;color:#aaa;text-align:right;">' + timeLabel + '</div>'
+                + '<div style="min-width:26px;font-size:1.1em;text-align:center;">' + icon + '</div>'
+                + '<div style="flex:1;">'
+                +   '<div style="background:rgba(255,255,255,0.08);border-radius:4px;height:6px;overflow:hidden;margin-bottom:4px;">'
+                +     '<div style="background:' + col + ';width:' + barPct + '%;height:100%;border-radius:4px;"></div>'
+                +   '</div>'
+                +   '<div style="font-size:0.71em;display:flex;justify-content:space-between;">'
+                +     '<span style="font-weight:900;color:' + col + ';">' + tier + ' <span style="font-weight:400;opacity:0.8;">' + score + '/100</span></span>'
+                +     '<span style="opacity:0.5;">' + Math.round(probPct) + '% / ' + intStr + '</span>'
+                +   '</div>'
+                + '</div></div>';
         }
 
+        // Three 4-hour tabs (16 slots each at 15-min resolution)
+        var dayKeys = ['Now\u2013+4h', '+4\u2013+8h', '+8\u2013+12h'];
         window._floodDayIdx = 0;
         window._floodDayHtml = {};
-        dayKeys.forEach(function(k) { window._floodDayHtml[k] = buildFloodDayContent(k); });
+        dayKeys.forEach(function(label, gi) {
+            var gStart = omStart + gi * 16;
+            var html = '';
+            for (var si = gStart; si < Math.min(gStart + 16, omTimes.length); si++) {
+                html += buildFlood15Row(si);
+            }
+            window._floodDayHtml[label] = html || '<div style="opacity:0.5;padding:10px;">No data for this window.</div>';
+        });
 
         var tabHtml = dayKeys.map(function(key, i) {
-            var lbl = i === 0 ? 'Today' : new Date(key + 'T12:00:00Z').toLocaleDateString([], { weekday: 'short' });
-            return '<button id="flood-tab-' + i + '" onclick="(function(idx){document.querySelectorAll(\'#flood-day-tabs .btn-opt\').forEach(function(b){b.classList.remove(\'active\')});document.getElementById(\'flood-tab-\'+idx).classList.add(\'active\');document.getElementById(\'flood-hours\').innerHTML=window._floodDayHtml[\'' + key + '\']; window._floodDayIdx=idx;})(' + i + ')" class="btn-opt' + (i === 0 ? ' active' : '') + '">' + lbl + '</button>';
+            return '<button id="flood-tab-' + i + '" onclick="(function(idx){document.querySelectorAll(\'#flood-day-tabs .btn-opt\').forEach(function(b){b.classList.remove(\'active\')});document.getElementById(\'flood-tab-\'+idx).classList.add(\'active\');document.getElementById(\'flood-hours\').innerHTML=window._floodDayHtml[\'' + key.replace(/'/g, "\\'") + '\']; window._floodDayIdx=idx;})(' + i + ')" class="btn-opt' + (i === 0 ? ' active' : '') + '">' + key + '</button>';
         }).join('');
 
         document.getElementById('flood-modal-inner').innerHTML =
             '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
-            + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:12px;padding-right:28px;">\uD83C\uDF0A HOURLY FLOOD IMPACT</div>'
+            + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:12px;padding-right:28px;">\uD83C\uDF0A 15-MIN FLOOD IMPACT</div>'
             + alertHtml
             + '<div id="flood-day-tabs" class="btn-group spc-btn-tabs" style="margin-bottom:12px;">' + tabHtml + '</div>'
             + '<div id="flood-hours">' + (window._floodDayHtml[dayKeys[0]] || '') + '</div>';
@@ -5913,7 +5887,7 @@
 
     function setReportType(type) {
         selectedReportType = type;
-        document.getElementById('report-subcat-wrap').style.display = 'none';
+        document.getElementById('report-subcat-wrap').style.di�play = 'none';
         const display = document.getElementById('report-type-display');
         display.style.display = 'flex';
         display.style.alignItems = 'center';
