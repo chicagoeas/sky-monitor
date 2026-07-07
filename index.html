@@ -2707,13 +2707,14 @@
         return Math.round(Math.min(100, Math.max(0, iScore, alertFloor)));
     }
 
-    // Fetches Open-Meteo 15-minute precipitation data — the single authoritative source
-    // for the live rain rate feeding FLOOD IMPACT. Works globally (no NWS/WU/PW dependency).
+    // Fetches Open-Meteo 15-minute precipitation and stores the current rain rate
+    // exclusively for the FLOOD IMPACT score. Touches nothing else (no timeline,
+    // no precip1h badge, no livePrecipInt — those stay owned by PirateWeather/OM fallback).
     async function fetchOMPrecip15() {
         try {
             const res = await fetch(
                 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-                '&minutely_15=precipitation,precipitation_probability' +
+                '&minutely_15=precipitation' +
                 '&precipitation_unit=inch&timezone=auto'
             );
             if (!res.ok) return;
@@ -2732,50 +2733,17 @@
                 else break;
             }
 
-            // 15-min accumulation × 4 → in/hr rate
-            const rate = (m15.precipitation[idx] || 0) * 4;
-            livePrecipInt = rate;
-            window.livePrecipInt = rate;
-            _updatePrecipCache(rate);
-
-            // 1h accumulation = current slot + next 3 (4 × 15 min = 1 hour)
-            let acc1h = 0;
-            for (let j = idx; j < Math.min(idx + 4, m15.precipitation.length); j++) {
-                acc1h += m15.precipitation[j] || 0;
-            }
-            document.getElementById('precip1h').innerText = '1h: ' + (_isMetric() ? (acc1h * 25.4).toFixed(1) + ' mm' : acc1h.toFixed(2) + '"');
-            document.getElementById('precip1h').style.display = (acc1h > 0.005) ? '' : 'none';
-
-            // Timeline — 8 bars covering the next 2 hours at 15-min resolution
-            const timeline = document.getElementById('timeline');
-            if (timeline) {
-                timeline.innerHTML = '';
-                const slots = m15.precipitation.slice(idx, idx + 8);
-                slots.forEach(function(v) {
-                    const rateHr = (v || 0) * 4;
-                    const bar = document.createElement('div');
-                    bar.className = 'bar';
-                    bar.style.height = Math.max(Math.min((rateHr / 0.4) * 100, 100), 2) + '%';
-                    if (rateHr > 0) {
-                        if      (rateHr >= 0.3) bar.style.background = '#ff1744';
-                        else if (rateHr >= 0.1) bar.style.background = '#ffeb3b';
-                        else                    bar.style.background = '#00e676';
-                    }
-                    timeline.appendChild(bar);
-                });
-                document.getElementById('minuteSummary').innerText = rate > 0
-                    ? 'Raining at ~' + (_isMetric() ? (rate * 25.4).toFixed(1) + ' mm/hr' : rate.toFixed(2) + '"/hr') + ' \u2014 Open-Meteo 15-min'
-                    : 'No precipitation detected \u2014 Open-Meteo 15-min';
-            }
-
+            // 15-min accumulation × 4 → in/hr. Stored separately so nothing else is disturbed.
+            window.omFloodRate = (m15.precipitation[idx] || 0) * 4;
             computeFloodImpact();
         } catch(e) {}
     }
 
     function computeFloodImpact() {
         var descEl = document.getElementById('flood-score-desc');
-        // Live rate comes exclusively from fetchOMPrecip15() — one consistent global source.
-        var lpi = Math.max(0, window.livePrecipInt || 0);
+        // Single source for live rain rate: Open-Meteo 15-min (global, consistent).
+        // Falls back to livePrecipInt if fetchOMPrecip15 hasn't returned yet.
+        var lpi = Math.max(0, window.omFloodRate != null ? window.omFloodRate : (window.livePrecipInt || 0));
 
         // Hard rule: >2 in/hr → instant SEVERE 100
         if (lpi > 2.0) {
@@ -5098,7 +5066,7 @@
         else if (score >= 3)           { tier = 'ELEVATED';         tierClass = 'threat-tier-elev';     emoji = '\uD83D\uDFE1'; badgeColor = '#ffeb3b'; }
         else                           { tier = 'LOW';              tierClass = 'threat-tier-low';      emoji = '\uD83D\uDFE2'; badgeColor = '#00e676'; }
 
-        // ── 12. Smart Contextual Description ─────────────────────────────
+        // ── 12. Smart Contextual Description ────────────nt�────────────────
         const _activeEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
         // Build lowercase-keyed onset map — activeAlertOnsets stores keys with original casing
         const _onsetsByLower = {};
