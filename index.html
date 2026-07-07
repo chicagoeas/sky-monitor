@@ -2183,6 +2183,67 @@
         }
     }
 
+    // Resolve a PirateWeather summary string (or icon slug) to an NWS icon URL.
+    // Used wherever PirateWeather is the condition source and NWS hasn't supplied an icon.
+    // Pass isNight=true to get the night-variant URL.
+    function _pwSummaryIcon(summary, isNight) {
+        if (!summary) return null;
+        var dn  = isNight ? 'night' : 'day';
+        var s   = summary.toLowerCase();
+        var base = 'https://api.weather.gov/icons/land/' + dn + '/';
+        var sz  = '?size=medium';
+        // Severe / convective — check first so "thunderstorm" beats plain "rain"
+        if (s.includes('tornado'))                                       return base + 'tornado'        + sz;
+        if (s.includes('hurricane'))                                     return base + 'hurricane'      + sz;
+        if (s.includes('tropical storm'))                                return base + 'tropical_storm' + sz;
+        if (s.includes('blizzard'))                                      return base + 'blizzard'       + sz;
+        if (s.includes('thunder') || s.includes('t-storm') ||
+            s.includes('tstm'))                                          return base + 'tsra'           + sz;
+        // Frozen precip
+        if (s.includes('freezing rain') || s.includes('freezing drizzle') ||
+            s.includes('fzra'))                                          return base + 'fzra'           + sz;
+        if (s.includes('rain') && s.includes('snow'))                   return base + 'rain_snow'      + sz;
+        if (s.includes('sleet') || s.includes('ice pellet') ||
+            s.includes('hail'))                                          return base + 'sleet'          + sz;
+        if (s.includes('snow') || s.includes('flurr') ||
+            s.includes('blowing snow'))                                  return base + 'snow'           + sz;
+        // Liquid precip
+        if (s.includes('drizzle') || s.includes('light rain') ||
+            s.includes('sprinkl') || s.includes('mist') ||
+            s.includes('shower'))                                        return base + 'rain_showers'   + sz;
+        if (s.includes('rain'))                                          return base + 'rain'           + sz;
+        // Obscurations
+        if (s.includes('fog'))                                           return base + 'fog'            + sz;
+        if (s.includes('smoke'))                                         return base + 'smoke'          + sz;
+        if (s.includes('haze'))                                          return base + 'haze'           + sz;
+        if (s.includes('dust') || s.includes('sand'))                   return base + 'dust'           + sz;
+        // Wind — pick cloud cover variant when other words give a hint
+        if (s.includes('breezy') || s.includes('windy') ||
+            s.includes('gusty')  || s.includes('blustery')) {
+            if (s.includes('overcast'))                                  return base + 'wind_ovc'       + sz;
+            if (s.includes('mostly cloud') || s.includes('broken'))     return base + 'wind_bkn'       + sz;
+            if (s.includes('partly') || s.includes('scatter'))          return base + 'wind_sct'       + sz;
+            if (s.includes('clear') || s.includes('sunny') ||
+                s.includes('fair'))                                      return base + 'wind_skc'       + sz;
+            return base + 'wind_bkn' + sz;   // default: breezy with some clouds
+        }
+        // Sky cover
+        if (s.includes('overcast'))                                      return base + 'ovc'            + sz;
+        if (s.includes('mostly cloud') || s.includes('broken'))         return base + 'bkn'            + sz;
+        if (s.includes('partly cloud') || s.includes('partly sunny') ||
+            s.includes('scatter'))                                       return base + 'sct'            + sz;
+        if (s.includes('mostly clear') || s.includes('few cloud') ||
+            s.includes('a few cloud'))                                   return base + 'few'            + sz;
+        if (s.includes('clear') || s.includes('sunny') ||
+            s.includes('fair'))                                          return base + 'skc'            + sz;
+        if (s.includes('cloud') || s.includes('cloudy'))                return base + 'ovc'            + sz;
+        // Extremes
+        if (s.includes('hot'))                                           return base + 'hot'            + sz;
+        if (s.includes('cold') || s.includes('frigid') ||
+            s.includes('arctic') || s.includes('bitter'))               return base + 'cold'           + sz;
+        return null;
+    }
+
     function applyInternationalMode() {
         ['spc-outlook-section','wxstory-section','afd-section','hwo-section'].forEach(function(id) {
             const el = document.getElementById(id); if (el) el.style.display = 'none';
@@ -2198,7 +2259,12 @@
                 (function(){ var _tv = Math.round(pwTemp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
             }
             document.getElementById('conditionText').innerText = summary;
-            document.getElementById('weatherIcon').style.display = 'none';
+            // Resolve an NWS icon from the PirateWeather summary/icon
+            const _intlIsNight = window.pirateCurrently.icon && window.pirateCurrently.icon.includes('night');
+            const _intlIcon = _pwSummaryIcon(summary, _intlIsNight)
+                           || _pwSummaryIcon(window.pirateCurrently.icon, _intlIsNight);
+            if (_intlIcon) { document.getElementById('weatherIcon').src = _intlIcon; document.getElementById('weatherIcon').style.display = 'block'; }
+            else document.getElementById('weatherIcon').style.display = 'none';
             document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
             document.getElementById('meta-name').innerText = 'PirateWeather API';
             document.getElementById('meta-id').innerText = lat + ', ' + lon;
@@ -4077,7 +4143,22 @@
                     }
                 } catch(e) {}
             }
-            const PW_ICON_MAP = { 'clear-day':'https://api.weather.gov/icons/land/day/skc?size=medium','clear-night':'https://api.weather.gov/icons/land/night/skc?size=medium','rain':'https://api.weather.gov/icons/land/day/rain?size=medium','snow':'https://api.weather.gov/icons/land/day/snow?size=medium','sleet':'https://api.weather.gov/icons/land/day/sleet?size=medium','wind':'https://api.weather.gov/icons/land/day/wind_bkn?size=medium','fog':'https://api.weather.gov/icons/land/day/fog?size=medium','cloudy':'https://api.weather.gov/icons/land/day/ovc?size=medium','partly-cloudy-day':'https://api.weather.gov/icons/land/day/few?size=medium','partly-cloudy-night':'https://api.weather.gov/icons/land/night/few?size=medium','thunderstorm':'https://api.weather.gov/icons/land/day/tsra?size=medium' };
+            // PirateWeather icon slug → NWS icon URL.
+            // Night-variant slugs use the night path; generic slugs default to day
+            // (PirateWeather only emits day/night distinction on clear & partly-cloudy).
+            const PW_ICON_MAP = {
+                'clear-day':           'https://api.weather.gov/icons/land/day/skc?size=medium',
+                'clear-night':         'https://api.weather.gov/icons/land/night/skc?size=medium',
+                'partly-cloudy-day':   'https://api.weather.gov/icons/land/day/sct?size=medium',
+                'partly-cloudy-night': 'https://api.weather.gov/icons/land/night/sct?size=medium',
+                'cloudy':              'https://api.weather.gov/icons/land/day/ovc?size=medium',
+                'wind':                'https://api.weather.gov/icons/land/day/wind_bkn?size=medium',
+                'rain':                'https://api.weather.gov/icons/land/day/rain?size=medium',
+                'sleet':               'https://api.weather.gov/icons/land/day/sleet?size=medium',
+                'snow':                'https://api.weather.gov/icons/land/day/snow?size=medium',
+                'fog':                 'https://api.weather.gov/icons/land/day/fog?size=medium',
+                'thunderstorm':        'https://api.weather.gov/icons/land/day/tsra?size=medium'
+            };
             const PW_ICON_TO_TEXT = { 'clear-day':'Clear','clear-night':'Clear','rain':'Rain','snow':'Snow','sleet':'Sleet','wind':'Windy','fog':'Fog','cloudy':'Cloudy','partly-cloudy-day':'Partly Cloudy','partly-cloudy-night':'Partly Cloudy','thunderstorm':'Thunderstorm' };
             let nwsCond = '';
             let nwsIcon = null;
@@ -4134,7 +4215,11 @@
                     // as-is so it reflects the actual temperature source. meta-name records
                     // that the condition string came from PirateWeather.
                     document.getElementById('meta-name').innerText = 'PirateWeather API (condition)';
-                    const fbIcon = pw.icon ? PW_ICON_MAP[pw.icon] : null;
+                    // Try icon slug map first, then fall back to summary-text resolver
+                    // so conditions like "Breezy" that have no PW icon slug still get an image.
+                    const _fbIsNight = pw.icon && pw.icon.includes('night');
+                    const fbIcon = (pw.icon ? PW_ICON_MAP[pw.icon] : null)
+                                || _pwSummaryIcon(fbCond, _fbIsNight);
                     if (fbIcon) { document.getElementById('weatherIcon').src = fbIcon; document.getElementById('weatherIcon').style.display = 'block'; }
                     else document.getElementById('weatherIcon').style.display = 'none';
                 }
