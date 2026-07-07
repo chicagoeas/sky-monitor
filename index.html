@@ -2190,61 +2190,94 @@
     // Resolve a PirateWeather summary string (or icon slug) to an NWS icon URL.
     // Used wherever PirateWeather is the condition source and NWS hasn't supplied an icon.
     // Pass isNight=true to get the night-variant URL.
+    // Maps a PirateWeather summary string (or PW icon slug) to a NWS api.weather.gov icon URL.
+    // Built from the official NWS icon-to-text table at weather.gov/forecast-icons.
     function _pwSummaryIcon(summary, isNight) {
         if (!summary) return null;
-        var dn  = isNight ? 'night' : 'day';
-        var s   = summary.toLowerCase();
+        var dn   = isNight ? 'night' : 'day';
+        var s    = summary.toLowerCase();
         var base = 'https://api.weather.gov/icons/land/' + dn + '/';
-        var sz  = '?size=medium';
-        // Severe / convective — check first so "thunderstorm" beats plain "rain"
-        if (s.includes('tornado'))                                       return base + 'tornado'        + sz;
-        if (s.includes('hurricane'))                                     return base + 'hurricane'      + sz;
-        if (s.includes('tropical storm'))                                return base + 'tropical_storm' + sz;
-        if (s.includes('blizzard'))                                      return base + 'blizzard'       + sz;
-        if (s.includes('thunder') || s.includes('t-storm') ||
-            s.includes('tstm'))                                          return base + 'tsra'           + sz;
-        // Frozen precip
-        if (s.includes('freezing rain') || s.includes('freezing drizzle') ||
-            s.includes('fzra'))                                          return base + 'fzra'           + sz;
-        if (s.includes('rain') && s.includes('snow'))                   return base + 'rain_snow'      + sz;
-        if (s.includes('sleet') || s.includes('ice pellet') ||
-            s.includes('hail'))                                          return base + 'sleet'          + sz;
-        if (s.includes('snow') || s.includes('flurr') ||
-            s.includes('blowing snow'))                                  return base + 'snow'           + sz;
-        // Liquid precip
-        if (s.includes('drizzle') || s.includes('light rain') ||
-            s.includes('sprinkl') || s.includes('mist') ||
-            s.includes('shower'))                                        return base + 'rain_showers'   + sz;
-        if (s.includes('rain'))                                          return base + 'rain'           + sz;
-        // Obscurations
-        if (s.includes('fog'))                                           return base + 'fog'            + sz;
-        if (s.includes('smoke'))                                         return base + 'smoke'          + sz;
-        if (s.includes('haze'))                                          return base + 'haze'           + sz;
-        if (s.includes('dust') || s.includes('sand'))                   return base + 'dust'           + sz;
-        // Wind — pick cloud cover variant when other words give a hint
-        if (s.includes('breezy') || s.includes('windy') ||
-            s.includes('gusty')  || s.includes('blustery')) {
-            if (s.includes('overcast'))                                  return base + 'wind_ovc'       + sz;
-            if (s.includes('mostly cloud') || s.includes('broken'))     return base + 'wind_bkn'       + sz;
-            if (s.includes('partly') || s.includes('scatter'))          return base + 'wind_sct'       + sz;
-            if (s.includes('clear') || s.includes('sunny') ||
-                s.includes('fair'))                                      return base + 'wind_skc'       + sz;
-            return base + 'wind_bkn' + sz;   // default: breezy with some clouds
+        var sz   = '?size=medium';
+
+        // ── Severe / life-threatening ──────────────────────────────────────
+        if (s.includes('tornado'))                                           return base + 'tornado'        + sz;
+        if (s.includes('hurricane'))                                         return base + 'hurricane'      + sz;
+        if (s.includes('tropical storm'))                                    return base + 'tropical_storm' + sz;
+        if (s.includes('blizzard'))                                          return base + 'blizzard'       + sz;
+
+        // ── Thunderstorms — three NWS probability tiers ───────────────────
+        // Must check before rain so "thunderstorm" beats the rain branches.
+        if (s.includes('thunder') || s.includes('t-storm') || s.includes('tstm')) {
+            // Isolated / slight chance / in vicinity → tsra_hi
+            if (s.includes('isolat') || s.includes('slight') ||
+                s.includes('possibl') || s.includes('vicinit'))              return base + 'tsra_hi'        + sz;
+            // Scattered / chance → tsra_sct
+            if (s.includes('scatter') || s.includes('chance'))              return base + 'tsra_sct'       + sz;
+            // Definite / likely → tsra
+            return base + 'tsra' + sz;
         }
-        // Sky cover
-        if (s.includes('overcast'))                                      return base + 'ovc'            + sz;
-        if (s.includes('mostly cloud') || s.includes('broken'))         return base + 'bkn'            + sz;
+
+        // ── Frozen precip ──────────────────────────────────────────────────
+        if (s.includes('freezing rain') || s.includes('freezing drizzle'))  return base + 'fzra'           + sz;
+        if ((s.includes('rain') || s.includes('drizzle')) && s.includes('snow')) return base + 'rain_snow' + sz;
+        if ((s.includes('rain') || s.includes('drizzle')) &&
+            (s.includes('sleet') || s.includes('ice pellet')))              return base + 'rain_sleet'     + sz;
+        if (s.includes('snow') && (s.includes('sleet') || s.includes('ice pellet'))) return base + 'snow_sleet' + sz;
+        if (s.includes('sleet') || s.includes('ice pellet') || s.includes('hail'))   return base + 'sleet'      + sz;
+        if (s.includes('snow') || s.includes('flurr') ||
+            s.includes('blowing snow') || s.includes('snow grain'))          return base + 'snow'           + sz;
+
+        // ── Liquid precip — three NWS probability tiers ───────────────────
+        // Drizzle / sprinkles / possible light = isolated/slight chance → rain_showers_hi
+        if (s.includes('drizzle') || s.includes('sprinkl') || s.includes('possible light'))
+                                                                             return base + 'rain_showers_hi' + sz;
+        // Showers (moderate probability) → rain_showers
+        if (s.includes('shower') || s.includes('light rain'))               return base + 'rain_showers'   + sz;
+        // Definite / likely rain → rain
+        if (s.includes('rain'))                                              return base + 'rain'           + sz;
+
+        // ── Obscurations ───────────────────────────────────────────────────
+        // NWS puts Fog/Mist together in the fog icon (fg); mist is NOT a precip icon.
+        if (s.includes('fog') || s.includes('mist') || s.includes('freezing fog'))
+                                                                             return base + 'fog'            + sz;
+        if (s.includes('smoke'))                                             return base + 'smoke'          + sz;
+        if (s.includes('haze'))                                              return base + 'haze'           + sz;
+        if (s.includes('dust') || s.includes('sand'))                       return base + 'dust'           + sz;
+
+        // ── Wind ───────────────────────────────────────────────────────────
+        // NWS distinction: "Breezy" with a cloud modifier uses the *plain* sky icon
+        // (e.g. "Partly Cloudy and Breezy" → sct). Standalone "Breezy" → wind_skc.
+        // "Windy" always uses the wind_ icon variants.
+        if (s.includes('breezy') || s.includes('blustery')) {
+            if (s.includes('overcast'))                                      return base + 'ovc'            + sz;
+            if (s.includes('mostly cloud') || s.includes('broken'))         return base + 'bkn'            + sz;
+            if (s.includes('partly') || s.includes('scatter'))              return base + 'sct'            + sz;
+            if (s.includes('few cloud') || s.includes('a few'))             return base + 'few'            + sz;
+            return base + 'wind_skc' + sz;   // standalone breezy = fair and breezy
+        }
+        if (s.includes('windy') || s.includes('gusty')) {
+            if (s.includes('overcast'))                                      return base + 'wind_ovc'       + sz;
+            if (s.includes('mostly cloud') || s.includes('broken'))         return base + 'wind_bkn'       + sz;
+            if (s.includes('partly') || s.includes('scatter'))              return base + 'wind_sct'       + sz;
+            if (s.includes('few cloud') || s.includes('a few'))             return base + 'wind_few'       + sz;
+            return base + 'wind_skc' + sz;
+        }
+
+        // ── Sky cover ──────────────────────────────────────────────────────
+        if (s.includes('overcast'))                                          return base + 'ovc'            + sz;
+        if (s.includes('mostly cloud') || s.includes('broken'))             return base + 'bkn'            + sz;
         if (s.includes('partly cloud') || s.includes('partly sunny') ||
-            s.includes('scatter'))                                       return base + 'sct'            + sz;
+            s.includes('scatter'))                                           return base + 'sct'            + sz;
         if (s.includes('mostly clear') || s.includes('few cloud') ||
-            s.includes('a few cloud'))                                   return base + 'few'            + sz;
-        if (s.includes('clear') || s.includes('sunny') ||
-            s.includes('fair'))                                          return base + 'skc'            + sz;
-        if (s.includes('cloud') || s.includes('cloudy'))                return base + 'ovc'            + sz;
-        // Extremes
-        if (s.includes('hot'))                                           return base + 'hot'            + sz;
+            s.includes('a few cloud'))                                       return base + 'few'            + sz;
+        if (s.includes('clear') || s.includes('sunny') || s.includes('fair')) return base + 'skc'         + sz;
+        if (s.includes('cloud') || s.includes('cloudy'))                    return base + 'ovc'            + sz;
+
+        // ── Extremes ───────────────────────────────────────────────────────
+        if (s.includes('hot'))                                               return base + 'hot'            + sz;
         if (s.includes('cold') || s.includes('frigid') ||
-            s.includes('arctic') || s.includes('bitter'))               return base + 'cold'           + sz;
+            s.includes('arctic') || s.includes('bitter'))                   return base + 'cold'           + sz;
+
         return null;
     }
 
