@@ -3420,7 +3420,7 @@
             if (curr.windSpeed != null && curr.windSpeed < 0)                        { curr.windSpeed = null;           _currSentinelBad = true; }
             if (curr.windGust != null && curr.windGust < 0)                          { curr.windGust = null;            _currSentinelBad = true; }
             if (curr.windBearing != null && curr.windBearing < 0)                    { curr.windBearing = null;         _currSentinelBad = true; }
-            if (curr.humidity != null && curr.humidity < 0)                          { curr.humidity = null;            _currSentinelBad = true; }
+            if (curr.humidity != null && (!isFinite(curr.humidity) || curr.humidity < 0 || curr.humidity > 1)) { curr.humidity = null; _currSentinelBad = true; } // NaN/Inf or out of [0,1] fraction range
             if (curr.dewPoint != null && curr.dewPoint < -200)                       { curr.dewPoint = null;            _currSentinelBad = true; }
             if (curr.temperature != null && curr.temperature < -200)                 { curr.temperature = null;         _currSentinelBad = true; }
             if (curr.apparentTemperature != null && curr.apparentTemperature < -200) { curr.apparentTemperature = null; _currSentinelBad = true; }
@@ -3449,6 +3449,7 @@
             // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
             (function() {
                 var T = temp, W = liveWindSpd, RH = humidity, fl = T;
+                RH = isFinite(RH) ? Math.min(100, Math.max(0, RH)) : 50; // clamp: Rothfusz polynomial is undefined outside [0,100]; NaN → 50
                 if (T <= 50 && W >= 3) {
                     // NWS Wind Chill formula
                     fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
@@ -4282,6 +4283,10 @@
                 if (_pwTempPre !== null && Math.abs(n.temp - _pwTempPre) > 20) return false;
                 return true;
             });
+            // Hard validity guard: WU returns humidity as 0-100 integer percent.
+            // Values outside [0, 100] are sensor glitches (e.g. 104%) — null them out
+            // so this station is treated as unavailable regardless of neighbor comparison.
+            if (_wu && _wu.humidity !== null && (!isFinite(_wu.humidity) || _wu.humidity < 0 || _wu.humidity > 100)) { _wu.humidity = null; }
             const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
             // Neighbor medians
             let _neighborMedianTemp = null, _neighborMedianHum = null;
@@ -4357,6 +4362,7 @@
                     var _humEl = document.getElementById('humVal');
                     var _humFallback = (_humEl && _humEl.innerText) ? parseInt(_humEl.innerText) : 50;
                     var RH = (nwsObsHumidity !== null) ? nwsObsHumidity : _humFallback;
+                    RH = isFinite(RH) ? Math.min(100, Math.max(0, RH)) : 50; // clamp: Rothfusz polynomial is undefined outside [0,100]; NaN → 50
                     if (T <= 50 && W >= 3) {
                         fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
                     } else if (T >= 70) {
@@ -4397,6 +4403,7 @@
                 document.getElementById('wuStation').style.display = 'block';
                 (function() {
                     var T = _wuT, W = liveWindSpd, RH = _wuH, fl = T;
+                    RH = isFinite(RH) ? Math.min(100, Math.max(0, RH)) : 50; // clamp: Rothfusz polynomial is undefined outside [0,100]; NaN → 50
                     if (T <= 50 && W >= 3) {
                         fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
                     } else if (T >= 70) {
