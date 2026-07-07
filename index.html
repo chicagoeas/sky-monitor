@@ -2721,12 +2721,15 @@
         var _nws6hAvg = window.nwsObsPrecip6h != null ? window.nwsObsPrecip6h / 6 : null;
         var _nwsPrecipAvail = !window.isOutsideUS && (_nws1h != null || _nws3hAvg != null || _nws6hAvg != null);
         var _nwsBest = Math.max(_nws1h || 0, _nws3hAvg || 0, _nws6hAvg || 0);
-        var lpi = Math.max(0, _nwsPrecipAvail ? Math.max(_nwsBest, window.livePrecipInt || 0) : (window.livePrecipInt || 0));
+        // Always include the WU live gauge rate — it's a physical tipping-bucket reading and
+        // more reliable than the PirateWeather model for tropical/extreme events.
+        var _wuRate = window.wuPrecipRate || 0;
+        var lpi = Math.max(0, _wuRate, _nwsPrecipAvail ? Math.max(_nwsBest, window.livePrecipInt || 0) : (window.livePrecipInt || 0));
 
         // Hard rule: >2 in/hr → instant SEVERE 100
         if (lpi > 2.0) {
             _setFloodDisplay(100, 'SEVERE');
-            if (descEl) descEl.innerText = 'Extreme rainfall rate (>' + lpi.toFixed(1) + '\u201d/hr) — flash flooding imminent. Seek higher ground now.';
+            if (descEl) descEl.innerText = 'Extreme rainfall rate (' + lpi.toFixed(1) + '\u201d/hr) — flash flooding imminent. Seek higher ground now.';
             return;
         }
 
@@ -3394,6 +3397,10 @@
             // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
             const useWU = wuAvailable;
             window.wuData = wu || null;
+            // Store WU live gauge rain rate independently of temp/humidity QC — a tipping-bucket
+            // gauge is accurate even when the temp sensor is solar-biased, and PirateWeather's
+            // model badly under-reports tropical cyclone rainfall. Used by computeFloodImpact().
+            window.wuPrecipRate = (wu && wu.precipRate != null && wu.precipRate >= 0 && wu.precipRate <= 20) ? wu.precipRate : null;
             window.wuNeighborData = wuStations.slice(1).filter(function(s) { return s != null; });
             window.wuElevFt = (wu && wu.elev != null) ? wu.elev : null;
             window.wuDeviates = false; // reset; fetchNWSChain sets this based on wuData availability
@@ -3486,7 +3493,7 @@
             }
             lastPressureMb = curr.pressure;
             document.getElementById('presVal').innerHTML = (_isMetric() ? Math.round(curr.pressure) + ' hPa' : presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
-            const MAX_PRECIP_INTENSITY = 2.0; // in/hr sanity cap (guards against PirateWeather data glitches)
+            const MAX_PRECIP_INTENSITY = 15.0; // in/hr sanity cap — raised from 2.0; Super Typhoons can exceed 5-10"/hr and PW data should not be clipped
             let precip1h = 0;
             if (d.minutely?.data?.length) { precip1h = d.minutely.data.reduce(function(sum, m) { return sum + (Math.min(m.precipIntensity || 0, MAX_PRECIP_INTENSITY) / 60); }, 0); }
             else precip1h = Math.min(d.hourly?.data?.[0]?.precipAccumulation || 0, MAX_PRECIP_INTENSITY);
