@@ -860,11 +860,11 @@
                 <div style="border-top:1px solid rgba(255,255,255,0.08); margin:4px 0 10px;"></div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">Show reports up to 48h old</span>
-                    <label class="ios-toggle"><input type="checkbox" id="show-older-reports" onchange="loadMapReports()"><span class="ios-toggle-track"></span></label>
+                    <label class="ios-toggle"><input type="checkbox" id="show-older-reports" onchange="onShowOlderReportsChange()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-size:0.82em; color:#ccc;">Privacy Mode</span>
-                    <label class="ios-toggle"><input type="checkbox" id="privacy-mode-cb"><span class="ios-toggle-track"></span></label>
+                    <label class="ios-toggle"><input type="checkbox" id="privacy-mode-cb" onchange="onPrivacyModeChange()"><span class="ios-toggle-track"></span></label>
                 </div>
             </div>
 
@@ -953,7 +953,8 @@
             var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
                         'skymonitor_swipe','pref_alert_enabled','pref_alert_type','pref_rain_enabled',
                         'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd',
-                        'report_radar_on','report_alerts_on','report_lsr_on'];
+                        'report_radar_on','report_alerts_on','report_lsr_on',
+                        'report_show_older','report_privacy_mode'];
             get(S.settings, '__migrated_v1').then(function(done) {
                 if (done) return;
                 keys.forEach(function(k) {
@@ -6156,6 +6157,20 @@
         }, { enableHighAccuracy: true, timeout: 8000 });
     }
 
+    function onPrivacyModeChange() {
+        const cb = document.getElementById('privacy-mode-cb');
+        const isOn = cb ? cb.checked : false;
+        localStorage.setItem('report_privacy_mode', isOn ? '1' : '0');
+        // When turned ON, immediately re-locate using the privacy-mode snapping
+        if (isOn) findMeReporting();
+    }
+
+    function onShowOlderReportsChange() {
+        const cb = document.getElementById('show-older-reports');
+        localStorage.setItem('report_show_older', cb && cb.checked ? '1' : '0');
+        loadMapReports();
+    }
+
     function applyPrivacyOffset(rawLat, rawLon) {
         const offsetMeters = 150 + Math.random() * 100;
         const angle = Math.random() * 2 * Math.PI;
@@ -6227,6 +6242,11 @@
             const cb = document.getElementById('lsr-toggle-cb');
             if (cb) cb.checked = false;
         }
+        // Restore persisted states for show-older-reports and privacy-mode
+        const _showOlderCb = document.getElementById('show-older-reports');
+        if (_showOlderCb) _showOlderCb.checked = localStorage.getItem('report_show_older') === '1';
+        const _privacyCb = document.getElementById('privacy-mode-cb');
+        if (_privacyCb) _privacyCb.checked = localStorage.getItem('report_privacy_mode') === '1';
         userReportLayer = L_ref.markerClusterGroup({
             maxClusterRadius: 40,
             iconCreateFunction: function(cluster) {
