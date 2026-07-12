@@ -5554,7 +5554,7 @@
             ].filter(Boolean);
             html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="https://www.wunderground.com/static/i/c/v4/' + (icons[part] ? icons[part] : '50') + '.svg" style="width:64px;height:64px;margin:0 auto;"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (_isMetric() ? (qpf[part] * 25.4).toFixed(1) + ' mm' : qpf[part] + '"') : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
-        html += '<hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
+        html += '<div id="twc-hourly-section"><hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div></div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
 
         document.getElementById('twc-prev-btn').onclick = function(e) { e.stopPropagation(); openTWCDetailModal(data, (dayIdx - 1 + data.dayOfWeek.length) % data.dayOfWeek.length); };
@@ -5587,24 +5587,30 @@
         }
         inner._currentDayIdx = dayIdx;
 
-        if (window.pirateHourlyData) {
-            const baseDate = data.validTimeLocal?.[dayIdx]?.split('T')[0];
-            if (baseDate) {
-                const offsetHours = window.pirateTimezoneOffset || 0;
-                const currentUnix = Math.floor(Date.now() / 1000);
-                const hoursForDay = window.pirateHourlyData.filter(function(h) {
-                    if (h.time < currentUnix - 3600) return false;
-                    const jsdate = new Date((h.time + (offsetHours * 3600)) * 1000).toISOString().split('T')[0];
-                    return jsdate === baseDate;
-                });
-                const holder = document.getElementById('twc-hourly-placeholder');
-                if (holder) {
-                    const tempCont = document.createElement('div'); tempCont.className = 'forecast-scroll';
-                    renderPirateHourly(hoursForDay, offsetHours, tempCont);
-                    holder.innerHTML = ''; holder.appendChild(tempCont);
-                }
+        (function() {
+            const holder = document.getElementById('twc-hourly-placeholder');
+            const hourlySection = document.getElementById('twc-hourly-section');
+            function _hideHourly() {
+                if (hourlySection) hourlySection.style.display = 'none';
+                if (holder) holder.style.display = 'none';
             }
-        }
+            if (!window.pirateHourlyData) { _hideHourly(); return; }
+            const baseDate = data.validTimeLocal?.[dayIdx]?.split('T')[0];
+            if (!baseDate) { _hideHourly(); return; }
+            const offsetHours = window.pirateTimezoneOffset || 0;
+            const currentUnix = Math.floor(Date.now() / 1000);
+            const hoursForDay = window.pirateHourlyData.filter(function(h) {
+                if (h.time < currentUnix - 3600) return false;
+                const jsdate = new Date((h.time + (offsetHours * 3600)) * 1000).toISOString().split('T')[0];
+                return jsdate === baseDate;
+            });
+            if (!hoursForDay.length) { _hideHourly(); return; }
+            if (holder) {
+                const tempCont = document.createElement('div'); tempCont.className = 'forecast-scroll';
+                renderPirateHourly(hoursForDay, offsetHours, tempCont);
+                holder.innerHTML = ''; holder.appendChild(tempCont);
+            }
+        })();
     }
 
     function computeHourComfort(h) {
