@@ -2323,10 +2323,17 @@
     }
 
     function computeOutdoorScore(hourlyData) {
-        // Only show outdoor section 6 AM – 6 PM at the weather station's local time
-        const _stationNowMs = Date.now() + (stationTzOffset * 1000);
-        const currentHour = new Date(_stationNowMs).getUTCHours();
-        const _isDaytime = currentHour >= 6 && currentHour < 18;
+        // Only show outdoor section between sunrise and sunset at the weather station's local time
+        const _isDaytime = (function() {
+            const _nowMs = Date.now();
+            if (window._polarState === 'day') return true;
+            if (window._polarState === 'night') return false;
+            if (localRiseTime && localSetTime) return _nowMs >= localRiseTime && _nowMs <= localSetTime;
+            // fallback if sunrise/sunset not yet loaded: use 6 AM – 6 PM
+            const _stationNowMs = _nowMs + (stationTzOffset * 1000);
+            const _fallbackHour = new Date(_stationNowMs).getUTCHours();
+            return _fallbackHour >= 6 && _fallbackHour < 18;
+        })();
         var _oBox = document.getElementById('outdoor-score-box');
         if (!_isDaytime) {
             if (_oBox) _oBox.style.display = 'none';
