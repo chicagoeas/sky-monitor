@@ -1807,6 +1807,17 @@
         if (lnk) lnk.href = fullUrl;
     }
 
+    // Computes the moon's illumination phase (0 = new, 0.5 = full, 1 = new again)
+    // directly from the synodic month length — no network call, so it never fails.
+    function computeMoonPhase(date) {
+        var synodicMonth = 29.53058867; // days
+        var knownNewMoon = Date.UTC(2000, 0, 6, 18, 14, 0); // a reference new moon
+        var daysSince = (date.getTime() - knownNewMoon) / 86400000;
+        var phase = (daysSince % synodicMonth) / synodicMonth;
+        if (phase < 0) phase += 1;
+        return phase;
+    }
+
     function getMoonPhaseName(phase) {
         if (phase === 0 || phase === 1) return 'New \uD83C\uDF11';
         if (phase > 0 && phase < 0.25) return 'Waxing Cresc \uD83C\uDF12';
@@ -4017,24 +4028,14 @@
         document.getElementById('storm-toa').innerText = 'N/A';
         updateRadarUI(null, null);
 
-        // Moon phase: Open-Meteo doesn't provide this — fetch from OpenWeather One Call 2.5.
-        // moon_phase 0–1 convention matches PirateWeather exactly (0=new, 0.5=full).
-        window._syncPending++;
-        (async function() {
-            try {
-                var owMoonRes = await fetch('https://api.openweathermap.org/data/2.5/onecall?lat=' + lat + '&lon=' + lon + '&appid=' + OW_API_KEY + '&exclude=current,minutely,hourly,alerts');
-                if (!owMoonRes.ok) throw new Error('OW onecall ' + owMoonRes.status);
-                var owMoonData = await owMoonRes.json();
-                var phase = owMoonData.daily && owMoonData.daily[0] && owMoonData.daily[0].moon_phase != null
-                    ? owMoonData.daily[0].moon_phase : null;
-                if (phase != null) {
-                    moonPhaseVal = phase;
-                    document.getElementById('moonVal').innerText = getMoonPhaseName(phase);
-                }
-            } catch(e) { /* silent — moon display stays at '--' */ }
-            window._syncPending = Math.max(0, window._syncPending - 1);
-            window._maybeHideSync();
-        })();
+        // Moon phase: Open-Meteo doesn't provide this, and OpenWeather's moon-phase field
+        // only lives behind One Call (2.5 is deprecated for this key, 3.0 needs a paid
+        // subscription), so an API-based backup here would just fail again. Instead,
+        // compute it directly from a standard synodic-month formula — this can't go down.
+        // 0–1 convention matches PirateWeather exactly (0=new, 0.5=full).
+        var phase = computeMoonPhase(new Date());
+        moonPhaseVal = phase;
+        document.getElementById('moonVal').innerText = getMoonPhaseName(phase);
 
         // UV
         const uv = fakeCurr.uvIndex || 0;
