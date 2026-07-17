@@ -623,6 +623,7 @@
         <div id="twc-section" style="margin-bottom:15px;">
             <div class="sky-hd">Daily Forecast</div>
             <div id="twc-daily-forecast" class="forecast-scroll"></div>
+            <div id="daily-summary" style="font-size:0.88em; color:var(--accent); margin-top:8px; min-height:1em;"></div>
         </div>
 
         <!-- Outdoor Score — daytime only (6 AM – 6 PM) -->
@@ -5463,6 +5464,118 @@
 
     let twcMaxFeelsLike = null;
 
+    function buildDailySummary(data) {
+        var dp    = data.daypart[0];
+        var highs = data.calendarDayTemperatureMax || [];
+        var days  = data.dayOfWeek || [];
+        var n     = Math.min(days.length, 5);
+
+        function dayLabel(i) {
+            if (i === 0) return 'today';
+            if (i === 1) return 'tomorrow';
+            return days[i] || ('day ' + (i + 1));
+        }
+        function maxPrecipChance(i) {
+            return Math.max(dp.precipChance?.[i * 2] ?? 0, dp.precipChance?.[i * 2 + 1] ?? 0);
+        }
+        function totalQpf(i) {
+            return (dp.qpf?.[i * 2] ?? 0) + (dp.qpf?.[i * 2 + 1] ?? 0);
+        }
+        function totalSnow(i) {
+            return (dp.qpfSnow?.[i * 2] ?? 0) + (dp.qpfSnow?.[i * 2 + 1] ?? 0);
+        }
+        function wxText(i) {
+            return ((dp.wxPhraseLong?.[i * 2] || '') + ' ' + (dp.wxPhraseLong?.[i * 2 + 1] || '')).toLowerCase();
+        }
+        function fmtT(f) {
+            if (f == null) return '--°';
+            return _isMetric() ? Math.round((f - 32) * 5 / 9) + '°' : Math.round(f) + '°';
+        }
+        function fmtRain(inches) {
+            return _isMetric() ? (inches * 25.4).toFixed(0) + ' mm' : inches.toFixed(2) + '"';
+        }
+        function fmtSnow(inches) {
+            return _isMetric() ? (inches * 25.4).toFixed(0) + ' mm' : inches.toFixed(1) + '"';
+        }
+
+        var s1 = null, s2 = null;
+
+        // ── Priority 1: Snow ─────────────────────────────────────────────────
+        for (var i = 0; i < n && !s1; i++) {
+            var snow = totalSnow(i);
+            var wx   = wxText(i);
+            if (snow >= 0.1 || wx.includes('snow') || wx.includes('blizzard') || wx.includes('flurr')) {
+                var label = snow >= 2 ? 'Heavy snow' : snow >= 0.1 ? 'Snow' : 'Snow showers';
+                s1 = label + ' expected ' + dayLabel(i) + (snow >= 0.5 ? ' (' + fmtSnow(snow) + ' possible).' : '.');
+            }
+        }
+
+        // ── Priority 2: Thunderstorms ────────────────────────────────────────
+        for (var i = 0; i < n && !s1; i++) {
+            var wx = wxText(i);
+            if (wx.includes('thunder') || wx.includes('t-storm') || wx.includes('tstorm')) {
+                s1 = 'Thunderstorms possible ' + dayLabel(i) + '.';
+            }
+        }
+
+        // ── Priority 3: Heavy rain (≥70% chance or ≥0.5" QPF) ───────────────
+        for (var i = 0; i < n && !s1; i++) {
+            var pc  = maxPrecipChance(i);
+            var amt = totalQpf(i);
+            if (pc >= 70 || amt >= 0.5) {
+                s1 = 'Heavy rain likely ' + dayLabel(i) + (amt >= 0.25 ? ' (' + fmtRain(amt) + ' possible).' : '.');
+            }
+        }
+
+        // ── Priority 4: Rain / showers (≥40% chance) ────────────────────────
+        if (!s1) {
+            var rainDays = [];
+            for (var i = 0; i < n; i++) { if (maxPrecipChance(i) >= 40) rainDays.push(i); }
+            if (rainDays.length === 1) {
+                s1 = 'Rain possible ' + dayLabel(rainDays[0]) + '.';
+            } else if (rainDays.length === 2) {
+                s1 = 'Rain possible ' + dayLabel(rainDays[0]) + ' and ' + dayLabel(rainDays[1]) + '.';
+            } else if (rainDays.length >= 3) {
+                s1 = 'Unsettled and rainy pattern through ' + dayLabel(rainDays[rainDays.length - 1]) + '.';
+            }
+        }
+
+        // ── Temperature trend (used as s2 if s1 exists, or s1 as last resort) ──
+        var todayHigh    = highs[0];
+        var tomorrowHigh = highs[1];
+        var lastHigh     = highs[n - 1];
+        var singleDelta  = (todayHigh != null && tomorrowHigh != null) ? tomorrowHigh - todayHigh : 0;
+        var trendDelta   = (todayHigh != null && lastHigh != null)     ? lastHigh - todayHigh     : 0;
+        var tempSentence = null;
+
+        if (Math.abs(singleDelta) >= 12) {
+            // Big overnight jump is more newsworthy than a slow trend
+            var mag = Math.abs(singleDelta) >= 20 ? 'much ' : Math.abs(singleDelta) >= 15 ? 'significantly ' : 'noticeably ';
+            var dir = singleDelta > 0 ? 'warmer' : 'cooler';
+            tempSentence = 'Tomorrow will be ' + mag + dir + ' than today (' + fmtT(todayHigh) + ' \u2192 ' + fmtT(tomorrowHigh) + ').';
+        } else if (Math.abs(trendDelta) >= 8 && n >= 3) {
+            var endLabel = dayLabel(n - 1);
+            tempSentence = trendDelta > 0
+                ? 'A warming trend builds through ' + endLabel + ' (up to ' + fmtT(lastHigh) + ').'
+                : 'Temperatures cool through ' + endLabel + ' (dropping to ' + fmtT(lastHigh) + ').';
+        }
+
+        if (tempSentence) {
+            if (!s1) s1 = tempSentence; else s2 = tempSentence;
+        }
+
+        // ── Fallback: dry / quiet ────────────────────────────────────────────
+        if (!s1) {
+            var anyPrecip = false;
+            for (var i = 0; i < n; i++) { if (maxPrecipChance(i) >= 25) { anyPrecip = true; break; } }
+            s1 = anyPrecip
+                ? 'Mainly quiet weather expected through ' + dayLabel(n - 1) + '.'
+                : 'Dry conditions expected through ' + dayLabel(n - 1) + '.';
+        }
+
+        return s2 ? s1 + ' ' + s2 : s1;
+    }
+
     function renderTWCForecast(data) {
         const cont = document.getElementById('twc-daily-forecast'); cont.innerHTML = '';
         if (!data || !Array.isArray(data.dayOfWeek) || !data.dayOfWeek.length || !data.daypart || !Array.isArray(data.daypart[0].iconCode)) {
@@ -5505,6 +5618,10 @@
             }
             cont.appendChild(card);
         }
+
+        // Daily outlook summary — sits beneath the forecast strip
+        var summEl = document.getElementById('daily-summary');
+        if (summEl) summEl.innerText = buildDailySummary(data);
     }
 
     let _twcData = null;
