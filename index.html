@@ -6816,12 +6816,16 @@
                            String(localNow.getUTCMonth() + 1).padStart(2, '0') + '-' +
                            String(localNow.getUTCDate()).padStart(2, '0');
             var base   = 'https://www.airnowapi.org/aq/';
-            var coords = 'latitude=' + curLat + '&longitude=' + curLon + '&distance=50&API_KEY=' + AIRNOW_KEY;
-            var [obsRes, fcstRes] = await Promise.all([
-                fetch(base + 'observation/latLong/current/?format=application/json&' + coords),
-                fetch(base + 'forecast/latLong/?format=application/json&' + coords + '&date=' + todayStr)
-            ]);
-            var obsData  = obsRes.ok  ? await obsRes.json()  : [];
+            var coordsFcst = 'latitude=' + curLat + '&longitude=' + curLon + '&distance=200&API_KEY=' + AIRNOW_KEY;
+            // Try 50 miles first; if no stations found, widen to 200 miles
+            var obsData;
+            for (var dist of [50, 100, 200]) {
+                var coords = 'latitude=' + curLat + '&longitude=' + curLon + '&distance=' + dist + '&API_KEY=' + AIRNOW_KEY;
+                var obsRes = await fetch(base + 'observation/latLong/current/?format=application/json&' + coords);
+                obsData = obsRes.ok ? await obsRes.json() : [];
+                if (obsData && obsData.length > 0) break;
+            }
+            var fcstRes  = await fetch(base + 'forecast/latLong/?format=application/json&' + coordsFcst + '&date=' + todayStr);
             var fcstData = fcstRes.ok ? await fcstRes.json() : [];
             _renderAQIData(obsData, fcstData);
         } catch(e) {
