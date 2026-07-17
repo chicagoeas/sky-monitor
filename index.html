@@ -762,8 +762,8 @@
         <div id="aqi-section" class="toolkit-box" style="margin-bottom:20px; display:none;">
             <div class="toolkit-header"><span>&#x1F32B;&#xFE0F; AIR QUALITY INDEX</span></div>
             <div style="display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap;">
-                <div style="flex-shrink:0; text-align:center;">
-                    <canvas id="aqi-dial-canvas" width="290" height="162" style="display:block; margin:0 auto; max-width:100%;"></canvas>
+                <div style="flex: 0 1 290px; min-width:0; text-align:center;">
+                    <canvas id="aqi-dial-canvas" width="290" height="162" style="display:block; margin:0 auto; max-width:100%; height:auto;"></canvas>
                     <div id="air-num" style="font-size:2em; font-weight:900; margin-top:4px; letter-spacing:-1px; color:white;">--</div>
                     <div id="air-cat" style="font-size:0.72em; font-weight:700; opacity:0.9; margin-top:2px;">Loading...</div>
                     <div id="air-poll" style="font-size:0.6em; color:var(--primary); margin-top:4px; opacity:0.8;">--</div>
@@ -6754,10 +6754,14 @@
         var outerR = 128, innerR = 100;
         ctx.clearRect(0, 0, W, H);
 
-        // AQI → angle: 0=left(π), 500=right(0)
+        // aqiAngle uses MATH convention (y-up): AQI 0 → π (left), AQI 500 → 0 (right).
+        // The needle uses cy - r*sin(angle) so math angles point upward correctly.
+        // ctx.arc() uses CANVAS convention (y-down), so we negate: canvas_angle = -math_angle.
+        // To draw a band in the UPPER semicircle: CCW from -ea to -sa on the outer circle,
+        // then CW from -sa to -ea on the inner circle.
         function aqiAngle(v) { return Math.PI - (Math.min(Math.max(v, 0), 500) / 500) * Math.PI; }
 
-        // Colored arc bands
+        // Colored arc bands — drawn in the UPPER semicircle using negated angles
         var bands = [
             {from:0,   to:50,  color:'#00e400'},
             {from:50,  to:100, color:'#ffff00'},
@@ -6767,25 +6771,26 @@
             {from:300, to:500, color:'#7e0023'},
         ];
         bands.forEach(function(b) {
-            var sa = aqiAngle(b.from), ea = aqiAngle(b.to);
+            var sa = aqiAngle(b.from);  // math angle for "from" (larger, left side)
+            var ea = aqiAngle(b.to);    // math angle for "to"   (smaller, right side)
             ctx.beginPath();
-            ctx.arc(cx, cy, outerR, ea, sa, false);
-            ctx.arc(cx, cy, innerR, sa, ea, true);
+            ctx.arc(cx, cy, outerR, -ea, -sa, true);   // CCW on outer circle (upper area)
+            ctx.arc(cx, cy, innerR, -sa, -ea, false);  // CW  on inner circle (upper area)
             ctx.closePath();
             ctx.fillStyle = b.color;
             ctx.fill();
         });
 
-        // Dark inner semicircle
+        // Dark inner half-disk covering the upper semicircle within innerR
+        // arc: CW from -π to 0 traces the upper semicircle (through -π/2 = top)
         ctx.beginPath();
-        ctx.arc(cx, cy, innerR - 2, Math.PI, 0, false);
-        ctx.lineTo(cx + innerR - 2, cy);
-        ctx.lineTo(cx - (innerR - 2), cy);
-        ctx.closePath();
+        ctx.arc(cx, cy, innerR, -Math.PI, 0, false);
+        ctx.closePath();  // chord from (cx+innerR,cy) back to (cx-innerR,cy)
         ctx.fillStyle = 'rgba(8,16,26,0.96)';
         ctx.fill();
 
         // Tick marks and labels at band boundaries
+        // Positions use math convention: (cx + r*cosA, cy - r*sinA) → upper area
         var ticks = [
             {v:50,  label:'50'},
             {v:100, label:'100'},
@@ -6796,7 +6801,6 @@
         ticks.forEach(function(t) {
             var a = aqiAngle(t.v);
             var cosA = Math.cos(a), sinA = Math.sin(a);
-            // Tick line spanning the arc ring
             var tx1 = cx + (innerR + 1) * cosA, ty1 = cy - (innerR + 1) * sinA;
             var tx2 = cx + (outerR - 1) * cosA, ty2 = cy - (outerR - 1) * sinA;
             ctx.beginPath();
@@ -6805,7 +6809,6 @@
             ctx.strokeStyle = 'rgba(8,16,26,0.75)';
             ctx.lineWidth = 1.8;
             ctx.stroke();
-            // Label just outside the arc
             var lx = cx + (outerR + 12) * cosA;
             var ly = cy - (outerR + 12) * sinA;
             ctx.save();
@@ -6817,15 +6820,14 @@
             ctx.restore();
         });
 
-        // Category text inside dark area (AirNow style)
+        // Category label inside the dark area (AirNow style)
         if (catLabel) {
             ctx.save();
-            var centerY = cy - (innerR - 2) * 0.42;
-            var maxLineW = (innerR - 2) * 1.75;
+            var centerY = cy - (innerR) * 0.42;
+            var maxLineW = innerR * 1.7;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             var words = catLabel.split(' ');
-            // Find a font size that fits (max 14px)
             var fontSize = 14;
             ctx.font = 'bold ' + fontSize + 'px sans-serif';
             while (ctx.measureText(catLabel).width > maxLineW && fontSize > 8) {
@@ -6834,7 +6836,6 @@
             }
             ctx.fillStyle = catColor || '#ffffff';
             if (ctx.measureText(catLabel).width > maxLineW && words.length > 1) {
-                // Two-line wrap
                 var mid = Math.ceil(words.length / 2);
                 var line1 = words.slice(0, mid).join(' ');
                 var line2 = words.slice(mid).join(' ');
@@ -6846,7 +6847,7 @@
             ctx.restore();
         }
 
-        // Needle
+        // Needle — uses math convention: cy - nLen*sin(angle) → points upward
         var angle = aqiAngle(Math.min(aqi, 500));
         var nLen = innerR - 10;
         ctx.save();
@@ -6860,7 +6861,7 @@
         ctx.stroke();
         ctx.restore();
 
-        // Center pivot (outer white ring + dark core)
+        // Center pivot
         ctx.beginPath();
         ctx.arc(cx, cy, 5.5, 0, Math.PI * 2);
         ctx.fillStyle = 'white';
