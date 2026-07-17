@@ -758,6 +758,23 @@
             </div>
         </div>
 
+        <!-- AIR QUALITY INDEX -->
+        <div id="aqi-section" class="toolkit-box" style="margin-bottom:20px; display:none;">
+            <div class="toolkit-header"><span>&#x1F32B;&#xFE0F; AIR QUALITY INDEX</span></div>
+            <div style="display:flex; align-items:center; gap:20px; flex-wrap:wrap;">
+                <div style="flex-shrink:0; text-align:center; min-width:170px;">
+                    <canvas id="aqi-dial-canvas" width="200" height="110" style="display:block; margin:0 auto;"></canvas>
+                    <div id="air-num" style="font-size:2em; font-weight:900; margin-top:2px; letter-spacing:-1px; color:white;">--</div>
+                    <div id="air-cat" style="font-size:0.72em; font-weight:700; opacity:0.9; margin-top:2px;">Loading...</div>
+                    <div id="air-poll" style="font-size:0.6em; color:var(--primary); margin-top:4px; opacity:0.8;">--</div>
+                </div>
+                <div style="flex:1; min-width:130px; display:flex; flex-direction:column; gap:10px; padding:4px 0;">
+                    <div id="air-trend" style="font-size:0.87em; line-height:1.65; color:#e2e8f0;">Fetching 48-hour forecast...</div>
+                    <div id="air-health" style="font-size:0.73em; color:#94a3b8; line-height:1.55; border-top:1px solid rgba(255,255,255,0.07); padding-top:8px;"></div>
+                </div>
+            </div>
+        </div>
+
         <div class="toolkit-box" style="text-align:center; padding-bottom:20px;">
             <div class="toolkit-header" style="justify-content:center; margin-bottom:5px;"><span>ASTRONOMY &amp; ORBIT</span></div>
             <div id="station-clock" style="font-family:monospace; font-size:1.4em; color:var(--accent); margin-bottom:15px; font-weight:bold; letter-spacing:1px;">00:00:00</div>
@@ -6711,6 +6728,167 @@
 
     }
 
+    // ─── AIR QUALITY (Open-Meteo Air Quality API) ────────────────────────────
+    var _aqiLastFetch = 0; var _aqiLastLat = null; var _aqiLastLon = null;
+
+    function _aqiInfo(aqi) {
+        if (aqi == null) return {cat:'Unknown', color:'#888', health:''};
+        if (aqi <= 50)  return {cat:'Good', color:'#00e400', health:'Air quality is satisfactory and poses little or no risk.'};
+        if (aqi <= 100) return {cat:'Moderate', color:'#ffff00', health:'Acceptable air quality. Unusually sensitive individuals may notice minor effects.'};
+        if (aqi <= 150) return {cat:'Unhealthy for Sensitive Groups', color:'#ff7e00', health:'Sensitive groups (elderly, children, heart/lung conditions) may experience health effects. General public is unlikely to be affected.'};
+        if (aqi <= 200) return {cat:'Unhealthy', color:'#ff0000', health:'Everyone may begin to experience health effects. Sensitive groups may experience more serious effects. Reduce prolonged outdoor exertion.'};
+        if (aqi <= 300) return {cat:'Very Unhealthy', color:'#8f3f97', health:'Health alert — everyone may experience more serious health effects. Avoid prolonged outdoor exertion. Sensitive groups should remain indoors.'};
+        return {cat:'Hazardous', color:'#7e0023', health:'Emergency health conditions. The entire population is likely to be affected. Avoid all outdoor exertion. Sensitive groups should stay indoors with windows closed.'};
+    }
+
+    function _renderAQIDial(aqi) {
+        var canvas = document.getElementById('aqi-dial-canvas');
+        if (!canvas || !canvas.getContext) return;
+        var ctx = canvas.getContext('2d');
+        var W = canvas.width, H = canvas.height;
+        var cx = W / 2, cy = H - 8;
+        var outerR = H - 14, innerR = H - 32;
+        ctx.clearRect(0, 0, W, H);
+
+        // AQI → angle: 0 → π (left side), 500 → 0 (right side)
+        function aqiAngle(v) { return Math.PI - (Math.min(Math.max(v, 0), 500) / 500) * Math.PI; }
+
+        // Color band segments
+        var bands = [
+            {from:0,   to:50,  color:'#00e400'},
+            {from:50,  to:100, color:'#ffff00'},
+            {from:100, to:150, color:'#ff7e00'},
+            {from:150, to:200, color:'#ff0000'},
+            {from:200, to:300, color:'#8f3f97'},
+            {from:300, to:500, color:'#7e0023'},
+        ];
+        bands.forEach(function(b) {
+            var sa = aqiAngle(b.from), ea = aqiAngle(b.to);
+            ctx.beginPath();
+            ctx.arc(cx, cy, outerR, ea, sa, false);
+            ctx.arc(cx, cy, innerR, sa, ea, true);
+            ctx.closePath();
+            ctx.fillStyle = b.color;
+            ctx.fill();
+        });
+
+        // Dark inner fill
+        ctx.beginPath();
+        ctx.moveTo(cx - outerR, cy);
+        ctx.arc(cx, cy, innerR - 1, Math.PI, 0, false);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(10,20,30,0.9)';
+        ctx.fill();
+
+        // Needle
+        var angle = aqiAngle(Math.min(aqi, 500));
+        var nLen = innerR - 5;
+        ctx.save();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+        ctx.shadowColor = 'rgba(255,255,255,0.45)';
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + nLen * Math.cos(angle), cy - nLen * Math.sin(angle));
+        ctx.stroke();
+        ctx.restore();
+
+        // Center pivot dot
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'white';
+        ctx.fill();
+    }
+
+    async function fetchAQI() {
+        var curLat = lat, curLon = lon;
+        if (!curLat || !curLon) return;
+        var now = Date.now();
+        if (curLat === _aqiLastLat && curLon === _aqiLastLon && now - _aqiLastFetch < 600000) return;
+        _aqiLastFetch = now; _aqiLastLat = curLat; _aqiLastLon = curLon;
+        try {
+            var res = await fetch(
+                'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + curLat +
+                '&longitude=' + curLon +
+                '&hourly=us_aqi,us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone&timezone=auto&forecast_days=3'
+            );
+            if (!res.ok) throw new Error('AQI ' + res.status);
+            _renderAQIData(await res.json());
+        } catch(e) {
+            var tEl = document.getElementById('air-trend');
+            if (tEl) tEl.innerText = 'Air quality data unavailable.';
+        }
+    }
+
+    function _renderAQIData(d) {
+        var section = document.getElementById('aqi-section');
+        if (!section) return;
+        section.style.display = '';
+
+        var times = d.hourly.time || [];
+        var aqis  = d.hourly.us_aqi || [];
+        var pm25s = d.hourly.us_aqi_pm2_5 || [];
+        var pm10s = d.hourly.us_aqi_pm10 || [];
+        var o3s   = d.hourly.us_aqi_ozone || [];
+
+        // Find current hour index
+        var nowH = Math.floor(Date.now() / 3600000) * 3600000;
+        var curIdx = 0;
+        for (var i = 0; i < times.length; i++) {
+            if (new Date(times[i]).getTime() <= nowH) curIdx = i;
+        }
+
+        var curAQI = aqis[curIdx] != null ? aqis[curIdx] : 0;
+        var info = _aqiInfo(curAQI);
+
+        // Dominant pollutant (highest component AQI)
+        var polls = [
+            {n:'PM2.5', v: pm25s[curIdx] || 0},
+            {n:'PM10',  v: pm10s[curIdx] || 0},
+            {n:'Ozone', v: o3s[curIdx]   || 0},
+        ];
+        polls.sort(function(a,b){ return b.v - a.v; });
+        var pollLabel = polls[0].v > 0 ? 'Dominant pollutant: ' + polls[0].n : '';
+
+        // 48-hour trend text
+        var ahead = aqis.slice(curIdx + 1, curIdx + 49).filter(function(v){ return v != null; });
+        var trendText = '';
+        if (ahead.length > 0) {
+            var endAQI = ahead[ahead.length - 1];
+            var startCat = info.cat, endCat = _aqiInfo(endAQI).cat;
+            var delta = endAQI - curAQI;
+            if (delta < -15) {
+                trendText = 'Next 48 hours: Air quality improving' + (startCat !== endCat ? ' from ' + startCat + ' to ' + endCat : '') + '.';
+            } else if (delta > 15) {
+                trendText = 'Next 48 hours: Air quality worsening' + (startCat !== endCat ? ' from ' + startCat + ' to ' + endCat : '') + '.';
+            } else {
+                trendText = 'Next 48 hours: Air quality expected to remain ' + startCat + '.';
+            }
+            var peakVal = ahead.reduce(function(m,v){ return v > m ? v : m; }, curAQI);
+            var peakCat = _aqiInfo(peakVal).cat;
+            if (peakVal > curAQI + 30 && peakCat !== startCat) {
+                trendText += ' Peak: ' + peakCat + ' (AQI ' + Math.round(peakVal) + ').';
+            }
+        }
+
+        // Write to DOM
+        var numEl    = document.getElementById('air-num');
+        var catEl    = document.getElementById('air-cat');
+        var pollEl   = document.getElementById('air-poll');
+        var trendEl  = document.getElementById('air-trend');
+        var healthEl = document.getElementById('air-health');
+
+        if (numEl)    { numEl.innerText = Math.round(curAQI); numEl.style.color = info.color; }
+        if (catEl)    { catEl.innerText = info.cat; catEl.style.color = info.color; }
+        if (pollEl)   pollEl.innerText = pollLabel;
+        if (trendEl)  trendEl.innerText = trendText || 'No forecast data available.';
+        if (healthEl) healthEl.innerText = info.health;
+
+        _renderAQIDial(curAQI);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     async function loadAll() {
         lastSyncTime = new Date();
         twcMaxFeelsLike = null;
@@ -6718,6 +6896,7 @@
         if (sync) sync.style.opacity = '1';
         try {
             await fetchPirate();
+            fetchAQI();
             await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast(), fetchOMPrecip15()]);
             await fetchAlerts();
             await fetchRiskLevels();
