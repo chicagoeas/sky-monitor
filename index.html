@@ -7013,14 +7013,20 @@
             for (var dist of [50, 100, 200]) {
                 var coords = 'latitude=' + curLat + '&longitude=' + curLon + '&distance=' + dist + '&API_KEY=' + AIRNOW_KEY;
                 var obsRes = await fetch(proxy + encodeURIComponent(base + 'observation/latLong/current/?format=application/json&' + coords));
-                if (!obsRes.ok) { isNonUS = true; break; }
+                if (!obsRes.ok) {
+                    if (obsRes.status === 404) { isNonUS = true; }
+                    break; // any error (404, 504, etc.) stops the distance loop
+                }
                 obsData = await obsRes.json();
                 if (obsData && obsData.length > 0) break;
             }
-            if (isNonUS || !obsData || obsData.length === 0) {
+            // Only fall back to Open-Meteo on a definitive 404 (non-US location).
+            // Timeouts, 5xx errors, or simply no nearby stations stay silent.
+            if (isNonUS) {
                 await _fetchAQIFromOpenMeteo(curLat, curLon);
                 return;
             }
+            if (!obsData || obsData.length === 0) return;
             var fcstRes  = await fetch(proxy + encodeURIComponent(base + 'forecast/latLong/?format=application/json&' + coordsFcst + '&date=' + todayStr));
             var fcstData = fcstRes.ok ? await fcstRes.json() : [];
             _renderAQIData(obsData, fcstData);
