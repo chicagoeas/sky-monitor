@@ -6801,6 +6801,8 @@
         ctx.fill();
     }
 
+    var AIRNOW_KEY = '26BA2E6C-2948-4FA1-B7F2-E342EC39F749';
+
     async function fetchAQI() {
         var curLat = lat, curLon = lon;
         if (!curLat || !curLon) return;
@@ -6808,71 +6810,69 @@
         if (curLat === _aqiLastLat && curLon === _aqiLastLon && now - _aqiLastFetch < 600000) return;
         _aqiLastFetch = now; _aqiLastLat = curLat; _aqiLastLon = curLon;
         try {
-            var res = await fetch(
-                'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + curLat +
-                '&longitude=' + curLon +
-                '&hourly=us_aqi,us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone&timezone=auto&forecast_days=3'
-            );
-            if (!res.ok) throw new Error('AQI ' + res.status);
-            _renderAQIData(await res.json());
+            var tzOff = (window.pirateTimezoneOffset || 0) * 3600000;
+            var localNow = new Date(now + tzOff);
+            var todayStr = localNow.getUTCFullYear() + '-' +
+                           String(localNow.getUTCMonth() + 1).padStart(2, '0') + '-' +
+                           String(localNow.getUTCDate()).padStart(2, '0');
+            var base   = 'https://www.airnowapi.org/aq/';
+            var coords = 'latitude=' + curLat + '&longitude=' + curLon + '&distance=50&API_KEY=' + AIRNOW_KEY;
+            var [obsRes, fcstRes] = await Promise.all([
+                fetch(base + 'observation/latLong/current/?format=application/json&' + coords),
+                fetch(base + 'forecast/latLong/?format=application/json&' + coords + '&date=' + todayStr)
+            ]);
+            var obsData  = obsRes.ok  ? await obsRes.json()  : [];
+            var fcstData = fcstRes.ok ? await fcstRes.json() : [];
+            _renderAQIData(obsData, fcstData);
         } catch(e) {
             var tEl = document.getElementById('air-trend');
             if (tEl) tEl.innerText = 'Air quality data unavailable.';
         }
     }
 
-    function _renderAQIData(d) {
+    function _renderAQIData(obsData, fcstData) {
         var section = document.getElementById('aqi-section');
         if (!section) return;
         section.style.display = '';
 
-        var times = d.hourly.time || [];
-        var aqis  = d.hourly.us_aqi || [];
-        var pm25s = d.hourly.us_aqi_pm2_5 || [];
-        var pm10s = d.hourly.us_aqi_pm10 || [];
-        var o3s   = d.hourly.us_aqi_ozone || [];
-
-        // Find current hour index
-        var nowH = Math.floor(Date.now() / 3600000) * 3600000;
-        var curIdx = 0;
-        for (var i = 0; i < times.length; i++) {
-            if (new Date(times[i]).getTime() <= nowH) curIdx = i;
+        if (!obsData || obsData.length === 0) {
+            var tEl = document.getElementById('air-trend');
+            if (tEl) tEl.innerText = 'No monitoring stations found within 50 miles.';
+            return;
         }
 
-        var curAQI = aqis[curIdx] != null ? aqis[curIdx] : 0;
-        var info = _aqiInfo(curAQI);
+        // Pick the pollutant with the highest current AQI
+        var best = obsData.reduce(function(m, o) { return (o.AQI || 0) > (m.AQI || 0) ? o : m; }, obsData[0]);
+        var curAQI    = best.AQI || 0;
+        var pollutant = best.ParameterName || '';
+        var area      = best.ReportingArea ? best.ReportingArea + ', ' + best.StateCode : '';
+        var info      = _aqiInfo(curAQI);
 
-        // Dominant pollutant (highest component AQI)
-        var polls = [
-            {n:'PM2.5', v: pm25s[curIdx] || 0},
-            {n:'PM10',  v: pm10s[curIdx] || 0},
-            {n:'Ozone', v: o3s[curIdx]   || 0},
-        ];
-        polls.sort(function(a,b){ return b.v - a.v; });
-        var pollLabel = polls[0].v > 0 ? 'Dominant pollutant: ' + polls[0].n : '';
-
-        // 48-hour trend text
-        var ahead = aqis.slice(curIdx + 1, curIdx + 49).filter(function(v){ return v != null; });
+        // Build forecast trend from AirNow daily forecasts
         var trendText = '';
-        if (ahead.length > 0) {
-            var endAQI = ahead[ahead.length - 1];
-            var startCat = info.cat, endCat = _aqiInfo(endAQI).cat;
-            var delta = endAQI - curAQI;
-            if (delta < -15) {
-                trendText = 'Next 48 hours: Air quality improving' + (startCat !== endCat ? ' from ' + startCat + ' to ' + endCat : '') + '.';
-            } else if (delta > 15) {
-                trendText = 'Next 48 hours: Air quality worsening' + (startCat !== endCat ? ' from ' + startCat + ' to ' + endCat : '') + '.';
-            } else {
-                trendText = 'Next 48 hours: Air quality expected to remain ' + startCat + '.';
+        if (fcstData && fcstData.length > 0) {
+            var dates = fcstData.map(function(f) { return f.DateForecast; })
+                                .filter(function(v, i, a) { return a.indexOf(v) === i; })
+                                .sort();
+            function maxAQIForDate(dateStr) {
+                return fcstData.filter(function(f) { return f.DateForecast === dateStr; })
+                               .reduce(function(m, f) { return (f.AQI || 0) > m ? (f.AQI || 0) : m; }, 0);
             }
-            var peakVal = ahead.reduce(function(m,v){ return v > m ? v : m; }, curAQI);
-            var peakCat = _aqiInfo(peakVal).cat;
-            if (peakVal > curAQI + 30 && peakCat !== startCat) {
-                trendText += ' Peak: ' + peakCat + ' (AQI ' + Math.round(peakVal) + ').';
+            var parts = [];
+            for (var di = 1; di < Math.min(dates.length, 4); di++) {
+                var dayAQI = maxAQIForDate(dates[di]);
+                if (dayAQI > 0) {
+                    var label = di === 1 ? 'Tomorrow' : dates[di].slice(5); // MM-DD for days 3+
+                    parts.push(label + ': ' + _aqiInfo(dayAQI).cat + ' (AQI\u00a0' + Math.round(dayAQI) + ')');
+                }
             }
+            if (parts.length) trendText = parts.join(' · ');
+
+            // Action Day callout
+            var actionDay = fcstData.some(function(f) { return f.ActionDay === true; });
+            if (actionDay) trendText = '⚠️ Action Day declared. ' + trendText;
         }
 
-        // Write to DOM
         var numEl    = document.getElementById('air-num');
         var catEl    = document.getElementById('air-cat');
         var pollEl   = document.getElementById('air-poll');
@@ -6881,8 +6881,8 @@
 
         if (numEl)    { numEl.innerText = Math.round(curAQI); numEl.style.color = info.color; }
         if (catEl)    { catEl.innerText = info.cat; catEl.style.color = info.color; }
-        if (pollEl)   pollEl.innerText = pollLabel;
-        if (trendEl)  trendEl.innerText = trendText || 'No forecast data available.';
+        if (pollEl)   pollEl.innerText = (pollutant ? 'Dominant: ' + pollutant : '') + (area ? '  ·  ' + area : '');
+        if (trendEl)  trendEl.innerText = trendText || 'No forecast available.';
         if (healthEl) healthEl.innerText = info.health;
 
         _renderAQIDial(curAQI);
