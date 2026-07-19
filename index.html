@@ -1652,6 +1652,11 @@
         document.getElementById('alert-stack').innerHTML = '';
         stopWeatherFX();
         _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
+        // Clear stale PWS data immediately so previous location's station never bleeds through
+        window.isWaterLocation = false;
+        window.wuData = null; window.wuNeighborData = [];
+        var _wuStEl = document.getElementById('wuStation');
+        if (_wuStEl) _wuStEl.style.display = 'none';
         loadAll();
         if (document.getElementById('reporting-tab')?.classList.contains('active')) {
             initReportingMap();
@@ -3547,7 +3552,9 @@
             if (!resP.ok) throw new Error('Pirate ' + resP.status);
             const d = await resP.json();
             if (d.offset != null) stationTzOffset = d.offset * 3600;
-            const wuStations = await fetchWUMulti(lat, lon);
+            // Skip PWS entirely for water locations — nearest station is always on land
+            // and its readings are completely unrepresentative of an open-water point.
+            const wuStations = window.isWaterLocation ? [] : await fetchWUMulti(lat, lon);
             const wu = wuStations[0] || null;
             const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
             // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
@@ -4273,7 +4280,8 @@
         try {
             const pointsRes = await fetch('https://api.weather.gov/points/' + lat + ',' + lon);
             if (!pointsRes.ok) { window.isOutsideUS = true; applyInternationalMode(); return; }
-            window.isOutsideUS = false; applyUSMode();
+            window.isOutsideUS = false;
+     window.isWaterLocation = false; applyUSMode();
             const p = await pointsRes.json();
             // Elevation of the user's requested coordinate (meters), returned by the NWS
             // /points/ endpoint — used for lapse-rate correction when comparing NWS obs
@@ -7205,6 +7213,22 @@
         const sync = document.getElementById('sync-indicator');
         if (sync) sync.style.opacity = '1';
         try {
+            // Water location detection — Nominatim reverse geocode tells us if coords are on
+            // open water (sea, bay, lake, waterway). If so, skip PWS entirely.
+            try {
+                var _nomR = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lon);
+                if (_nomR.ok) {
+                    var _nomD = await _nomR.json();
+                    var _nCls = (_nomD.class || '').toLowerCase();
+                    var _nTyp = (_nomD.type  || '').toLowerCase();
+                    var _waterNaturalTypes = ['sea','bay','strait','water','ocean','lake','reservoir','lagoon','sound','river'];
+                    window.isWaterLocation =
+                        _nCls === 'waterway' ||
+                        (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
+                        (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
+                }
+            } catch(e) { window.isWaterLocation = false; }
+
             await fetchPirate();
             fetchAQI();
             await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast(), fetchOMPrecip15()]);
