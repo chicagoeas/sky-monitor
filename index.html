@@ -4386,6 +4386,8 @@
                 // observed floors apply even if the 1h sensor returned null.
                 if (window.nwsObsPrecip1h !== null || window.nwsObsPrecip3h !== null || window.nwsObsPrecip6h !== null) computeFloodImpact();
             } catch(obsErr) { _obsEndpointFailed = true; /* observation fetch failed — will fall back below */ }
+            // Water locations: discard all NWS obs — PirateWeather is the sole data source.
+            if (window.isWaterLocation) { nwsCond = ''; nwsObsTempF = null; nwsObsHumidity = null; nwsObsWindMph = null; nwsObsWindDir = null; }
             if (!nwsCond) {
                 // Truly no NWS conditions — fall back to PirateWeather
                 const pw = window.pirateCurrently;
@@ -4644,6 +4646,14 @@
                 wfo:         document.getElementById('wfo-label').innerText
             });
         } catch(e) {
+            // Water locations: the chain throws when no obs stations exist for the gridpoint
+            // (open ocean). PirateWeather data is already displayed — just label correctly.
+            if (window.isWaterLocation) {
+                document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
+                document.getElementById('meta-name').innerText = 'PirateWeather API';
+                document.getElementById('meta-id').innerText = lat + ', ' + lon;
+                return;
+            }
             // NWS chain failed — restore cached station metadata and condition text,
             // then ensure temperature is not left stuck at '--'.
             SkyDB.get(SkyDB.S.weather, 'nws_obs').then(function(c) {
