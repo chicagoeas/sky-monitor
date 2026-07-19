@@ -7219,13 +7219,18 @@
                 var _nomR = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lon);
                 if (_nomR.ok) {
                     var _nomD = await _nomR.json();
-                    var _nCls = (_nomD.class || '').toLowerCase();
-                    var _nTyp = (_nomD.type  || '').toLowerCase();
-                    var _waterNaturalTypes = ['sea','bay','strait','water','ocean','lake','reservoir','lagoon','sound','river'];
-                    window.isWaterLocation =
-                        _nCls === 'waterway' ||
-                        (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
-                        (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
+                    // "Unable to geocode" = open ocean with no mapped land feature
+                    if (_nomD.error) {
+                        window.isWaterLocation = true;
+                    } else {
+                        var _nCls = (_nomD.class || '').toLowerCase();
+                        var _nTyp = (_nomD.type  || '').toLowerCase();
+                        var _waterNaturalTypes = ['sea','bay','strait','water','ocean','lake','reservoir','lagoon','sound','river'];
+                        window.isWaterLocation =
+                            _nCls === 'waterway' ||
+                            (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
+                            (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
+                    }
                 }
             } catch(e) { window.isWaterLocation = false; }
 
