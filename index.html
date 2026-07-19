@@ -4646,12 +4646,59 @@
                 wfo:         document.getElementById('wfo-label').innerText
             });
         } catch(e) {
-            // Water locations: the chain throws when no obs stations exist for the gridpoint
-            // (open ocean). PirateWeather data is already displayed — just label correctly.
+            // Water locations: the NWS chain throws (no gridpoint for ocean coordinates).
+            // fetchNWSChain() reset tempVal to '--' at its top; restore everything from
+            // PirateWeather since that is the sole data source for water locations.
             if (window.isWaterLocation) {
                 document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
                 document.getElementById('meta-name').innerText = 'PirateWeather API';
                 document.getElementById('meta-id').innerText = lat + ', ' + lon;
+                (function() {
+                    var pw = window.pirateCurrently;
+                    if (!pw) return;
+                    // Temperature
+                    if (pw.temperature != null) {
+                        var tv = Math.round(pw.temperature);
+                        window.liveTemp = tv;
+                        var te = document.getElementById('tempVal');
+                        te.innerText = _isMetric() ? Math.round((tv-32)*5/9) + '\u00b0' : tv + '\u00b0';
+                        te.style.color = colorFeelsLike(tv);
+                    }
+                    // Feels-like (apparent temperature)
+                    if (pw.apparentTemperature != null) {
+                        var fv = Math.round(pw.apparentTemperature);
+                        liveFeelsLike = fv;
+                        var fe = document.getElementById('feelsVal');
+                        fe.innerText = _isMetric() ? Math.round((fv-32)*5/9) + '\u00b0' : fv + '\u00b0';
+                        fe.style.color = colorFeelsLike(fv);
+                    }
+                    // Humidity
+                    if (pw.humidity != null) {
+                        var hv = Math.round(pw.humidity * 100);
+                        var he = document.getElementById('humVal');
+                        he.innerText = hv + '%';
+                        he.style.color = colorHumidity(hv);
+                    }
+                    // Wind
+                    if (pw.windSpeed != null) {
+                        liveWindSpd = Math.round(pw.windSpeed);
+                        document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                        setWindCompass(liveWindSpd > 0 && pw.windBearing != null ? pw.windBearing : null);
+                    }
+                    // Condition text + icon
+                    var fbCond = pw.summary || (pw.icon && PW_ICON_TO_TEXT[pw.icon]) || '';
+                    if (fbCond) {
+                        currentCondition = fbCond;
+                        document.getElementById('conditionText').innerText = fbCond;
+                    }
+                    var fbIsNight = pw.icon && pw.icon.includes('night');
+                    var fbIcon = (pw.icon ? PW_ICON_MAP[pw.icon] : null) || _pwSummaryIcon(fbCond, fbIsNight);
+                    if (fbIcon) { document.getElementById('weatherIcon').src = fbIcon; document.getElementById('weatherIcon').style.display = 'block'; }
+                    // Smart comfort
+                    updateSmartComfort(pw.temperature != null ? Math.round(pw.temperature) : 70,
+                        liveFeelsLike, pw.humidity != null ? Math.round(pw.humidity * 100) : 50,
+                        liveWindSpd, fbCond, liveUV, (pw.precipProbability || 0) * 100);
+                })();
                 return;
             }
             // NWS chain failed — restore cached station metadata and condition text,
