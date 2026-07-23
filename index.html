@@ -7412,41 +7412,63 @@
                 ? (metric ? obs.wvht.toFixed(1) + ' m' : _mToFt(obs.wvht) + ' ft') : '--';
             var wtmpDisp = obs.wtmp != null
                 ? (metric ? obs.wtmp.toFixed(1) + '\u00b0C' : _cToF(obs.wtmp) + '\u00b0F') : '--';
-            var wspdDisp = obs.wspd != null
-                ? (metric ? Math.round(obs.wspd * 3.6) + ' km/h' : _mpsToMph(obs.wspd) + ' mph') : '--';
-            var waveLabel = _waveDesc(obs.wvht);
             var waveColor = _waveColor(obs.wvht);
-            var windCard  = _degToCard(obs.wdir);
 
-            var html = '<div style="margin-bottom:4px;">';
-            html += '<div style="font-size:0.68em; font-weight:700; letter-spacing:0.8px; color:#64748b; text-transform:uppercase; margin-bottom:10px;">';
-            html += escapeHtml(buoyName) + ' \u2014 ' + distKm + ' km away</div>';
+            // Swim conditions rating derived from wave height
+            var condLabel, condDesc, condColor, condFill;
+            var wvhtFt = obs.wvht != null ? obs.wvht * 3.28084 : null;
+            if (wvhtFt == null)     { condLabel='UNKNOWN';   condDesc='Wave data unavailable.';                        condColor='#94a3b8'; condFill=0; }
+            else if (wvhtFt < 0.5) { condLabel='EXCELLENT'; condDesc='Glassy water, ideal conditions for swimming.'; condColor='#4ade80'; condFill=5; }
+            else if (wvhtFt < 1.5) { condLabel='GOOD';      condDesc='Light chop, comfortable for most swimmers.';   condColor='#86efac'; condFill=4; }
+            else if (wvhtFt < 2.5) { condLabel='FAIR';      condDesc='Moderate waves, swim with awareness.';         condColor='#fbbf24'; condFill=3; }
+            else if (wvhtFt < 4.0) { condLabel='ROUGH';     condDesc='Strong waves, exercise caution.';              condColor='#f97316'; condFill=2; }
+            else if (wvhtFt < 6.0) { condLabel='HAZARDOUS'; condDesc='Dangerous surf, swimming not advised.';        condColor='#ef4444'; condFill=1; }
+            else                   { condLabel='EXTREME';   condDesc='Life-threatening conditions.';                  condColor='#dc2626'; condFill=1; }
 
-            // Stat tiles
-            html += '<div style="display:flex; gap:10px; flex-wrap:wrap;">';
+            // Inline SVG icons
+            var thermSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/></svg>';
+            var waveSvg  = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="' + waveColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 6px;"><path d="M2 12c1.5-3 3-3 4.5 0s3 3 4.5 0 3-3 4.5 0 3 3 4.5 0"/><path d="M2 17c1.5-3 3-3 4.5 0s3 3 4.5 0 3-3 4.5 0 3 3 4.5 0"/></svg>';
+
+            // 5-dot rating strip
+            var dots = '';
+            for (var i = 0; i < 5; i++) {
+                dots += '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 2px;background:' + (i < condFill ? condColor : 'rgba(255,255,255,0.1)') + ';"></span>';
+            }
+
+            var html = '';
+
+            // Two stat tiles
+            html += '<div style="display:flex;gap:10px;margin-bottom:10px;">';
 
             // Water Temp
-            html += '<div style="flex:1; min-width:80px; background:rgba(255,255,255,0.05); border-radius:10px; padding:10px 12px; text-align:center;">';
-            html += '<div style="font-size:0.6em; color:#64748b; font-weight:700; letter-spacing:0.7px; text-transform:uppercase; margin-bottom:4px;">WATER TEMP</div>';
-            html += '<div style="font-size:1.6em; font-weight:900; color:#38bdf8; line-height:1.1;">' + escapeHtml(wtmpDisp) + '</div>';
+            html += '<div style="flex:1;background:rgba(56,189,248,0.07);border:1px solid rgba(56,189,248,0.2);border-radius:12px;padding:14px 10px;text-align:center;">';
+            html += thermSvg;
+            html += '<div style="font-size:0.58em;font-weight:700;letter-spacing:0.8px;color:#64748b;text-transform:uppercase;margin-bottom:5px;">WATER TEMP</div>';
+            html += '<div style="font-size:2em;font-weight:900;color:#38bdf8;line-height:1;letter-spacing:-0.5px;">' + escapeHtml(wtmpDisp) + '</div>';
             html += '</div>';
 
             // Wave Height
-            html += '<div style="flex:1; min-width:80px; background:rgba(255,255,255,0.05); border-radius:10px; padding:10px 12px; text-align:center;">';
-            html += '<div style="font-size:0.6em; color:#64748b; font-weight:700; letter-spacing:0.7px; text-transform:uppercase; margin-bottom:4px;">WAVE HEIGHT</div>';
-            html += '<div style="font-size:1.6em; font-weight:900; line-height:1.1; color:' + waveColor + ';">' + escapeHtml(wvhtDisp) + '</div>';
-            if (waveLabel) html += '<div style="font-size:0.62em; color:' + waveColor + '; margin-top:2px; font-weight:700;">' + escapeHtml(waveLabel) + '</div>';
+            html += '<div style="flex:1;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);border-radius:12px;padding:14px 10px;text-align:center;">';
+            html += waveSvg;
+            html += '<div style="font-size:0.58em;font-weight:700;letter-spacing:0.8px;color:#64748b;text-transform:uppercase;margin-bottom:5px;">WAVE HEIGHT</div>';
+            html += '<div style="font-size:2em;font-weight:900;line-height:1;letter-spacing:-0.5px;color:' + waveColor + ';">' + escapeHtml(wvhtDisp) + '</div>';
             html += '</div>';
 
-            // Wind
-            html += '<div style="flex:1; min-width:80px; background:rgba(255,255,255,0.05); border-radius:10px; padding:10px 12px; text-align:center;">';
-            html += '<div style="font-size:0.6em; color:#64748b; font-weight:700; letter-spacing:0.7px; text-transform:uppercase; margin-bottom:4px;">WIND</div>';
-            html += '<div style="font-size:1.6em; font-weight:900; color:#a78bfa; line-height:1.1;">' + escapeHtml(wspdDisp) + '</div>';
-            if (windCard) html += '<div style="font-size:0.62em; color:#a78bfa; margin-top:2px; font-weight:700;">' + escapeHtml(windCard) + '</div>';
-            html += '</div>';
+            html += '</div>'; // end stat tiles
 
-            html += '</div>'; // end tiles
-            html += '</div>'; // end header block
+            // Conditions bar (replaces broken wind tile)
+            html += '<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:12px;">';
+            html += '<div style="width:42px;height:42px;border-radius:50%;background:' + condColor + '1a;border:2px solid ' + condColor + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;">';
+            html += '<div style="width:13px;height:13px;border-radius:50%;background:' + condColor + ';"></div>';
+            html += '</div>';
+            html += '<div style="flex:1;min-width:0;">';
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">';
+            html += '<span style="font-size:0.8em;font-weight:900;color:' + condColor + ';letter-spacing:0.4px;">' + condLabel + '</span>';
+            html += '<span>' + dots + '</span>';
+            html += '</div>';
+            html += '<div style="font-size:0.7em;color:#94a3b8;line-height:1.4;">' + escapeHtml(condDesc) + '</div>';
+            html += '</div>';
+            html += '</div>'; // end conditions bar
 
             // GLF lake forecast discussion (collapsible)
             if (glfText) {
@@ -7455,9 +7477,9 @@
                 var startIdx = (synIdx !== -1) ? synIdx : (wavIdx !== -1 ? wavIdx : 0);
                 var raw = glfText.slice(startIdx, startIdx + 600).split('\n').slice(0, 10).join('\n').trim();
                 if (raw.length > 20) {
-                    html += '<details style="margin-top:12px;">';
-                    html += '<summary style="list-style:none; font-size:0.68em; font-weight:700; color:#64748b; letter-spacing:0.6px; cursor:pointer; text-transform:uppercase; outline:none;">LAKE FORECAST DISCUSSION</summary>';
-                    html += '<div style="background:rgba(0,0,0,0.35); border-radius:10px; padding:10px 12px; font-family:monospace; font-size:0.75em; color:#86efac; line-height:1.55; margin-top:6px; white-space:pre-wrap; max-height:160px; overflow-y:auto;">' + escapeHtml(raw) + '</div>';
+                    html += '<details style="margin-top:10px;">';
+                    html += '<summary style="list-style:none;font-size:0.68em;font-weight:700;color:#64748b;letter-spacing:0.6px;cursor:pointer;text-transform:uppercase;outline:none;">LAKE FORECAST DISCUSSION</summary>';
+                    html += '<div style="background:rgba(0,0,0,0.35);border-radius:10px;padding:10px 12px;font-family:monospace;font-size:0.75em;color:#86efac;line-height:1.55;margin-top:6px;white-space:pre-wrap;max-height:160px;overflow-y:auto;">' + escapeHtml(raw) + '</div>';
                     html += '</details>';
                 }
             }
@@ -7467,8 +7489,10 @@
         }
 
         window.fetchBeachForecast = async function(la, lo) {
+            // Only activate at confirmed beach or shoreline locations
+            if (!window.isBeachLocation && !window.isWaterLocation) return;
             var result = _findNearest(la, lo);
-            if (!result) { return; }  // no buoy within 150 km — silently skip
+            if (!result) return;  // no buoy within 150 km
             var buoy = result.buoy;
             try {
                 var obs = await _fetchNDBC(buoy.id);
@@ -7478,7 +7502,7 @@
                 if (_isGL(buoy.id)) {
                     glfText = await _fetchGLF(window.nwsGridOffice || 'MKX');
                 }
-                _renderBeach(buoy.name, result.distKm, obs, glfText);
+                _renderBeach(obs, glfText);
             } catch(e) { /* best-effort — silently skip on network failure */ }
         };
     })();
@@ -7499,6 +7523,7 @@
                     // "Unable to geocode" = open ocean with no mapped land feature
                     if (_nomD.error) {
                         window.isWaterLocation = true;
+                        window.isBeachLocation = false;
                     } else {
                         var _nCls = (_nomD.class || '').toLowerCase();
                         var _nTyp = (_nomD.type  || '').toLowerCase();
@@ -7507,9 +7532,16 @@
                             _nCls === 'waterway' ||
                             (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
                             (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
+                        // Beach detection: OSM type=beach, leisure=beach, or "beach" in the place name
+                        window.isBeachLocation =
+                            _nTyp === 'beach' ||
+                            _nTyp === 'sand'  ||
+                            (_nCls === 'leisure' && _nTyp === 'beach') ||
+                            ((_nomD.name         || '').toLowerCase().indexOf('beach') !== -1) ||
+                            ((_nomD.display_name || '').toLowerCase().indexOf('beach') !== -1);
                     }
                 }
-            } catch(e) { window.isWaterLocation = false; }
+            } catch(e) { window.isWaterLocation = false; window.isBeachLocation = false; }
 
             await fetchPirate();
             fetchAQI();
