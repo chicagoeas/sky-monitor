@@ -549,8 +549,8 @@
         <!-- Hero: big temperature + condition -->
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px;">
             <div>
-                <div id="tempVal" style="font-size:clamp(3.5rem,5.2rem,84px); font-weight:900; letter-spacing:-2px; line-height:0.9;">--</div>
-                <div style="font-size:0.82em; color:#94a3b8; margin-top:11px;">Feels like <span id="feelsVal">--</span></div>
+                <div id="tempVal" style="font-size:clamp(3.5rem,5.2rem,84px); font-weight:900; letter-spacing:-2px; line-height:0.9; opacity:0; transition:opacity 0.35s ease;">--</div>
+                <div style="font-size:0.82em; color:#94a3b8; margin-top:11px;">Feels like <span id="feelsVal" style="opacity:0; transition:opacity 0.35s ease;">--</span></div>
                 <div id="conditionText" style="font-size:0.88em; color:#cbd5e1; margin-top:5px; font-weight:400;">--</div>
             </div>
             <div style="flex-shrink:0; padding-top:4px; text-align:right;">
@@ -564,7 +564,7 @@
                     <div class="detail-label">Wind</div>
                 </div>
                 <div class="di-right">
-                    <div id="windVal" class="detail-val" style="white-space:nowrap;">--</div>
+                    <div id="windVal" class="detail-val" style="white-space:nowrap; opacity:0; transition:opacity 0.35s ease;">--</div>
                     <svg id="windCompass" width="38" height="38" viewBox="0 0 56 56" style="display:none;flex-shrink:0;overflow:visible;">
                         <circle cx="28" cy="28" r="26" fill="rgba(0,0,0,0.4)" stroke="rgba(79,195,247,0.18)" stroke-width="1.5"/>
                         <line x1="28" y1="4" x2="28" y2="9" stroke="rgba(79,195,247,0.35)" stroke-width="1.2"/>
@@ -588,7 +588,7 @@
                 <div class="di-left">
                     <div class="detail-label">Humidity</div>
                 </div>
-                <div class="di-right"><div id="humVal" class="detail-val">--</div></div>
+                <div class="di-right"><div id="humVal" class="detail-val" style="opacity:0; transition:opacity 0.35s ease;">--</div></div>
             </div>
             <div class="detail-item">
                 <div class="di-left">
@@ -1641,11 +1641,13 @@
         saveLoc();
         document.getElementById('stationName').innerText = 'LOADING LOCATION...';
         document.getElementById('conditionText').innerText = '--';
-        document.getElementById('tempVal').innerText = '--';
-        document.getElementById('windVal').innerText = '--'; setWindCompass(null);
-        document.getElementById('humVal').innerText = '--'; document.getElementById('humVal').style.color = '';
-        document.getElementById('feelsVal').innerText = '--'; document.getElementById('feelsVal').style.color = '';
         document.getElementById('presVal').innerText = '--';
+        // Hide observed fields without blanking — values reappear once authoritative data arrives
+        (function(){['tempVal','feelsVal','windVal','humVal'].forEach(function(id){
+            var el=document.getElementById(id);
+            if(el){el.style.transition='none';el.style.opacity='0';el.innerText='--';el.style.color='';}
+        });})();
+        setWindCompass(null);
         document.getElementById('weatherIcon').style.display = 'none';
         document.getElementById('minuteSummary').innerText = 'Scanning radar...';
         document.getElementById('timeline').innerHTML = '';
@@ -2351,6 +2353,7 @@
         }
         // Populate the QC panel for international locations (NWS unavailable)
         _renderPWSQCPanel(window.wuData || null, null, null);
+        _wxReveal(); // International location — PirateWeather is authoritative; reveal now
     }
 
     function applyUSMode() {
@@ -2558,7 +2561,7 @@
         if (descEl) descEl.innerText = desc;
     }
 
-    // ── Flood Impact Score ─────────────────────────────────────────────────────
+    // ── Flood Impact Score ─────o �───────────────────────────────────────────────
     // Scores 0–100 basement flood risk using live rain rate, NWS gridpoint QPF,
     // cached 24h antecedent rainfall, and active NWS flood alerts.
     // >2 in/hr hard-caps at 100. Intensity weighted most heavily per user spec.
@@ -4274,10 +4277,18 @@
         panel.style.display = 'block';
     }
 
+    // Reveal observed weather fields (temp, feels-like, wind, humidity) once the
+    // authoritative source has written its values. Called from every exit path of
+    // fetchNWSChain so fields are never permanently hidden.
+    // During auto-refresh the elements are already visible; calling this is a no-op.
+    function _wxReveal() {
+        ['tempVal','feelsVal','windVal','humVal'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) { el.style.transition = 'opacity 0.35s ease'; el.style.opacity = '1'; }
+        });
+    }
+
     async function fetchNWSChain() {
-        // Hold temp at '--' while the chain resolves so the user never sees a
-        // flash of the PirateWeather baseline before QC and lapse correction finish.
-        (function(){ var _te = document.getElementById('tempVal'); _te.innerText = '--'; _te.style.color = ''; })();
         try {
             const pointsRes = await fetch('https://api.weather.gov/points/' + lat + ',' + lon);
             if (!pointsRes.ok) { window.isOutsideUS = true; applyInternationalMode(); return; }
@@ -4645,6 +4656,7 @@
                 iconVisible: document.getElementById('weatherIcon').style.display !== 'none',
                 wfo:         document.getElementById('wfo-label').innerText
             });
+            _wxReveal(); // Authoritative chain complete — make observed fields visible
         } catch(e) {
             // Water locations: the NWS chain throws (no gridpoint for ocean coordinates).
             // fetchNWSChain() reset tempVal to '--' at its top; restore everything from
@@ -4699,6 +4711,7 @@
                         liveFeelsLike, pw.humidity != null ? Math.round(pw.humidity * 100) : 50,
                         liveWindSpd, fbCond, liveUV, (pw.precipProbability || 0) * 100);
                 })();
+                _wxReveal(); // Water location — PirateWeather is the sole source; reveal now
                 return;
             }
             // NWS chain failed — restore cached station metadata and condition text,
@@ -4732,6 +4745,7 @@
                     }
                 }
             })();
+            _wxReveal(); // NWS chain failed — reveal whatever values are available
         }
     }
 
@@ -4937,7 +4951,7 @@
         if (flags.typhoonWarning) return 'A TYPHOON WARNING is in effect for your area. This is a life-threatening situation — catastrophic winds, storm surge, and flooding are expected. Complete all preparations and follow evacuation orders immediately.';
         if (flags.tsunamiWarning) return 'A TSUNAMI WARNING is in effect. Life-threatening waves and flooding are possible along the coast. Move immediately to high ground or inland — do not wait to see the wave before moving.';
         if (flags.extremeWindWarning) return 'An EXTREME WIND WARNING is in effect. Life-threatening, hurricane-force winds are imminent or occurring. Take shelter immediately in an interior room away from windows.';
-        // ── Tier 2: Critical ──────────────────────────────────────────────
+        // ── Tier 2: Critical ─────────────────── ��──────────────────────────
         if (flags.torObserved) {
             if (flags.night) return 'A confirmed tornado is on the ground nearby. Tornadoes are nearly impossible to see at night — take shelter immediately in the lowest interior room of a sturdy building. Do not wait.';
             return 'A confirmed tornado is on the ground near your location. Take immediate shelter in an interior room on the lowest floor of a sturdy building.';
