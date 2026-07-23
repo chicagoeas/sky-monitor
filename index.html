@@ -7489,8 +7489,12 @@
         }
 
         window.fetchBeachForecast = async function(la, lo) {
-            // Only activate at confirmed beach or shoreline locations
-            if (!window.isBeachLocation && !window.isWaterLocation) return;
+            // Gate: Nominatim confirmed a beach/shoreline, OR the user's saved
+            // search string contains "beach" (catches "Montrose Beach" etc. even
+            // when the Nominatim reverse-geocode fails or returns a non-beach feature).
+            var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
+            var _beachByQuery = _savedQ.indexOf('beach') !== -1 || _savedQ.indexOf('shore') !== -1;
+            if (!window.isBeachLocation && !window.isWaterLocation && !_beachByQuery) return;
             var result = _findNearest(la, lo);
             if (!result) return;  // no buoy within 150 km
             var buoy = result.buoy;
