@@ -7517,7 +7517,7 @@
             // Water location detection — Nominatim reverse geocode tells us if coords are on
             // open water (sea, bay, lake, waterway). If so, skip PWS entirely.
             try {
-                var _nomR = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lon);
+                var _nomR = await fetch('https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&lat=' + lat + '&lon=' + lon);
                 if (_nomR.ok) {
                     var _nomD = await _nomR.json();
                     // "Unable to geocode" = open ocean with no mapped land feature
@@ -7532,13 +7532,25 @@
                             _nCls === 'waterway' ||
                             (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
                             (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
-                        // Beach detection: OSM type=beach, leisure=beach, or "beach" in the place name
+                        // Beach detection: covers OSM natural=beach, leisure=beach,
+                        // leisure=beach_resort (Montrose Beach uses this tag), sand,
+                        // plus "beach" anywhere in name/display_name/address components.
+                        var _nomAllText = ((_nomD.name || '') + ' ' + (_nomD.display_name || '')).toLowerCase();
+                        if (_nomD.address) {
+                            // address is a flat object: {beach:"Montrose Beach", suburb:…, city:…}
+                            Object.keys(_nomD.address).forEach(function(k) {
+                                _nomAllText += ' ' + (typeof _nomD.address[k] === 'string' ? _nomD.address[k] : k);
+                            });
+                        }
+                        // Also check the user's saved search string as a final fallback
+                        var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
                         window.isBeachLocation =
                             _nTyp === 'beach' ||
-                            _nTyp === 'sand'  ||
-                            (_nCls === 'leisure' && _nTyp === 'beach') ||
-                            ((_nomD.name         || '').toLowerCase().indexOf('beach') !== -1) ||
-                            ((_nomD.display_name || '').toLowerCase().indexOf('beach') !== -1);
+                            _nTyp === 'beach_resort' ||
+                            _nTyp === 'sand' ||
+                            (_nCls === 'leisure' && (_nTyp === 'beach' || _nTyp === 'beach_resort')) ||
+                            _nomAllText.indexOf('beach') !== -1 ||
+                            _savedQ.indexOf('beach') !== -1;
                     }
                 }
             } catch(e) { window.isWaterLocation = false; window.isBeachLocation = false; }
