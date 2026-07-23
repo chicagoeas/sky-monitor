@@ -7337,7 +7337,7 @@
                 var d = _haverKm(la, lo, b.lat, b.lon);
                 if (d < bestDist) { bestDist = d; best = b; }
             });
-            return (best && bestDist < 150) ? {buoy: best, distKm: Math.round(bestDist)} : null;
+            return (best && bestDist < 40.25) ? {buoy: best, distKm: Math.round(bestDist)} : null;
         }
 
         // Paste your deployed Cloudflare Worker URL here (see cloudflare-worker-ndbc-proxy.js)
@@ -7496,17 +7496,38 @@
             var _beachByQuery = _savedQ.indexOf('beach') !== -1 || _savedQ.indexOf('shore') !== -1;
             if (!window.isBeachLocation && !window.isWaterLocation && !_beachByQuery) return;
             var result = _findNearest(la, lo);
-            if (!result) return;  // no buoy within 150 km
-            var buoy = result.buoy;
             try {
-                var obs = await _fetchNDBC(buoy.id);
-                if (!obs) return;
-                if (obs.wvht == null && obs.wtmp == null) return;
-                var glfText = null;
-                if (_isGL(buoy.id)) {
-                    glfText = await _fetchGLF(window.nwsGridOffice || 'MKX');
+                if (result) {
+                    // Buoy within 25 miles — use NDBC
+                    var buoy = result.buoy;
+                    var obs = await _fetchNDBC(buoy.id);
+                    if (!obs) return;
+                    if (obs.wvht == null && obs.wtmp == null) return;
+                    var glfText = null;
+                    if (_isGL(buoy.id)) {
+                        glfText = await _fetchGLF(window.nwsGridOffice || 'MKX');
+                    }
+                    _renderBeach(obs, glfText);
+                } else {
+                    // No buoy within 25 miles — fall back to Open-Meteo Marine API
+                    var mRes = await fetch(
+                        'https://marine-api.open-meteo.com/v1/marine?latitude=' + la +
+                        '&longitude=' + lo +
+                        '&current=wave_height,wave_direction,wave_period,sea_surface_temperature'
+                    );
+                    if (!mRes.ok) return;
+                    var mData = await mRes.json();
+                    var cur = (mData && mData.current) || {};
+                    var obs = {
+                        wvht: cur.wave_height             != null ? cur.wave_height             : null,
+                        wtmp: cur.sea_surface_temperature != null ? cur.sea_surface_temperature : null,
+                        wspd: null,
+                        wdir: cur.wave_direction          != null ? cur.wave_direction          : null,
+                        atmp: null
+                    };
+                    if (obs.wvht == null && obs.wtmp == null) return;
+                    _renderBeach(obs, null);
                 }
-                _renderBeach(obs, glfText);
             } catch(e) { /* best-effort — silently skip on network failure */ }
         };
     })();
@@ -7541,24 +7562,27 @@
                             _nCls === 'waterway' ||
                             (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
                             (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
-                        // Beach detection: covers OSM natural=beach, leisure=beach,
-                        // leisure=beach_resort (Montrose Beach uses this tag), sand,
-                        // plus "beach" anywhere in name/display_name/address components.
-                        var _nomAllText = ((_nomD.name || '') + ' ' + (_nomD.display_name || '')).toLowerCase();
-                        if (_nomD.address) {
-                            // address is a flat object: {beach:"Montrose Beach", suburb:…, city:…}
-                            Object.keys(_nomD.address).forEach(function(k) {
-                                _nomAllText += ' ' + (typeof _nomD.address[k] === 'string' ? _nomD.address[k] : k);
-                            });
-                        }
-                        // Also check the user's saved search string as a final fallback
+                        // Beach detection: OSM class/type tags are the primary signal.
+                        // We intentionally do NOT search the full display_name or
+                        // address values like city/suburb/road — those would cause false
+                        // positives for any location in "Long Beach", "Virginia Beach",
+                        // or on "Beach Blvd". Instead we check, in priority order:
+                        //   1. OSM feature type (natural=beach, leisure=beach/_resort, natural=sand)
+                        //   2. address.beach key — OSM only adds this when the pin is ON a beach feature
+                        //   3. The feature's own name field only (catches "Montrose Beach" when
+                        //      the pin is actually on that beach polygon)
+                        //   4. Saved search query — user explicitly typed a beach name
+                        var _hasAddressBeachKey  = !!(  _nomD.address && typeof _nomD.address.beach === 'string');
+                        var _featureNameHasBeach = (_nomD.name || '').toLowerCase().indexOf('beach') !== -1;
                         var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
                         window.isBeachLocation =
                             _nTyp === 'beach' ||
                             _nTyp === 'beach_resort' ||
                             _nTyp === 'sand' ||
                             (_nCls === 'leisure' && (_nTyp === 'beach' || _nTyp === 'beach_resort')) ||
-                            _nomAllText.indexOf('beach') !== -1 ||
+                            (_nCls === 'natural' && _nTyp === 'sand') ||
+                            _hasAddressBeachKey ||
+                            _featureNameHasBeach ||
                             _savedQ.indexOf('beach') !== -1;
                     }
                 }
