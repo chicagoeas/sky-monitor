@@ -3599,20 +3599,17 @@
             // _patchSentinelsFromOpenMeteo is called after hourly data is stored below
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
-            // Always render PirateWeather as the initial baseline — fetchNWSChain resolves
-            // the final QC-trusted source (PWS1, NWS obs, or neighbor median) and overwrites
-            // once, after QC completes. This prevents briefly showing a bad PWS value on screen.
+            // Store PirateWeather values as state — fetchNWSChain is responsible for all DOM
+            // writes (temp, wind, humidity, feels-like). Writing PW values to the DOM here
+            // caused a visible flash on every 5-minute auto-refresh: PW would briefly appear
+            // before the QC-trusted source (PWS, NWS obs, or neighbor median) overwrote it.
             let temp = curr.temperature;
             window.liveTemp = Math.round(temp);
-            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
             liveUV = curr.uvIndex || 0;
             const windSpeed = curr.windSpeed;
             const windDir = curr.windBearing;
             liveWindSpd = Math.round(windSpeed);
-            document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
-            setWindCompass(liveWindSpd > 0 && windDir !== null ? windDir : null);
             let humidity = curr.humidity * 100;
-            (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
             // NWS-standard local feels-like: wind chill ≤50°F, heat index ≥70°F, else actual temp
             (function() {
                 var T = temp, W = liveWindSpd, RH = humidity, fl = T;
@@ -3644,7 +3641,6 @@
                 }
                 liveFeelsLike = fl;
             })();
-            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
             const presIn = (curr.pressure * 0.02953).toFixed(2);
             let trend = '\u27A1\uFE0F';
             if (lastPressureMb !== null && curr.pressure !== null) {
@@ -4467,13 +4463,13 @@
             if (_wuRawAvail && _neighborMedianTemp !== null) {
                 const _tDiff = Math.abs(_wu.temp - _neighborMedianTemp);
                 const _hDiff = (_neighborMedianHum !== null && _wu.humidity !== null) ? Math.abs(_wu.humidity - _neighborMedianHum) : 0;
-                // 8°F / 15% RH threshold — tight enough to catch solar-biased sensors
-                // while allowing normal urban microclimate variation (shading, pavement
-                // heat, lake-breeze gradients) which routinely produces 5-7°F differences
-                // between nearby stations without indicating a bad sensor.
-                _wuDevFromNeighbors = (_tDiff > 8) || (_neighborMedianHum !== null && _hDiff > 15);
+                // 6°F / 12% RH threshold — tightened from 8°F/15% to catch more solar-biased
+                // and poorly-sited sensors. Urban microclimate variation (shading, pavement
+                // heat, lake-breeze gradients) typically produces 3-5°F differences; 6°F
+                // still gives genuine microclimates room while rejecting outlier sensors sooner.
+                _wuDevFromNeighbors = (_tDiff > 6) || (_neighborMedianHum !== null && _hDiff > 12);
             }
-            // If the primary is a clear outlier (>8°F from consensus), promote the neighbor
+            // If the primary is a clear outlier (>6°F from consensus), promote the neighbor
             // closest to the median instead — and update wuData so downstream code and the
             // "Observed at" label both reflect the station actually being used.
             if (_wuDevFromNeighbors && _neighbors.length > 0 && _neighborMedianTemp !== null) {
@@ -4494,7 +4490,7 @@
             const _pwNow = window.pirateCurrently;
             const _pwTemp = (_pwNow && _pwNow.temperature != null) ? _pwNow.temperature : null;
             const _wuDevFromPirate = _wuRawAvail && _neighborMedianTemp === null
-                                     && _pwTemp !== null && Math.abs(_wu.temp - _pwTemp) > 15;
+                                     && _pwTemp !== null && Math.abs(_wu.temp - _pwTemp) > 12;
             const _wuAvail = _wuRawAvail && !_wuDevFromNeighbors && !_wuDevFromPirate;
             window.wuDeviates = !_wuAvail;
             // Hide the "Observed at KXXX" label whenever the PWS is rejected —
