@@ -7570,16 +7570,16 @@
                             (_nCls === 'natural' && _waterNaturalTypes.indexOf(_nTyp) !== -1) ||
                             (_nCls === 'place'   && (_nTyp === 'sea' || _nTyp === 'ocean'));
                         // Beach detection: OSM class/type tags are the primary signal.
-                        // We intentionally do NOT search the full display_name or
-                        // address values like city/suburb/road — those would cause false
-                        // positives for any location in "Long Beach", "Virginia Beach",
-                        // or on "Beach Blvd". Instead we check, in priority order:
-                        //   1. OSM feature type (natural=beach, leisure=beach/_resort, natural=sand)
-                        //   2. address.beach key — OSM only adds this when the pin is ON a beach feature
-                        //   3. The feature's own name field only (catches "Montrose Beach" when
-                        //      the pin is actually on that beach polygon)
-                        //   4. Saved search query — user explicitly typed a beach name
-                        var _hasAddressBeachKey  = !!(  _nomD.address && typeof _nomD.address.beach === 'string');
+                        // When the pin lands on a sub-feature inside a beach polygon (a path,
+                        // bench, etc.) Nominatim returns that sub-feature as the top result, so
+                        // the class/type won't say "beach". The address object is the fallback:
+                        // Nominatim adds address.beach for natural=beach polygons and
+                        // address.beach_resort for leisure=beach_resort polygons (like Montrose
+                        // Beach, Chicago). We check both. We intentionally skip city/suburb/road
+                        // values to avoid false positives from "Long Beach, CA" or "Beach Blvd".
+                        var _addr = _nomD.address || {};
+                        var _hasAddressBeachKey = typeof _addr.beach === 'string' ||
+                                                  typeof _addr.beach_resort === 'string';
                         var _featureNameHasBeach = (_nomD.name || '').toLowerCase().indexOf('beach') !== -1;
                         var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
                         window.isBeachLocation =
