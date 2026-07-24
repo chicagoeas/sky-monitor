@@ -671,20 +671,14 @@
 
         <iframe id="radar-frame" width="100%" height="450" frameborder="0" style="border-radius:16px; background:#000; margin-bottom:20px;"></iframe>
 
-        <!-- Flood Impact — moved to severe tab -->
-        <div id="flood-score-box" style="background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-bottom:20px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for 15-min flood forecast">
+        <!-- Flood Outlook — multi-day WPC ERO + NWS QPF; hidden outside US -->
+        <div id="flood-score-box" style="display:none; background:rgba(0,230,118,0.07); border:1px solid rgba(0,230,118,0.25); border-radius:15px; padding:14px 18px; margin-bottom:20px; cursor:pointer; -webkit-tap-highlight-color:transparent;" onclick="openFloodModal()" title="Tap for multi-day flood outlook">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <div style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; color:var(--success);">&#127754; FLOOD IMPACT</div>
-                <div style="font-size:0.62em; color:#445566; letter-spacing:0.5px; font-weight:700;">HOURLY &#8250;</div>
+                <div id="flood-outlook-header" style="font-size:0.7em; font-weight:900; text-transform:uppercase; letter-spacing:1px; color:var(--success);">&#127754; FLOOD OUTLOOK</div>
+                <div id="flood-outlook-label" style="font-size:0.62em; color:var(--success); letter-spacing:0.5px; font-weight:700;">OUTLOOK &#8250;</div>
             </div>
             <div id="flood-score-section">
-                <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;">
-                    <span id="flood-score-tier" style="font-size:clamp(1rem,1.5rem,25px); font-weight:900; color:#00e676;">LOW</span>
-                    <span style="font-size:1em; color:#555;">—</span>
-                    <span id="flood-score-val" style="font-size:clamp(1rem,1.5rem,25px); font-weight:900; color:#00e676;">0</span>
-                    <span style="font-size:0.85em; color:#888;">/100</span>
-                </div>
-                <div id="flood-score-desc" style="font-size:0.8em; color:#aaa; margin-top:4px; line-height:1.4;">Calculating…</div>
+                <div id="flood-outlook-days" style="font-size:0.82em; color:#aaa; line-height:1.8;">Loading…</div>
             </div>
         </div>
 
@@ -2668,37 +2662,20 @@
     }
 
     async function fetchNWSQPF(office, gridX, gridY) {
-        if (!office || gridX == null || gridY == null) { computeFloodImpact(); return; }
+        if (!office || gridX == null || gridY == null) { computeFloodOutlook(); return; }
         try {
             var res = await fetch('https://api.weather.gov/gridpoints/' + office + '/' + gridX + ',' + gridY);
-            if (!res.ok) { window.nwsQPFValues = []; computeFloodImpact(); return; }
+            if (!res.ok) { window.nwsQPFValues = []; computeFloodOutlook(); return; }
             var data = await res.json();
             window.nwsQPFValues = (data.properties && data.properties.quantitativePrecipitation && data.properties.quantitativePrecipitation.values) || [];
             window.nwsPopValues = (data.properties && data.properties.probabilityOfPrecipitation && data.properties.probabilityOfPrecipitation.values) || [];
         } catch(e) { window.nwsQPFValues = []; window.nwsPopValues = []; }
-        computeFloodImpact();
+        computeFloodOutlook();
     }
 
     function onScoreModeChange() { /* no-op — outdoor and flood are now separate boxes */ }
 
-    function _setFloodDisplay(score, tier) {
-        var COLORS = {
-            LOW:      { text: '#00e676', bg: 'rgba(0,230,118,0.07)',  border: 'rgba(0,230,118,0.25)'  },
-            ELEVATED: { text: '#ffeb3b', bg: 'rgba(255,235,59,0.07)', border: 'rgba(255,235,59,0.3)'  },
-            HIGH:     { text: '#ff9100', bg: 'rgba(255,145,0,0.10)',  border: 'rgba(255,145,0,0.35)'  },
-            SEVERE:   { text: '#ff1744', bg: 'rgba(255,23,68,0.10)',  border: 'rgba(255,23,68,0.4)'   },
-        };
-        var c = COLORS[tier] || COLORS.LOW;
-        var tierEl = document.getElementById('flood-score-tier');
-        var valEl  = document.getElementById('flood-score-val');
-        if (tierEl) { tierEl.innerText = tier; tierEl.style.color = c.text; }
-        if (valEl)  { valEl.innerText  = score; valEl.style.color = c.text; }
-        var box = document.getElementById('flood-score-box');
-        if (box) { box.style.background = c.bg; box.style.borderColor = c.border; }
-        // Keep the HOURLY label color in sync with tier
-        var hourlyLbl = box && box.querySelector('[style*="HOURLY"]');
-        if (hourlyLbl) hourlyLbl.style.color = c.text;
-    }
+    // _setFloodDisplay removed — replaced by computeFloodOutlook()
 
     // General rolling accumulation helper — supports any window size (hours)
     function _getRollingNh(hours) {
@@ -2775,293 +2752,116 @@
         return Math.round(Math.min(100, Math.max(0, iScore, alertFloor)));
     }
 
-    // Fetches Open-Meteo 15-minute precipitation for FLOOD IMPACT only.
-    // Stores current-slot rain rate in window.omFloodRate and full data in
-    // window.omMinutely15Data for the modal. Touches nothing else.
-    async function fetchOMPrecip15() {
-        try {
-            const res = await fetch(
-                'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
-                '&minutely_15=precipitation,precipitation_probability' +
-                '&precipitation_unit=inch&timezone=auto'
-            );
-            if (!res.ok) return;
-            const d = await res.json();
-            const m15 = d.minutely_15;
-            if (!m15 || !m15.time || !m15.precipitation) return;
-
-            // OM returns local time strings (no 'Z'); treat as UTC then subtract the offset.
-            const utcOffSec = d.utc_offset_seconds || 0;
-            const nowMs = Date.now();
-
-            // Find the current 15-min slot.
-            let idx = 0;
-            for (let i = 0; i < m15.time.length; i++) {
-                const slotUtcMs = new Date(m15.time[i] + 'Z').getTime() - utcOffSec * 1000;
-                if (slotUtcMs <= nowMs) idx = i;
-                else break;
-            }
-
-            // Store full dataset for the modal and current rate for the flood score.
-            window.omMinutely15Data = {
-                time:        m15.time,
-                precipitation:        m15.precipitation,
-                probability: m15.precipitation_probability || [],
-                utcOffSec:   utcOffSec,
-                startIdx:    idx
-            };
-            // Smooth over 3 slots (prev, current, next) to dampen HRRR single-slot
-            // spike artifacts (e.g. 1.9" in one 15-min bucket → 7.5"/hr display).
-            // A real sustained heavy rain event will show elevated values across
-            // multiple consecutive slots and still score correctly.
-            var _sIdx = [idx - 1, idx, idx + 1].filter(function(i) { return i >= 0 && i < m15.precipitation.length; });
-            var _sAvg = _sIdx.reduce(function(s, i) { return s + (m15.precipitation[i] || 0); }, 0) / _sIdx.length;
-            // Cap at 3 in/hr — legitimate extreme events are well below this;
-            // anything higher is almost certainly a model glitch (HRRR).
-            window.omFloodRate = Math.min(_sAvg * 4, 3.0);
-            computeFloodImpact();
-        } catch(e) { console.warn('[SkyMonitor OM15] fetch error:', e); }
-    }
-
-    function computeFloodImpact() {
-        var descEl = document.getElementById('flood-score-desc');
-        // Single source for live rain rate: Open-Meteo 15-min (global, consistent).
-        // Falls back to livePrecipInt if fetchOMPrecip15 hasn't returned yet.
-        var lpi = Math.max(0, window.omFloodRate != null ? window.omFloodRate : (window.livePrecipInt || 0));
-
-        // Hard rule: >2 in/hr → instant SEVERE 100
-        if (lpi > 2.0) {
-            _setFloodDisplay(100, 'SEVERE');
-            if (descEl) descEl.innerText = 'Extreme rainfall rate (' + lpi.toFixed(1) + '\u201d/hr) — flash flooding imminent. Seek higher ground now.';
+    // ── Multi-day Flood Outlook (replaces computeFloodImpact) ──────────────────
+    // Driven by WPC ERO (Days 1–3) + NWS gridpoint QPF. US-only; hidden outside US.
+    function computeFloodOutlook() {
+        var box = document.getElementById('flood-score-box');
+        if (window.isOutsideUS) {
+            if (box) box.style.display = 'none';
             return;
         }
+        if (box) box.style.display = 'block';
 
-        // 1. Live intensity score
-        var intensityScore;
-        if      (lpi >= 1.5)  intensityScore = 90;
-        else if (lpi >= 1.0)  intensityScore = 75;
-        else if (lpi >= 0.5)  intensityScore = 55;
-        else if (lpi >= 0.25) intensityScore = 38;
-        else if (lpi >= 0.1)  intensityScore = 20;
-        else if (lpi >= 0.01) intensityScore = 8;
-        else                  intensityScore = 0;
+        var daysEl   = document.getElementById('flood-outlook-days');
+        var headerEl = document.getElementById('flood-outlook-header');
+        var labelEl  = document.getElementById('flood-outlook-label');
 
-        // 2. NWS official gridpoint QPF (most authoritative forecast source)
-        var qpf1h = _getNWSQPF(0, 1);
-        var qpf3h = _getNWSQPF(0, 3);
-        var qpf6h = _getNWSQPF(0, 6);
-        var forecastScore = 0;
-        if      (qpf1h >= 2.0)  forecastScore = 100;
-        else if (qpf1h >= 1.0)  forecastScore = 80;
-        else if (qpf1h >= 0.5)  forecastScore = 55;
-        else if (qpf1h >= 0.25) forecastScore = 38;
-        if      (qpf3h >= 2.0)  forecastScore = Math.max(forecastScore, 65);
-        else if (qpf3h >= 1.0)  forecastScore = Math.max(forecastScore, 48);
-        if      (qpf6h >= 2.0)  forecastScore = Math.max(forecastScore, 45);
-        else if (qpf6h >= 1.0)  forecastScore = Math.max(forecastScore, 30);
-        else if (qpf6h >= 0.5)  forecastScore = Math.max(forecastScore, 15);
-
-        // 2a-obs. NWS station observed 3h/6h accumulations (US only) — actual measured
-        // rainfall beats forecast QPF for capturing ongoing events. These raise the
-        // forecastScore floor when observed rain exceeds what QPF predicted.
-        if (!window.isOutsideUS) {
-            var _obs3h = window.nwsObsPrecip3h;
-            var _obs6h = window.nwsObsPrecip6h;
-            if (_obs3h != null) {
-                if      (_obs3h >= 3.0)  forecastScore = Math.max(forecastScore, 85);
-                else if (_obs3h >= 2.0)  forecastScore = Math.max(forecastScore, 70);
-                else if (_obs3h >= 1.0)  forecastScore = Math.max(forecastScore, 52);
-                else if (_obs3h >= 0.5)  forecastScore = Math.max(forecastScore, 35);
-                else if (_obs3h >= 0.25) forecastScore = Math.max(forecastScore, 20);
-            }
-            if (_obs6h != null) {
-                if      (_obs6h >= 4.0)  forecastScore = Math.max(forecastScore, 75);
-                else if (_obs6h >= 2.5)  forecastScore = Math.max(forecastScore, 58);
-                else if (_obs6h >= 1.5)  forecastScore = Math.max(forecastScore, 42);
-                else if (_obs6h >= 0.75) forecastScore = Math.max(forecastScore, 25);
-            }
+        // ERO label string → 0–4 severity level
+        function _eroLevel(label) {
+            if (!label || label === '0') return 0;
+            var ul = label.toUpperCase();
+            if (ul.includes('HIGH'))     return 4;
+            if (ul.includes('MODERATE')) return 3;
+            if (ul.includes('SLIGHT'))   return 2;
+            if (ul.includes('MARGINAL')) return 1;
+            return 0;
         }
 
-        // 2b. Supplement NWS QPF with official NWS probability of precipitation.
-        // Cross-multiplying QPF amount × PoP surfaces events where high confidence +
-        // moderate accumulation is more meaningful than low-confidence heavy QPF.
-        var _nwsPop1h = _getNWSPoP(0, 1);  // 0–100
-        var _nwsPop3h = _getNWSPoP(0, 3);
-        var _nwsPop6h = _getNWSPoP(0, 6);
-        if (_nwsPop1h !== null) {
-            // NWS PoP available — cross-multiply with already-computed NWS QPF
-            var _pop1 = _nwsPop1h / 100, _pop3 = (_nwsPop3h || 0) / 100, _pop6 = (_nwsPop6h || 0) / 100;
-            var _nwsForecast = 0;
-            // 1-hour window: QPF × PoP gives probability-weighted expected in
-            var _exp1 = qpf1h * _pop1;
-            if      (_exp1 >= 1.0)  _nwsForecast = Math.max(_nwsForecast, 75);
-            else if (_exp1 >= 0.5)  _nwsForecast = Math.max(_nwsForecast, 55);
-            else if (_exp1 >= 0.25) _nwsForecast = Math.max(_nwsForecast, 35);
-            else if (_pop1 >= 0.7)  _nwsForecast = Math.max(_nwsForecast, 20); // high conf even if QPF modest
-            // 3-hour window
-            var _exp3 = qpf3h * _pop3;
-            if      (_exp3 >= 2.0) _nwsForecast = Math.max(_nwsForecast, 65);
-            else if (_exp3 >= 1.0) _nwsForecast = Math.max(_nwsForecast, 45);
-            else if (_exp3 >= 0.5) _nwsForecast = Math.max(_nwsForecast, 28);
-            // 6-hour window
-            var _exp6 = qpf6h * _pop6;
-            if      (_exp6 >= 2.0) _nwsForecast = Math.max(_nwsForecast, 45);
-            else if (_exp6 >= 1.0) _nwsForecast = Math.max(_nwsForecast, 28);
-            forecastScore = Math.max(forecastScore, _nwsForecast);
-        }
+        // QPF windows aligned to local midnight
+        var now = new Date();
+        var hoursToMidnight = 24 - now.getHours() - now.getMinutes() / 60;
 
-        // Past rainfall (used in descriptions)
-        var past24h = _getRolling24h();
-        var past48h = _getRollingNh(48);
+        var qpf0 = _getNWSQPF(0, hoursToMidnight);           // rest of today
+        var qpf1 = _getNWSQPF(hoursToMidnight, 24);          // tomorrow
+        var qpf2 = _getNWSQPF(hoursToMidnight + 24, 24);     // day after tomorrow
 
-        // 4. Active NWS flood alerts (raw weight; hard floors applied below)
+        var ero1 = _eroLevel(window.wpcERODay1);
+        var ero2 = _eroLevel(window.wpcERODay2);
+        var ero3 = _eroLevel(window.wpcERODay3);
+
+        // Active flood alert floors
         var evts = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
-        var alertScore = 0;
-        if (window.activeFFE)                                                               alertScore = 100;
-        else if (evts.some(function(e) { return e.includes('flash flood warning'); }))      alertScore = 70;
-        else if (evts.some(function(e) { return e.includes('flood warning'); }))            alertScore = 45;
-        else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) alertScore = 25;
+        var hasFFW  = window.activeFFE || evts.some(function(e) { return e.includes('flash flood warning'); });
+        var hasWarn = !hasFFW && evts.some(function(e) { return e.includes('flood warning'); });
+        var hasWatch = !hasFFW && !hasWarn && evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); });
 
-        // 5. Near-term precip probability boost — NWS official PoP only
-        var forecastProbBoost = 0;
-        var _pop3hPct = _getNWSPoP(0, 3); // NWS avg PoP (0–100) for next 3h
-        if (_pop3hPct !== null) {
-            var _pop3hFrac = _pop3hPct / 100;
-            if      (_pop3hFrac >= 0.85) forecastProbBoost = 8;
-            else if (_pop3hFrac >= 0.65) forecastProbBoost = 5;
-            else if (_pop3hFrac >= 0.45) forecastProbBoost = 2;
-        }
+        // Day labels
+        var DNAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        var d0 = now.getDay();
+        var names = ['Today', DNAMES[(d0 + 1) % 7], DNAMES[(d0 + 2) % 7]];
 
-        // 6. Spring season amplifier (snowmelt + rain compound risk)
-        var mo = new Date().getMonth();
-        var seasonBonus = (mo >= 2 && mo <= 4) ? 8 : 0;
+        // ERO colors
+        var ERO_BG   = ['','#7dce55','#f9a825','#8e24aa','#c62828'];
+        var ERO_FG   = ['','#000','#000','#fff','#fff'];
+        var ERO_NAME = ['','Marginal','Slight','Moderate','High'];
 
-        // Weighted total — alert carries 30%, live intensity 45%, QPF 25%
-        var raw = intensityScore    * 0.45
-                + forecastScore     * 0.25
-                + alertScore        * 0.30
-                + forecastProbBoost
-                + seasonBonus;
-        var score = Math.round(Math.min(100, Math.max(0, raw)));
-
-        // Hard minimum floors — a government-issued warning always guarantees its tier.
-        // NWS issues a FFW only when flooding IS occurring or imminent; rainfall rate
-        // at the sensor cannot suppress that signal.
-        if (window.activeFFE) {
-            score = 100;
-        } else if (evts.some(function(e) { return e.includes('flash flood warning'); })) {
-            score = (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood)
-                ? Math.max(score, 80)   // Considerable/Catastrophic FFW → SEVERE
-                : Math.max(score, 65);  // Standard FFW → solidly HIGH
-        } else if (evts.some(function(e) { return e.includes('flood warning'); })) {
-            score = Math.max(score, 50); // Flood Warning → minimum HIGH
-        } else if (evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); })) {
-            score = Math.max(score, 30); // Watch/Advisory → minimum ELEVATED
-        }
-
-        // Tier
-        var tier;
-        if      (score >= 75) tier = 'SEVERE';
-        else if (score >= 50) tier = 'HIGH';
-        else if (score >= 25) tier = 'ELEVATED';
-        else                  tier = 'LOW';
-
-        _setFloodDisplay(score, tier);
-
-        // Rich contextual description — most specific driver wins
-        var desc;
-        if (tier === 'SEVERE') {
-            if      (lpi >= 1.0)               desc = 'Extremely heavy rain now (' + lpi.toFixed(2) + '\u201d/hr) — storm drains overwhelmed. Check basement immediately.';
-            else if (window.activeFFE)          desc = 'Flash Flood Emergency in effect. Life-threatening flooding is occurring. Move to higher ground NOW.';
-            else if (alertScore >= 70 && (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood))
-                                               desc = 'Flash Flood Warning (Considerable/Catastrophic impacts). Basement flooding very likely — act now.';
-            else if (qpf1h >= 1.0)             desc = 'NWS forecasts ' + qpf1h.toFixed(2) + '\u201d in the next hour. Run sump pump and move valuables upstairs now.';
-            else                               desc = 'Multiple severe flood factors active. Basement risk is critical.';
-        } else if (tier === 'HIGH') {
-            if      (lpi >= 0.5)               desc = 'Heavy rain now (' + lpi.toFixed(2) + '\u201d/hr). Storm drains under stress — monitor basement closely.';
-            else if (alertScore >= 65)         desc = 'Flash Flood Warning in effect. Flooding is occurring or imminent — monitor basement and be ready to act.';
-            else if (qpf3h >= 1.0)             desc = qpf3h.toFixed(2) + '\u201d of rain expected in 3 hrs. Be ready to act if water enters basement.';
-            else if (past24h >= 2.0)           desc = 'Ground saturated (' + past24h.toFixed(1) + '\u201d in 24h) — even moderate rain now poses HIGH basement risk.';
-            else if (past48h >= 3.5)           desc = 'Soil deeply saturated from extended rainfall (' + past48h.toFixed(1) + '\u201d in 48h). Basement risk elevated.';
-            else                               desc = 'Elevated combination of rain and forecast. Monitor basement and clear sump pump.';
-        } else if (tier === 'ELEVATED') {
-            if      (qpf6h >= 0.5)             desc = qpf6h.toFixed(2) + '\u201d forecast in 6 hrs — worth monitoring if your basement is vulnerable.';
-            else if (past24h >= 1.0)           desc = 'Soil partially saturated (' + past24h.toFixed(1) + '\u201d last 24h). Additional rain will have above-normal impact.';
-            else if (forecastProbBoost >= 5)   desc = 'High rain probability forecast in the next 3 hours. Watch conditions.';
-            else                               desc = 'Minor flood risk factors present. No immediate concern, but conditions worth watching.';
-        } else {
-            if      (lpi > 0)                  desc = 'Light rain (' + lpi.toFixed(2) + '\u201d/hr) — well below basement flooding threshold.';
-            else if (qpf6h > 0.1)              desc = 'Light rain possible but no significant flooding threat.';
-            else                               desc = 'No significant flood factors. Basement risk is minimal.';
-        }
-        if (descEl) descEl.innerText = desc;
-
-        // ── Look-ahead: warn about imminent elevated conditions ───────────────
-        // Scans next 4 slots (1 hour). Fires only when ≥2 *consecutive* slots
-        // score ≥ HIGH — single-slot HRRR spikes can't trigger it. Displayed
-        // score is discounted to 80% of raw to signal forecast vs. observed.
-        var _laOmD = window.omMinutely15Data;
-        if (_laOmD && _laOmD.time && _laOmD.precipitation && _laOmD.startIdx != null) {
-            var _laCurIdx  = _laOmD.startIdx;
-            var _laScanEnd = Math.min(_laCurIdx + 49, _laOmD.time.length); // slots +1 … +48 (12 hours)
-
-            // Score each future slot with the same 3-slot smoothing + 3"/hr cap
-            var _laScores = [];
-            for (var _lai = _laCurIdx + 1; _lai < _laScanEnd; _lai++) {
-                var _laNeigh = [_lai - 1, _lai, _lai + 1].filter(function(j) {
-                    return j >= 0 && j < _laOmD.precipitation.length;
-                });
-                var _laAvg  = _laNeigh.reduce(function(s, j) { return s + (_laOmD.precipitation[j] || 0); }, 0) / _laNeigh.length;
-                var _laRate = Math.min(_laAvg * 4, 3.0);
-                var _laProb = (_laOmD.probability[_lai] != null ? _laOmD.probability[_lai] : 0) / 100;
-                _laScores.push({
-                    i: _lai,
-                    s: _computeHourFloodScore({ precipIntensity: _laRate, precipProbability: _laProb, time: 0 })
-                });
+        // Natural-language callout per day
+        function _dayCallout(name, qpf, eroLvl) {
+            var qpfStr = qpf >= 0.01 ? '~' + qpf.toFixed(2) + '\u2033' : 'Dry';
+            var eroBadge = '';
+            if (eroLvl >= 1) {
+                eroBadge = ' <span style="background:' + ERO_BG[eroLvl] + ';color:' + ERO_FG[eroLvl] + ';padding:1px 7px;border-radius:4px;font-size:0.76em;font-weight:900;letter-spacing:0.3px;">L' + eroLvl + '/4</span>';
             }
-
-            // Find the longest consecutive run of slots scoring ≥ 50 (HIGH)
-            var _laRunLen = 0, _laRunStart = 0, _laRunPeak = 0;
-            var _laBestLen = 0, _laBestStart = 0, _laBestPeak = 0;
-            for (var _lci = 0; _lci < _laScores.length; _lci++) {
-                if (_laScores[_lci].s >= 50) {
-                    if (_laRunLen === 0) { _laRunStart = _lci; _laRunPeak = 0; }
-                    _laRunLen++;
-                    _laRunPeak = Math.max(_laRunPeak, _laScores[_lci].s);
-                    if (_laRunLen > _laBestLen || (_laRunLen === _laBestLen && _laRunPeak > _laBestPeak)) {
-                        _laBestLen = _laRunLen; _laBestStart = _laRunStart; _laBestPeak = _laRunPeak;
-                    }
-                } else {
-                    _laRunLen = 0;
-                }
-            }
-
-            // Gate: ≥2 consecutive elevated slots AND beats current score
-            if (_laBestLen >= 2 && _laBestPeak > score) {
-                // _laScores indices → omMinutely15Data indices
-                var _laFirstI  = _laScores[_laBestStart].i;
-                var _laLastI   = _laScores[_laBestStart + _laBestLen - 1].i;
-
-                // OM times are local strings (no Z); appending Z + rendering as
-                // UTC is the correct local-time display (same trick as the modal).
-                var _laFmtSlot = function(omIdx) {
-                    return new Date(_laOmD.time[omIdx] + 'Z')
-                        .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-                };
-                var _laT1    = _laFmtSlot(_laFirstI);
-                var _laEndMs = new Date(_laOmD.time[_laLastI] + 'Z').getTime() + 15 * 60 * 1000;
-                var _laT2    = new Date(_laEndMs)
-                    .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-
-                // 80% discount signals this is a forecast, not observed rain
-                var _laDiscount = Math.round(_laBestPeak * 0.8);
-                var _laTier = _laDiscount >= 75 ? 'SEVERE' : _laDiscount >= 50 ? 'HIGH' : 'ELEVATED';
-                var _laVerb = _laBestPeak >= 75 ? 'Severe rain' : 'Heavy rain';
-                _setFloodDisplay(_laDiscount, _laTier);
-                if (descEl) descEl.innerText = '\u26a0\ufe0f Forecast: ' + _laVerb + ' expected '
-                    + _laT1 + '\u2013' + _laT2 + ' \u2014 tap for 15-min details.';
-            }
+            // Severity-aware name color
+            var nameColor = eroLvl >= 3 ? '#ff9100' : eroLvl >= 1 ? '#f1f5f9' : '#9aa5b4';
+            // Natural language suffix
+            var suffix = '';
+            if (eroLvl >= 4)      suffix = ' \u2014 High flash flood risk. Watch forecasts closely.';
+            else if (eroLvl === 3) suffix = ' \u2014 Moderate flash flood risk. Stay alert.';
+            else if (eroLvl === 2) suffix = ' \u2014 Slight flash flood risk.';
+            else if (eroLvl === 1) suffix = ' \u2014 Marginal flash flood risk.';
+            return '<div style="padding:2px 0;"><span style="color:' + nameColor + ';font-weight:700;">' + name + ':</span>'
+                + ' <span style="color:#aaa;">' + qpfStr + '</span>' + eroBadge
+                + (suffix ? '<span style="color:#7a8fa6;font-size:0.9em;">' + suffix + '</span>' : '')
+                + '</div>';
         }
+
+        // Overall card severity
+        var maxEro = Math.max(ero1, ero2, ero3);
+        var maxQPF = Math.max(qpf0, qpf1, qpf2);
+        var CARD = {
+            LOW:      { text: '#00e676', bg: 'rgba(0,230,118,0.07)',  border: 'rgba(0,230,118,0.25)'  },
+            ELEVATED: { text: '#ffeb3b', bg: 'rgba(255,235,59,0.07)', border: 'rgba(255,235,59,0.3)'  },
+            HIGH:     { text: '#ff9100', bg: 'rgba(255,145,0,0.10)',  border: 'rgba(255,145,0,0.35)'  },
+            SEVERE:   { text: '#ff1744', bg: 'rgba(255,23,68,0.10)',  border: 'rgba(255,23,68,0.4)'   },
+        };
+        var tier = 'LOW';
+        if (hasFFW || maxEro >= 3 || maxQPF >= 2.0)       tier = 'SEVERE';
+        else if (hasWarn || maxEro >= 2 || maxQPF >= 1.0)  tier = 'HIGH';
+        else if (hasWatch || maxEro >= 1 || maxQPF >= 0.5) tier = 'ELEVATED';
+
+        var c = CARD[tier];
+        if (box)      { box.style.background = c.bg; box.style.borderColor = c.border; }
+        if (headerEl)   headerEl.style.color = c.text;
+        if (labelEl)    labelEl.style.color  = c.text;
+
+        if (daysEl) {
+            daysEl.innerHTML = _dayCallout(names[0], qpf0, ero1)
+                             + _dayCallout(names[1], qpf1, ero2)
+                             + _dayCallout(names[2], qpf2, ero3);
+        }
+
+        // Cache for modal
+        window._floodOutlookData = {
+            days: [
+                { name: names[0], qpf: qpf0, ero: ero1, hoursAhead: 0,                   windowH: hoursToMidnight },
+                { name: names[1], qpf: qpf1, ero: ero2, hoursAhead: hoursToMidnight,      windowH: 24 },
+                { name: names[2], qpf: qpf2, ero: ero3, hoursAhead: hoursToMidnight + 24, windowH: 24 }
+            ],
+            tier: tier,
+            hasFFW: hasFFW, hasWarn: hasWarn, hasWatch: hasWatch,
+            eroNames: ERO_NAME, eroBg: ERO_BG, eroFg: ERO_FG
+        };
     }
 
 
@@ -5042,7 +4842,7 @@
         const factorList = [];
         const hazardCats = {}; // tracks distinct hazard categories active
 
-        // ── 1. SPC Convective Outlook ─────────────────or�────────────────────
+        // ── 1. SPC Convective Outlook ─────────────────or ────────────────────
         const spc = window.spcRisk;
         const SPC_SCORES = { TSTM: 0, MRGL: 1, SLGT: 2, ENH: 3, MDT: 5, HIGH: 7 };
         const SPC_COLORS = { HIGH: '#e040fb', MDT: '#ff1744', ENH: '#ff9100', SLGT: '#ffeb3b', MRGL: '#7BB07B', TSTM: '#4fc3f7' };
@@ -5484,8 +5284,10 @@
 
         const eroUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
         const eroData = await checkArcGIS(eroUrl);
+        // Store Day 1 ERO for the flood outlook card
+        window.wpcERODay1 = eroData ? (eroData.outlook || eroData.label || eroData.LABEL || eroData.risk || eroData.RISK || null) : null;
         if (eroData) {
-            const eroLabel = eroData.outlook || eroData.label || eroData.LABEL || eroData.risk || eroData.RISK || null;
+            const eroLabel = window.wpcERODay1;
             if (eroLabel && eroLabel !== '0') {
                 hasRisk = true;
                 let shortLabel = eroLabel, eroBg = '#1565c0';
@@ -5498,6 +5300,14 @@
                 riskHtml += '<div style="background:' + eroBg + '; color:' + eroTextColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px;">\uD83D\uDCA7 WPC: ' + shortLabel + ' Risk</div>';
             }
         }
+        // Fetch ERO Days 2 & 3 in parallel for the flood outlook card (no badge, background only)
+        const [_ero2Raw, _ero3Raw] = await Promise.all([
+            checkArcGIS('https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/1/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json'),
+            checkArcGIS('https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/2/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json')
+        ]);
+        window.wpcERODay2 = _ero2Raw ? (_ero2Raw.outlook || _ero2Raw.label || _ero2Raw.LABEL || _ero2Raw.risk || _ero2Raw.RISK || null) : null;
+        window.wpcERODay3 = _ero3Raw ? (_ero3Raw.outlook || _ero3Raw.label || _ero3Raw.LABEL || _ero3Raw.risk || _ero3Raw.RISK || null) : null;
+        computeFloodOutlook(); // Re-render flood card with full ERO data
         try {
             const mpdRes = await fetch('https://wpcmetwatch.skymonitor-account.workers.dev/?lat=' + lat + '&lon=' + lon);
             if (mpdRes.ok) {
@@ -5996,154 +5806,108 @@
         }
     }
 
-    // ── Hourly Flood Impact Modal ────────────────────────────────────────36�──────
+    // ── Multi-day Flood Outlook Modal ──────────────────────────────────────────
     function openFloodModal() {
-        var _pwAvailEarly  = window.pirateHourlyData && window.pirateHourlyData.length > 0;
-        var _nwsAvailEarly = window.nwsQPFValues && window.nwsQPFValues.length > 0;
-        if (!_pwAvailEarly && !_nwsAvailEarly) { alert('Hourly data not yet loaded.'); return; }
         setModalOpen(true);
         var modal = document.getElementById('flood-modal');
         if (!modal) {
             modal = document.createElement('div'); modal.id = 'flood-modal';
             modal.style = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.78);z-index:9999;display:flex;align-items:center;justify-content:center;';
-            modal.innerHTML = '<div id="flood-modal-inner" style="background:#071a28;color:#fff;border-radius:20px;max-width:390px;width:93vw;padding:24px;position:relative;box-shadow:0 16px 40px #000a;max-height:88vh;overflow-y:auto;"></div>';
+            modal.innerHTML = '<div id="flood-modal-inner" style="background:#071a28;color:#fff;border-radius:20px;max-width:420px;width:93vw;padding:24px;position:relative;box-shadow:0 16px 40px #000a;max-height:88vh;overflow-y:auto;"></div>';
             document.body.appendChild(modal);
             modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } });
         }
         modal.style.display = 'flex';
 
-        var FLOOD_COLORS = {
-            LOW:      '#00e676',
-            ELEVATED: '#ffeb3b',
-            HIGH:     '#ff9100',
-            SEVERE:   '#ff1744'
-        };
-        function _floodTier(s) {
-            if (s >= 75) return 'SEVERE';
-            if (s >= 50) return 'HIGH';
-            if (s >= 25) return 'ELEVATED';
-            return 'LOW';
-        }
-        function _floodIcon(tier) {
-            if (tier === 'SEVERE')   return '\uD83D\uDEA8';
-            if (tier === 'HIGH')     return '\u26A0\uFE0F';
-            if (tier === 'ELEVATED') return '\uD83D\uDCA7';
-            return '\u2714\uFE0F';
-        }
-
-        var offsetHours = window.pirateTimezoneOffset || 0;
-        var currentUnix = Math.floor(Date.now() / 1000);
-        var evts = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
-        var hasFFW = window.activeFFE || evts.some(function(e) { return e.includes('flash flood warning'); });
-        var hasFloodWarn = !hasFFW && evts.some(function(e) { return e.includes('flood warning'); });
-        var hasWatch = !hasFFW && !hasFloodWarn && evts.some(function(e) { return e.includes('flood watch') || e.includes('flood advisory'); });
-
-        // Build alert banner HTML
-        var alertHtml = '';
-        if (window.activeFFE) {
-            alertHtml = '<div style="background:#b71c1c;border:2px solid #fff;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-weight:900;font-size:0.85em;letter-spacing:0.5px;text-transform:uppercase;">\uD83D\uDEA8 Flash Flood Emergency — Life-threatening flooding occurring. Move to higher ground NOW.</div>';
-        } else if (hasFFW) {
-            var ffwLabel = (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 'Flash Flood Warning (Considerable/Catastrophic)' : 'Flash Flood Warning in effect';
-            alertHtml = '<div style="background:rgba(0,188,212,0.15);border:1px solid #00bcd4;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\u26A0\uFE0F ' + ffwLabel + '</div>';
-        } else if (hasFloodWarn) {
-            alertHtml = '<div style="background:rgba(255,152,0,0.12);border:1px solid #ff9800;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Warning in effect</div>';
-        } else if (hasWatch) {
-            alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:12px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
-        }
-
-        // ── 15-min OM data (preferred) ────────────────────────────────────
-        var omData = window.omMinutely15Data;
-        if (!omData) {
+        var d = window._floodOutlookData;
+        if (!d) {
             document.getElementById('flood-modal-inner').innerHTML =
                 '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
-                + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:16px;padding-right:28px;">\uD83C\uDF0A 15-MIN FLOOD IMPACT</div>'
-                + '<div style="color:#888;font-size:0.85em;">15-min data not yet loaded. Try again in a moment.</div>';
+                + '<div style="font-size:1em;font-weight:900;color:#4fc3f7;letter-spacing:1px;margin-bottom:16px;padding-right:28px;">\uD83C\uDF0A FLOOD OUTLOOK</div>'
+                + '<div style="color:#888;font-size:0.85em;">Outlook data not yet loaded. Try again in a moment.</div>';
             return;
         }
 
-        var omUtcOff  = omData.utcOffSec || 0;
-        var omStart   = omData.startIdx  || 0;
-        var omTimes   = omData.time;
-        var omPrecip  = omData.precipitation;
-        var omProb    = omData.probability;
+        var ERO_BG   = d.eroBg   || ['','#7dce55','#f9a825','#8e24aa','#c62828'];
+        var ERO_FG   = d.eroFg   || ['','#000','#000','#fff','#fff'];
+        var ERO_NAME = d.eroNames || ['','Marginal','Slight','Moderate','High'];
+        var ERO_DESC = [
+            '',
+            'Isolated flash flooding possible in susceptible areas.',
+            'Flash flooding likely in some areas — stay alert.',
+            'Flash flooding likely and may be life-threatening in spots.',
+            'Widespread, life-threatening flash flooding expected.'
+        ];
 
-        // Build a row for a single 15-min slot
-        function buildFlood15Row(i) {
-            var slotUtcMs  = new Date(omTimes[i] + 'Z').getTime() - omUtcOff * 1000;
-            var slotUnixS  = Math.floor(slotUtcMs / 1000);
-            // 3-slot rolling average + 3 in/hr cap — matches the omFloodRate smoothing
-            // so modal rows are consistent with the headline score (no HRRR spike display).
-            var _mIdx  = [i - 1, i, i + 1].filter(function(j) { return j >= 0 && j < omPrecip.length; });
-            var _mAvg  = _mIdx.reduce(function(s, j) { return s + (omPrecip[j] || 0); }, 0) / _mIdx.length;
-            var rateHr = Math.min(_mAvg * 4, 3.0);            // 15-min accum × 4 → in/hr, capped at 3.0
-            var probPct    = omProb[i] != null ? omProb[i] : 0; // already 0-100
-            var h          = { time: slotUnixS, precipIntensity: rateHr, precipProbability: probPct / 100 };
-            var score      = _computeHourFloodScore(h);
-            var tier       = _floodTier(score);
-            var col        = FLOOD_COLORS[tier];
-            var icon       = _floodIcon(tier);
-            var barPct     = Math.min(score, 100);
-            var intStr     = rateHr >= 0.01 ? rateHr.toFixed(2) + '\u201d/hr' : 'trace';
-            // Display in station-local time: shift by utcOffset then render as UTC so
-            // browser timezone doesn't interfere (same trick as the rest of the app).
-            var timeLabel  = new Date(slotUtcMs + omUtcOff * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
-            return '<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.06);">'
-                + '<div style="min-width:50px;font-size:0.73em;color:#aaa;text-align:right;">' + timeLabel + '</div>'
-                + '<div style="min-width:26px;font-size:1.1em;text-align:center;">' + icon + '</div>'
-                + '<div style="flex:1;">'
-                +   '<div style="background:rgba(255,255,255,0.08);border-radius:4px;height:6px;overflow:hidden;margin-bottom:4px;">'
-                +     '<div style="background:' + col + ';width:' + barPct + '%;height:100%;border-radius:4px;"></div>'
-                +   '</div>'
-                +   '<div style="font-size:0.71em;display:flex;justify-content:space-between;">'
-                +     '<span style="font-weight:900;color:' + col + ';">' + tier + ' <span style="font-weight:400;opacity:0.8;">' + score + '/100</span></span>'
-                +     '<span style="opacity:0.5;">' + Math.round(probPct) + '% / ' + intStr + '</span>'
-                +   '</div>'
-                + '</div></div>';
+        // Active alert banner
+        var alertHtml = '';
+        if (window.activeFFE) {
+            alertHtml = '<div style="background:#b71c1c;border:2px solid #fff;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-weight:900;font-size:0.82em;letter-spacing:0.5px;text-transform:uppercase;">\uD83D\uDEA8 Flash Flood Emergency \u2014 Life-threatening flooding occurring. Move to higher ground NOW.</div>';
+        } else if (d.hasFFW) {
+            var ffwLabel = (window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 'Flash Flood Warning (Considerable/Catastrophic)' : 'Flash Flood Warning in effect';
+            alertHtml = '<div style="background:rgba(0,188,212,0.15);border:1px solid #00bcd4;border-radius:10px;padding:9px 13px;margin-bottom:14px;font-weight:700;font-size:0.82em;">\u26A0\uFE0F ' + ffwLabel + '</div>';
+        } else if (d.hasWarn) {
+            alertHtml = '<div style="background:rgba(255,152,0,0.12);border:1px solid #ff9800;border-radius:10px;padding:9px 13px;margin-bottom:14px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Warning in effect</div>';
+        } else if (d.hasWatch) {
+            alertHtml = '<div style="background:rgba(255,235,59,0.08);border:1px solid #ffeb3b;border-radius:10px;padding:9px 13px;margin-bottom:14px;font-weight:700;font-size:0.82em;">\uD83D\uDCA7 Flood Watch / Advisory in effect</div>';
         }
 
-        // Three 4-hour tabs (16 slots each at 15-min resolution).
-        // Use plain numeric indices as _floodDayHtml keys so onclick attrs stay ASCII-safe.
-        var tabLabels = ['Now\u2013+4h', '+4\u2013+8h', '+8\u2013+12h'];
-        window._floodDayIdx = 0;
-        window._floodDayHtml = {};
-        tabLabels.forEach(function(label, gi) {
-            var gStart = omStart + gi * 16;
-            var html = '';
-            for (var si = gStart; si < Math.min(gStart + 16, omTimes.length); si++) {
-                html += buildFlood15Row(si);
+        // Day rows (ERO + QPF per day)
+        var daysHtml = '';
+        d.days.forEach(function(day) {
+            var ero = day.ero;
+            var qpfStr = day.qpf >= 0.01 ? '\u007e' + day.qpf.toFixed(2) + '\u2033 QPF' : 'Dry';
+            var eroBadge = '';
+            var descText = '';
+            if (ero >= 1) {
+                eroBadge = '<span style="background:' + ERO_BG[ero] + ';color:' + ERO_FG[ero] + ';padding:2px 8px;border-radius:5px;font-size:0.76em;font-weight:900;letter-spacing:0.4px;display:inline-block;margin-left:6px;">'
+                    + ERO_NAME[ero].toUpperCase() + ' ERO</span>';
+                descText = ERO_DESC[ero] || '';
             }
-            window._floodDayHtml[gi] = html || '<div style="opacity:0.5;padding:10px;">No data for this window.</div>';
+            var qpfColor = day.qpf >= 1.0 ? '#ff9100' : day.qpf >= 0.5 ? '#ffeb3b' : day.qpf >= 0.1 ? '#4fc3f7' : '#556677';
+            var nameColor = ero >= 3 ? '#ff9100' : ero >= 1 ? '#f1f5f9' : '#9aa5b4';
+            var noEroNote = ero === 0 ? '<span style="color:#4a5a6a;font-size:0.75em;"> \u2014 No ERO risk</span>' : '';
+            daysHtml += '<div style="padding:11px 0;border-bottom:1px solid rgba(255,255,255,0.07);">'
+                + '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px;' + (descText ? 'margin-bottom:5px;' : '') + '">'
+                +   '<span style="font-weight:700;font-size:0.9em;color:' + nameColor + ';">' + day.name + noEroNote + '</span>'
+                +   '<span style="font-size:0.8em;color:' + qpfColor + ';font-weight:600;">' + qpfStr + eroBadge + '</span>'
+                + '</div>'
+                + (descText ? '<div style="font-size:0.78em;color:#7a8fa6;line-height:1.45;padding-left:2px;">' + descText + '</div>' : '')
+                + '</div>';
         });
 
-        var tabHtml = tabLabels.map(function(label, i) {
-            return '<button id="flood-tab-' + i + '" onclick="(function(n){document.querySelectorAll(\'#flood-day-tabs .btn-opt\').forEach(function(b){b.classList.remove(\'active\')});document.getElementById(\'flood-tab-\'+n).classList.add(\'active\');document.getElementById(\'flood-hours\').innerHTML=window._floodDayHtml[n];window._floodDayIdx=n;})(' + i + ')" class="btn-opt' + (i === 0 ? ' active' : '') + '">' + label + '</button>';
-        }).join('');
+        // Overall tier summary bar
+        var TIER_COLORS = { LOW: '#00e676', ELEVATED: '#ffeb3b', HIGH: '#ff9100', SEVERE: '#ff1744' };
+        var TIER_LABELS = {
+            LOW:      'Low overall flood risk this period.',
+            ELEVATED: 'Elevated flood risk \u2014 monitor conditions.',
+            HIGH:     'High flood risk \u2014 stay weather-aware.',
+            SEVERE:   'Severe flood threat \u2014 take precautions now.'
+        };
+        var tier = d.tier || 'LOW';
+        var tierColor = TIER_COLORS[tier];
+        var tierLabel = TIER_LABELS[tier];
 
-        document.getElementById('flood-modal-inner').innerHTML =
-            '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
-            + '<div style="font-size:1em;font-weight:bold;color:#4fc3f7;letter-spacing:1px;margin-bottom:12px;padding-right:28px;">\uD83C\uDF0A 15-MIN FLOOD IMPACT</div>'
+        var html = '<button onclick="document.getElementById(\'flood-modal\').style.display=\'none\'; setModalOpen(false);" style="position:absolute;top:10px;right:15px;background:transparent;border:none;color:#fff;font-size:1.6em;cursor:pointer;">&times;</button>'
+            + '<div style="font-size:1em;font-weight:900;color:#4fc3f7;letter-spacing:1px;margin-bottom:14px;padding-right:28px;">\uD83C\uDF0A FLOOD OUTLOOK</div>'
             + alertHtml
-            + '<div id="flood-day-tabs" class="btn-group spc-btn-tabs" style="margin-bottom:12px;">' + tabHtml + '</div>'
-            + '<div id="flood-hours">' + (window._floodDayHtml[0] || '') + '</div>';
+            + '<div style="font-size:0.72em;font-weight:700;color:' + tierColor + ';text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;padding:7px 10px;background:rgba(255,255,255,0.04);border-radius:7px;border-left:3px solid ' + tierColor + ';">'
+            +   tierLabel
+            + '</div>'
+            + daysHtml
+            + '<div style="margin-top:16px;padding:11px 13px;background:rgba(255,255,255,0.03);border-radius:9px;border:1px solid rgba(255,255,255,0.07);">'
+            +   '<div style="font-size:0.67em;font-weight:900;text-transform:uppercase;letter-spacing:0.8px;color:#4a5a6a;margin-bottom:7px;">About This Outlook</div>'
+            +   '<div style="font-size:0.73em;color:#6b7f92;line-height:1.65;">'
+            +     '<b style="color:#7a8fa6;">ERO</b> = WPC Excessive Rainfall Outlook (Days 1\u20133). Marginal \u2192 Slight \u2192 Moderate \u2192 High risk level.<br>'
+            +     '<b style="color:#7a8fa6;">QPF</b> = NWS Quantitative Precipitation Forecast (total inches for that period).<br>'
+            +     'Active NWS flood alerts always take priority over outlooks.'
+            +   '</div>'
+            + '</div>'
+            + '<div style="margin-top:13px;text-align:center;">'
+            +   '<a href="https://www.wpc.ncep.noaa.gov/qpf/ero.php" target="_blank" style="color:#4fc3f7;font-size:0.76em;font-weight:700;text-decoration:none;letter-spacing:0.5px;">View Full WPC ERO \u2197</a>'
+            + '</div>';
 
-        // Swipe between day tabs
-        var inner = document.getElementById('flood-modal-inner');
-        if (!inner._swipeAttached) {
-            inner._swipeAttached = true;
-            var fTouchX = 0, fTouchY = 0, fWasScrolling = false;
-            inner.addEventListener('touchstart', function(e) { fTouchX = e.touches[0].clientX; fTouchY = e.touches[0].clientY; fWasScrolling = false; }, { passive: true });
-            inner.addEventListener('touchmove', function(e) { if (Math.abs(e.touches[0].clientY - fTouchY) > Math.abs(e.touches[0].clientX - fTouchX) + 5) fWasScrolling = true; }, { passive: true });
-            inner.addEventListener('touchend', function(e) {
-                if (!swipeEnabled || fWasScrolling) return;
-                var dx = e.changedTouches[0].clientX - fTouchX;
-                var dy = e.changedTouches[0].clientY - fTouchY;
-                if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 2) {
-                    var newIdx = Math.max(0, Math.min(tabLabels.length - 1, (window._floodDayIdx || 0) + (dx < 0 ? 1 : -1)));
-                    var btn = document.getElementById('flood-tab-' + newIdx);
-                    if (btn) btn.click();
-                }
-            }, { passive: true });
-        }
+        document.getElementById('flood-modal-inner').innerHTML = html;
     }
 
     // ——— v1.0.4 NEW: REPORTING MAP ———
@@ -7606,7 +7370,7 @@
             await fetchPirate();
             fetchAQI();
             fetchBeachForecast(lat, lon);
-            await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast(), fetchOMPrecip15()]);
+            await Promise.all([fetchNWSChain(), fetchOpenWeather(), fetchTWCForecast()]);
             await fetchAlerts();
             await fetchRiskLevels();
             if (activeOutlookCenter === 'nhc') {
