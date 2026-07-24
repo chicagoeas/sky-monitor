@@ -7571,40 +7571,34 @@
                 }
             } catch(e) { window.isWaterLocation = false; }
 
-            // Beach detection — walk Nominatim reverse zoom levels from specific → general.
-            // At lower zoom values Nominatim surfaces land-use / natural polygons rather
-            // than the nearest point feature (path, shower, etc.), so a natural=beach
-            // polygon containing the pin becomes visible even when finer features sit on
-            // top of it.  We break as soon as we get a match so most beach hits resolve
-            // in one or two requests.
+            // Beach detection — Nominatim /reverse never reliably surfaces a
+            // natural=beach polygon (point features like paths/showers always
+            // rank higher). Use /search with a 1 km viewbox instead: it queries
+            // by name token so "Montrose Beach", "North Avenue Beach", etc. all
+            // match "beach", and the class/type check confirms it is actually a
+            // beach polygon rather than an address result.  0.01° ≈ 1 km, large
+            // enough that even a long beach polygon's centroid falls inside the box.
             try {
                 var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
                 if (_savedQ.indexOf('beach') !== -1 || _savedQ.indexOf('shore') !== -1) {
                     window.isBeachLocation = true;
                 } else {
-                    // Zoom levels 17-16 return paths/roads and never surface a
-                    // natural=beach polygon; 13 is too coarse (city district).
-                    // 14 and 15 are the window where Nominatim generalises away
-                    // from point features and returns the enclosing natural area.
-                    // Two calls keeps us well under Nominatim's rate limit.
-                    var _beachZooms = [14, 15];
-                    for (var _zi = 0; _zi < _beachZooms.length; _zi++) {
-                        var _zR = await fetch(
-                            'https://corsproxy.io/?url=' + encodeURIComponent(
-                                'https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat +
-                                '&lon=' + lon + '&zoom=' + _beachZooms[_zi]
-                            )
-                        );
-                        if (!_zR.ok) continue;
-                        var _zD = await _zR.json();
-                        if (_zD.error) continue;
-                        var _zC = (_zD.class || '').toLowerCase();
-                        var _zT = (_zD.type  || '').toLowerCase();
-                        if ((_zC === 'natural' && _zT === 'beach') ||
-                            (_zC === 'leisure' && _zT === 'beach_resort')) {
-                            window.isBeachLocation = true;
-                            break;
-                        }
+                    var _d = 0.01; // ~1 km — covers centroids of large beach polygons
+                    var _vbox = (lon - _d) + ',' + (lat + _d) + ',' + (lon + _d) + ',' + (lat - _d);
+                    var _bchR = await fetch(
+                        'https://corsproxy.io/?url=' + encodeURIComponent(
+                            'https://nominatim.openstreetmap.org/search?format=json&q=beach&viewbox=' +
+                            _vbox + '&bounded=1&limit=10'
+                        )
+                    );
+                    if (_bchR.ok) {
+                        var _bchD = await _bchR.json();
+                        window.isBeachLocation = Array.isArray(_bchD) && _bchD.some(function(r) {
+                            var c = (r.class || '').toLowerCase();
+                            var t = (r.type  || '').toLowerCase();
+                            return (c === 'natural' && t === 'beach') ||
+                                   (c === 'leisure' && t === 'beach_resort');
+                        });
                     }
                 }
             } catch(e) { window.isBeachLocation = false; }
