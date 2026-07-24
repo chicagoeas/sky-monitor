@@ -7277,6 +7277,24 @@
                     var obs = await _fetchNDBC(buoy.id);
                     if (!obs) return;
                     if (obs.wvht == null && obs.wtmp == null) return;
+                    // If only one field is missing, patch it from Open-Meteo Marine API
+                    if (obs.wvht == null || obs.wtmp == null) {
+                        try {
+                            var _pRes = await fetch(
+                                'https://marine-api.open-meteo.com/v1/marine?latitude=' + la +
+                                '&longitude=' + lo +
+                                '&current=wave_height,sea_surface_temperature'
+                            );
+                            if (_pRes.ok) {
+                                var _pData = await _pRes.json();
+                                var _pCur = (_pData && _pData.current) || {};
+                                if (obs.wvht == null && _pCur.wave_height != null)
+                                    obs.wvht = _pCur.wave_height;
+                                if (obs.wtmp == null && _pCur.sea_surface_temperature != null)
+                                    obs.wtmp = _pCur.sea_surface_temperature;
+                            }
+                        } catch(e) {}
+                    }
                     var glfText = null;
                     if (_isGL(buoy.id)) {
                         glfText = await _fetchGLF(window.nwsGridOffice || 'MKX');
