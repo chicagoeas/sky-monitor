@@ -2842,6 +2842,20 @@
         else if (hasWatch || maxQPF >= 0.5)                tier = 'ELEVATED';
         else if (maxEro >= 1 || maxQPF >= 0.1)             tier = 'LIMITED';
 
+        // Find which day drives the overall tier (for the modal label)
+        function _dayScore(ero, qpf) {
+            if (ero >= 3 || qpf >= 2.0) return 4;
+            if (ero >= 2 || qpf >= 1.0) return 3;
+            if (qpf >= 0.5)             return 2;
+            if (ero >= 1 || qpf >= 0.1) return 1;
+            return 0;
+        }
+        var _sc = [_dayScore(ero1, qpf0), _dayScore(ero2, qpf1), _dayScore(ero3, qpf2)];
+        var _driverIdx = (hasFFW || hasWarn || hasWatch) ? 0
+            : (_sc[0] >= _sc[1] && _sc[0] >= _sc[2]) ? 0
+            : (_sc[1] >= _sc[2]) ? 1 : 2;
+        var _driverLabel = _driverIdx === 0 ? 'today' : _driverIdx === 1 ? 'tomorrow' : names[2].toLowerCase();
+
         var c = CARD[tier];
         if (box)      { box.style.background = c.bg; box.style.borderColor = c.border; }
         if (headerEl)   headerEl.style.color = c.text;
@@ -2861,6 +2875,7 @@
                 { name: names[2], qpf: qpf2, ero: ero3, hoursAhead: hoursToMidnight + 24, windowH: 24 }
             ],
             tier: tier,
+            driverLabel: _driverLabel,
             hasFFW: hasFFW, hasWarn: hasWarn, hasWatch: hasWatch,
             eroNames: ERO_NAME, eroBg: ERO_BG, eroFg: ERO_FG
         };
@@ -5880,14 +5895,15 @@
 
         // Overall tier summary bar
         var TIER_COLORS = { LOW: '#00e676', LIMITED: '#80deea', ELEVATED: '#ffeb3b', HIGH: '#ff9100', SEVERE: '#ff1744' };
+        var tier = d.tier || 'LOW';
+        var _when = d.driverLabel ? ' ' + d.driverLabel : '';
         var TIER_LABELS = {
             LOW:      'Low flood risk this period.',
-            LIMITED:  'Limited flood risk \u2014 isolated impacts possible.',
-            ELEVATED: 'Elevated flood risk \u2014 monitor conditions.',
-            HIGH:     'High flood risk \u2014 stay weather-aware.',
-            SEVERE:   'Severe flood threat \u2014 take precautions now.'
+            LIMITED:  'Limited flood risk' + _when + ' \u2014 isolated impacts possible.',
+            ELEVATED: 'Elevated flood risk' + _when + ' \u2014 monitor conditions.',
+            HIGH:     'High flood risk' + _when + ' \u2014 stay weather-aware.',
+            SEVERE:   'Severe flood threat' + _when + ' \u2014 take precautions now.'
         };
-        var tier = d.tier || 'LOW';
         var tierColor = TIER_COLORS[tier];
         var tierLabel = TIER_LABELS[tier];
 
