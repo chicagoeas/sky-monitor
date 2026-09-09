@@ -11881,7 +11881,7 @@
         history.replaceState(null, '', window.location.pathname);
     })();
 
-    // ——— v1.0.4: SWIPE TABS + PULL-TO-REFRESH (respects _modalOpen flag) ———
+    // ——— v1.0.4: SWIPE TABS + PULL-TO-REFRESH (mobile) ———
     const tabs = ['home', 'severe', 'specs', 'reporting'];
     const navIds = ['nav-home', 'nav-severe', 'nav-specs', 'nav-reporting'];
     let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
@@ -11889,6 +11889,8 @@
     let ptr_startY = 0, ptr_pulling = false;
     let swipeLocked = false;
     let touchOnMap = false;
+    let touchOnScrollableContent = false;
+    let ptrBlocked = false;
     let swipeEnabled = localStorage.getItem('skymonitor_swipe') !== 'off';
 
     function setSwipeSetting(enabled) {
@@ -11918,6 +11920,20 @@
         return false;
     }
 
+    // Pull-to-refresh belongs to the document, not to a modal or any nested
+    // scroll area. Without this guard, pulling down while an inner panel is
+    // already at its own top can look like a document-level refresh gesture.
+    function isInsideVerticalScroll(el) {
+        while (el && el !== document.body) {
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            if ((overflowY === 'auto' || overflowY === 'scroll') &&
+                el.scrollHeight > el.clientHeight) return true;
+            el = el.parentElement;
+        }
+        return false;
+    }
+
     document.addEventListener('touchstart', function(e) {
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
@@ -11925,6 +11941,9 @@
         ptr_startY = e.touches[0].clientY;
         swipeLocked = isInsideHorizontalScroll(e.target);
         touchOnMap = !!e.target.closest('#reporting-map');
+        touchOnScrollableContent = isInsideVerticalScroll(e.target);
+        ptrBlocked = !!window._modalOpen || touchOnScrollableContent;
+        ptr_pulling = false;
     }, { passive: true });
 
     document.addEventListener('touchend', function(e) {
@@ -11943,7 +11962,11 @@
     let ptrActive = false;
 
     document.addEventListener('touchmove', function(e) {
-        if (!swipeEnabled || touchOnMap) return;
+        if (!swipeEnabled || touchOnMap || touchOnScrollableContent || ptrBlocked ||
+            window._modalOpen || ptrActive) {
+            ptr_pulling = false;
+            return;
+        }
         const dy = e.touches[0].clientY - ptr_startY;
         if (window.scrollY === 0 && dy > 60 && !ptrActive) {
             ptrIndicator.classList.add('visible'); ptr_pulling = true;
@@ -11951,7 +11974,9 @@
     }, { passive: true });
 
     document.addEventListener('touchend', function() {
-        if (!swipeEnabled) { ptr_pulling = false; return; }
+        if (!swipeEnabled || ptrBlocked || touchOnScrollableContent || window._modalOpen) {
+            ptr_pulling = false; return;
+        }
         if (ptr_pulling) {
             ptr_pulling = false; ptrActive = true;
             ptrIndicator.innerText = '\u21BB Refreshing...';
