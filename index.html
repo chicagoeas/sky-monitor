@@ -2869,6 +2869,12 @@
         twcMaxFeelsLike = null;
         var _outdoorBox = document.getElementById('outdoor-score-box');
         if (_outdoorBox) _outdoorBox.style.display = 'none';
+        // Do not show the previous location's comfort result while the new
+        // observation is loading.
+        var _comfortVal = document.getElementById('aqi-val');
+        var _comfortDesc = document.getElementById('aqi-desc');
+        if (_comfortVal) { _comfortVal.innerText = '--'; _comfortVal.style.color = ''; }
+        if (_comfortDesc) _comfortDesc.innerText = 'Loading...';
         var _minuteHeadEl = document.getElementById('minute-heading');
         if (_minuteHeadEl) _minuteHeadEl.innerText = 'Minutely Forecast';
         var _minuteChartEl = document.getElementById('minute-chart-wrap');
@@ -3835,6 +3841,20 @@
                 _intlFe.style.color = colorFeelsLike(_intlFv);
             }
             document.getElementById('conditionText').innerText = summary;
+            // International locations do not enter fetchNWSChain's US
+            // observation-source branches. Recalculate the current comfort
+            // card here from the same authoritative values just rendered above
+            // so a previous location's result cannot remain on screen.
+            updateSmartComfort(
+                _intlTemp != null ? Math.round(_intlTemp) : 70,
+                liveFeelsLike,
+                _intlResolvedHumidity != null ? Math.round(_intlResolvedHumidity) : 50,
+                _intlResolvedWind != null ? liveWindSpd : 0,
+                summary,
+                liveUV,
+                (_intlPw.precipProbability || 0) * 100,
+                summary
+            );
             // Resolve an NWS icon from the PirateWeather summary/icon
             const _intlIsNight = window.pirateCurrently.icon && window.pirateCurrently.icon.includes('night');
             const _intlIcon = _pwSummaryIcon(summary, _intlIsNight)
