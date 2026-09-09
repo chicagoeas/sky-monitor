@@ -6068,7 +6068,20 @@
         ) ? 100 : 0;
     }
 
-    function _currentTWCOutlookIconHtml() {
+    function _currentForecastHourStart(timezoneOffset) {
+        var nowSec = Date.now() / 1000;
+        var offsetHours = Number(timezoneOffset) || 0;
+        return Math.floor((nowSec + offsetHours * 3600) / 3600) * 3600 -
+            offsetHours * 3600;
+    }
+
+    function _isCurrentForecastHour(timestamp, timezoneOffset) {
+        var start = _currentForecastHourStart(timezoneOffset);
+        return timestamp != null && timestamp >= start && timestamp < start + 3600;
+    }
+
+    function _currentTWCOutlookIconHtml(size) {
+        size = size || '32px';
         var currentText = String(currentCondition || '').trim();
         var currentLower = currentText.toLowerCase();
         var currentIsNight = window._polarState === 'night' || isNightAtStation;
@@ -6086,7 +6099,7 @@
         }
         return '<img class="hourly-outlook-icon" src="' + _twcIconSrc(currentCode) + '" alt="' +
             escapeHtml(currentText || 'Current weather conditions') +
-            '" style="width:32px;height:32px;object-fit:contain;display:block;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
+            '" style="width:' + size + ';height:' + size + ';object-fit:contain;display:block;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
     }
 
     function renderHourlyOutlook(hourlyData, timezoneOffset) {
@@ -6103,15 +6116,10 @@
             return;
         }
 
-         const nowSec = Date.now() / 1000;
          const offsetHours = Number(timezoneOffset) || 0;
-         // Keep the forecast slot for the entire current local clock hour.
-         // A rolling 30-minute cutoff incorrectly changed the current 7 PM
-         // slot to "Now" = 8 PM at 7:30.  The current hour remains "Now"
-         // through 7:59, then the next hour becomes the first upcoming slot.
-         const currentHourStartSec =
-             Math.floor((nowSec + offsetHours * 3600) / 3600) * 3600 -
-             offsetHours * 3600;
+          // Keep the forecast slot for the entire current local clock hour.
+          // All hourly views use this same boundary so their Now rows agree.
+          const currentHourStartSec = _currentForecastHourStart(offsetHours);
          const upcoming = (hourlyData || []).filter(function(h) {
              return h && h.time != null && h.time >= currentHourStartSec;
          }).slice(0, 6);
@@ -6217,14 +6225,20 @@
             container.innerHTML = '';
             days[key].forEach(function(h) {
                 const date = new Date((h.time + (timezoneOffset * 3600)) * 1000);
-                const hour = date.toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+                 const isCurrent = _isCurrentForecastHour(h.time, timezoneOffset);
+                 const hour = isCurrent ? 'Now' : date.toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
                 const card = document.createElement('div'); card.className = 'forecast-card';
-                const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
+                 const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
                 const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + (_isMetric() ? (rainAmt * 25.4).toFixed(1) + ' mm' : rainAmt.toFixed(2) + '"') + '</div>' : '';
-                const iconHtml = _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h);
-                card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div>' + iconHtml + '<div class="hourly-temperature" style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(h.temperature) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(h.summary || '') + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + Math.round((h.precipProbability || 0) * 100) + '%</div>' + rainLine;
+                 const iconHtml = isCurrent
+                     ? _currentTWCOutlookIconHtml('48px')
+                     : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h);
+                 const cardTemp = isCurrent && window.liveTemp != null ? window.liveTemp : h.temperature;
+                 const cardSummary = isCurrent && currentCondition ? currentCondition : (h.summary || '');
+                 const cardPrecip = isCurrent ? _estimateCurrentPrecipChance() : Math.round((h.precipProbability || 0) * 100);
+                 card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div>' + iconHtml + '<div class="hourly-temperature" style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(cardTemp) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(cardSummary) + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + cardPrecip + '%</div>' + rainLine;
                 var pwTempEl = card.querySelector('.hourly-temperature');
-                if (pwTempEl) pwTempEl.style.setProperty('color', colorFeelsLike(Number(h.temperature)), 'important');
+                 if (pwTempEl) pwTempEl.style.setProperty('color', colorFeelsLike(Number(cardTemp)), 'important');
                 container.appendChild(card);
             });
         }
@@ -8672,6 +8686,23 @@
         return { word: word, color: color, reason: reason };
     }
 
+    function _currentComfortSnapshot(fallbackHour) {
+        var valueEl = document.getElementById('aqi-val');
+        var descEl = document.getElementById('aqi-desc');
+        var word = valueEl && valueEl.innerText && valueEl.innerText !== '--'
+            ? valueEl.innerText : computeHourComfort(fallbackHour).word;
+        var reason = descEl && descEl.innerText && descEl.innerText !== 'Loading...'
+            ? descEl.innerText : computeHourComfort(fallbackHour).reason;
+        var color = valueEl && valueEl.style.color
+            ? valueEl.style.color : computeHourComfort(fallbackHour).color;
+        return {
+            word: word,
+            color: color,
+            reason: reason,
+            temperature: window.liveTemp != null ? window.liveTemp : fallbackHour.temperature
+        };
+    }
+
     // v1.0.4: Comfort modal with day-tab swipe
     function openComfortModal() {
         if (!window.pirateHourlyData || !window.pirateHourlyData.length) { alert('Hourly comfort data not yet loaded.'); return; }
@@ -8697,11 +8728,14 @@
         function buildDayContent(key) {
             const hours = days[key];
             if (!hours || !hours.length) return '<div style="opacity:0.5;padding:10px;">No data.</div>';
-            return hours.map(function(h) {
-                const c = computeHourComfort(h);
-                const hourLabel = new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
-                const temp = _fmtTemp(h.temperature ?? 0);
-                const icon = _twcHourlyIconHtml(h.icon, h.summary, '30px', 'hourly-comfort-icon', h);
+             return hours.map(function(h) {
+                 const isCurrent = _isCurrentForecastHour(h.time, offsetHours);
+                 const c = isCurrent ? _currentComfortSnapshot(h) : computeHourComfort(h);
+                 const hourLabel = isCurrent ? 'Now' : new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+                 const temp = _fmtTemp(isCurrent ? c.temperature : (h.temperature ?? 0));
+                 const icon = isCurrent
+                     ? _currentTWCOutlookIconHtml('30px')
+                     : _twcHourlyIconHtml(h.icon, h.summary, '30px', 'hourly-comfort-icon', h);
                 return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><div style="min-width:42px;font-size:0.75em;color:#aaa;text-align:right;">' + hourLabel + '</div><div style="min-width:30px;text-align:center;">' + icon + '</div><div style="min-width:36px;font-size:0.9em;font-weight:bold;color:var(--accent);">' + temp + '</div><div style="flex:1;"><div style="font-weight:900;font-size:0.85em;color:' + c.color + ';letter-spacing:0.5px;">' + c.word + '</div><div style="font-size:0.68em;opacity:0.65;">' + c.reason + '</div></div></div>';
             }).join('');
         }
@@ -8770,7 +8804,9 @@
             if (!hours || !hours.length) return '<div style="opacity:0.5;padding:10px;">No data.</div>';
             return hours.map(function(h) {
                 const uv = h.uvIndex ?? 0; const info = getUVInfo(uv);
-                const hourLabel = new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+                 const hourLabel = _isCurrentForecastHour(h.time, offsetHours)
+                     ? 'Now'
+                     : new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
                 const barPct = Math.min(Math.round((uv / 11) * 100), 100);
                 return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.07);"><div style="min-width:44px;font-size:0.75em;color:#aaa;text-align:right;">' + hourLabel + '</div><div style="min-width:28px;font-size:1.15em;font-weight:900;color:' + info.color + ';text-align:center;">' + uv + '</div><div style="flex:1;"><div style="background:rgba(255,255,255,0.1);border-radius:4px;height:6px;overflow:hidden;"><div style="background:' + info.color + ';width:' + barPct + '%;height:100%;border-radius:4px;"></div></div><div style="font-size:0.72em;margin-top:3px;display:flex;justify-content:space-between;"><span style="font-weight:bold;color:' + info.color + ';">' + info.label + '</span><span style="opacity:0.6;">' + info.burn + '</span></div></div></div>';
             }).join('');
