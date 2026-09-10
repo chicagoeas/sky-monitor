@@ -1687,6 +1687,7 @@
     // equivalent NWS product can suppress duplicate scoring.
     window.customSkyThreatAlerts = [];
     window.customSkyActiveFeatures = [];
+    window.customSkyActiveMDs = [];
     // v1.0.4: Modal-open flag disables tab swipe
     window._modalOpen = false;
     function setModalOpen(v) { window._modalOpen = v; document.body.style.overflow = v ? 'hidden' : ''; }
@@ -2565,6 +2566,7 @@
             // immediately when the integration setting is disabled.
             window.customSkyThreatAlerts = [];
             window.customSkyActiveFeatures = [];
+            window.customSkyActiveMDs = [];
             renderCustomSkyHazards();
             computeThreatLevel();
             // Restore the NWS banner if a custom headline had been displayed.
@@ -2768,6 +2770,9 @@
             // Verified — re-trigger the reporting tab navigation now that the flag is set
             var repNav = document.getElementById('nav-reporting');
             if (repNav) window.switchTab('reporting', repNav);
+            if (window._pendingCustomSkyMDKey) {
+                setTimeout(function() { _tryOpenPendingCustomSkyMD(0); }, 180);
+            }
         }
     }
 
@@ -8210,6 +8215,19 @@
                 });
             }
         } catch(e) {}
+        (window.customSkyActiveMDs || []).forEach(function(feature, mdIndex) {
+            const props = feature.properties || {};
+            const discussionNumber = formatCustomSkyDiscussionNumber(props);
+            if (!discussionNumber) return;
+            hasRisk = true;
+            const mdColor = customSkyAlertColor(props) || '#ce93d8';
+            riskHtml += '<div role="button" tabindex="0" aria-label="Open SkyMonitor custom Mesoscale Discussion ' + escapeHtml(discussionNumber) + '"'
+                + ' onclick="openCustomSkyMDFromRisk(' + mdIndex + ')"'
+                + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openCustomSkyMDFromRisk(' + mdIndex + ')}"'
+                + ' style="background:' + mdColor + '; color:#07131d; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">'
+                + 'SM Custom <a href="/about-custom-alerts" class="custom-alerts-help" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a> MD #' + escapeHtml(discussionNumber)
+                + '</div>';
+        });
         // Set DOM once — prevents interleaving when two loadAll() calls race on first load
         container.innerHTML = riskHtml;
         box.style.display = hasRisk ? 'block' : 'none';
@@ -9470,7 +9488,7 @@
         if (detailEl) detailEl.innerHTML = detail;
     }
 
-    function openReportingPopup(sourceEntry, latlng) {
+    function openReportingPopup(sourceEntry, latlng, autoOpenEntry) {
         if (!reportingMap || !window.L) return;
         const nearby = reportingPopupEntries.filter(function(entry) {
             return reportingPopupEntryIsNear(entry, latlng, sourceEntry);
@@ -9496,6 +9514,13 @@
             autoPanPaddingBottomRight: [14, 42]
         }).setLatLng(latlng).setContent(buildReportingPopup(nearby));
         popup.openOn(reportingMap);
+        if (autoOpenEntry) {
+            setTimeout(function() {
+                var cardId = reportingPopupEntryIdFor(autoOpenEntry);
+                var card = document.getElementById(cardId);
+                if (card && !card.classList.contains('is-open')) toggleReportingPopupCard(cardId);
+            }, 0);
+        }
         nearby.forEach(function(entry) {
             if (typeof entry.loadDetails === 'function' && !entry._detailsLoaded) {
                 entry._detailsLoaded = true;
@@ -9505,6 +9530,49 @@
             }
         });
     }
+
+    function _tryOpenPendingCustomSkyMD(attempt) {
+        var pendingKey = window._pendingCustomSkyMDKey;
+        if (!pendingKey) return;
+        var reportingTab = document.getElementById('reporting-tab');
+        if (!reportingMap || !reportingTab || !reportingTab.classList.contains('active')) {
+            if (attempt < 120) setTimeout(function() { _tryOpenPendingCustomSkyMD(attempt + 1); }, 250);
+            return;
+        }
+        var entry = reportingPopupEntries.find(function(item) {
+            return item.source === 'custom-skymonitor' && item.customAlertKey === pendingKey;
+        });
+        if (!entry) {
+            if (attempt < 120) setTimeout(function() { _tryOpenPendingCustomSkyMD(attempt + 1); }, 250);
+            return;
+        }
+        window._pendingCustomSkyMDKey = '';
+        var point = window.L.latLng(parseFloat(lat), parseFloat(lon));
+        reportingMap.setView(point, reportingMap.getZoom());
+        setTimeout(function() {
+            openReportingPopup(entry, point, entry);
+        }, 80);
+    }
+
+    function openCustomSkyMDFromRisk(index) {
+        var feature = (window.customSkyActiveMDs || [])[index];
+        if (!feature) return;
+        var key = customSkyMDKey(feature);
+        if (!key) return;
+        window._pendingCustomSkyMDKey = key;
+
+        // A user who deliberately opened the risk should be able to see its
+        // map polygon even if the optional map-layer toggle was previously off.
+        customSkyAlertsVisible = true;
+        localStorage.setItem('report_custom_sky_alerts', '1');
+        var layerCb = document.getElementById('custom-sky-alerts-toggle-cb');
+        if (layerCb) layerCb.checked = true;
+
+        var nav = document.getElementById('nav-reporting');
+        if (nav) (window.switchTab || switchTab)('reporting', nav);
+        setTimeout(function() { _tryOpenPendingCustomSkyMD(0); }, 180);
+    }
+    window.openCustomSkyMDFromRisk = openCustomSkyMDFromRisk;
 
     function registerReportingPopup(layer, entry) {
         entry.layer = layer;
@@ -9817,6 +9885,16 @@
             : String(raw).replace(/\.0+$/, '');
     }
 
+    function customSkyMDKey(feature) {
+        const props = feature && feature.properties || {};
+        const number = formatCustomSkyDiscussionNumber(props);
+        if (number) return 'md:' + number;
+        const fallback = customSkyAlertValue(props, [
+            'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
+        ], '') || (feature && feature.id != null ? String(feature.id) : '');
+        return fallback ? 'md-id:' + fallback : '';
+    }
+
     function isCustomSkyMesoscaleDiscussion(props) {
         const type = customSkyAlertValue(
             props,
@@ -10020,30 +10098,34 @@
         if (localStorage.getItem('user_reports_enabled') !== 'true' || window.isOutsideUS) {
             window.customSkyThreatAlerts = [];
             window.customSkyActiveFeatures = [];
+            window.customSkyActiveMDs = [];
             return;
         }
         try {
             var res = await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, { headers: { 'Accept': 'application/geo+json, application/json' } });
             if (!res.ok) throw new Error('Failed to fetch custom alerts');
             var features = getCustomSkyAlertFeatures(await res.json());
-            var activeFeatures = features.map(function(item) {
+            var activeFeatures = [];
+            var activeMDs = [];
+            features.forEach(function(item) {
                 var feature = toCustomSkyAlertFeature(item);
-                if (!feature || !feature.geometry || !customSkyPointInGeometry(lat, lon, feature.geometry)) return null;
-                var info = customSkyThreatInfo(feature);
-                if (!info) return null;
+                if (!feature || !feature.geometry || !customSkyPointInGeometry(lat, lon, feature.geometry)) return;
                 var props = feature.properties || {};
                 var expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'endTime', 'ends'], '');
                 var onset = customSkyAlertValue(props, ['onset', 'effective', 'effectiveAt', 'effective_at', 'issued', 'issuedAt', 'issued_at', 'created_at'], '');
                 var onsetMs = onset ? new Date(onset).getTime() : 0;
                 var expiresMs = expires ? new Date(expires).getTime() : 0;
-                if ((onsetMs && onsetMs > Date.now()) || (expiresMs && expiresMs <= Date.now())) return null;
-                return feature;
-            }).filter(Boolean);
+                if ((onsetMs && onsetMs > Date.now()) || (expiresMs && expiresMs <= Date.now())) return;
+                if (isCustomSkyMesoscaleDiscussion(props)) activeMDs.push(feature);
+                else if (customSkyThreatInfo(feature)) activeFeatures.push(feature);
+            });
             window.customSkyActiveFeatures = activeFeatures;
+            window.customSkyActiveMDs = activeMDs;
             window.customSkyThreatAlerts = activeFeatures.map(customSkyThreatInfo).filter(Boolean);
         } catch (e) {
             window.customSkyThreatAlerts = [];
             window.customSkyActiveFeatures = [];
+            window.customSkyActiveMDs = [];
         }
     }
 
@@ -10231,6 +10313,7 @@
                 registerReportingPopup(polygon, {
                     source: 'custom-skymonitor',
                     isPolygon: true,
+                     customAlertKey: isMd ? customSkyMDKey(feature) : '',
                     color: color,
                     title: escapeHtml(headline),
                      meta: escapeHtml(alertType) + (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : ''),
@@ -10248,6 +10331,9 @@
                 renderedCount ? renderedCount + ' active custom alert' + (renderedCount === 1 ? '' : 's') : 'No active custom alerts',
                 renderedCount ? '#00e676' : '#718496'
             );
+            if (window._pendingCustomSkyMDKey) {
+                setTimeout(function() { _tryOpenPendingCustomSkyMD(0); }, 0);
+            }
         } catch (e) {
             setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
         }
