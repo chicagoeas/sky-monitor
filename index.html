@@ -957,7 +957,7 @@
             <p>As you have already noticed from using the site, SkyMonitor uses your current location ONLY if you provide us access to it (you can still use SkyMonitor perfectly fine even if you deny location permissions), and we use your current location to provide you with the most accurate, precise information for your exact location. This is especially important on SkyMonitor, as we use the Weather Underground PWS network, which has many PWS (Personal Weather Stations) around the world. You can check out the official web page for WU’s PWS network here: <a href="https://www.wunderground.com/pws/overview" target="_blank" rel="noopener noreferrer">https://www.wunderground.com/pws/overview</a>. WU has a massive network of PWS’s, and there is most likely one in your city, if not even down the street. This is one of the major benefits of using SkyMonitor, as every time you check the current conditions, you are seeing real observations from physical weather stations around the globe, not just model estimates or far-away airport observations. (Though it should be noted that the current weather, for example, whether it’s sunny, cloudy, or rainy, does use either your nearest airport or a model estimate, as WU PWS’s do not provide that kind of information.)</p>
 
             <h3>What other features on the site use your location?</h3>
-            <p>The other two features on SkyMonitor that use your location data are push notifications and user reporting. These are both optional features, as is location access in general, but it’s important for you to know as the user what kind of your data is being sent to us, especially on the internet nowadays. When you enable push notifications (which can ONLY be done if you have added the website to your home screen on your phone; this can NOT be done through the web browser), every time you open SkyMonitor, we ping your location to check if there are any notifications that need to be sent to you. SkyMonitor is designed to use your location when the site is open. It does not intentionally request continuous background location updates. When you submit a user report, your exact location is not published as the report location. SkyMonitor adjusts the report marker before submission. SkyMonitor will automatically change the report location to anywhere within around 500 feet (or 150 meters) of your location. There is also a separate feature called “Privacy Mode” that you can enable, which will instead send reports from the exact location of your city center, for extra privacy. It should also be noted that you can clearly see where your report pin is placed on the map, and you can move it to your liking. You will then be prompted to choose a category for the user report, and you can optionally add any extra information about the report you are making in the text box provided.</p>
+            <p>The other two features on SkyMonitor that use your location data are push notifications and user reporting. These are both optional features, as is location access in general, but it’s important for you to know as the user what kind of your data is being sent to us, especially on the internet nowadays. When you enable push notifications (which can ONLY be done if you have added the website to your home screen on your phone; this can NOT be done through the web browser), every time you open SkyMonitor, we ping your location to check if there are any notifications that need to be sent to you. SkyMonitor is designed to use your location when the site is open. It does not intentionally request continuous background location updates. When you submit a user report, your exact location is not published as the report location. SkyMonitor adjusts the report marker before submission. SkyMonitor will automatically change the report location to anywhere within around 500 feet (or 150 meters) of your location. There is also a separate feature called “Privacy Mode” that you can enable, which will instead send reports from the center of your nearest named neighborhood or community area when one is available, otherwise the center of the containing city or town, for extra privacy. It should also be noted that you can clearly see where your report pin is placed on the map, and you can move it to your liking. You will then be prompted to choose a category for the user report, and you can optionally add any extra information about the report you are making in the text box provided.</p>
 
             <h3>What does SkyMonitor store on your browser?</h3>
             <p>SkyMonitor stores your settings, selected locations, notification preferences, and cached weather information on your browser. The reason we store this is so that every time you visit SkyMonitor from the same device, you won’t have to change your settings to how you like them every time. We also cache weather information, as SkyMonitor can actually be used completely offline, provided you have added it to your home screen on your phone. No other data is ever stored on your browser by SkyMonitor.</p>
@@ -1930,6 +1930,12 @@
             lat: coords.length > 1 ? String(coords[1]) : '',
             lon: coords.length > 0 ? String(coords[0]) : '',
             display_name: displayParts.join(', '),
+            name: props.name || '',
+            feature_type: props.type || '',
+            osm_type: props.osm_type || '',
+            osm_key: props.osm_key || '',
+            osm_value: props.osm_value || '',
+            extent: Array.isArray(props.extent) ? props.extent : null,
             address: {
                 city: props.city || '',
                 town: props.town || '',
@@ -1973,6 +1979,106 @@
                 return features.length ? _osmFeatureToGeoResult(features[0]) : {};
             }
             return features.map(_osmFeatureToGeoResult);
+        });
+    }
+
+    // Privacy Mode must never use the raw reverse-geocoder result as the
+    // report pin: reverse results describe the exact nearby building/street.
+    // Resolve the nearest named neighborhood/community first, then fall back
+    // to the containing city or town. Search results for those area features
+    // provide an OSM place center rather than the user's coordinates.
+    function _privacyAreaCandidate(results, targetName, rawLat, rawLon, allowCity) {
+        var target = String(targetName || '').trim().toLowerCase();
+        var areaTypes = {
+            district: true, suburb: true, neighbourhood: true, neighborhood: true,
+            quarter: true, locality: true, city: true, town: true, village: true,
+            municipality: true
+        };
+        var candidates = (results || []).filter(function(result) {
+            var latValue = parseFloat(result && result.lat);
+            var lonValue = parseFloat(result && result.lon);
+            if (!isFinite(latValue) || !isFinite(lonValue)) return false;
+            var type = String(result.feature_type || '').toLowerCase();
+            var osmValue = String(result.osm_value || '').toLowerCase();
+            if (!areaTypes[type] && !areaTypes[osmValue]) return false;
+            if (!allowCity && (type === 'city' || type === 'town' || type === 'village' ||
+                osmValue === 'city' || osmValue === 'town' || osmValue === 'village')) return false;
+            return true;
+        });
+        if (!candidates.length) return null;
+
+        candidates.sort(function(a, b) {
+            function score(result) {
+                var resultName = String(result.name || '').trim().toLowerCase();
+                var address = result.address || {};
+                var addressNames = [
+                    address.suburb, address.neighbourhood, address.quarter,
+                    address.city, address.town, address.village
+                ].filter(Boolean).map(function(value) { return String(value).toLowerCase(); });
+                var resultType = String(result.feature_type || '').toLowerCase();
+                var resultOsmValue = String(result.osm_value || '').toLowerCase();
+                var resultLat = parseFloat(result.lat);
+                var resultLon = parseFloat(result.lon);
+                var distance = Math.pow(resultLat - rawLat, 2) + Math.pow(resultLon - rawLon, 2);
+                var value = 0;
+                if (target && resultName === target) value += 1000;
+                if (target && addressNames.indexOf(target) !== -1) value += 700;
+                if (target && resultName.indexOf(target) !== -1) value += 250;
+                if (resultType === 'district' || resultOsmValue === 'suburb' ||
+                    resultOsmValue === 'neighbourhood' || resultOsmValue === 'neighborhood') value += 100;
+                if (Array.isArray(result.extent) && result.extent.length >= 4 &&
+                    rawLon >= result.extent[0] && rawLon <= result.extent[2] &&
+                    rawLat >= result.extent[1] && rawLat <= result.extent[3]) value += 150;
+                return value - distance;
+            }
+            return score(b) - score(a);
+        });
+        return candidates[0];
+    }
+
+    function _privacyCenterFromLocation(rawLat, rawLon) {
+        return _osmGeocodeFetch('reverse', { lat: rawLat, lon: rawLon }).then(function(reverse) {
+            var address = (reverse && reverse.address) || {};
+            var neighborhood = address.suburb || address.neighbourhood ||
+                address.neighborhood || address.quarter || '';
+            var city = address.city || address.town || address.village ||
+                address.locality || '';
+            var state = address.state || '';
+            var context = [city, state].filter(Boolean).join(', ');
+
+            function searchArea(query, targetName, allowCity) {
+                if (!query) return Promise.resolve(null);
+                return _osmGeocodeFetch('search', {
+                    q: query,
+                    lat: rawLat,
+                    lon: rawLon,
+                    limit: 10
+                }).then(function(results) {
+                    return _privacyAreaCandidate(results, targetName, rawLat, rawLon, allowCity);
+                });
+            }
+
+            // In Chicago this searches for "Avondale" near the user's
+            // coordinates and selects Photon's district feature, not the
+            // exact reverse-geocoded address.
+            if (neighborhood && neighborhood.toLowerCase() !== String(city).toLowerCase()) {
+                return searchArea(neighborhood, neighborhood, false)
+                    .then(function(area) {
+                        if (area) return area;
+                        return searchArea([neighborhood, context].filter(Boolean).join(', '), neighborhood, false);
+                    }).then(function(area) {
+                        if (area) return area;
+                        return searchArea(context, city, true);
+                    });
+            }
+            return searchArea(context, city, true);
+        }).then(function(area) {
+            if (!area) throw new Error('No privacy-safe area center found');
+            return {
+                lat: parseFloat(parseFloat(area.lat).toFixed(5)),
+                lon: parseFloat(parseFloat(area.lon).toFixed(5)),
+                label: area.display_name || area.name || 'Nearby area'
+            };
         });
     }
 
@@ -8973,6 +9079,7 @@
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let reportLat = null, reportLon = null;
     let reportPinMarker = null;
+    let privacySnapGeneration = 0;
     let selectedReportType = '';
 
     // Report icons are resolved here so report pickers, IEM/NWS storm reports,
@@ -10199,16 +10306,12 @@
             const rawLa = pos.coords.latitude;
             const rawLo = pos.coords.longitude;
             if (privacyMode) {
-                // Privacy Mode: snap to city center via Nominatim reverse geocode at city zoom
-                _osmGeocodeFetch('reverse', { lat: rawLa, lon: rawLo })
-                    .then(function(data) {
-                        const la = parseFloat(parseFloat(data.lat).toFixed(5));
-                        const lo = parseFloat(parseFloat(data.lon).toFixed(5));
-                        setReportPin(la, lo);
-                        if (reportingMap) reportingMap.setView([la, lo], reportingMap.getZoom());
-                    })
-                    .catch(function() { alert('Could not resolve city center. Try again.'); });
+                // Privacy Mode: resolve a named neighborhood/community center
+                // first, then fall back to the containing city or town. Never
+                // use the raw reverse-geocoder point as the report location.
+                moveReportPinToPrivacyCenter(rawLa, rawLo, true);
             } else {
+                ++privacySnapGeneration;
                 // Default: apply ~200m random offset for basic privacy
                 const offsetMeters = 150 + Math.random() * 100;
                 const angle = Math.random() * 2 * Math.PI;
@@ -10230,6 +10333,7 @@
         localStorage.setItem('report_privacy_mode', isOn ? '1' : '0');
         // When turned ON, immediately re-locate using the privacy-mode snapping
         if (isOn) findMeReporting();
+        else ++privacySnapGeneration;
     }
 
     function onShowOlderReportsChange() {
@@ -10246,6 +10350,22 @@
         return { la: parseFloat((rawLat + dLat).toFixed(5)), lo: parseFloat((rawLon + dLon).toFixed(5)) };
     }
 
+    function moveReportPinToPrivacyCenter(rawLat, rawLon, showError) {
+        const requestId = ++privacySnapGeneration;
+        return _privacyCenterFromLocation(rawLat, rawLon).then(function(center) {
+            const cb = document.getElementById('privacy-mode-cb');
+            if (requestId !== privacySnapGeneration || !cb || !cb.checked) return false;
+            setReportPin(center.lat, center.lon);
+            if (reportingMap) reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            return true;
+        }).catch(function() {
+            // Never fall back to raw coordinates. The existing offset pin is
+            // safer than showing the user's exact location if lookup fails.
+            if (showError) alert('Could not resolve a privacy-safe neighborhood or city center. Your report pin was not moved.');
+            return false;
+        });
+    }
+
     function initReportingMap() {
         if (reportingMap) {
             const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
@@ -10253,9 +10373,14 @@
             reportingMap.invalidateSize();
             // If the new location came from GPS, move the report pin to match
             if (window._locFromGPS) {
-                const offset = applyPrivacyOffset(rawLat, rawLon);
-                setReportPin(offset.la, offset.lo);
-                reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom());
+                const privacyCb = document.getElementById('privacy-mode-cb');
+                if (privacyCb && privacyCb.checked) {
+                    moveReportPinToPrivacyCenter(rawLat, rawLon, false);
+                } else {
+                    const offset = applyPrivacyOffset(rawLat, rawLon);
+                    setReportPin(offset.la, offset.lo);
+                    reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom());
+                }
             }
             return;
         }
@@ -10358,6 +10483,9 @@
         window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
+        if (_privacyCb && _privacyCb.checked) {
+            moveReportPinToPrivacyCenter(rawLat, rawLon, false);
+        }
 
         // Double-click/double-tap to move pin — manual timer is more reliable than native dblclick on mobile
         let _dblTapTimer = null;
