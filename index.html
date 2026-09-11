@@ -10538,12 +10538,6 @@
                 lon: center.lng,
                 zoom: reportingMap.getZoom()
             }));
-            if (reportLat != null && reportLon != null) {
-                localStorage.setItem('skymonitor_reporting_pin', JSON.stringify({
-                    lat: reportLat,
-                    lon: reportLon
-                }));
-            }
         } catch (e) {}
     }
 
@@ -10645,9 +10639,29 @@
         const cb = document.getElementById('privacy-mode-cb');
         const isOn = cb ? cb.checked : false;
         localStorage.setItem('report_privacy_mode', isOn ? '1' : '0');
-        // When turned ON, immediately re-locate using the privacy-mode snapping
-        if (isOn) findMeReporting();
-        else ++privacySnapGeneration;
+        if (isOn) {
+            // Privacy Mode requires a fresh location lookup and snaps
+            // the report pin to a privacy-safe named-area center.
+            findMeReporting();
+            return;
+        }
+
+        // Cancel any pending privacy-center lookup.
+        ++privacySnapGeneration;
+
+        // Turning Privacy Mode off intentionally changes the pin back to
+        // a new randomized offset around the current app location.
+        const rawLat = parseFloat(lat);
+        const rawLon = parseFloat(lon);
+        const offset = applyPrivacyOffset(rawLat, rawLon);
+        setReportPin(offset.la, offset.lo);
+
+        if (reportingMap) {
+            reportingMap.setView(
+                [offset.la, offset.lo],
+                reportingMap.getZoom()
+            );
+        }
     }
 
     function onShowOlderReportsChange() {
@@ -10685,35 +10699,24 @@
             const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
             reportingMap.setView([rawLat, rawLon], reportingMap.getZoom());
             reportingMap.invalidateSize();
-            // If the new location came from GPS, move the report pin to match
-            if (window._locFromGPS) {
-                const privacyCb = document.getElementById('privacy-mode-cb');
-                if (privacyCb && privacyCb.checked) {
-                    moveReportPinToPrivacyCenter(rawLat, rawLon, false);
-                } else {
-                    const offset = applyPrivacyOffset(rawLat, rawLon);
-                    setReportPin(offset.la, offset.lo);
-                    reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom());
-                }
-            }
+            // The map already owns the current report pin. Tab changes,
+            // route changes, and fullscreen transitions must not recalculate it.
             return;
         }
         const L_ref = window.L;
         if (!L_ref) { setTimeout(initReportingMap, 500); return; }
 
         const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
-        // Restore the report pin across the /radar handoff when available. New
-        // users still get a randomized privacy offset rather than an exact pin.
-        if (window._locFromGPS || !window._reportPinInitialized) {
-            let savedPin = null;
-            try { savedPin = JSON.parse(localStorage.getItem('skymonitor_reporting_pin') || 'null'); } catch (e) {}
-            if (savedPin && isFinite(Number(savedPin.lat)) && isFinite(Number(savedPin.lon))) {
-                reportLat = Number(savedPin.lat);
-                reportLon = Number(savedPin.lon);
-            } else {
-                const offset = applyPrivacyOffset(rawLat, rawLon);
-                reportLat = offset.la; reportLon = offset.lo;
-            }
+        const firstReportMapInit = !window._reportPinInitialized;
+        const privacyEnabledAtInit = localStorage.getItem('report_privacy_mode') === '1';
+
+        // Initialize the report pin once per page load. In-app tab and route
+        // transitions reuse the existing pin; a full reload may create a new
+        // randomized offset.
+        if (firstReportMapInit) {
+            const offset = applyPrivacyOffset(rawLat, rawLon);
+            reportLat = offset.la;
+            reportLon = offset.lo;
             updatePinCoordsDisplay();
         }
 
@@ -10831,7 +10834,7 @@
         window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
-        if (_privacyCb && _privacyCb.checked) {
+        if (firstReportMapInit && privacyEnabledAtInit && _privacyCb && _privacyCb.checked) {
             moveReportPinToPrivacyCenter(rawLat, rawLon, false);
         }
 
@@ -12518,7 +12521,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('/sw.js?v=20260911-radar-sw-fix').then(function(reg) {
+            navigator.serviceWorker.register('./sw.js?v=20260911-radar-turnstile-fix').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(checkNotifStatus, 1500);
