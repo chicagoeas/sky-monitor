@@ -3043,7 +3043,6 @@
                 if (!reportingMap) return;
                 reportingMap.invalidateSize({ pan: false });
                 syncReportingMapLayers();
-                loadReportingMapData();
                 // Mobile Safari can finish revealing the tab after the first
                 // Leaflet/layout pass. Retry once after it is fully visible.
                 if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
@@ -3051,7 +3050,6 @@
                         if (!document.getElementById('reporting-tab')?.classList.contains('active') || !reportingMap) return;
                         reportingMap.invalidateSize({ pan: false });
                         syncReportingMapLayers();
-                        loadReportingMapData();
                     }, 450);
                 }
             }, 150);
@@ -10533,7 +10531,7 @@
         if (!reportingMap) return;
         const center = reportingMap.getCenter();
         try {
-            localStorage.setItem('skymonitor_reporting_view', JSON.stringify({
+            localStorage.setItem('skymonitor_reporting_view_v2', JSON.stringify({
                 lat: center.lat,
                 lon: center.lng,
                 zoom: reportingMap.getZoom()
@@ -10547,14 +10545,13 @@
         document.documentElement.classList.toggle('radar-route', active);
         document.title = active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor';
 
-        const routeNav = document.getElementById(active ? 'nav-reporting' : 'nav-home');
+        const routeNav = document.getElementById('nav-reporting');
         if (routeNav && window.switchTab) {
             // The reporting tab is the same map surface in both routes. The
             // route class controls the chrome around it; the map instance and
-            // its layers stay alive during an in-app transition. When leaving
-            // /radar, explicitly return to Home rather than leaving the
-            // reporting tab selected.
-            window.switchTab(active ? 'reporting' : 'home', routeNav);
+            // its layers stay alive during an in-app transition. Exiting the
+            // fullscreen route returns to the regular Reporting tab.
+            window.switchTab('reporting', routeNav);
         }
 
         if (active && !_turnstileVerified) {
@@ -10572,7 +10569,6 @@
                 if (reportingMap) {
                     reportingMap.invalidateSize({ pan: false });
                     syncReportingMapLayers();
-                    loadReportingMapData();
                 }
             }, 80);
         } else {
@@ -10690,11 +10686,10 @@
 
     function initReportingMap() {
         if (reportingMap) {
-            const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
-            reportingMap.setView([rawLat, rawLon], reportingMap.getZoom());
             reportingMap.invalidateSize();
-            // The map already owns the current report pin. Tab changes,
-            // route changes, and fullscreen transitions must not recalculate it.
+            // The map already owns the current report pin and viewport. Tab
+            // changes, route changes, and fullscreen transitions must not
+            // recenter it on the user's exact weather location.
             return;
         }
         const L_ref = window.L;
@@ -10714,9 +10709,17 @@
             updatePinCoordsDisplay();
         }
 
-        let initialView = { lat: rawLat, lon: rawLon, zoom: 8 };
+        // Center the map on the adjusted report pin, never on the user's raw
+        // weather location. This keeps repeated zooming from exposing the
+        // exact location by revealing that the initial viewport was centered
+        // somewhere different from the report marker.
+        let initialView = {
+            lat: reportLat != null ? reportLat : rawLat,
+            lon: reportLon != null ? reportLon : rawLon,
+            zoom: 8
+        };
         try {
-            const savedView = JSON.parse(localStorage.getItem('skymonitor_reporting_view') || 'null');
+            const savedView = JSON.parse(localStorage.getItem('skymonitor_reporting_view_v2') || 'null');
             if (savedView && isFinite(Number(savedView.lat)) && isFinite(Number(savedView.lon)) &&
                 isFinite(Number(savedView.zoom))) {
                 initialView = {
