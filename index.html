@@ -10563,17 +10563,66 @@
         } catch (e) {}
     }
 
-    function openRadarRoute() {
+    function setRadarRouteState(isRadar) {
+        const active = !!isRadar;
+        window.SKYMONITOR_RADAR_PAGE = active;
+        document.documentElement.classList.toggle('radar-route', active);
+        document.title = active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor';
+
+        const reportingNav = document.getElementById('nav-reporting');
+        if (reportingNav && window.switchTab) {
+            // The reporting tab is the same map surface in both routes. The
+            // route class controls the chrome around it; the map instance and
+            // its layers stay alive during an in-app transition.
+            window.switchTab('reporting', reportingNav);
+        }
+
+        if (active) {
+            renderReportCategories();
+            if (!window._radarRefreshTimer) {
+                window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
+            }
+            setTimeout(function() {
+                if (!reportingMap) initReportingMap();
+                if (reportingMap) {
+                    reportingMap.invalidateSize({ pan: false });
+                    syncReportingMapLayers();
+                    loadReportingMapData();
+                }
+            }, 80);
+        } else {
+            if (window._radarRefreshTimer) {
+                clearInterval(window._radarRefreshTimer);
+                window._radarRefreshTimer = null;
+            }
+            setTimeout(function() {
+                if (reportingMap) reportingMap.invalidateSize({ pan: false });
+            }, 80);
+        }
+    }
+
+    function navigateRadarRoute(isRadar) {
         saveReportingMapView();
-        try { sessionStorage.setItem('skymonitor_skip_launch_once', 'true'); } catch (e) {}
-        window.location.assign('/radar');
+        const nextPath = isRadar ? '/radar' : '/';
+        const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (currentPath !== nextPath) {
+            window.history.pushState({ skymonitorRadar: !!isRadar }, '', nextPath);
+        }
+        setRadarRouteState(isRadar);
+    }
+
+    function openRadarRoute() {
+        navigateRadarRoute(true);
     }
 
     function closeRadarRoute() {
-        saveReportingMapView();
-        try { sessionStorage.setItem('skymonitor_skip_launch_once', 'true'); } catch (e) {}
-        window.location.assign('/');
+        navigateRadarRoute(false);
     }
+
+    window.addEventListener('popstate', function() {
+        const path = window.location.pathname.replace(/\/+$/, '') || '/';
+        setRadarRouteState(path === '/radar');
+    });
 
     function findMeReporting() {
         if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
