@@ -10547,12 +10547,14 @@
         document.documentElement.classList.toggle('radar-route', active);
         document.title = active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor';
 
-        const reportingNav = document.getElementById('nav-reporting');
-        if (reportingNav && window.switchTab) {
+        const routeNav = document.getElementById(active ? 'nav-reporting' : 'nav-home');
+        if (routeNav && window.switchTab) {
             // The reporting tab is the same map surface in both routes. The
             // route class controls the chrome around it; the map instance and
-            // its layers stay alive during an in-app transition.
-            window.switchTab('reporting', reportingNav);
+            // its layers stay alive during an in-app transition. When leaving
+            // /radar, explicitly return to Home rather than leaving the
+            // reporting tab selected.
+            window.switchTab(active ? 'reporting' : 'home', routeNav);
         }
 
         if (active && !_turnstileVerified) {
@@ -10581,6 +10583,17 @@
             setTimeout(function() {
                 if (reportingMap) reportingMap.invalidateSize({ pan: false });
             }, 80);
+
+            // A direct /radar load intentionally skips the normal home
+            // weather startup. Resume it when the user returns home. The
+            // regular 60-second refresh timer eventually did this before,
+            // which left the home screen stuck in its loading state.
+            if (!weatherLoadedLocationKey) {
+                loadAll().then(function() {
+                    syncPushLocation();
+                    checkForGitHubRelease();
+                });
+            }
         }
     }
 
