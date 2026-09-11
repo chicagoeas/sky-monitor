@@ -10561,6 +10561,11 @@
             window.switchTab('reporting', reportingNav);
         }
 
+        if (active && !_turnstileVerified) {
+            showTurnstileGate();
+            return;
+        }
+
         if (active) {
             renderReportCategories();
             if (!window._radarRefreshTimer) {
@@ -12473,7 +12478,7 @@
     const _origSwitchTab = switchTab;
     window.switchTab = function(tabId, element) {
         // Gate: reporting tab requires Turnstile verification once per session
-        if (tabId === 'reporting' && !_turnstileVerified && !window.SKYMONITOR_RADAR_PAGE) {
+        if (tabId === 'reporting' && !_turnstileVerified) {
             showTurnstileGate();
             return; // don't switch yet — gate will re-trigger switchTab after verification
         }
@@ -12513,7 +12518,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('./sw.js?v=20260828-aqi-sw-fix').then(function(reg) {
+            navigator.serviceWorker.register('./sw.js?v=20260911-radar-turnstile-fix').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(checkNotifStatus, 1500);
@@ -12801,6 +12806,10 @@
         }
         if (window.SKYMONITOR_RADAR_PAGE) {
             window._dismissLaunch();
+            if (!_turnstileVerified) {
+                showTurnstileGate();
+                return;
+            }
             renderReportCategories();
             setTimeout(function() {
                 initReportingMap();
