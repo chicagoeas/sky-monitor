@@ -10,7 +10,9 @@
         (function () {
             var path = window.location.pathname.replace(/\/+$/, '') || '/';
             var infoPage = path === '/privacy' || path === '/about-custom-alerts';
+            var radarPage = path === '/radar';
             window.SKYMONITOR_INFO_PAGE = infoPage;
+            window.SKYMONITOR_RADAR_PAGE = radarPage;
             window.SKYMONITOR_INFO_KIND = path === '/privacy' ? 'privacy' :
                 (path === '/about-custom-alerts' ? 'custom-alerts' : '');
             var infoPaths = { '/privacy': true, '/about-custom-alerts': true };
@@ -31,6 +33,12 @@
                         ? (ref.pathname.replace(/\/+$/, '') || '/')
                         : '';
                     if (refPath === mainPath) armSkipLaunch();
+                } else if (!radarPage) {
+                    var radarRef = document.referrer ? new URL(document.referrer, window.location.href) : null;
+                    var radarRefPath = radarRef && radarRef.origin === window.location.origin
+                        ? (radarRef.pathname.replace(/\/+$/, '') || '/')
+                        : '';
+                    if (radarRefPath === '/radar') armSkipLaunch();
                 }
                 document.addEventListener('click', function (event) {
                     var link = event.target && event.target.closest
@@ -39,7 +47,8 @@
                     if (!link || link.target === '_blank' || event.defaultPrevented) return;
                     var destination = new URL(link.href, window.location.href);
                     var destinationPath = destination.pathname.replace(/\/+$/, '') || '/';
-                    if (destination.origin === window.location.origin && infoPaths[destinationPath]) {
+                    if (destination.origin === window.location.origin &&
+                        (infoPaths[destinationPath] || destinationPath === '/radar' || destinationPath === '/')) {
                         armSkipLaunch();
                     }
                 }, true);
@@ -49,12 +58,15 @@
                 document.title = path === '/privacy'
                     ? 'Privacy Policy · SkyMonitor'
                     : 'About Custom Alerts · SkyMonitor';
+            } else if (radarPage) {
+                document.documentElement.classList.add('radar-route');
+                document.title = 'Live Reporting Map · SkyMonitor';
             }
             // Returning from an informational page is a normal in-app
             // navigation, not a cold start. Hide the launch splash before the
             // body is painted so it never flashes during the handoff.
             try {
-                if (!infoPage && sessionStorage.getItem('skymonitor_skip_launch_once') === 'true') {
+                if (!infoPage && !radarPage && sessionStorage.getItem('skymonitor_skip_launch_once') === 'true') {
                     sessionStorage.removeItem('skymonitor_skip_launch_once');
                     document.documentElement.classList.add('skip-launch');
                 }
@@ -117,11 +129,16 @@
                         title: 'About Custom Alerts · SkyMonitor',
                         description: 'Learn how SkyMonitor custom alerts work, what they mean, and why they should not replace official warnings.'
                     }
+                    : path === '/radar'
+                        ? {
+                            title: 'Live Reporting Map · SkyMonitor',
+                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, satellite imagery, and HRRR guidance.'
+                        }
                     : {
                         title: 'SkyMonitor',
                         description: 'SkyMonitor provides real-time weather conditions, forecasts, severe weather alerts, storm tracking, and local weather monitoring.'
                     };
-            var canonicalPath = path === '/' || path === '/privacy' || path === '/about-custom-alerts'
+            var canonicalPath = path === '/' || path === '/privacy' || path === '/about-custom-alerts' || path === '/radar'
                 ? path
                 : '/';
             var canonicalUrl = 'https://skymonitor.app' + canonicalPath;
@@ -178,6 +195,112 @@
         }
         html.info-route.info-night {
             --info-page-background: linear-gradient(180deg, #07131d 0%, #000000 100%);
+        }
+        html.radar-route,
+        html.radar-route body {
+            background: #02080e !important;
+        }
+        html.radar-route body {
+            padding: 0 !important;
+            overflow: hidden;
+        }
+        html.radar-route #launch-screen,
+        html.radar-route #skyCanvas,
+        html.radar-route #rainCanvas,
+        html.radar-route #ptr-indicator,
+        html.radar-route #sync-indicator,
+        html.radar-route #github-release-modal,
+        html.radar-route body > h1,
+        html.radar-route #app-location-shell,
+        html.radar-route #settings-window,
+        html.radar-route #advanced-settings-modal,
+        html.radar-route #user-report-info-modal,
+        html.radar-route #notif-prefs-modal,
+        html.radar-route footer,
+        html.radar-route .bottom-nav,
+        html.radar-route #reporting-tab > .toolkit-box:not(:first-child) {
+            display: none !important;
+        }
+        html.radar-route #dashboard {
+            display: block !important;
+            width: 100vw;
+            max-width: none;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            box-shadow: none;
+            backdrop-filter: none;
+            overflow: hidden;
+        }
+        html.radar-route #dashboard > .tab-content:not(#reporting-tab) {
+            display: none !important;
+        }
+        html.radar-route #reporting-tab {
+            display: block !important;
+            height: 100vh;
+            overflow: hidden;
+        }
+        html.radar-route #reporting-map-card {
+            position: relative;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: #02080e;
+        }
+        html.radar-route #reporting-map-card .toolkit-header {
+            position: relative;
+            z-index: 1200;
+            height: 48px;
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0 12px;
+            background: rgba(2, 8, 14, 0.94);
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+        }
+        html.radar-route #reporting-map {
+            height: calc(100vh - 48px);
+            margin: 0;
+            border-radius: 0;
+        }
+        html.radar-route #map-settings-panel {
+            position: absolute;
+            top: 56px;
+            left: 12px;
+            z-index: 1100;
+            width: min(330px, calc(100vw - 24px));
+            box-sizing: border-box;
+            margin: 0 !important;
+            max-height: calc(100vh - 72px);
+            overflow-y: auto;
+            background: rgba(5, 18, 30, 0.94) !important;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+        }
+        html.radar-route #reporting-map-card > div:last-child {
+            position: absolute;
+            left: 12px;
+            right: 12px;
+            bottom: 12px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        html.radar-route #reporting-map-card > div:last-child button {
+            pointer-events: auto;
+        }
+        html.radar-route #reporting-map-card > div:last-child #report-pin-coords {
+            text-shadow: 0 1px 4px #000;
+        }
+        html.radar-route #open-radar-btn {
+            display: none !important;
+        }
+        html.radar-route #close-radar-btn {
+            display: inline-flex !important;
+            align-items: center;
         }
         html.info-route #launch-screen,
         html.skip-launch #launch-screen,
@@ -851,7 +974,7 @@
         <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.7.5</span></span>
     </h1>
 
-    <div style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
+    <div id="app-location-shell" style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
         <div id="coords-panel">
             <input type="text" id="coordInput" value="41.8781, -87.6298" placeholder="lat, lon" autocomplete="off" oninput="this.value=this.value.replace(/[^0-9.,\-]/g,'')">
             <button class="btn-action" onclick="manualUpdateLocation()">SYNC</button>
@@ -1424,12 +1547,14 @@
     <div id="reporting-tab" class="tab-content">
 
         <!-- Card 1: Map -->
-        <div class="toolkit-box">
+        <div id="reporting-map-card" class="toolkit-box">
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span>LIVE REPORTING MAP</span>
                 <div style="display:flex; gap:6px;">
                     <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
+                    <button id="open-radar-btn" onclick="openRadarRoute()" style="background:rgba(0,230,118,0.14); border:1px solid #00e676; color:#00e676; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Open fullscreen live reporting map">&#x26F6;</button>
+                    <button id="close-radar-btn" onclick="closeRadarRoute()" style="display:none; background:rgba(255,213,79,0.14); border:1px solid var(--accent); color:var(--accent); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Return to SkyMonitor">&#x26F6; <span style="font-size:0.8em;">EXIT</span></button>
                 </div>
             </div>
 
@@ -1455,6 +1580,14 @@
                      <label class="ios-toggle"><input type="checkbox" id="custom-sky-alerts-toggle-cb" onchange="onCustomSkyAlertsChange()"><span class="ios-toggle-track"></span></label>
                  </div>
                   <div id="custom-sky-alerts-status" style="display:none; font-size:0.68em; color:#718496; margin:-3px 0 10px;"></div>
+                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                     <span style="font-size:0.82em; color:#ccc;">&#127752; Satellite <span style="color:#8aa0b5; font-size:0.9em;">(IEM GOES IR)</span></span>
+                     <label class="ios-toggle"><input type="checkbox" id="satellite-toggle-cb" onchange="toggleReportingSatellite()"><span class="ios-toggle-track"></span></label>
+                 </div>
+                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                     <span style="font-size:0.82em; color:#ccc;">&#128225; HRRR Reflectivity <span style="color:#8aa0b5; font-size:0.9em;">(IEM)</span></span>
+                     <label class="ios-toggle"><input type="checkbox" id="hrrr-toggle-cb" onchange="toggleReportingHRRR()"><span class="ios-toggle-track"></span></label>
+                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">Show reports up to 48h old</span>
                     <label class="ios-toggle"><input type="checkbox" id="show-older-reports" onchange="onShowOlderReportsChange()"><span class="ios-toggle-track"></span></label>
@@ -9090,9 +9223,13 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
+    let reportingSatelliteLayer = null;
+    let reportingHrrrLayer = null;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
+    let satelliteVisible = localStorage.getItem('report_satellite_on') === '1';
+    let hrrrVisible = localStorage.getItem('report_hrrr_on') === '1';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let reportLat = null, reportLon = null;
@@ -9666,6 +9803,7 @@
         const open = panel.style.display === 'none' || panel.style.display === '';
         panel.style.display = open ? 'block' : 'none';
         if (btn) btn.style.background = open ? 'rgba(79,195,247,0.35)' : 'rgba(79,195,247,0.15)';
+        localStorage.setItem('report_map_settings_open', open ? '1' : '0');
     }
 
     function toggleLSR() {
@@ -10387,6 +10525,56 @@
         else { reportingMap.removeLayer(reportingRadarLayer); }
     }
 
+    function toggleReportingSatellite() {
+        const cb = document.getElementById('satellite-toggle-cb');
+        satelliteVisible = cb ? cb.checked : !satelliteVisible;
+        if (cb) cb.checked = satelliteVisible;
+        localStorage.setItem('report_satellite_on', satelliteVisible ? '1' : '0');
+        if (!reportingSatelliteLayer || !reportingMap) return;
+        if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
+        else reportingMap.removeLayer(reportingSatelliteLayer);
+    }
+
+    function toggleReportingHRRR() {
+        const cb = document.getElementById('hrrr-toggle-cb');
+        hrrrVisible = cb ? cb.checked : !hrrrVisible;
+        if (cb) cb.checked = hrrrVisible;
+        localStorage.setItem('report_hrrr_on', hrrrVisible ? '1' : '0');
+        if (!reportingHrrrLayer || !reportingMap) return;
+        if (hrrrVisible) reportingHrrrLayer.addTo(reportingMap);
+        else reportingMap.removeLayer(reportingHrrrLayer);
+    }
+
+    function saveReportingMapView() {
+        if (!reportingMap) return;
+        const center = reportingMap.getCenter();
+        try {
+            localStorage.setItem('skymonitor_reporting_view', JSON.stringify({
+                lat: center.lat,
+                lon: center.lng,
+                zoom: reportingMap.getZoom()
+            }));
+            if (reportLat != null && reportLon != null) {
+                localStorage.setItem('skymonitor_reporting_pin', JSON.stringify({
+                    lat: reportLat,
+                    lon: reportLon
+                }));
+            }
+        } catch (e) {}
+    }
+
+    function openRadarRoute() {
+        saveReportingMapView();
+        try { sessionStorage.setItem('skymonitor_skip_launch_once', 'true'); } catch (e) {}
+        window.location.assign('/radar');
+    }
+
+    function closeRadarRoute() {
+        saveReportingMapView();
+        try { sessionStorage.setItem('skymonitor_skip_launch_once', 'true'); } catch (e) {}
+        window.location.assign('/');
+    }
+
     function findMeReporting() {
         if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
         const privacyMode = document.getElementById('privacy-mode-cb')?.checked;
@@ -10476,15 +10664,37 @@
         if (!L_ref) { setTimeout(initReportingMap, 500); return; }
 
         const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
-        // On very first load always place the pin (so new users see it); after that, only move for GPS
+        // Restore the report pin across the /radar handoff when available. New
+        // users still get a randomized privacy offset rather than an exact pin.
         if (window._locFromGPS || !window._reportPinInitialized) {
-            const offset = applyPrivacyOffset(rawLat, rawLon);
-            reportLat = offset.la; reportLon = offset.lo;
+            let savedPin = null;
+            try { savedPin = JSON.parse(localStorage.getItem('skymonitor_reporting_pin') || 'null'); } catch (e) {}
+            if (savedPin && isFinite(Number(savedPin.lat)) && isFinite(Number(savedPin.lon))) {
+                reportLat = Number(savedPin.lat);
+                reportLon = Number(savedPin.lon);
+            } else {
+                const offset = applyPrivacyOffset(rawLat, rawLon);
+                reportLat = offset.la; reportLon = offset.lo;
+            }
             updatePinCoordsDisplay();
         }
 
-        reportingMap = L_ref.map('reporting-map', { zoomControl: true }).setView([rawLat, rawLon], 8);
+        let initialView = { lat: rawLat, lon: rawLon, zoom: 8 };
+        try {
+            const savedView = JSON.parse(localStorage.getItem('skymonitor_reporting_view') || 'null');
+            if (savedView && isFinite(Number(savedView.lat)) && isFinite(Number(savedView.lon)) &&
+                isFinite(Number(savedView.zoom))) {
+                initialView = {
+                    lat: Number(savedView.lat),
+                    lon: Number(savedView.lon),
+                    zoom: Math.max(2, Math.min(18, Number(savedView.zoom)))
+                };
+            }
+        } catch (e) {}
+        reportingMap = L_ref.map('reporting-map', { zoomControl: true })
+            .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
+        reportingMap.on('moveend zoomend', saveReportingMapView);
 
         // Layer 1 — physical geography only (no labels), sits below radar
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
@@ -10498,7 +10708,19 @@
         });
         reportingRadarLayer.addTo(reportingMap);
 
-        // Layer 3 — roads + labels only (transparent background), floats above radar
+        // IEM GOES East CONUS infrared imagery, below radar when both are enabled.
+        reportingSatelliteLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/goes_east_conus_ch13/{z}/{x}/{y}.png', {
+            opacity: 0.48, attribution: 'Satellite: IEM / GOES', maxZoom: 12
+        });
+        if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
+
+        // Latest IEM HRRR reflectivity forecast (F0000 = current hour).
+        reportingHrrrLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F0000-0/{z}/{x}/{y}.png', {
+            opacity: 0.58, attribution: 'HRRR: IEM', maxZoom: 12
+        });
+        if (hrrrVisible) reportingHrrrLayer.addTo(reportingMap);
+
+        // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
             subdomains: 'abcd', maxZoom: 19, pane: 'overlayPane'
         }).addTo(reportingMap);
@@ -10527,6 +10749,14 @@
         if (_lsrCb) _lsrCb.checked = lsrVisible;
         if (!lsrVisible) {
             reportingMap.removeLayer(lsrLayer);
+        }
+        const _satelliteCb = document.getElementById('satellite-toggle-cb');
+        if (_satelliteCb) _satelliteCb.checked = satelliteVisible;
+        const _hrrrCb = document.getElementById('hrrr-toggle-cb');
+        if (_hrrrCb) _hrrrCb.checked = hrrrVisible;
+        const _settingsPanel = document.getElementById('map-settings-panel');
+        if (_settingsPanel && localStorage.getItem('report_map_settings_open') === '1') {
+            _settingsPanel.style.display = 'block';
         }
         // Restore persisted states for show-older-reports and privacy-mode
         const _showOlderCb = document.getElementById('show-older-reports');
@@ -12218,7 +12448,7 @@
     const _origSwitchTab = switchTab;
     window.switchTab = function(tabId, element) {
         // Gate: reporting tab requires Turnstile verification once per session
-        if (tabId === 'reporting' && !_turnstileVerified) {
+        if (tabId === 'reporting' && !_turnstileVerified && !window.SKYMONITOR_RADAR_PAGE) {
             showTurnstileGate();
             return; // don't switch yet — gate will re-trigger switchTab after verification
         }
@@ -12521,7 +12751,13 @@
         document.getElementById('opt-wind-compass')?.classList.toggle('active', savedWindMode === 'compass');
         document.getElementById('opt-wind-text')?.classList.toggle('active', savedWindMode === 'text');
         if (window.SKYMONITOR_INFO_PAGE) initInfoPage();
-        else renderAnalyticsWhenReady();
+        else {
+            renderAnalyticsWhenReady();
+            if (window.SKYMONITOR_RADAR_PAGE) {
+                var radarNav = document.getElementById('nav-reporting');
+                if (radarNav) window.switchTab('reporting', radarNav);
+            }
+        }
     });
 
     window.onload = function() {
@@ -12536,6 +12772,20 @@
         };
         if (window.SKYMONITOR_INFO_PAGE) {
             window._dismissLaunch();
+            return;
+        }
+        if (window.SKYMONITOR_RADAR_PAGE) {
+            window._dismissLaunch();
+            renderReportCategories();
+            setTimeout(function() {
+                initReportingMap();
+                if (reportingMap) {
+                    reportingMap.invalidateSize({ pan: false });
+                    syncReportingMapLayers();
+                    loadReportingMapData();
+                }
+            }, 80);
+            window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
             return;
         }
         setTimeout(window._dismissLaunch, 4000);
