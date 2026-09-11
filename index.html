@@ -132,7 +132,7 @@
                     : path === '/radar'
                         ? {
                             title: 'Live Reporting Map · SkyMonitor',
-                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, satellite imagery, and HRRR guidance.'
+                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, and satellite imagery.'
                         }
                     : {
                         title: 'SkyMonitor',
@@ -1554,7 +1554,7 @@
                     <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
                     <button id="open-radar-btn" onclick="openRadarRoute()" style="background:rgba(0,230,118,0.14); border:1px solid #00e676; color:#00e676; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Open fullscreen live reporting map">&#x26F6;</button>
-                    <button id="close-radar-btn" onclick="closeRadarRoute()" style="display:none; background:rgba(255,213,79,0.14); border:1px solid var(--accent); color:var(--accent); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Return to SkyMonitor">&#x26F6; <span style="font-size:0.8em;">EXIT</span></button>
+                    <button id="close-radar-btn" onclick="closeRadarRoute()" style="display:none; background:rgba(244,67,54,0.16); border:1px solid #ef5350; color:#ff6b61; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Return to SkyMonitor" aria-label="Return to SkyMonitor">&#x26F6;</button>
                 </div>
             </div>
 
@@ -1583,10 +1583,6 @@
                  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                      <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite <span style="color:#8aa0b5; font-size:0.9em;">(IEM GOES IR)</span></span>
                      <label class="ios-toggle"><input type="checkbox" id="satellite-toggle-cb" onchange="toggleReportingSatellite()"><span class="ios-toggle-track"></span></label>
-                 </div>
-                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                     <span style="font-size:0.82em; color:#ccc;">HRRR Reflectivity <span style="color:#8aa0b5; font-size:0.9em;">(IEM)</span></span>
-                     <label class="ios-toggle"><input type="checkbox" id="hrrr-toggle-cb" onchange="toggleReportingHRRR()"><span class="ios-toggle-track"></span></label>
                  </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">Show reports up to 48h old</span>
@@ -9224,12 +9220,10 @@
     let userReportLayer = null;
     let reportingRadarLayer = null;
     let reportingSatelliteLayer = null;
-    let reportingHrrrLayer = null;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let satelliteVisible = localStorage.getItem('report_satellite_on') === '1';
-    let hrrrVisible = localStorage.getItem('report_hrrr_on') === '1';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let reportLat = null, reportLon = null;
@@ -10535,16 +10529,6 @@
         else reportingMap.removeLayer(reportingSatelliteLayer);
     }
 
-    function toggleReportingHRRR() {
-        const cb = document.getElementById('hrrr-toggle-cb');
-        hrrrVisible = cb ? cb.checked : !hrrrVisible;
-        if (cb) cb.checked = hrrrVisible;
-        localStorage.setItem('report_hrrr_on', hrrrVisible ? '1' : '0');
-        if (!reportingHrrrLayer || !reportingMap) return;
-        if (hrrrVisible) reportingHrrrLayer.addTo(reportingMap);
-        else reportingMap.removeLayer(reportingHrrrLayer);
-    }
-
     function saveReportingMapView() {
         if (!reportingMap) return;
         const center = reportingMap.getCenter();
@@ -10763,12 +10747,6 @@
         });
         if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
 
-        // Latest IEM HRRR reflectivity forecast (F0000 = current hour).
-        reportingHrrrLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/hrrr::REFD-F0000-0/{z}/{x}/{y}.png', {
-            opacity: 0.58, attribution: 'HRRR: IEM', maxZoom: 12
-        });
-        if (hrrrVisible) reportingHrrrLayer.addTo(reportingMap);
-
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
             subdomains: 'abcd', maxZoom: 19, pane: 'overlayPane'
@@ -10801,8 +10779,6 @@
         }
         const _satelliteCb = document.getElementById('satellite-toggle-cb');
         if (_satelliteCb) _satelliteCb.checked = satelliteVisible;
-        const _hrrrCb = document.getElementById('hrrr-toggle-cb');
-        if (_hrrrCb) _hrrrCb.checked = hrrrVisible;
         const _settingsPanel = document.getElementById('map-settings-panel');
         if (_settingsPanel && localStorage.getItem('report_map_settings_open') === '1') {
             _settingsPanel.style.display = 'block';
