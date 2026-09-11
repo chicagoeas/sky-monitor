@@ -10639,29 +10639,10 @@
         const cb = document.getElementById('privacy-mode-cb');
         const isOn = cb ? cb.checked : false;
         localStorage.setItem('report_privacy_mode', isOn ? '1' : '0');
-        if (isOn) {
-            // Privacy Mode requires a fresh location lookup and snaps
-            // the report pin to a privacy-safe named-area center.
-            findMeReporting();
-            return;
-        }
-
-        // Cancel any pending privacy-center lookup.
-        ++privacySnapGeneration;
-
-        // Turning Privacy Mode off intentionally changes the pin back to
-        // a new randomized offset around the current app location.
-        const rawLat = parseFloat(lat);
-        const rawLon = parseFloat(lon);
-        const offset = applyPrivacyOffset(rawLat, rawLon);
-        setReportPin(offset.la, offset.lo);
-
-        if (reportingMap) {
-            reportingMap.setView(
-                [offset.la, offset.lo],
-                reportingMap.getZoom()
-            );
-        }
+        // Preserve the existing privacy-mode behavior. The report pin may
+        // change here, but not during ordinary tab or route transitions.
+        if (isOn) findMeReporting();
+        else ++privacySnapGeneration;
     }
 
     function onShowOlderReportsChange() {
