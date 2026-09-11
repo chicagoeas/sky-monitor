@@ -2,7 +2,7 @@
 // Bump CACHE_VERSION whenever you deploy a breaking change.
 // All three sub-caches share the same version prefix so a single bump clears
 // everything consistently.
-const CACHE_VERSION = 'skymonitor-v1.1.7.5';
+const CACHE_VERSION = 'skymonitor-v1.1.7.6';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;   // CDN libs — cache-first
 const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small icons — cache-on-use
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;  // HTML + same-origin — network-first
@@ -134,6 +134,30 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
     if (e.request.method !== 'GET') return;
     const url = e.request.url;
+    const requestUrl = new URL(url);
+
+    // /radar is a client-side route in the single-page app. Serve the app
+    // shell for direct visits instead of allowing a static-host 404 or a
+    // stale navigation fallback to resolve to an invalid response.
+    if (
+        e.request.mode === 'navigate' &&
+        requestUrl.origin === self.location.origin &&
+        requestUrl.pathname.replace(/\/+$/, '') === '/radar'
+    ) {
+        const appShell = new URL('/index.html', self.location.origin);
+        e.respondWith(
+            fetch(new Request(appShell.href, { cache: 'no-store' }))
+                .catch(() => caches.match(appShell.href))
+                .then((response) =>
+                    response || new Response('SkyMonitor is temporarily unavailable.', {
+                        status: 503,
+                        statusText: 'Service Unavailable',
+                        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+                    })
+                )
+        );
+        return;
+    }
 
     // 1. CDN static libs — cache-first (versioned, immutable)
     if (isStaticCDN(url)) {
@@ -204,7 +228,19 @@ self.addEventListener('fetch', (e) => {
                     }
                     return res;
                 })
-                .catch(() => caches.match(e.request))
+                .catch(() =>
+                    caches.match(e.request).then((cached) =>
+                        cached || new Response('SkyMonitor is temporarily unavailable.', {
+                            status: 503,
+                            statusText: 'Service Unavailable',
+                            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+                        })
+                    ).catch(() => new Response('SkyMonitor is temporarily unavailable.', {
+                        status: 503,
+                        statusText: 'Service Unavailable',
+                        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+                    }))
+                )
         );
         return;
     }
