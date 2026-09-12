@@ -132,7 +132,7 @@
                     : path === '/radar'
                         ? {
                             title: 'Live Reporting Map · SkyMonitor',
-                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, and satellite imagery.'
+                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, and radar imagery.'
                         }
                     : {
                         title: 'SkyMonitor',
@@ -226,6 +226,7 @@
             width: 100vw;
             max-width: none;
             height: 100vh;
+            height: 100dvh;
             margin: 0;
             padding: 0;
             border: 0;
@@ -241,11 +242,13 @@
         html.radar-route #reporting-tab {
             display: block !important;
             height: 100vh;
+            height: 100dvh;
             overflow: hidden;
         }
         html.radar-route #reporting-map-card {
             position: relative;
             height: 100vh;
+            height: 100dvh;
             margin: 0;
             padding: 0;
             border: 0;
@@ -255,15 +258,16 @@
         html.radar-route #reporting-map-card .toolkit-header {
             position: relative;
             z-index: 1200;
-            height: 48px;
+            height: calc(48px + env(safe-area-inset-top));
             box-sizing: border-box;
             margin: 0;
-            padding: 0 12px;
+            padding: env(safe-area-inset-top) 12px 0;
             background: rgba(2, 8, 14, 0.94);
             border-bottom: 1px solid rgba(255,255,255,0.12);
         }
         html.radar-route #reporting-map {
-            height: calc(100vh - 48px);
+            height: calc(100vh - 48px - env(safe-area-inset-top));
+            height: calc(100dvh - 48px - env(safe-area-inset-top));
             margin: 0;
             border-radius: 0;
         }
@@ -285,7 +289,7 @@
             position: absolute;
             left: 12px;
             right: 12px;
-            bottom: 12px;
+            bottom: calc(12px + env(safe-area-inset-bottom));
             z-index: 1000;
             pointer-events: none;
         }
@@ -294,6 +298,35 @@
         }
         html.radar-route #reporting-map-card > div:last-child #report-pin-coords {
             text-shadow: 0 1px 4px #000;
+        }
+        html.radar-route #reporting-map .leaflet-control-attribution {
+            display: none !important;
+        }
+        #reporting-map-info {
+            min-width: 0;
+            flex: 1;
+        }
+        #reporting-map-attribution {
+            display: none;
+            margin-top: 2px;
+            box-sizing: border-box;
+            max-width: 100%;
+            overflow: hidden;
+            padding: 0 5px;
+            color: #333;
+            background: rgba(255,255,255,0.8);
+            font: 9px/1.2 "Helvetica Neue", Arial, Helvetica, sans-serif;
+            text-shadow: none;
+            white-space: nowrap;
+        }
+        #reporting-map-attribution a {
+            color: #0078A8;
+            text-decoration: none;
+        }
+        html.radar-route #reporting-map-attribution {
+            display: table;
+            width: fit-content;
+            pointer-events: auto;
         }
         html.radar-route #open-radar-btn {
             display: none !important;
@@ -723,6 +756,7 @@
                 max-width: var(--reporting-popup-width, calc(100vw - 92px));
             }
             #reporting-map .leaflet-popup-content-wrapper {
+                width: var(--reporting-popup-width, calc(100vw - 92px)) !important;
                 max-width: var(--reporting-popup-width, calc(100vw - 92px));
             }
         }
@@ -789,6 +823,9 @@
         .reporting-popup-footer {
             padding: 8px 12px; border-top: 1px solid rgba(255,255,255,0.16);
             color: #d4deec; font-size: 0.68em; font-weight: 600;
+        }
+        .reporting-popup-shell.has-expanded-card .reporting-popup-footer {
+            display: none;
         }
         .report-form-input {
             background: #0b1e2d; color: #fff; border: 1px solid #334;
@@ -1580,10 +1617,6 @@
                      <label class="ios-toggle"><input type="checkbox" id="custom-sky-alerts-toggle-cb" onchange="onCustomSkyAlertsChange()"><span class="ios-toggle-track"></span></label>
                  </div>
                   <div id="custom-sky-alerts-status" style="display:none; font-size:0.68em; color:#718496; margin:-3px 0 10px;"></div>
-                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                     <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite <span style="color:#8aa0b5; font-size:0.9em;">(IEM GOES IR)</span></span>
-                     <label class="ios-toggle"><input type="checkbox" id="satellite-toggle-cb" onchange="toggleReportingSatellite()"><span class="ios-toggle-track"></span></label>
-                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">Show reports up to 48h old</span>
                     <label class="ios-toggle"><input type="checkbox" id="show-older-reports" onchange="onShowOlderReportsChange()"><span class="ios-toggle-track"></span></label>
@@ -1595,7 +1628,12 @@
             </div>
 
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px;">
-                <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; min-height:1em;"></div>
+                <div id="reporting-map-info">
+                    <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; min-height:1em;"></div>
+                    <div id="reporting-map-attribution" aria-label="Map attribution">
+                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM</a>
+                    </div>
+                </div>
                 <button onclick="findMeReporting()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.72em; cursor:pointer;">&#128205; Find Me</button>
             </div>
         </div>
@@ -2419,6 +2457,7 @@
                 window._locFromGPS = true;
                 if (moved) {
                     _updateLivePanelCity(lat, lon);
+                    recalculateReportPinForLocation(lat, lon, true);
                     loadAll();
                 }
             }, function() {
@@ -3163,6 +3202,7 @@
                 const cityBox = document.getElementById('cityInput');
                 if (cityBox) cityBox.value = '';
                 window._locFromGPS = true;
+                recalculateReportPinForLocation(lat, lon, true);
                 updateLocation();
             }, function() { alert('GPS Access Denied'); });
         }
@@ -9217,13 +9257,12 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-    let reportingSatelliteLayer = null;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
-    let satelliteVisible = localStorage.getItem('report_satellite_on') === '1';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
+    let normalReportingPopupWidth = null;
     let reportLat = null, reportLon = null;
     let reportPinMarker = null;
     let privacySnapGeneration = 0;
@@ -9608,6 +9647,13 @@
         if (!card) return;
         const open = card.classList.toggle('is-open');
         if (chevron) chevron.innerHTML = open ? '&#8964;' : '&#8250;';
+        const shell = card.closest('.reporting-popup-shell');
+        if (shell) {
+            shell.classList.toggle(
+                'has-expanded-card',
+                !!shell.querySelector('.reporting-popup-card.is-open')
+            );
+        }
     }
     window.toggleReportingPopupCard = toggleReportingPopupCard;
 
@@ -9615,6 +9661,24 @@
         entry.detail = detail;
         const detailEl = document.getElementById(reportingPopupEntryIdFor(entry) + '-detail');
         if (detailEl) detailEl.innerHTML = detail;
+    }
+
+    function reportingPopupWidthForMap(mapWidth) {
+        return Math.min(400, Math.max(0, Math.floor(mapWidth - 24)));
+    }
+
+    function rememberNormalReportingPopupWidth() {
+        if (!reportingMap || !reportingMap.getSize) return;
+        const mapWidth = reportingMap.getSize().x;
+        if (mapWidth) normalReportingPopupWidth = reportingPopupWidthForMap(mapWidth);
+    }
+
+    function applyNormalReportingPopupWidth() {
+        if (!reportingMap || !normalReportingPopupWidth) return;
+        reportingMap.getContainer().style.setProperty(
+            '--reporting-popup-width',
+            normalReportingPopupWidth + 'px'
+        );
     }
 
     function openReportingPopup(sourceEntry, latlng, autoOpenEntry) {
@@ -9625,8 +9689,17 @@
         if (!nearby.length) nearby.push(sourceEntry);
         const isMobileReportingMap = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
         const mapWidth = reportingMap.getSize ? reportingMap.getSize().x : 0;
+        const isFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (isMobileReportingMap && mapWidth && !isFullscreenReportingMap) {
+            rememberNormalReportingPopupWidth();
+        }
         const mobilePopupWidth = isMobileReportingMap && mapWidth
-            ? Math.max(0, Math.floor(mapWidth - 24))
+            // Fullscreen must reuse the width measured in the normal map.
+            // Only fall back to the current map width for a direct /radar load
+            // where there has not been a normal-map measurement yet.
+            ? (isFullscreenReportingMap && normalReportingPopupWidth
+                ? normalReportingPopupWidth
+                : reportingPopupWidthForMap(mapWidth))
             : null;
         if (mobilePopupWidth) {
             reportingMap.getContainer().style.setProperty('--reporting-popup-width', mobilePopupWidth + 'px');
@@ -9724,9 +9797,10 @@
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
         const url = 'https://api.weather.gov/alerts/active?point='
             + encodeURIComponent(latlng.lat.toFixed(4) + ',' + latlng.lng.toFixed(4));
+        const unavailable = '<span style="opacity:0.72;">Full alert text is temporarily unavailable. Try refreshing the map.</span>';
         try {
             const res = await fetch(url, { headers: { 'Accept': 'application/geo+json' } });
-            if (!res.ok) return '';
+            if (!res.ok) return unavailable;
             const data = await res.json();
             const wanted = String(eventName || '').toLowerCase();
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
@@ -9756,7 +9830,7 @@
                  return (bTime ? bTime.getTime() : 0) - (aTime ? aTime.getTime() : 0);
             });
             const alert = alertCandidates[0];
-            if (!alert) return '';
+            if (!alert || (!alert.description && !alert.instruction)) return unavailable;
              const timeInfo = reportingAlertTimeInfo(alert);
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
@@ -9766,7 +9840,7 @@
              ];
             return reportingPopupDetailRows(rows);
         } catch (e) {
-            return '';
+            return unavailable;
         }
     }
 
@@ -10517,33 +10591,20 @@
         else { reportingMap.removeLayer(reportingRadarLayer); }
     }
 
-    function toggleReportingSatellite() {
-        const cb = document.getElementById('satellite-toggle-cb');
-        satelliteVisible = cb ? cb.checked : !satelliteVisible;
-        if (cb) cb.checked = satelliteVisible;
-        localStorage.setItem('report_satellite_on', satelliteVisible ? '1' : '0');
-        if (!reportingSatelliteLayer || !reportingMap) return;
-        if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
-        else reportingMap.removeLayer(reportingSatelliteLayer);
-    }
-
     function saveReportingMapView() {
-        if (!reportingMap) return;
-        const center = reportingMap.getCenter();
-        try {
-            localStorage.setItem('skymonitor_reporting_view_v2', JSON.stringify({
-                lat: center.lat,
-                lon: center.lng,
-                zoom: reportingMap.getZoom()
-            }));
-        } catch (e) {}
+        // The map viewport is intentionally session-only. A fresh reporting
+        // map must start at the current adjusted report pin, never at a
+        // previously saved (possibly exact) location.
     }
 
     function setRadarRouteState(isRadar) {
         const active = !!isRadar;
+        const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (active && !wasFullscreenReportingMap) rememberNormalReportingPopupWidth();
         window.SKYMONITOR_RADAR_PAGE = active;
         document.documentElement.classList.toggle('radar-route', active);
         document.title = active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor';
+        if (!active) applyNormalReportingPopupWidth();
 
         const routeNav = document.getElementById('nav-reporting');
         if (routeNav && window.switchTab) {
@@ -10618,27 +10679,10 @@
 
     function findMeReporting() {
         if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
-        const privacyMode = document.getElementById('privacy-mode-cb')?.checked;
         navigator.geolocation.getCurrentPosition(function(pos) {
             const rawLa = pos.coords.latitude;
             const rawLo = pos.coords.longitude;
-            if (privacyMode) {
-                // Privacy Mode: resolve a named neighborhood/community center
-                // first, then fall back to the containing city or town. Never
-                // use the raw reverse-geocoder point as the report location.
-                moveReportPinToPrivacyCenter(rawLa, rawLo, true);
-            } else {
-                ++privacySnapGeneration;
-                // Default: apply ~200m random offset for basic privacy
-                const offsetMeters = 150 + Math.random() * 100;
-                const angle = Math.random() * 2 * Math.PI;
-                const dLat = (offsetMeters * Math.cos(angle)) / 111000;
-                const dLon = (offsetMeters * Math.sin(angle)) / (111000 * Math.cos(rawLa * Math.PI / 180));
-                const la = parseFloat((rawLa + dLat).toFixed(5));
-                const lo = parseFloat((rawLo + dLon).toFixed(5));
-                setReportPin(la, lo);
-                if (reportingMap) reportingMap.setView([la, lo], reportingMap.getZoom());
-            }
+            recalculateReportPinForLocation(rawLa, rawLo, true);
         }, function() {
             alert('Could not get your location. Check browser permissions.');
         }, { enableHighAccuracy: true, timeout: 8000 });
@@ -10666,6 +10710,31 @@
         const dLat = (offsetMeters * Math.cos(angle)) / 111000;
         const dLon = (offsetMeters * Math.sin(angle)) / (111000 * Math.cos(rawLat * Math.PI / 180));
         return { la: parseFloat((rawLat + dLat).toFixed(5)), lo: parseFloat((rawLon + dLon).toFixed(5)) };
+    }
+
+    function recalculateReportPinForLocation(rawLat, rawLon, recenterMap) {
+        rawLat = parseFloat(rawLat);
+        rawLon = parseFloat(rawLon);
+        if (!isFinite(rawLat) || !isFinite(rawLon)) return;
+
+        const privacyCb = document.getElementById('privacy-mode-cb');
+        const privacyMode = privacyCb
+            ? privacyCb.checked
+            : localStorage.getItem('report_privacy_mode') === '1';
+
+        if (privacyMode) {
+            // Privacy Mode resolves a named neighborhood/community center
+            // rather than exposing the raw GPS coordinate.
+            moveReportPinToPrivacyCenter(rawLat, rawLon, false);
+            return;
+        }
+
+        ++privacySnapGeneration;
+        const offset = applyPrivacyOffset(rawLat, rawLon);
+        setReportPin(offset.la, offset.lo);
+        if (recenterMap && reportingMap) {
+            reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
+        }
     }
 
     function moveReportPinToPrivacyCenter(rawLat, rawLon, showError) {
@@ -10718,17 +10787,6 @@
             lon: reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
-        try {
-            const savedView = JSON.parse(localStorage.getItem('skymonitor_reporting_view_v2') || 'null');
-            if (savedView && isFinite(Number(savedView.lat)) && isFinite(Number(savedView.lon)) &&
-                isFinite(Number(savedView.zoom))) {
-                initialView = {
-                    lat: Number(savedView.lat),
-                    lon: Number(savedView.lon),
-                    zoom: Math.max(2, Math.min(18, Number(savedView.zoom)))
-                };
-            }
-        } catch (e) {}
         reportingMap = L_ref.map('reporting-map', { zoomControl: true })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
@@ -10745,12 +10803,6 @@
             opacity: 0.65, attribution: 'Radar: IEM', maxZoom: 18
         });
         reportingRadarLayer.addTo(reportingMap);
-
-        // IEM GOES East CONUS infrared imagery, below radar when both are enabled.
-        reportingSatelliteLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/goes_east_conus_ch13/{z}/{x}/{y}.png', {
-            opacity: 0.48, attribution: 'Satellite: IEM / GOES', maxZoom: 12
-        });
-        if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
@@ -10782,8 +10834,6 @@
         if (!lsrVisible) {
             reportingMap.removeLayer(lsrLayer);
         }
-        const _satelliteCb = document.getElementById('satellite-toggle-cb');
-        if (_satelliteCb) _satelliteCb.checked = satelliteVisible;
         const _settingsPanel = document.getElementById('map-settings-panel');
         if (_settingsPanel && localStorage.getItem('report_map_settings_open') === '1') {
             _settingsPanel.style.display = 'block';
@@ -10893,7 +10943,6 @@
                     const color = shortFusedPhenomena[ph];
                     const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
                     const expiresText = f.properties.expire || f.properties.polygon_end;
-                     const nwsTimeInfo = reportingAlertTimeInfo(f.properties);
                     const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
                     registerReportingPopup(_poly, {
                         source: 'nws',
@@ -10901,10 +10950,7 @@
                         color: color,
                         title: escapeHtml(nwsEvent),
                          meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
-                        detail: reportingPopupDetailRows([
-                             [nwsTimeInfo.label, nwsTimeInfo.value ? formatReportTime(nwsTimeInfo.value) : ''],
-                             ['Issued by', f.properties.wfo || 'NWS']
-                        ]),
+                        detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                         loadDetails: function(latlng) {
                             return loadNwsReportingDetails(
                                 null,
@@ -12747,6 +12793,11 @@
     });
 
     window.addEventListener('DOMContentLoaded', function() {
+        // Load the persisted location before the Reporting Map can initialize.
+        // Direct /radar loads create the map during this event, before
+        // window.onload; without this ordering they briefly use the Chicago
+        // fallback coordinates.
+        loadLoc();
         var pendingMode = null;
         try {
             var pendingLocation = JSON.parse(sessionStorage.getItem('skymonitor_pending_location') || 'null');
