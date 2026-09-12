@@ -8294,6 +8294,55 @@
     }
 
     // ——— SPC RISK LEVELS ———
+    // WPC MPDs do not change every minute, but loadAll() does. Keep the
+    // location-specific result for ten minutes so the normal weather refresh
+    // does not invoke the WPC Worker once per minute per open tab.
+    const WPC_MPD_CACHE_MS = 10 * 60 * 1000;
+    var _wpcMpdCache = null;
+    var _wpcMpdRequest = null;
+
+    async function fetchWpcMpdCached() {
+        var key = String(Number(lat).toFixed(3)) + ',' + String(Number(lon).toFixed(3));
+        var now = Date.now();
+        var stale = null;
+
+        if (_wpcMpdCache) {
+            if (_wpcMpdCache.key === key && now - _wpcMpdCache.ts < WPC_MPD_CACHE_MS) {
+                return _wpcMpdCache.data;
+            }
+            if (_wpcMpdCache.key === key) stale = _wpcMpdCache.data;
+        }
+
+        // Reuse the result across normal page reloads on the same browser.
+        try {
+            var saved = JSON.parse(localStorage.getItem('sm_wpc_mpd_cache') || 'null');
+            if (saved && saved.key === key) {
+                if (now - saved.ts < WPC_MPD_CACHE_MS) {
+                    _wpcMpdCache = saved;
+                    return saved.data;
+                }
+                stale = saved.data;
+            }
+        } catch (e) {}
+
+        if (_wpcMpdRequest) return _wpcMpdRequest;
+        _wpcMpdRequest = fetch('https://wpcmetwatch.skymonitor-account.workers.dev/?lat=' +
+            encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon))
+            .then(function(res) {
+                if (!res.ok) throw new Error('WPC MPD Worker ' + res.status);
+                return res.json();
+            })
+            .then(function(data) {
+                var entry = { key: key, ts: Date.now(), data: data };
+                _wpcMpdCache = entry;
+                try { localStorage.setItem('sm_wpc_mpd_cache', JSON.stringify(entry)); } catch (e) {}
+                return data;
+            })
+            .catch(function() { return stale; })
+            .finally(function() { _wpcMpdRequest = null; });
+        return _wpcMpdRequest;
+    }
+
     async function fetchRiskLevels() {
         // When offline, the cached risks were already restored in the PirateWeather
         // fallback block. Running the fetches here would just overwrite that cache
@@ -8383,9 +8432,8 @@
         window.wpcERODay3 = _ero3Raw ? (_ero3Raw.outlook || _ero3Raw.label || _ero3Raw.LABEL || _ero3Raw.risk || _ero3Raw.RISK || null) : null;
         computeFloodOutlook(); // Re-render flood card with full ERO data
         try {
-            const mpdRes = await fetch('https://wpcmetwatch.skymonitor-account.workers.dev/?lat=' + lat + '&lon=' + lon);
-            if (mpdRes.ok) {
-                const mpdData = await mpdRes.json();
+            const mpdData = await fetchWpcMpdCached();
+            if (mpdData) {
                 const mpds = mpdData.mpds || [];
                 mpds.forEach(function(mpd) {
                     if (!mpd.id) return;
