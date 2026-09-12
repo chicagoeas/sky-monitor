@@ -727,6 +727,7 @@
                 max-width: var(--reporting-popup-width, calc(100vw - 92px));
             }
             #reporting-map .leaflet-popup-content-wrapper {
+                width: var(--reporting-popup-width, calc(100vw - 92px)) !important;
                 max-width: var(--reporting-popup-width, calc(100vw - 92px));
             }
         }
@@ -9224,6 +9225,7 @@
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
+    let normalReportingPopupWidth = null;
     let reportLat = null, reportLon = null;
     let reportPinMarker = null;
     let privacySnapGeneration = 0;
@@ -9617,6 +9619,24 @@
         if (detailEl) detailEl.innerHTML = detail;
     }
 
+    function reportingPopupWidthForMap(mapWidth) {
+        return Math.min(400, Math.max(0, Math.floor(mapWidth - 24)));
+    }
+
+    function rememberNormalReportingPopupWidth() {
+        if (!reportingMap || !reportingMap.getSize) return;
+        const mapWidth = reportingMap.getSize().x;
+        if (mapWidth) normalReportingPopupWidth = reportingPopupWidthForMap(mapWidth);
+    }
+
+    function applyNormalReportingPopupWidth() {
+        if (!reportingMap || !normalReportingPopupWidth) return;
+        reportingMap.getContainer().style.setProperty(
+            '--reporting-popup-width',
+            normalReportingPopupWidth + 'px'
+        );
+    }
+
     function openReportingPopup(sourceEntry, latlng, autoOpenEntry) {
         if (!reportingMap || !window.L) return;
         const nearby = reportingPopupEntries.filter(function(entry) {
@@ -9625,11 +9645,17 @@
         if (!nearby.length) nearby.push(sourceEntry);
         const isMobileReportingMap = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
         const mapWidth = reportingMap.getSize ? reportingMap.getSize().x : 0;
+        const isFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (isMobileReportingMap && mapWidth && !isFullscreenReportingMap) {
+            rememberNormalReportingPopupWidth();
+        }
         const mobilePopupWidth = isMobileReportingMap && mapWidth
-            // Keep the fullscreen route from making alert popups wider than
-            // the normal reporting map. Smaller viewports still use all the
-            // available width needed to keep the popup inside the map.
-            ? Math.min(400, Math.max(0, Math.floor(mapWidth - 24)))
+            // Fullscreen must reuse the width measured in the normal map.
+            // Only fall back to the current map width for a direct /radar load
+            // where there has not been a normal-map measurement yet.
+            ? (isFullscreenReportingMap && normalReportingPopupWidth
+                ? normalReportingPopupWidth
+                : reportingPopupWidthForMap(mapWidth))
             : null;
         if (mobilePopupWidth) {
             reportingMap.getContainer().style.setProperty('--reporting-popup-width', mobilePopupWidth + 'px');
@@ -10528,9 +10554,12 @@
 
     function setRadarRouteState(isRadar) {
         const active = !!isRadar;
+        const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (active && !wasFullscreenReportingMap) rememberNormalReportingPopupWidth();
         window.SKYMONITOR_RADAR_PAGE = active;
         document.documentElement.classList.toggle('radar-route', active);
         document.title = active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor';
+        if (!active) applyNormalReportingPopupWidth();
 
         const routeNav = document.getElementById('nav-reporting');
         if (routeNav && window.switchTab) {
