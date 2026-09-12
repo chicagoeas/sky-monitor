@@ -681,6 +681,27 @@
         .btn-group { display: flex; gap: 4px; background: rgba(0,0,0,0.35); padding: 4px; border-radius: 8px; }
         .btn-opt { flex: 1; padding: 7px 10px; border: none; background: transparent; color: #6b7280; font-size: 0.7em; font-weight: 700; cursor: pointer; border-radius: 6px; transition: color 0.2s; }
         .btn-opt.active { background: var(--primary); color: #07131d; }
+        .btn-opt:focus-visible,
+        .modal-close:focus-visible,
+        .unit-select:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+        .modal-close {
+            width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+            padding: 0; border: 1px solid rgba(144,202,249,0.28); border-radius: 8px;
+            background: rgba(144,202,249,0.08); color: #9db5c9; cursor: pointer; font-size: 1.15em;
+            line-height: 1; transition: background 0.2s, color 0.2s, border-color 0.2s;
+        }
+        .modal-close:hover { background: rgba(79,195,247,0.18); border-color: rgba(79,195,247,0.55); color: #e7f6ff; }
+        .unit-custom-controls {
+            display: none; margin-top: 10px; padding: 10px; border: 1px solid rgba(79,195,247,0.16);
+            border-radius: 10px; background: rgba(0,0,0,0.18);
+        }
+        .unit-custom-controls.visible { display: grid; gap: 8px; }
+        .unit-choice { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .unit-choice label { color: #b8c7d3; font-size: 0.72em; font-weight: 700; }
+        .unit-select {
+            min-width: 112px; padding: 6px 8px; border: 1px solid #344b5c; border-radius: 6px;
+            background: #102838; color: #e8f5fc; font-size: 0.72em; cursor: pointer;
+        }
 
         #ptr-indicator {
             position: fixed; top: -120px; left: 50%; transform: translateX(-50%);
@@ -1023,7 +1044,7 @@
     <div id="settings-window">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
             <h3 style="margin:0; font-size:0.85em; letter-spacing:1px; color:var(--primary);">SETTINGS</h3>
-            <button onclick="toggleSettingsWindow()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+            <button class="modal-close" type="button" aria-label="Close settings" onclick="toggleSettingsWindow()">&#10005;</button>
         </div>
         <div class="settings-row">
             <span class="settings-label">Input Mode</span>
@@ -1043,8 +1064,49 @@
         <div class="settings-row">
             <span class="settings-label">Unit System</span>
             <div class="btn-group">
-                <button id="opt-unit-imperial" class="btn-opt active" onclick="setUnitSystem('imperial')">IMPERIAL</button>
+                <button id="opt-unit-imperial" class="btn-opt active" onclick="setUnitSystem('imperial')">US / IMPERIAL</button>
                 <button id="opt-unit-metric" class="btn-opt" onclick="setUnitSystem('metric')">METRIC</button>
+                <button id="opt-unit-custom" class="btn-opt" onclick="setUnitSystem('custom')">CUSTOM</button>
+            </div>
+            <div id="unit-custom-controls" class="unit-custom-controls" aria-label="Custom unit preferences">
+                <div class="unit-choice">
+                    <label for="unit-temp-select">Temperature</label>
+                    <select id="unit-temp-select" class="unit-select" onchange="setCustomUnit('temperature', this.value)">
+                        <option value="F">Fahrenheit (°F)</option>
+                        <option value="C">Celsius (°C)</option>
+                    </select>
+                </div>
+                <div class="unit-choice">
+                    <label for="unit-precip-select">Rain / snow</label>
+                    <select id="unit-precip-select" class="unit-select" onchange="setCustomUnit('precipitation', this.value)">
+                        <option value="in">Inches (in)</option>
+                        <option value="mm">Millimeters (mm)</option>
+                    </select>
+                </div>
+                <div class="unit-choice">
+                    <label for="unit-wind-select">Wind speed</label>
+                    <select id="unit-wind-select" class="unit-select" onchange="setCustomUnit('wind', this.value)">
+                        <option value="mph">Miles/hour (mph)</option>
+                        <option value="kmh">Kilometers/hour (km/h)</option>
+                        <option value="ms">Meters/second (m/s)</option>
+                        <option value="kt">Knots (kt)</option>
+                    </select>
+                </div>
+                <div class="unit-choice">
+                    <label for="unit-pressure-select">Pressure</label>
+                    <select id="unit-pressure-select" class="unit-select" onchange="setCustomUnit('pressure', this.value)">
+                        <option value="inHg">inches Hg (inHg)</option>
+                        <option value="hPa">Hectopascals (hPa)</option>
+                        <option value="kPa">Kilopascals (kPa)</option>
+                    </select>
+                </div>
+                <div class="unit-choice">
+                    <label for="unit-distance-select">Distance / elevation</label>
+                    <select id="unit-distance-select" class="unit-select" onchange="setCustomUnit('distance', this.value)">
+                        <option value="mi">Miles / feet</option>
+                        <option value="km">Kilometers / meters</option>
+                    </select>
+                </div>
             </div>
         </div>
         <div class="settings-row" id="notif-settings-row">
@@ -1070,7 +1132,7 @@
     <div style="background:#0b1e2d; border:1px solid #223344; border-radius:15px; padding:25px; width:90%; max-width:320px; box-shadow:0 0 50px rgba(0,0,0,1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
             <h3 style="margin:0; font-size:0.85em; letter-spacing:1px; color:var(--primary);">ADVANCED SETTINGS</h3>
-            <button onclick="closeAdvancedSettings()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+            <button class="modal-close" type="button" aria-label="Close advanced settings" onclick="closeAdvancedSettings()">&#10005;</button>
         </div>
         <div class="settings-row">
             <span class="settings-label">Wind Direction Mode</span>
@@ -1153,7 +1215,7 @@
     <div id="turnstile-gate" style="display:none; position:fixed; inset:0; z-index:5000; background:rgba(0,0,0,0.88); backdrop-filter:blur(8px); align-items:center; justify-content:center;">
     <div style="background:#0b1e2d; border:1px solid #223344; border-radius:18px; padding:30px 24px 24px 24px; width:90%; max-width:310px; box-shadow:0 0 60px rgba(0,0,0,1); text-align:center;">
         <div style="display:flex; justify-content:flex-end; margin-bottom:2px;">
-            <button onclick="closeTurnstileGate(true)" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.3em; line-height:1;">&#10005;</button>
+            <button class="modal-close" type="button" aria-label="Close verification" onclick="closeTurnstileGate(true)">&#10005;</button>
         </div>
         <div style="font-size:clamp(1.5rem,2rem,33px); margin-bottom:12px;">&#128204;</div>
         <div style="font-size:0.82em; font-weight:700; color:var(--primary); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Live Reporting</div>
@@ -1173,7 +1235,7 @@
     <div style="background:#0b1e2d; border:1px solid #223344; border-radius:15px; padding:25px; width:90%; max-width:320px; box-shadow:0 0 50px rgba(0,0,0,1);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
             <span style="font-size:0.78em; color:#556677; letter-spacing:0.5px;">About Integrating User Reports and Alerts</span>
-            <button onclick="closeUserReportInfoModal()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+            <button class="modal-close" type="button" aria-label="Close report information" onclick="closeUserReportInfoModal()">&#10005;</button>
         </div>
         <p style="font-size:0.82em; line-height:1.65; color:#ccd6dd; margin:0;">
             When this is enabled, nearby live user reports and SkyMonitor custom alerts <a class="custom-alerts-help" href="/about-custom-alerts" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts">?</a> will be taken into account with Threat Level, and for custom alerts, will also make it clear when a custom alert is issued for your exact location.
@@ -1188,7 +1250,7 @@
     <div style="background:#0f1e2d; border:1px solid rgba(255,255,255,0.12); border-radius:20px; padding:24px; width:90%; max-width:340px; box-shadow:0 20px 60px rgba(0,0,0,0.8);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
             <span style="font-weight:800; font-size:0.95em; letter-spacing:1px; color:white;">&#128276; NOTIFICATION SETTINGS</span>
-            <button onclick="closeNotifPrefs()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
+            <button class="modal-close" type="button" aria-label="Close notification settings" onclick="closeNotifPrefs()">&#10005;</button>
         </div>
         <!-- Weather Alerts -->
         <div style="margin-bottom:16px;">
@@ -2714,6 +2776,8 @@
         var unitSys = localStorage.getItem('unit_system') || 'imperial';
         document.getElementById('opt-unit-imperial')?.classList.toggle('active', unitSys === 'imperial');
         document.getElementById('opt-unit-metric')?.classList.toggle('active', unitSys === 'metric');
+        document.getElementById('opt-unit-custom')?.classList.toggle('active', unitSys === 'custom');
+        syncUnitControls();
         var alertLang = localStorage.getItem('alerts_language') || 'default';
         document.getElementById('opt-lang-default')?.classList.toggle('active', alertLang === 'default');
         document.getElementById('opt-lang-en')?.classList.toggle('active', alertLang === 'en');
@@ -2746,24 +2810,150 @@
         }
     }
 
-    function _isMetric() { return localStorage.getItem('unit_system') === 'metric'; }
-    function _fmtTemp(f) { return _isMetric() ? Math.round((f - 32) * 5 / 9) + '\u00b0' : Math.round(f) + '\u00b0'; }
-    function _fmtWind(mph) { return _isMetric() ? Math.round(mph * 1.60934) + ' km/h' : Math.round(mph) + ' mph'; }
+    var UNIT_PRESETS = {
+        imperial: { temperature: 'F', precipitation: 'in', wind: 'mph', pressure: 'inHg', distance: 'mi' },
+        metric:   { temperature: 'C', precipitation: 'mm', wind: 'kmh', pressure: 'hPa', distance: 'km' }
+    };
+
+    function _unitPrefs() {
+        var mode = localStorage.getItem('unit_system') || 'imperial';
+        if (mode !== 'custom') return UNIT_PRESETS[mode] || UNIT_PRESETS.imperial;
+        return {
+            temperature: localStorage.getItem('unit_temperature') || 'F',
+            precipitation: localStorage.getItem('unit_precipitation') || 'in',
+            wind: localStorage.getItem('unit_wind') || 'mph',
+            pressure: localStorage.getItem('unit_pressure') || 'inHg',
+            distance: localStorage.getItem('unit_distance') || 'mi'
+        };
+    }
+
+    function _unitValue(value, decimals) {
+        var n = Number(value);
+        if (!isFinite(n)) return '--';
+        return decimals === 0 ? String(Math.round(n)) : n.toFixed(decimals).replace(/\.?0+$/, '');
+    }
+
+    function _fmtTemp(f) {
+        var p = _unitPrefs();
+        return p.temperature === 'C'
+            ? _unitValue((Number(f) - 32) * 5 / 9, 0) + '\u00b0C'
+            : _unitValue(f, 0) + '\u00b0F';
+    }
+
+    function _windValue(mph) {
+        var p = _unitPrefs(), value = Number(mph);
+        if (p.wind === 'kmh') return value * 1.60934;
+        if (p.wind === 'ms') return value * 0.44704;
+        if (p.wind === 'kt') return value * 0.868976;
+        return value;
+    }
+
+    function _fmtWind(mph) {
+        var p = _unitPrefs(), decimals = p.wind === 'mph' || p.wind === 'kmh' ? 0 : 1;
+        return _unitValue(_windValue(mph), decimals) + ' ' + _windLabel();
+    }
+
+    function _windLabel() {
+        var p = _unitPrefs();
+        return p.wind === 'kmh' ? 'km/h' : p.wind === 'ms' ? 'm/s' : p.wind === 'kt' ? 'kt' : 'mph';
+    }
+
+    function _precipValue(inches) {
+        var p = _unitPrefs();
+        return p.precipitation === 'mm' ? Number(inches) * 25.4 : Number(inches);
+    }
+
+    function _fmtPrecip(inches, decimals) {
+        var p = _unitPrefs();
+        var places = decimals == null ? (p.precipitation === 'mm' ? 1 : 2) : decimals;
+        return _unitValue(_precipValue(inches), places) + ' ' + p.precipitation;
+    }
+
+    function _fmtHail(inches) {
+        var p = _unitPrefs();
+        return p.precipitation === 'mm'
+            ? _unitValue(Number(inches) * 2.54, 1) + ' cm'
+            : _unitValue(inches, 1) + ' in';
+    }
+
+    function _pressureValue(hPa) {
+        var p = _unitPrefs(), value = Number(hPa);
+        if (p.pressure === 'inHg') return value * 0.0295299831;
+        if (p.pressure === 'kPa') return value / 10;
+        return value;
+    }
+
+    function _fmtPressure(hPa) {
+        var p = _unitPrefs();
+        return _unitValue(_pressureValue(hPa), p.pressure === 'hPa' ? 0 : 2) + ' ' + p.pressure;
+    }
+
+    function _fmtDistance(miles) {
+        var p = _unitPrefs();
+        return _unitValue(p.distance === 'km' ? Number(miles) * 1.60934 : miles, 1) + ' ' + p.distance;
+    }
+
+    function _fmtElevation(meters) {
+        var p = _unitPrefs();
+        return _unitValue(p.distance === 'km' ? meters : Number(meters) * 3.28084, 0) + (p.distance === 'km' ? ' m' : ' ft');
+    }
+
     function _convertNarrativeToMetric(text) {
-        if (!_isMetric() || !text) return text;
-        text = text.replace(/(\d+)\s+to\s+(\d+)\s*\u00b0?F\b/gi, function(m, a, b) { return Math.round((+a-32)*5/9) + ' to ' + Math.round((+b-32)*5/9) + '\u00b0C'; });
-        text = text.replace(/(\d+)\s*\u00b0?F\b/gi, function(m, a) { return Math.round((+a-32)*5/9) + '\u00b0C'; });
-        text = text.replace(/(\d+)\s+to\s+(\d+)\s*mph\b/gi, function(m, a, b) { return Math.round(+a*1.60934) + ' to ' + Math.round(+b*1.60934) + ' km/h'; });
-        text = text.replace(/(\d+)\s*mph\b/gi, function(m, a) { return Math.round(+a*1.60934) + ' km/h'; });
-        text = text.replace(/(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a, b) { return parseFloat((+a*25.4).toFixed(1)) + ' to ' + parseFloat((+b*25.4).toFixed(1)) + ' mm'; });
-        text = text.replace(/(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a) { return parseFloat((+a*25.4).toFixed(1)) + ' mm'; });
+        if (!text) return text;
+        var p = _unitPrefs();
+        if (p.temperature === 'C') {
+            text = text.replace(/(\d+)\s+to\s+(\d+)\s*\u00b0?F\b/gi, function(m, a, b) { return _unitValue((+a-32)*5/9, 0) + ' to ' + _unitValue((+b-32)*5/9, 0) + '\u00b0C'; });
+            text = text.replace(/(\d+)\s*\u00b0?F\b/gi, function(m, a) { return _unitValue((+a-32)*5/9, 0) + '\u00b0C'; });
+        }
+        if (p.wind !== 'mph') {
+            text = text.replace(/(\d+)\s+to\s+(\d+)\s*mph\b/gi, function(m, a, b) { return _unitValue(_windValue(+a), p.wind === 'kmh' ? 0 : 1) + ' to ' + _unitValue(_windValue(+b), p.wind === 'kmh' ? 0 : 1) + ' ' + _windLabel(); });
+            text = text.replace(/(\d+)\s*mph\b/gi, function(m, a) { return _unitValue(_windValue(+a), p.wind === 'kmh' ? 0 : 1) + ' ' + _windLabel(); });
+        }
+        if (p.precipitation === 'mm') {
+            text = text.replace(/(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a, b) { return _unitValue(+a*25.4, 1) + ' to ' + _unitValue(+b*25.4, 1) + ' mm'; });
+            text = text.replace(/(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a) { return _unitValue(+a*25.4, 1) + ' mm'; });
+        }
         return text;
     }
 
+    function syncUnitControls() {
+        var mode = localStorage.getItem('unit_system') || 'imperial';
+        var prefs = _unitPrefs();
+        ['imperial', 'metric', 'custom'].forEach(function(name) {
+            document.getElementById('opt-unit-' + name)?.classList.toggle('active', mode === name);
+        });
+        var panel = document.getElementById('unit-custom-controls');
+        if (panel) panel.classList.toggle('visible', mode === 'custom');
+        var map = {
+            temperature: 'unit-temp-select',
+            precipitation: 'unit-precip-select',
+            wind: 'unit-wind-select',
+            pressure: 'unit-pressure-select',
+            distance: 'unit-distance-select'
+        };
+        Object.keys(map).forEach(function(key) {
+            var el = document.getElementById(map[key]);
+            if (el) el.value = prefs[key];
+        });
+    }
+
     function setUnitSystem(val) {
+        if (val === 'custom') {
+            var current = _unitPrefs();
+            ['temperature', 'precipitation', 'wind', 'pressure', 'distance'].forEach(function(key) {
+                if (!localStorage.getItem('unit_' + key)) localStorage.setItem('unit_' + key, current[key]);
+            });
+        }
         localStorage.setItem('unit_system', val);
-        document.getElementById('opt-unit-imperial')?.classList.toggle('active', val === 'imperial');
-        document.getElementById('opt-unit-metric')?.classList.toggle('active', val === 'metric');
+        syncUnitControls();
+        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
+        loadAll();
+    }
+
+    function setCustomUnit(key, value) {
+        localStorage.setItem('unit_' + key, value);
+        localStorage.setItem('unit_system', 'custom');
+        syncUnitControls();
         _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         loadAll();
     }
@@ -3857,28 +4047,43 @@
     }
 
     function _localizePirateAlertUnits(text) {
-        if (!text || (typeof _isMetric === 'function' && _isMetric())) return text;
+        if (!text) return text;
+        var p = _unitPrefs();
         // International alert feeds commonly describe precipitation in mm/cm
         // and wind/distance in metric units. Convert the displayed description
         // only; the source alert data remains untouched.
         return text
             .replace(/(\d+(?:\.\d+)?)\s*mm\b/gi, function(_, v) {
-                return (parseFloat(v) / 25.4).toFixed(2).replace(/\.?0+$/, '') + ' in';
+                return p.precipitation === 'mm'
+                    ? _unitValue(v, 1) + ' mm'
+                    : (parseFloat(v) / 25.4).toFixed(2).replace(/\.?0+$/, '') + ' in';
             })
             .replace(/(\d+(?:\.\d+)?)\s*cm\b/gi, function(_, v) {
-                return (parseFloat(v) / 2.54).toFixed(2).replace(/\.?0+$/, '') + ' in';
+                return p.precipitation === 'mm'
+                    ? _unitValue(parseFloat(v) * 10, 1) + ' mm'
+                    : (parseFloat(v) / 2.54).toFixed(2).replace(/\.?0+$/, '') + ' in';
             })
             .replace(/(\d+(?:\.\d+)?)\s*km\/h\b/gi, function(_, v) {
+                if (p.wind === 'kmh') return _unitValue(v, 0) + ' km/h';
+                if (p.wind === 'ms') return _unitValue(parseFloat(v) / 3.6, 1) + ' m/s';
+                if (p.wind === 'kt') return _unitValue(parseFloat(v) * 0.539957, 1) + ' kt';
                 return Math.round(parseFloat(v) * 0.621371) + ' mph';
             })
             .replace(/(\d+(?:\.\d+)?)\s*m\/s\b/gi, function(_, v) {
+                if (p.wind === 'kmh') return Math.round(parseFloat(v) * 3.6) + ' km/h';
+                if (p.wind === 'ms') return _unitValue(v, 1) + ' m/s';
+                if (p.wind === 'kt') return _unitValue(parseFloat(v) * 1.94384, 1) + ' kt';
                 return Math.round(parseFloat(v) * 2.23694) + ' mph';
             })
             .replace(/(\d+(?:\.\d+)?)\s*km\b/gi, function(_, v) {
-                return (parseFloat(v) * 0.621371).toFixed(1).replace(/\.?0+$/, '') + ' mi';
+                return p.distance === 'km'
+                    ? _unitValue(v, 1) + ' km'
+                    : (parseFloat(v) * 0.621371).toFixed(1).replace(/\.?0+$/, '') + ' mi';
             })
             .replace(/(\d+(?:\.\d+)?)\s*°\s*C\b/gi, function(_, v) {
-                return Math.round(parseFloat(v) * 9 / 5 + 32) + '°F';
+                return p.temperature === 'C'
+                    ? _unitValue(v, 0) + '°C'
+                    : Math.round(parseFloat(v) * 9 / 5 + 32) + '°F';
             });
     }
 
@@ -4107,7 +4312,7 @@
             // fields the PWS record does not contain.
             if (_intlTemp != null) {
                 window.liveTemp = Math.round(_intlTemp);
-                (function(){ var _tv = Math.round(_intlTemp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _tv = Math.round(_intlTemp); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
             }
             var _intlResolvedHumidity = _intlHumidity != null ? _intlHumidity
                 : (_intlPw.humidity != null ? _intlPw.humidity * 100 : null);
@@ -4121,7 +4326,7 @@
             var _intlResolvedWindDir = _intlWindDir != null ? _intlWindDir : _intlPw.windBearing;
             if (_intlResolvedWind != null) {
                 liveWindSpd = Math.round(_intlResolvedWind);
-                document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
                 setWindCompass(liveWindSpd > 0 && _intlResolvedWindDir != null ? _intlResolvedWindDir : null);
             }
             if (_intlTemp != null && _intlResolvedHumidity != null &&
@@ -4142,7 +4347,7 @@
                 liveFeelsLike = _intlFl;
                 var _intlFv = Math.round(_intlFl);
                 var _intlFe = document.getElementById('feelsVal');
-                _intlFe.innerText = _isMetric() ? Math.round((_intlFv-32)*5/9) + '\u00b0' : _intlFv + '\u00b0';
+                _intlFe.innerText = _fmtTemp(_intlFv);
                 _intlFe.style.color = colorFeelsLike(_intlFv);
             }
             document.getElementById('conditionText').innerText = summary;
@@ -4181,7 +4386,7 @@
                 var _eM = _eData && _eData.elevation && _eData.elevation[0];
                 var _eEl = document.getElementById('meta-elev');
                 if (_eEl && _eM != null) {
-                    _eEl.innerText = _isMetric() ? Math.round(_eM) + ' m' : Math.round(_eM * 3.28084) + ' ft';
+                    _eEl.innerText = _fmtElevation(_eM);
                 }
             } catch(e) {}
         })();
@@ -5156,22 +5361,22 @@
                             var deg = (parseInt(degM[1]) + 180) % 360;
                             var mph = Math.round(parseInt(ktM[1]) * 1.15078);
                             var dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-                            return dirs[Math.round(deg / 22.5) % 16] + ' at ' + mph + ' mph';
+                             return dirs[Math.round(deg / 22.5) % 16] + ' at ' + _fmtWind(mph);
                         }
                         // Maps hail diameter (inches) to NWS standard size reference.
                         var _HAIL_REF = [[0.25,'Pea'],[0.50,'Marble'],[0.75,'Penny'],[0.88,'Nickel'],[1.00,'Quarter'],[1.25,'Half Dollar'],[1.50,'Ping Pong Ball'],[1.75,'Golf Ball'],[2.00,'Hen Egg'],[2.50,'Baseball'],[2.75,'Tea Cup'],[3.00,'Grapefruit'],[4.00,'Softball']];
                         function _parseHail(v) {
                             var m = v.match(/(\d*\.?\d+)/); if (!m) return v;
                             var inches = parseFloat(m[1]); if (isNaN(inches)) return v;
-                            if (inches <= 0) return '0"';
+                             if (inches <= 0) return _fmtHail(0);
                             var ref = null;
                             for (var i = 0; i < _HAIL_REF.length; i++) { if (inches >= _HAIL_REF[i][0]) ref = _HAIL_REF[i][1]; }
-                            return inches.toFixed(2) + '"' + (ref ? ' (' + ref + ')' : '');
+                             return _fmtHail(inches) + (ref ? ' (' + ref + ')' : '');
                         }
                         // Parses NWS windGust value — may be "60 MPH", "Up to 60 MPH", or just "60"
                         function _parseWindGust(v) {
                             var m = v.match(/(\d+)/); if (!m) return v;
-                            return m[1] + ' mph';
+                             return _fmtWind(parseFloat(m[1]));
                         }
                         var _PARAM_LIST = null;
                         if (evtCheck.includes('tornado warning')) {
@@ -5661,12 +5866,12 @@
                 else if (curr.pressure < lastPressureMb - 1) trend = '\u2198\uFE0F';
             }
             lastPressureMb = curr.pressure;
-            document.getElementById('presVal').innerHTML = (_isMetric() ? Math.round(curr.pressure) + ' hPa' : presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
+            document.getElementById('presVal').innerHTML = _fmtPressure(curr.pressure) + ' <span style="font-size:0.75em; opacity:0.8;">' + trend + '</span>';
             const MAX_PRECIP_INTENSITY = 15.0; // in/hr sanity cap — raised from 2.0; Super Typhoons can exceed 5-10"/hr and PW data should not be clipped
             let precip1h = 0;
             if (d.minutely?.data?.length) { precip1h = d.minutely.data.reduce(function(sum, m) { return sum + (Math.min(m.precipIntensity || 0, MAX_PRECIP_INTENSITY) / 60); }, 0); }
             else precip1h = Math.min(d.hourly?.data?.[0]?.precipAccumulation || 0, MAX_PRECIP_INTENSITY);
-            document.getElementById('precip1h').innerText = '1h: ' + (_isMetric() ? (precip1h * 25.4).toFixed(1) + ' mm' : precip1h.toFixed(2) + '"');
+            document.getElementById('precip1h').innerText = '1h: ' + _fmtPrecip(precip1h);
             // Hide box when value is effectively zero
             document.getElementById('precip1h').style.display = (precip1h > 0.005) ? '' : 'none';
             livePrecipInt = Math.min(d.currently?.precipIntensity || 0, MAX_PRECIP_INTENSITY);
@@ -5731,7 +5936,7 @@
                 statusTag.style.color = currentDist < 10 ? 'var(--danger)' : currentDist < 25 ? 'var(--warning)' : '#ffd54f';
                 const motionStr = stormTrend === 'approaching' ? 'APPROACHING' : stormTrend === 'moving away' ? 'MOVING AWAY' : 'NEARBY';
                 dirVal.innerText = cardinal ? motionStr + ' \u00b7 FROM ' + cardinal : motionStr;
-                distVal.innerText = _isMetric() ? Math.round(currentDist * 1.60934) + ' km' : Math.round(currentDist) + ' mi';
+                distVal.innerText = _fmtDistance(currentDist);
                 if (stormTrend === 'approaching' && currentDist > 0) {
                     const minutesAway = Math.round((currentDist / stormSpeedEst) * 60);
                     const arrivalTime = new Date(); arrivalTime.setMinutes(arrivalTime.getMinutes() + minutesAway);
@@ -5845,14 +6050,14 @@
                 // Both live sources unavailable — restore from IndexedDB cache
                 SkyDB.get(SkyDB.S.weather, 'last_conditions').then(function(c) {
                     if (!c) return;
-                    (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                    (function(){ var _tv = c.temp; var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
                     (function(){ var _hv = c.humidity; var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-                    (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
-                    document.getElementById('windVal').innerText = _isMetric() ? Math.round(c.wind * 1.60934) + ' km/h' : c.wind + ' mph'; setWindCompass(null);
+                    (function(){ var _fv = c.feelsLike; var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
+                    document.getElementById('windVal').innerText = _fmtWind(c.wind); setWindCompass(null);
                     // Pressure with saved trend arrow (innerHTML preserves the emoji span)
                     var _presEl = document.getElementById('presVal');
                     if (c.pressureHTML) { _presEl.innerHTML = c.pressureHTML; }
-                    else if (c.pressure) { _presEl.innerText = _isMetric() ? Math.round(parseFloat(c.pressure) * 33.8639) + ' hPa' : c.pressure + ' inHg'; }
+                    else if (c.pressure) { _presEl.innerText = _fmtPressure(parseFloat(c.pressure) * 33.8639); }
                     // UV index with color
                     var _uvEl = document.getElementById('uv-val');
                     if (_uvEl) { _uvEl.innerText = c.uv != null ? c.uv : '--'; if (c.uvCol) _uvEl.style.color = c.uvCol; }
@@ -6052,7 +6257,7 @@
             if (!_wuHasWind && curr && curr.windSpeed != null && curr.windSpeed >= 0) {
                 liveWindSpd = Math.round(curr.windSpeed);
                 var _windEl = document.getElementById('windVal');
-                if (_windEl) _windEl.innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                if (_windEl) _windEl.innerText = _fmtWind(liveWindSpd);
                 setWindCompass(liveWindSpd > 0 && curr.windBearing != null ? curr.windBearing : null);
             }
 
@@ -6060,7 +6265,7 @@
             var _wuHasTemp = _wu && _wu.temp !== null;
             if (!_wuHasTemp && curr && curr.temperature != null) {
                 window.liveTemp = Math.round(curr.temperature);
-                (function(){ var _tv = Math.round(curr.temperature); var _te = document.getElementById('tempVal'); if (_te) { _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); } })();
+                (function(){ var _tv = Math.round(curr.temperature); var _te = document.getElementById('tempVal'); if (_te) { _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); } })();
             }
 
             // ── Re-render Humidity (only when WU doesn't supply it) ──
@@ -6073,7 +6278,7 @@
             if (curr && curr.pressure != null && curr.pressure > 0) {
                 var _presIn = (curr.pressure * 0.02953).toFixed(2);
                 var _presEl = document.getElementById('presVal');
-                if (_presEl) _presEl.innerHTML = (_isMetric() ? Math.round(curr.pressure) + ' hPa' : _presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">\u27A1\uFE0F</span>';
+                if (_presEl) _presEl.innerHTML = _fmtPressure(curr.pressure) + ' <span style="font-size:0.75em; opacity:0.8;">\u27A1\uFE0F</span>';
             }
 
             // ── Recalculate feels-like with any patched temp/wind/humidity ──
@@ -6096,7 +6301,7 @@
                     } else { _fl = _hiSimple; }
                 }
                 liveFeelsLike = _fl;
-                (function(){ var _fv = Math.round(_fl); var _fe = document.getElementById('feelsVal'); if (_fe) { _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); } })();
+                (function(){ var _fv = Math.round(_fl); var _fe = document.getElementById('feelsVal'); if (_fe) { _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); } })();
                 updateSmartComfort(_T, liveFeelsLike, _RH, liveWindSpd, curr.summary || '', liveUV, (curr.precipProbability || 0) * 100);
                 computeFloodOutlook();
             }
@@ -6230,13 +6435,13 @@
         // Temperature
         const temp = fakeCurr.temperature;
         window.liveTemp = Math.round(temp);
-        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
         liveUV = fakeCurr.uvIndex || 0;
 
         // Wind
         const windSpeed = fakeCurr.windSpeed, windDir = fakeCurr.windBearing;
         liveWindSpd = Math.round(windSpeed);
-        document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+        document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
         setWindCompass(liveWindSpd > 0 && windDir != null ? windDir : null);
 
         // Humidity
@@ -6261,15 +6466,15 @@
             }
             liveFeelsLike = fl;
         })();
-        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
 
         // Pressure
         const presIn = (cur.surface_pressure * 0.02953).toFixed(2);
-        document.getElementById('presVal').innerHTML = (_isMetric() ? Math.round(cur.surface_pressure) + ' hPa' : presIn + ' in') + ' <span style="font-size:0.75em; opacity:0.8;">\u27A1\uFE0F</span>';
+        document.getElementById('presVal').innerHTML = _fmtPressure(cur.surface_pressure) + ' <span style="font-size:0.75em; opacity:0.8;">\u27A1\uFE0F</span>';
 
         // Precipitation 1h (Open-Meteo current gives instantaneous; use hourly[0] accumulation)
         const precip1h = d.hourly?.precipitation?.[0] || 0;
-        document.getElementById('precip1h').innerText = '1h: ' + (_isMetric() ? (precip1h * 25.4).toFixed(1) + ' mm' : precip1h.toFixed(2) + '"');
+        document.getElementById('precip1h').innerText = '1h: ' + _fmtPrecip(precip1h);
         document.getElementById('precip1h').style.display = (precip1h > 0.005) ? '' : 'none';
         livePrecipInt = precip1h;
         window.livePrecipInt = livePrecipInt; _updatePrecipCache(livePrecipInt);
@@ -6440,7 +6645,7 @@
         const gust = Number(first.windGust);
         const windText = isFinite(wind) && wind > 0
             ? ' Winds ' + (first.windBearing != null ? getBearingLabel(Number(first.windBearing)) + ' ' : '') +
-              Math.round(wind) + (isFinite(gust) && gust > wind + 2 ? ' to ' + Math.round(gust) : '') + ' mph.'
+               _fmtWind(wind) + (isFinite(gust) && gust > wind + 2 ? ' to ' + _fmtWind(gust) : '') + '.'
             : '';
         const highText = isFinite(high) ? ' High ' + _fmtTemp(high) + '.' : '';
         const rainText = rainChance > 0 ? ' Chance of rain ' + rainChance + '%.' : '';
@@ -6531,7 +6736,7 @@
                  const hour = isCurrent ? 'Now' : date.toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
                 const card = document.createElement('div'); card.className = 'forecast-card';
                  const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
-                const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + (_isMetric() ? (rainAmt * 25.4).toFixed(1) + ' mm' : rainAmt.toFixed(2) + '"') + '</div>' : '';
+                const rainLine = rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + _fmtPrecip(rainAmt) + '</div>' : '';
                  const iconHtml = isCurrent
                      ? _currentTWCOutlookIconHtml('48px')
                      : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h);
@@ -6776,7 +6981,7 @@
                 window.liveTemp = temp;
                 var tempEl = document.getElementById('tempVal');
                 if (tempEl) {
-                    tempEl.innerText = _isMetric() ? Math.round((temp - 32) * 5 / 9) + '\u00b0' : temp + '\u00b0';
+                    tempEl.innerText = _fmtTemp(temp);
                     tempEl.style.color = colorFeelsLike(temp);
                 }
             }
@@ -6791,7 +6996,7 @@
             if (wind != null && isFinite(wind)) {
                 liveWindSpd = Math.round(wind);
                 var windEl = document.getElementById('windVal');
-                if (windEl) windEl.innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                if (windEl) windEl.innerText = _fmtWind(liveWindSpd);
                 setWindCompass(liveWindSpd > 0 && windDir != null && isFinite(windDir) ? windDir : null);
             }
 
@@ -6818,7 +7023,7 @@
                 var feelsEl = document.getElementById('feelsVal');
                 if (feelsEl) {
                     var roundedFeels = Math.round(feels);
-                    feelsEl.innerText = _isMetric() ? Math.round((roundedFeels - 32) * 5 / 9) + '\u00b0' : roundedFeels + '\u00b0';
+                    feelsEl.innerText = _fmtTemp(roundedFeels);
                     feelsEl.style.color = colorFeelsLike(roundedFeels);
                 }
             }
@@ -6908,7 +7113,7 @@
             document.getElementById('stationName').innerText = _nwsStationName;
             document.getElementById('meta-name').innerText = _nwsStationName;
             document.getElementById('meta-id').innerText = primaryStation.properties.stationIdentifier;
-            document.getElementById('meta-elev').innerText = elevMeters ? (_isMetric() ? Math.round(elevMeters) + ' m' : Math.round(elevMeters * 3.28084) + ' ft') : 'N/A';
+            document.getElementById('meta-elev').innerText = elevMeters ? _fmtElevation(elevMeters) : 'N/A';
             // Fetch the user's location elevation for NWS obs lapse-rate correction.
             // Cached by coordinate so it refetches automatically on location changes.
             const _elevCacheKey = requestLat.toFixed(4) + ',' + requestLon.toFixed(4);
@@ -7143,7 +7348,7 @@
             if (_useNWSFallback) {
                 var _pwObsForFallback = window.pirateCurrently || {};
                 window.liveTemp = Math.round(nwsObsTempFAdj);
-                (function(){ var _tv = Math.round(nwsObsTempFAdj); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _tv = Math.round(nwsObsTempFAdj); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
                 var _resolvedHumidity = nwsObsHumidity !== null
                     ? nwsObsHumidity
                     : (_pwObsForFallback.humidity != null ? _pwObsForFallback.humidity * 100 : null);
@@ -7161,7 +7366,7 @@
                     : (_pwObsForFallback.windSpeed != null ? _pwObsForFallback.windSpeed : null);
                 if (_resolvedWindMph !== null) {
                     liveWindSpd = Math.round(_resolvedWindMph);
-                    document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                    document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
                     var _resolvedWindDir = nwsObsWindDir !== null
                         ? nwsObsWindDir
                         : (_pwObsForFallback.windBearing != null ? _pwObsForFallback.windBearing : null);
@@ -7197,7 +7402,7 @@
                     liveFeelsLike = fl;
                 })();
                 if (liveFeelsLike !== null) {
-                    (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                    (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
                 }
                 var _pw = window.pirateCurrently;
                 var _rhForComfort = (_resolvedHumidity !== null) ? Math.round(_resolvedHumidity) : 50;
@@ -7208,7 +7413,7 @@
                 // laid down with the actual trusted station values. Single render, no flash.
                 var _wuT = _wu.temp, _wuH = _wu.humidity;
                 window.liveTemp = Math.round(_wuT);
-                (function(){ var _tv = Math.round(_wuT); var _te = document.getElementById('tempVal'); _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0'; _te.style.color = colorFeelsLike(_tv); })();
+                (function(){ var _tv = Math.round(_wuT); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
                 (function(){ var _hv = Math.round(_wuH); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
                 // PWS remains authoritative for temperature/humidity, but a
                 // PWS record can legitimately omit wind. Complete that one
@@ -7222,7 +7427,7 @@
                     : (window.pirateCurrently && window.pirateCurrently.windBearing != null ? window.pirateCurrently.windBearing : null));
                 if (_selectedWindMph !== null && _selectedWindMph !== undefined) {
                     liveWindSpd = Math.round(_selectedWindMph);
-                    document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                    document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
                     setWindCompass(liveWindSpd > 0 && _selectedWindDir !== null && _selectedWindDir !== undefined ? _selectedWindDir : null);
                 }
                 // Update callsign link to the actual station used — may be a promoted
@@ -7258,7 +7463,7 @@
                     }
                     liveFeelsLike = fl;
                 })();
-                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _isMetric() ? Math.round((_fv-32)*5/9) + '\u00b0' : _fv + '\u00b0'; _fe.style.color = colorFeelsLike(_fv); })();
+                (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
                 var _pw3 = window.pirateCurrently;
                 updateSmartComfort(Math.round(_wuT), liveFeelsLike, Math.round(_wuH), liveWindSpd,
                     _pw3 ? (_pw3.summary || '') : '', liveUV, _pw3 ? ((_pw3.precipProbability || 0) * 100) : 0, nwsCond);
@@ -7272,7 +7477,7 @@
                     var _pwFallbackTemp = Math.round(_pwFallback.temperature);
                     window.liveTemp = _pwFallbackTemp;
                     var _pwTempEl = document.getElementById('tempVal');
-                    _pwTempEl.innerText = _isMetric() ? Math.round((_pwFallbackTemp-32)*5/9) + '\u00b0' : _pwFallbackTemp + '\u00b0';
+                    _pwTempEl.innerText = _fmtTemp(_pwFallbackTemp);
                     _pwTempEl.style.color = colorFeelsLike(_pwFallbackTemp);
                 }
                 var _pwFallbackHumidity = _pwFallback.humidity != null ? _pwFallback.humidity * 100 : null;
@@ -7284,14 +7489,14 @@
                 }
                 if (_pwFallback.windSpeed != null) {
                     liveWindSpd = Math.round(_pwFallback.windSpeed);
-                    document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                    document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
                     setWindCompass(liveWindSpd > 0 && _pwFallback.windBearing != null ? _pwFallback.windBearing : null);
                 }
                 if (_pwFallback.apparentTemperature != null) {
                     var _pwFeels = Math.round(_pwFallback.apparentTemperature);
                     liveFeelsLike = _pwFeels;
                     var _pwFeelsEl = document.getElementById('feelsVal');
-                    _pwFeelsEl.innerText = _isMetric() ? Math.round((_pwFeels-32)*5/9) + '\u00b0' : _pwFeels + '\u00b0';
+                    _pwFeelsEl.innerText = _fmtTemp(_pwFeels);
                     _pwFeelsEl.style.color = colorFeelsLike(_pwFeels);
                 }
                 updateSmartComfort(
@@ -7374,7 +7579,7 @@
                         var tv = Math.round(pw.temperature);
                         window.liveTemp = tv;
                         var te = document.getElementById('tempVal');
-                        te.innerText = _isMetric() ? Math.round((tv-32)*5/9) + '\u00b0' : tv + '\u00b0';
+                        te.innerText = _fmtTemp(tv);
                         te.style.color = colorFeelsLike(tv);
                     }
                     // Feels-like (apparent temperature)
@@ -7382,7 +7587,7 @@
                         var fv = Math.round(pw.apparentTemperature);
                         liveFeelsLike = fv;
                         var fe = document.getElementById('feelsVal');
-                        fe.innerText = _isMetric() ? Math.round((fv-32)*5/9) + '\u00b0' : fv + '\u00b0';
+                        fe.innerText = _fmtTemp(fv);
                         fe.style.color = colorFeelsLike(fv);
                     }
                     // Humidity
@@ -7395,7 +7600,7 @@
                     // Wind
                     if (pw.windSpeed != null) {
                         liveWindSpd = Math.round(pw.windSpeed);
-                        document.getElementById('windVal').innerText = _isMetric() ? Math.round(liveWindSpd * 1.60934) + ' km/h' : liveWindSpd + ' mph';
+                        document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
                         setWindCompass(liveWindSpd > 0 && pw.windBearing != null ? pw.windBearing : null);
                     }
                     // Condition text + icon
@@ -7461,17 +7666,17 @@
                 if (c.liveTemp != null) {
                     window.liveTemp = c.liveTemp;
                     var _nwsTe = document.getElementById('tempVal');
-                    if (_nwsTe) { _nwsTe.innerText = _isMetric() ? Math.round((c.liveTemp-32)*5/9)+'\u00b0' : c.liveTemp+'\u00b0'; _nwsTe.style.color = colorFeelsLike(c.liveTemp); }
+                    if (_nwsTe) { _nwsTe.innerText = _fmtTemp(c.liveTemp); _nwsTe.style.color = colorFeelsLike(c.liveTemp); }
                 }
                 if (c.liveFeelsLike != null) {
                     liveFeelsLike = c.liveFeelsLike;
                     var _nwsFe = document.getElementById('feelsVal');
-                    if (_nwsFe) { _nwsFe.innerText = _isMetric() ? Math.round((c.liveFeelsLike-32)*5/9)+'\u00b0' : c.liveFeelsLike+'\u00b0'; _nwsFe.style.color = colorFeelsLike(c.liveFeelsLike); }
+                    if (_nwsFe) { _nwsFe.innerText = _fmtTemp(c.liveFeelsLike); _nwsFe.style.color = colorFeelsLike(c.liveFeelsLike); }
                 }
                 if (c.liveWindSpd != null) {
                     liveWindSpd = c.liveWindSpd;
                     var _nwsWe = document.getElementById('windVal');
-                    if (_nwsWe) _nwsWe.innerText = _isMetric() ? Math.round(c.liveWindSpd*1.60934)+' km/h' : c.liveWindSpd+' mph';
+                    if (_nwsWe) _nwsWe.innerText = _fmtWind(c.liveWindSpd);
                 }
                 if (c.liveHumidity != null) {
                     var _nwsHe = document.getElementById('humVal');
@@ -7489,7 +7694,7 @@
                     if (_pw && _pw.temperature != null) {
                         var _tv = Math.round(_pw.temperature);
                         window.liveTemp = _tv;
-                        _te.innerText = _isMetric() ? Math.round((_tv-32)*5/9) + '\u00b0' : _tv + '\u00b0';
+                        _te.innerText = _fmtTemp(_tv);
                         _te.style.color = colorFeelsLike(_tv);
                     }
                 }
@@ -8008,8 +8213,8 @@
 
         // ── 6. NWS Alert Parameter Boosters ──────────────────────────────
         // Large hail (NWS-reported max hail size from warning)
-        if (window.alertMaxHailIn >= 3.0)      { score += 2; factorList.push({ label: 'Hail ' + (_isMetric() ? (window.alertMaxHailIn * 2.54).toFixed(1) + ' cm' : window.alertMaxHailIn.toFixed(1) + '"'), color: '#ff5722' }); }
-        else if (window.alertMaxHailIn >= 1.75) { score += 1; factorList.push({ label: 'Hail ' + (_isMetric() ? (window.alertMaxHailIn * 2.54).toFixed(1) + ' cm' : window.alertMaxHailIn.toFixed(1) + '"'), color: '#ff9100' }); }
+        if (window.alertMaxHailIn >= 3.0)      { score += 2; factorList.push({ label: 'Hail ' + _fmtHail(window.alertMaxHailIn), color: '#ff5722' }); }
+        else if (window.alertMaxHailIn >= 1.75) { score += 1; factorList.push({ label: 'Hail ' + _fmtHail(window.alertMaxHailIn), color: '#ff9100' }); }
 
         // High wind gust (NWS-reported from warning parameters)
         if (window.alertMaxWindGustMph >= 80)   { score += 2; factorList.push({ label: 'Gust ' + _fmtWind(window.alertMaxWindGustMph), color: '#ff5722' }); }
@@ -8273,24 +8478,26 @@
             window.chartInstances[id] = new Chart(canvas, { type: type, data: { labels: labels, datasets: [data] }, options: opts });
         }
         // Update analytics labels for current unit system
+        var _units = _unitPrefs();
         var _pLbl = document.getElementById('chart-pressure')?.previousElementSibling;
         var _dLbl = document.getElementById('chart-dewpoint')?.previousElementSibling;
         var _wLbl = document.getElementById('chart-wind')?.previousElementSibling;
-        if (_pLbl) _pLbl.innerHTML = '\uD83C\uDF21\uFE0F Pressure Trend (' + (_isMetric() ? 'hPa' : 'inHg') + ')';
-        if (_dLbl) _dLbl.innerHTML = '\uD83D\uDCA7 Dewpoint Trend (' + (_isMetric() ? '\u00b0C' : '\u00b0F') + ')';
-        if (_wLbl) _wLbl.innerHTML = '\uD83D\uDCA8 Wind Gust Trend (' + (_isMetric() ? 'km/h' : 'mph') + ')';
-        const pressureVals = hrs.map(function(h) { return h.pressure ? (_isMetric() ? Math.round(h.pressure) : parseFloat((h.pressure * 0.02953).toFixed(2))) : null; });
-        makeChart('chart-pressure', 'line', { data: pressureVals, label: _isMetric() ? 'Pressure (hPa)' : 'Pressure (inHg)', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (_isMetric() ? Math.round(v) + ' hPa' : parseFloat(v.toFixed(2)) + ' in'); } });
-        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return _isMetric() ? parseFloat(TdC.toFixed(1)) : parseFloat((TdC * 9 / 5 + 32).toFixed(1)); });
-        makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: _isMetric() ? 'Dewpoint (\u00b0C)' : 'Dewpoint (\u00b0F)', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (Math.round(v * 10) / 10) + '\u00b0'; } });
-        const windVals = hrs.map(function(h) { return _isMetric() ? Math.round((h.windGust || h.windSpeed || 0) * 1.60934) : (h.windGust || h.windSpeed || 0); });
-        makeChart('chart-wind', 'bar', { data: windVals, label: _isMetric() ? 'Wind Gust (km/h)' : 'Wind Gust (mph)', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return Math.round(v) + (_isMetric() ? ' km/h' : ' mph'); } });
+        if (_pLbl) _pLbl.innerHTML = '\uD83C\uDF21\uFE0F Pressure Trend (' + _units.pressure + ')';
+        if (_dLbl) _dLbl.innerHTML = '\uD83D\uDCA7 Dewpoint Trend (' + (_units.temperature === 'C' ? '\u00b0C' : '\u00b0F') + ')';
+        if (_wLbl) _wLbl.innerHTML = '\uD83D\uDCA8 Wind Gust Trend (' + _windLabel() + ')';
+        const pressureVals = hrs.map(function(h) { return h.pressure ? _pressureValue(h.pressure) : null; });
+        makeChart('chart-pressure', 'line', { data: pressureVals, label: 'Pressure (' + _units.pressure + ')', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return _unitValue(v, _units.pressure === 'hPa' ? 0 : 2) + ' ' + _units.pressure; } });
+        const _dewUnit = _units.temperature === 'C' ? '\u00b0C' : '\u00b0F';
+        const _dewDecimals = _units.temperature === 'C' ? 1 : 1;
+        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return _units.temperature === 'C' ? parseFloat(TdC.toFixed(_dewDecimals)) : parseFloat((TdC * 9 / 5 + 32).toFixed(_dewDecimals)); });
+        makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: 'Dewpoint (' + _dewUnit + ')', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (Math.round(v * 10) / 10) + _dewUnit; } });
+        const windVals = hrs.map(function(h) { return _windValue(h.windGust || h.windSpeed || 0); });
+        makeChart('chart-wind', 'bar', { data: windVals, label: 'Wind Gust (' + _windLabel() + ')', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return _unitValue(v, _units.wind === 'mph' || _units.wind === 'kmh' ? 0 : 1) + ' ' + _windLabel(); } });
         var _precipLbl = document.getElementById('chart-precip')?.previousElementSibling;
-        if (_precipLbl) _precipLbl.innerHTML = '\uD83C\uDF27\uFE0F Precip. Accumulation Trend (' + (_isMetric() ? 'mm' : 'in') + ')';
+        if (_precipLbl) _precipLbl.innerHTML = '\uD83C\uDF27\uFE0F Precip. Accumulation Trend (' + _units.precipitation + ')';
         let accum = 0;
-        const precipFactor = _isMetric() ? 25.4 : 1;
-        const precipVals = hrs.map(function(h) { accum += (h.precipAccumulation || h.precipIntensity || 0); return parseFloat((accum * precipFactor).toFixed(_isMetric() ? 1 : 3)); });
-        makeChart('chart-precip', 'line', { data: precipVals, label: _isMetric() ? 'Precip Accum (mm)' : 'Precip Accum (in)', borderColor: '#29b6f6', backgroundColor: 'rgba(41,182,246,0.12)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.3, fill: true, spanGaps: true }, { yMin: 0, yCallback: function(v) { return (_isMetric() ? Math.round(v) + ' mm' : parseFloat(v.toFixed(2)) + '"'); } });
+        const precipVals = hrs.map(function(h) { accum += (h.precipAccumulation || h.precipIntensity || 0); return parseFloat(_precipValue(accum).toFixed(_units.precipitation === 'mm' ? 1 : 2)); });
+        makeChart('chart-precip', 'line', { data: precipVals, label: 'Precip Accum (' + _units.precipitation + ')', borderColor: '#29b6f6', backgroundColor: 'rgba(41,182,246,0.12)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.3, fill: true, spanGaps: true }, { yMin: 0, yCallback: function(v) { return _unitValue(v, _units.precipitation === 'mm' ? 1 : 2) + ' ' + _units.precipitation; } });
     }
 
     // ——— SPC RISK LEVELS ———
@@ -8607,14 +8814,14 @@
             return Number(chance) >= 70 ? 'likely' : 'possible';
         }
         function fmtT(f) {
-            if (f == null) return '--°';
-            return _isMetric() ? Math.round((f - 32) * 5 / 9) + '°' : Math.round(f) + '°';
+            if (f == null) return '--';
+            return _fmtTemp(f);
         }
         function fmtRain(inches) {
-            return _isMetric() ? (inches * 25.4).toFixed(0) + ' mm' : inches.toFixed(2) + '"';
+            return _fmtPrecip(inches);
         }
         function fmtSnow(inches) {
-            return _isMetric() ? (inches * 25.4).toFixed(0) + ' mm' : inches.toFixed(1) + '"';
+            return _fmtPrecip(inches, _unitPrefs().precipitation === 'mm' ? 0 : 1);
         }
 
         var s1 = null, s2 = null;
@@ -8891,7 +9098,7 @@
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
             // Icons are locally hosted and SW-cached — serve the same path online and offline.
             const iconHtml = '<img src="' + _twcIconSrc(iconNum || 50) + '" alt="Weather conditions" style="width:48px;height:48px;object-fit:contain;display:block;margin:auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
-            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + (_isMetric() && high !== '--' ? Math.round((high-32)*5/9) + '\u00b0' : high + '\u00b0') + ' / <span style="color:white">' + (_isMetric() && low !== '--' ? Math.round((low-32)*5/9) + '\u00b0' : low + '\u00b0') + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + (_isMetric() ? (precipAmt * 25.4).toFixed(1) + ' mm' : precipAmt.toFixed(2) + '"') : '') + '</div>' : '');
+            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + fmtT(high) + ' / <span style="color:white">' + fmtT(low) + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + fmtRain(precipAmt) : '') + '</div>' : '');
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
@@ -8965,9 +9172,9 @@
                 (uvIndex[part] != null && uvIndex[part] > 0) ? '<span style="opacity:0.55">\u2600\uFE0F UV Index</span><span>' + uvIndex[part] + (uvDesc2[part] ? ' \u2014 ' + uvDesc2[part] : '') + '</span>' : null,
                 feelsLikeParts[part] != null ? '<span style="opacity:0.55">\uD83C\uDF21\uFE0F Feels Like</span><span>' + _fmtTemp(feelsLikeParts[part]) + '</span>' : null,
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
-                (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + (_isMetric() ? (snowQpf[part] * 25.4).toFixed(1) + ' mm' : snowQpf[part] + '"') + '</span>' : null
+                (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + fmtSnow(snowQpf[part]) + '</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (_isMetric() ? (qpf[part] * 25.4).toFixed(1) + ' mm' : qpf[part] + '"') : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + fmtT(lohi[0]) : 'Low: ' + fmtT(lohi[1])) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + fmtRain(qpf[part]) : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<div id="twc-hourly-section"><hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div></div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
@@ -11990,12 +12197,12 @@
             var sec   = document.getElementById('beach-section');
             var inner = document.getElementById('beach-inner');
             if (!sec || !inner) return;
-            var metric = typeof _isMetric === 'function' && _isMetric();
+            var beachUnits = _unitPrefs();
 
             var wvhtDisp = obs.wvht != null
-                ? (metric ? obs.wvht.toFixed(1) + ' m' : _mToFt(obs.wvht) + ' ft') : '--';
+                ? (beachUnits.distance === 'km' ? obs.wvht.toFixed(1) + ' m' : _mToFt(obs.wvht) + ' ft') : '--';
             var wtmpDisp = obs.wtmp != null
-                ? (metric ? obs.wtmp.toFixed(1) + '\u00b0C' : _cToF(obs.wtmp) + '\u00b0F') : '--';
+                ? (beachUnits.temperature === 'C' ? obs.wtmp.toFixed(1) + '\u00b0C' : _cToF(obs.wtmp) + '\u00b0F') : '--';
             var waveColor = _waveColor(obs.wvht);
 
             // Swim conditions rating derived from wave height
@@ -12879,6 +13086,7 @@
         // window.onload; without this ordering they briefly use the Chicago
         // fallback coordinates.
         loadLoc();
+        syncUnitControls();
         var pendingMode = null;
         try {
             var pendingLocation = JSON.parse(sessionStorage.getItem('skymonitor_pending_location') || 'null');
