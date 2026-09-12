@@ -1742,9 +1742,10 @@
 
     // Cloudflare Turnstile site key. The secret stays in the reports Worker.
     const TURNSTILE_SITE_KEY = '0x4AAAAAAEmdOC6zKiL4nWlt';
-    // This flag only remembers that the visitor has passed the gate before.
-    // The Worker still requires a fresh, server-validated token for each POST.
-    var _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
+    // A localStorage flag is not proof of a current Turnstile challenge. The
+    // reports Worker validates every POST, so each page session must obtain a
+    // fresh visible token before submitting.
+    var _turnstileVerified = false;
     var _turnstileToken = '';
     // Turnstile tokens are short-lived and single-use. Keep the issue time so
     // a user who leaves the report form open does not submit an expired token.
@@ -2841,24 +2842,15 @@
         }
     }
 
-    // The first verification is visible and remembered per browser/device.
-    // Every later POST still receives a fresh one-use token, but renewal is
-    // invisible unless Cloudflare itself decides an interaction is necessary.
+    // Report tokens are one-use and the Worker may reject invisible renewals
+    // as bot traffic. Always use the visible widget for a new report token.
     function getTurnstileTokenForReport() {
-        // Renew before the provider's token lifetime expires. This avoids a
-        // confusing 403 from the Worker when the report form was left open.
         if (_turnstileToken && Date.now() - _turnstileTokenIssuedAt < 120000) {
             return Promise.resolve(_turnstileToken);
         }
         if (_turnstileToken) invalidateTurnstile();
-        if (!_turnstileVerified) {
-            showTurnstileGate();
-            return Promise.resolve(null);
-        }
-        return new Promise(function(resolve, reject) {
-            _turnstileSilentWaiters.push({ resolve: resolve, reject: reject });
-            _requestSilentTurnstileToken();
-        });
+        showTurnstileGate();
+        return Promise.resolve(null);
     }
 
     function showTurnstileGate() {
@@ -11139,6 +11131,8 @@
                 clearReportCategory();
                 document.getElementById('report-notes').value = '';
                 invalidateTurnstile();
+                _turnstileVerified = false;
+                localStorage.removeItem('turnstile_verified');
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
             } else {
@@ -11148,7 +11142,7 @@
                 var errorBody = '';
                 try { errorBody = await res.text(); } catch (_) {}
                 var needsVerification = res.status === 403 &&
-                    /turnstile verification required|verification failed|verification expired/i.test(errorBody);
+                    /turnstile verification required|verification failed|verification expired|bot detected/i.test(errorBody);
                 invalidateTurnstile();
                 if (needsVerification) {
                     _turnstileVerified = false;
