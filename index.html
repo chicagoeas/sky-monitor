@@ -132,7 +132,7 @@
                     : path === '/radar'
                         ? {
                             title: 'Live Reporting Map · SkyMonitor',
-                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, and satellite imagery.'
+                            description: 'Live SkyMonitor reporting map with NWS alerts, custom alerts, storm reports, and radar imagery.'
                         }
                     : {
                         title: 'SkyMonitor',
@@ -1584,10 +1584,6 @@
                      <label class="ios-toggle"><input type="checkbox" id="custom-sky-alerts-toggle-cb" onchange="onCustomSkyAlertsChange()"><span class="ios-toggle-track"></span></label>
                  </div>
                   <div id="custom-sky-alerts-status" style="display:none; font-size:0.68em; color:#718496; margin:-3px 0 10px;"></div>
-                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                     <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite <span style="color:#8aa0b5; font-size:0.9em;">(IEM GOES IR)</span></span>
-                     <label class="ios-toggle"><input type="checkbox" id="satellite-toggle-cb" onchange="toggleReportingSatellite()"><span class="ios-toggle-track"></span></label>
-                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">Show reports up to 48h old</span>
                     <label class="ios-toggle"><input type="checkbox" id="show-older-reports" onchange="onShowOlderReportsChange()"><span class="ios-toggle-track"></span></label>
@@ -9223,11 +9219,9 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-    let reportingSatelliteLayer = null;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
-    let satelliteVisible = localStorage.getItem('report_satellite_on') === '1';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let reportLat = null, reportLon = null;
@@ -9632,7 +9626,10 @@
         const isMobileReportingMap = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
         const mapWidth = reportingMap.getSize ? reportingMap.getSize().x : 0;
         const mobilePopupWidth = isMobileReportingMap && mapWidth
-            ? Math.max(0, Math.floor(mapWidth - 24))
+            // Keep the fullscreen route from making alert popups wider than
+            // the normal reporting map. Smaller viewports still use all the
+            // available width needed to keep the popup inside the map.
+            ? Math.min(400, Math.max(0, Math.floor(mapWidth - 24)))
             : null;
         if (mobilePopupWidth) {
             reportingMap.getContainer().style.setProperty('--reporting-popup-width', mobilePopupWidth + 'px');
@@ -10523,16 +10520,6 @@
         else { reportingMap.removeLayer(reportingRadarLayer); }
     }
 
-    function toggleReportingSatellite() {
-        const cb = document.getElementById('satellite-toggle-cb');
-        satelliteVisible = cb ? cb.checked : !satelliteVisible;
-        if (cb) cb.checked = satelliteVisible;
-        localStorage.setItem('report_satellite_on', satelliteVisible ? '1' : '0');
-        if (!reportingSatelliteLayer || !reportingMap) return;
-        if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
-        else reportingMap.removeLayer(reportingSatelliteLayer);
-    }
-
     function saveReportingMapView() {
         // The map viewport is intentionally session-only. A fresh reporting
         // map must start at the current adjusted report pin, never at a
@@ -10743,12 +10730,6 @@
         });
         reportingRadarLayer.addTo(reportingMap);
 
-        // IEM GOES East CONUS infrared imagery, below radar when both are enabled.
-        reportingSatelliteLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/goes_east_conus_ch13/{z}/{x}/{y}.png', {
-            opacity: 0.48, attribution: 'Satellite: IEM / GOES', maxZoom: 12
-        });
-        if (satelliteVisible) reportingSatelliteLayer.addTo(reportingMap);
-
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
             subdomains: 'abcd', maxZoom: 19, pane: 'overlayPane'
@@ -10779,8 +10760,6 @@
         if (!lsrVisible) {
             reportingMap.removeLayer(lsrLayer);
         }
-        const _satelliteCb = document.getElementById('satellite-toggle-cb');
-        if (_satelliteCb) _satelliteCb.checked = satelliteVisible;
         const _settingsPanel = document.getElementById('map-settings-panel');
         if (_settingsPanel && localStorage.getItem('report_map_settings_open') === '1') {
             _settingsPanel.style.display = 'block';
