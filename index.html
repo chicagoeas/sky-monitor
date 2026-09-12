@@ -1742,10 +1742,10 @@
 
     // Cloudflare Turnstile site key. The secret stays in the reports Worker.
     const TURNSTILE_SITE_KEY = '0x4AAAAAAEmdOC6zKiL4nWlt';
-    // A localStorage flag is not proof of a current Turnstile challenge. The
-    // reports Worker validates every POST, so each page session must obtain a
-    // fresh visible token before submitting.
-    var _turnstileVerified = false;
+    // Remember the completed gate on this machine. The Worker still requires
+    // a fresh one-use token for every POST, so this flag only controls whether
+    // the user sees the gate again.
+    var _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
     var _turnstileToken = '';
     // Turnstile tokens are short-lived and single-use. Keep the issue time so
     // a user who leaves the report form open does not submit an expired token.
@@ -2842,15 +2842,21 @@
         }
     }
 
-    // Report tokens are one-use and the Worker may reject invisible renewals
-    // as bot traffic. Always use the visible widget for a new report token.
+    // Report tokens are one-use. The first visit uses the visible widget;
+    // trusted returning machines silently mint a fresh token for each POST.
     function getTurnstileTokenForReport() {
         if (_turnstileToken && Date.now() - _turnstileTokenIssuedAt < 120000) {
             return Promise.resolve(_turnstileToken);
         }
         if (_turnstileToken) invalidateTurnstile();
-        showTurnstileGate();
-        return Promise.resolve(null);
+        if (!_turnstileVerified) {
+            showTurnstileGate();
+            return Promise.resolve(null);
+        }
+        return new Promise(function(resolve, reject) {
+            _turnstileSilentWaiters.push({ resolve: resolve, reject: reject });
+            _requestSilentTurnstileToken();
+        });
     }
 
     function showTurnstileGate() {
@@ -11131,8 +11137,6 @@
                 clearReportCategory();
                 document.getElementById('report-notes').value = '';
                 invalidateTurnstile();
-                _turnstileVerified = false;
-                localStorage.removeItem('turnstile_verified');
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
             } else {
