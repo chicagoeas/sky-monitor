@@ -309,16 +309,23 @@
         #reporting-map-attribution {
             display: none;
             margin-top: 2px;
-            color: rgba(220,230,240,0.8);
-            font-size: 9px;
-            line-height: 1.2;
-            text-shadow: 0 1px 4px #000;
+            box-sizing: border-box;
+            max-width: 100%;
+            overflow: hidden;
+            padding: 0 5px;
+            color: #333;
+            background: rgba(255,255,255,0.8);
+            font: 9px/1.2 "Helvetica Neue", Arial, Helvetica, sans-serif;
+            text-shadow: none;
+            white-space: nowrap;
         }
         #reporting-map-attribution a {
-            color: inherit;
+            color: #0078A8;
+            text-decoration: none;
         }
         html.radar-route #reporting-map-attribution {
             display: block;
+            pointer-events: auto;
         }
         html.radar-route #open-radar-btn {
             display: none !important;
@@ -9789,9 +9796,10 @@
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
         const url = 'https://api.weather.gov/alerts/active?point='
             + encodeURIComponent(latlng.lat.toFixed(4) + ',' + latlng.lng.toFixed(4));
+        const unavailable = '<span style="opacity:0.72;">Full alert text is temporarily unavailable. Try refreshing the map.</span>';
         try {
             const res = await fetch(url, { headers: { 'Accept': 'application/geo+json' } });
-            if (!res.ok) return '';
+            if (!res.ok) return unavailable;
             const data = await res.json();
             const wanted = String(eventName || '').toLowerCase();
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
@@ -9821,7 +9829,7 @@
                  return (bTime ? bTime.getTime() : 0) - (aTime ? aTime.getTime() : 0);
             });
             const alert = alertCandidates[0];
-            if (!alert) return '';
+            if (!alert || (!alert.description && !alert.instruction)) return unavailable;
              const timeInfo = reportingAlertTimeInfo(alert);
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
@@ -9831,7 +9839,7 @@
              ];
             return reportingPopupDetailRows(rows);
         } catch (e) {
-            return '';
+            return unavailable;
         }
     }
 
@@ -10934,7 +10942,6 @@
                     const color = shortFusedPhenomena[ph];
                     const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
                     const expiresText = f.properties.expire || f.properties.polygon_end;
-                     const nwsTimeInfo = reportingAlertTimeInfo(f.properties);
                     const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
                     registerReportingPopup(_poly, {
                         source: 'nws',
@@ -10942,10 +10949,7 @@
                         color: color,
                         title: escapeHtml(nwsEvent),
                          meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
-                        detail: reportingPopupDetailRows([
-                             [nwsTimeInfo.label, nwsTimeInfo.value ? formatReportTime(nwsTimeInfo.value) : ''],
-                             ['Issued by', f.properties.wfo || 'NWS']
-                        ]),
+                        detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                         loadDetails: function(latlng) {
                             return loadNwsReportingDetails(
                                 null,
