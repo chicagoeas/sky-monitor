@@ -1087,7 +1087,7 @@
         </div>
     </div>
 
-    <div id="custom-units-modal" onclick="if(event.target===this)closeCustomUnits()"
+    <div id="custom-units-modal" onclick="if(event.target===this){closeCustomUnits();var _sw=document.getElementById('settings-window');if(_sw)_sw.style.display='none';}"
          style="display:none; position:fixed; inset:0; z-index:3500; background:rgba(0,0,0,0.75); backdrop-filter:blur(6px); align-items:center; justify-content:center;">
         <div style="background:#0b1e2d; border:1px solid #223344; border-radius:15px; padding:25px; width:90%; max-width:320px; box-shadow:0 0 50px rgba(0,0,0,1);">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -1106,7 +1106,7 @@
                 <div class="unit-choice">
                     <label for="unit-precip-select">Rain / snow</label>
                     <select id="unit-precip-select" class="unit-select" onchange="setCustomUnit('precipitation', this.value)">
-                        <option value="in">Inches (in)</option>
+                        <option value="in">Inches (&quot;)</option>
                         <option value="mm">Millimeters (mm)</option>
                     </select>
                 </div>
@@ -2143,8 +2143,10 @@
         const win = document.getElementById('settings-window');
         const advModal = document.getElementById('advanced-settings-modal');
         const notifModal = document.getElementById('notif-prefs-modal');
+        const customUnitsModal = document.getElementById('custom-units-modal');
         if (advModal && advModal.style.display === 'flex') return;
         if (notifModal && notifModal.style.display === 'flex') return;
+        if (customUnitsModal && customUnitsModal.style.display === 'flex') return;
         if (win && win.style.display === 'block') {
             if (!win.contains(e.target) && !e.target.closest('[onclick*="toggleSettingsWindow"]')) {
                 win.style.display = 'none';
@@ -2877,14 +2879,14 @@
     function _fmtPrecip(inches, decimals) {
         var p = _unitPrefs();
         var places = decimals == null ? (p.precipitation === 'mm' ? 1 : 2) : decimals;
-        return _unitValue(_precipValue(inches), places) + ' ' + p.precipitation;
+        return _unitValue(_precipValue(inches), places) + (p.precipitation === 'mm' ? ' mm' : '"');
     }
 
     function _fmtHail(inches) {
         var p = _unitPrefs();
         return p.precipitation === 'mm'
             ? _unitValue(Number(inches) * 2.54, 1) + ' cm'
-            : _unitValue(inches, 1) + ' in';
+            : _unitValue(inches, 1) + '"';
     }
 
     function _pressureValue(hPa) {
@@ -2923,6 +2925,9 @@
         if (p.precipitation === 'mm') {
             text = text.replace(/(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a, b) { return _unitValue(+a*25.4, 1) + ' to ' + _unitValue(+b*25.4, 1) + ' mm'; });
             text = text.replace(/(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, function(m, a) { return _unitValue(+a*25.4, 1) + ' mm'; });
+        } else {
+            text = text.replace(/(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, '$1" to $2"');
+            text = text.replace(/(\d+(?:\.\d+)?)\s*(?:in(?:ch(?:es)?)?\.?)\b/gi, '$1"');
         }
         return text;
     }
@@ -4079,12 +4084,12 @@
             .replace(/(\d+(?:\.\d+)?)\s*mm\b/gi, function(_, v) {
                 return p.precipitation === 'mm'
                     ? _unitValue(v, 1) + ' mm'
-                    : (parseFloat(v) / 25.4).toFixed(2).replace(/\.?0+$/, '') + ' in';
+                    : (parseFloat(v) / 25.4).toFixed(2).replace(/\.?0+$/, '') + '"';
             })
             .replace(/(\d+(?:\.\d+)?)\s*cm\b/gi, function(_, v) {
                 return p.precipitation === 'mm'
                     ? _unitValue(parseFloat(v) * 10, 1) + ' mm'
-                    : (parseFloat(v) / 2.54).toFixed(2).replace(/\.?0+$/, '') + ' in';
+                    : (parseFloat(v) / 2.54).toFixed(2).replace(/\.?0+$/, '') + '"';
             })
             .replace(/(\d+(?:\.\d+)?)\s*km\/h\b/gi, function(_, v) {
                 if (p.wind === 'kmh') return _unitValue(v, 0) + ' km/h';
