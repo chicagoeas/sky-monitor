@@ -9105,6 +9105,13 @@
             ';object-fit:contain;display:block;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
     }
 
+    // Match the existing TWC/PirateWeather display precision everywhere:
+    // two decimals in inches and one decimal in millimetres.
+    function _fmtPrecipAmount(inches) {
+        if (inches == null || !isFinite(Number(inches)) || Number(inches) <= 0) return '';
+        return _isMetric() ? (Number(inches) * 25.4).toFixed(1) + ' mm' : Number(inches).toFixed(2) + '"';
+    }
+
     function renderTWCForecast(data) {
         window.twcForecastData = data;
         const cont = document.getElementById('twc-daily-forecast'); cont.innerHTML = '';
@@ -9161,7 +9168,7 @@
             const precipHtml = (precipPct > 0 || precipAmt > 0)
                 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">' +
                     (precipPct > 0 ? '\uD83D\uDCA7 ' + precipPct + '%' : '') +
-                    (precipAmt > 0 ? (precipPct > 0 ? ' &nbsp;&middot;&nbsp; Amount: ' : '\uD83C\uDF27 Amount: ') + (_isMetric() ? (precipAmt * 25.4).toFixed(1) + ' mm' : precipAmt.toFixed(2) + '"') : '') +
+                    (precipAmt > 0 ? (precipPct > 0 ? ' &nbsp;&middot;&nbsp; Amount: ' : '\uD83C\uDF27 Amount: ') + _fmtPrecipAmount(precipAmt) : '') +
                     '</div>' : '';
             card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + tempHtml + '</div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + precipHtml;
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
@@ -9237,7 +9244,7 @@
                 feelsLikeParts[part] != null ? '<span style="opacity:0.55">\uD83C\uDF21\uFE0F Feels Like</span><span>' + _fmtTemp(feelsLikeParts[part]) + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + (_isMetric() ? (snowQpf[part] * 25.4).toFixed(1) + ' mm' : snowQpf[part] + '"') + '</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (_isMetric() ? (qpf[part] * 25.4).toFixed(1) + ' mm' : qpf[part] + '"') : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + _fmtPrecipAmount(qpf[part]) : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<div id="twc-hourly-section"><hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div></div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
