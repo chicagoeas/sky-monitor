@@ -1749,10 +1749,14 @@
 
     // Cloudflare Turnstile site key. The secret stays in the reports Worker.
     const TURNSTILE_SITE_KEY = '0x4AAAAAAEmdOC6zKiL4nWlt';
-    // This flag only remembers that the visitor has passed the gate before.
-    // The Worker still requires a fresh, server-validated token for each POST.
+    // Remember the completed gate on this machine. The Worker still requires
+    // a fresh one-use token for every POST, so this flag only controls whether
+    // the user sees the gate again.
     var _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
     var _turnstileToken = '';
+    // Turnstile tokens are short-lived and single-use. Keep the issue time so
+    // a user who leaves the report form open does not submit an expired token.
+    var _turnstileTokenIssuedAt = 0;
     var _turnstileWidgetId = null;
     var _turnstileSilentWidgetId = null;
     var _turnstileSilentRequestActive = false;
@@ -2810,11 +2814,15 @@
     // ——— Cloudflare Turnstile Gate ———
     function invalidateTurnstile() {
         _turnstileToken = '';
+        _turnstileTokenIssuedAt = 0;
     }
 
     function _finishSilentTurnstileRequest(token, error) {
         _turnstileSilentRequestActive = false;
-        if (token) _turnstileToken = token;
+        if (token) {
+            _turnstileToken = token;
+            _turnstileTokenIssuedAt = Date.now();
+        }
         var waiters = _turnstileSilentWaiters.splice(0);
         waiters.forEach(function(waiter) {
             if (error) waiter.reject(error);
@@ -2839,7 +2847,10 @@
                     size: 'invisible',
                     execution: 'execute',
                     appearance: 'interaction-only',
-                    action: 'report_gate_renewal',
+                    // Keep the silent renewal action identical to the
+                    // first visible challenge. The reports Worker validates
+                    // this action when it verifies the token.
+                    action: 'report_gate',
                     callback: function(token) {
                         _finishSilentTurnstileRequest(token, null);
                     },
@@ -2859,11 +2870,13 @@
         }
     }
 
-    // The first verification is visible and remembered per browser/device.
-    // Every later POST still receives a fresh one-use token, but renewal is
-    // invisible unless Cloudflare itself decides an interaction is necessary.
+    // Report tokens are one-use. The first visit uses the visible widget;
+    // trusted returning machines silently mint a fresh token for each POST.
     function getTurnstileTokenForReport() {
-        if (_turnstileToken) return Promise.resolve(_turnstileToken);
+        if (_turnstileToken && Date.now() - _turnstileTokenIssuedAt < 120000) {
+            return Promise.resolve(_turnstileToken);
+        }
+        if (_turnstileToken) invalidateTurnstile();
         if (!_turnstileVerified) {
             showTurnstileGate();
             return Promise.resolve(null);
@@ -2915,6 +2928,7 @@
                 action: 'report_gate',
                 callback: function(token) {
                     _turnstileToken = token;
+                        _turnstileTokenIssuedAt = Date.now();
                     _turnstileVerified = true;
                     localStorage.setItem('turnstile_verified', 'true');
                     if (statusEl) {
@@ -8323,6 +8337,55 @@
     }
 
     // ——— SPC RISK LEVELS ———
+    // WPC MPDs do not change every minute, but loadAll() does. Keep the
+    // location-specific result for ten minutes so the normal weather refresh
+    // does not invoke the WPC Worker once per minute per open tab.
+    const WPC_MPD_CACHE_MS = 10 * 60 * 1000;
+    var _wpcMpdCache = null;
+    var _wpcMpdRequest = null;
+
+    async function fetchWpcMpdCached() {
+        var key = String(Number(lat).toFixed(3)) + ',' + String(Number(lon).toFixed(3));
+        var now = Date.now();
+        var stale = null;
+
+        if (_wpcMpdCache) {
+            if (_wpcMpdCache.key === key && now - _wpcMpdCache.ts < WPC_MPD_CACHE_MS) {
+                return _wpcMpdCache.data;
+            }
+            if (_wpcMpdCache.key === key) stale = _wpcMpdCache.data;
+        }
+
+        // Reuse the result across normal page reloads on the same browser.
+        try {
+            var saved = JSON.parse(localStorage.getItem('sm_wpc_mpd_cache') || 'null');
+            if (saved && saved.key === key) {
+                if (now - saved.ts < WPC_MPD_CACHE_MS) {
+                    _wpcMpdCache = saved;
+                    return saved.data;
+                }
+                stale = saved.data;
+            }
+        } catch (e) {}
+
+        if (_wpcMpdRequest) return _wpcMpdRequest;
+        _wpcMpdRequest = fetch('https://wpcmetwatch.skymonitor-account.workers.dev/?lat=' +
+            encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon))
+            .then(function(res) {
+                if (!res.ok) throw new Error('WPC MPD Worker ' + res.status);
+                return res.json();
+            })
+            .then(function(data) {
+                var entry = { key: key, ts: Date.now(), data: data };
+                _wpcMpdCache = entry;
+                try { localStorage.setItem('sm_wpc_mpd_cache', JSON.stringify(entry)); } catch (e) {}
+                return data;
+            })
+            .catch(function() { return stale; })
+            .finally(function() { _wpcMpdRequest = null; });
+        return _wpcMpdRequest;
+    }
+
     async function fetchRiskLevels() {
         // When offline, the cached risks were already restored in the PirateWeather
         // fallback block. Running the fetches here would just overwrite that cache
@@ -8412,9 +8475,8 @@
         window.wpcERODay3 = _ero3Raw ? (_ero3Raw.outlook || _ero3Raw.label || _ero3Raw.LABEL || _ero3Raw.risk || _ero3Raw.RISK || null) : null;
         computeFloodOutlook(); // Re-render flood card with full ERO data
         try {
-            const mpdRes = await fetch('https://wpcmetwatch.skymonitor-account.workers.dev/?lat=' + lat + '&lon=' + lon);
-            if (mpdRes.ok) {
-                const mpdData = await mpdRes.json();
+            const mpdData = await fetchWpcMpdCached();
+            if (mpdData) {
                 const mpds = mpdData.mpds || [];
                 mpds.forEach(function(mpd) {
                     if (!mpd.id) return;
@@ -11550,8 +11612,27 @@
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
             } else {
+                // The Worker uses 403 specifically when Turnstile rejects or
+                // has expired. Re-open the visible gate so the user can
+                // recover without guessing why the submission failed.
+                var errorBody = '';
+                try { errorBody = await res.text(); } catch (_) {}
+                var needsVerification = res.status === 403 &&
+                    /turnstile verification required|verification failed|verification expired|bot detected/i.test(errorBody);
                 invalidateTurnstile();
-                if (status) { status.textContent = 'Report failed. Please try again.'; status.style.color = 'var(--danger)'; }
+                if (needsVerification) {
+                    // Do not erase the device-level verification just because
+                    // a one-use renewal token failed. The user should not be
+                    // challenged again on the next visit.
+                    _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
+                    if (status) {
+                        status.textContent = 'Report verification could not be refreshed. Please try submitting again.';
+                        status.style.color = 'var(--warning)';
+                    }
+                } else if (status) {
+                    status.textContent = 'Report failed. Please try again.';
+                    status.style.color = 'var(--danger)';
+                }
             }
         } catch(e) {
             invalidateTurnstile();
