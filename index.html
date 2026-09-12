@@ -8539,28 +8539,65 @@
     }
 
     // NWS gridpoint QPF can stop before the end of the seven-day forecast
-    // periods. TWC/PirateWeather already supplies the same day/night QPF
-    // shape, so use it only to fill genuinely missing NWS amounts. NWS remains
-    // authoritative wherever it returned a value.
-    function _fillMissingNWSQPFFromTWC(nwsData, twcData) {
+    // periods. WPC is also an official NWS product and publishes Days 4-5
+    // and Days 6-7 QPFs through the NOAA ArcGIS service. Fetch those official
+    // later-period totals rather than mixing TWC data into an NWS forecast.
+    function _fetchWPCQPFPoint(layerId) {
+        var base = 'https://mapservices.weather.noaa.gov/vector/rest/services/precip/wpc_qpf/MapServer/' + layerId + '/query';
+        var params = '?geometry=' + encodeURIComponent(lon + ',' + lat) +
+            '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects' +
+            '&outFields=' + encodeURIComponent('qpf,units,start_time,end_time,valid_time,issue_time') +
+            '&returnGeometry=false&f=json';
+        return _weatherFetch(base + params, undefined, 12000).then(function(res) {
+            if (!res.ok) return [];
+            return res.json().then(function(json) {
+                return Array.isArray(json.features)
+                    ? json.features.map(function(feature) { return feature.attributes || {}; })
+                    : [];
+            });
+        }).catch(function() { return []; });
+    }
+
+    function _wpcTimeMs(value) {
+        var text = String(value || '').trim();
+        if (!text) return NaN;
+        var normalized = text.indexOf('T') >= 0 ? text : text.replace(' ', 'T');
+        if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(normalized)) normalized += 'Z';
+        var ms = Date.parse(normalized);
+        return isFinite(ms) ? ms : NaN;
+    }
+
+    function _fillMissingNWSQPFFromWPC(nwsData, wpcRows) {
         var nwsDp = nwsData && nwsData.daypart && nwsData.daypart[0];
-        var twcDp = twcData && twcData.daypart && twcData.daypart[0];
-        if (!nwsDp || !twcDp || !Array.isArray(nwsDp.qpf) || !Array.isArray(twcDp.qpf)) return false;
+        if (!nwsDp || !Array.isArray(nwsDp.qpf) || !Array.isArray(nwsData.validTimeLocal) || !Array.isArray(wpcRows)) return false;
         var changed = false;
-        var dayCount = Math.min(
-            Array.isArray(nwsData.dayOfWeek) ? nwsData.dayOfWeek.length : 0,
-            Array.isArray(twcData.dayOfWeek) ? twcData.dayOfWeek.length : 0
-        );
-        for (var i = 0; i < dayCount; i++) {
-            [i * 2, i * 2 + 1].forEach(function(slot) {
-                var nwsAmount = Number(nwsDp.qpf[slot]);
-                var twcAmount = Number(twcDp.qpf[slot]);
-                if ((!isFinite(nwsAmount) || nwsAmount <= 0) && isFinite(twcAmount) && twcAmount > 0) {
-                    nwsDp.qpf[slot] = twcAmount;
+        wpcRows.forEach(function(row) {
+            var total = Number(row && row.qpf);
+            var startMs = _wpcTimeMs(row && row.start_time);
+            if (!isFinite(total) || total <= 0 || !isFinite(startMs)) return;
+            if (String(row.units || '').toLowerCase().indexOf('mm') >= 0) total /= 25.4;
+            var startDate = new Date(startMs).toISOString().slice(0, 10);
+            var firstDay = nwsData.validTimeLocal.findIndex(function(value) {
+                return String(value || '').slice(0, 10) === startDate;
+            });
+            if (firstDay < 0) return;
+            // WPC's later products are official 48-hour totals (Days 4-5
+            // and Days 6-7), so split each total across its two forecast
+            // dates. The amount remains an official WPC total; only the
+            // card-level daily allocation is estimated.
+            var perDay = total / 2;
+            [firstDay, firstDay + 1].forEach(function(dayIndex) {
+                if (dayIndex < 0 || dayIndex >= nwsData.validTimeLocal.length) return;
+                var daySlot = dayIndex * 2;
+                var nightSlot = daySlot + 1;
+                var existing = Number(nwsDp.qpf[daySlot]) + Number(nwsDp.qpf[nightSlot]);
+                if ((!isFinite(existing) || existing <= 0) && perDay > 0) {
+                    nwsDp.qpf[daySlot] = perDay;
+                    if (nwsDp.qpf[nightSlot] == null) nwsDp.qpf[nightSlot] = 0;
                     changed = true;
                 }
             });
-        }
+        });
         return changed;
     }
 
@@ -8689,7 +8726,9 @@
                 _weatherFetch(props.forecastHourly, undefined, 15000),
                 props.forecastGridData
                     ? _weatherFetch(props.forecastGridData, undefined, 15000).catch(function() { return null; })
-                    : Promise.resolve(null)
+                    : Promise.resolve(null),
+                _fetchWPCQPFPoint(4),
+                _fetchWPCQPFPoint(5)
             ]);
             if (!responses[0].ok || !responses[1].ok) throw new Error('NWS forecast request failed');
             var dailyJson = await responses[0].json();
@@ -8699,6 +8738,9 @@
             var qpfValues = gridProps && gridProps.quantitativePrecipitation &&
                 Array.isArray(gridProps.quantitativePrecipitation.values)
                 ? gridProps.quantitativePrecipitation.values : [];
+            var wpcQPFValues = []
+                .concat(Array.isArray(responses[3]) ? responses[3] : [])
+                .concat(Array.isArray(responses[4]) ? responses[4] : []);
             if (qpfValues.length) window.nwsQPFValues = qpfValues;
             if (gridProps && gridProps.probabilityOfPrecipitation &&
                 Array.isArray(gridProps.probabilityOfPrecipitation.values)) {
@@ -8710,8 +8752,7 @@
                 qpfValues.length ? qpfValues : (window.nwsQPFValues || [])
             );
             if (getForecastProvider() !== 'nws') return;
-            var _twcFallback = window._fastProviderData && window._fastProviderData.twc;
-            _fillMissingNWSQPFFromTWC(normalized, _twcFallback);
+            _fillMissingNWSQPFFromWPC(normalized, wpcQPFValues);
             window.nwsForecastData = normalized;
             window.pirateHourlyData = normalized.hourlyData;
             window.pirateTimezoneOffset = normalized.timezoneOffset || 0;
@@ -8724,24 +8765,6 @@
                 hourlyData: normalized.hourlyData,
                 tzOffset: normalized.timezoneOffset || 0
             });
-            // If the shared enrichment request has not finished yet, apply
-            // TWC's longer QPF horizon as soon as it does.
-            if (!_twcFallback) {
-                getWeatherEnrichment().then(function(enrichment) {
-                    if (getForecastProvider() !== 'nws') return;
-                    var twc = enrichment && enrichment.twc ||
-                        (window._fastProviderData && window._fastProviderData.twc);
-                    if (!_fillMissingNWSQPFFromTWC(normalized, twc)) return;
-                    window.nwsForecastData = normalized;
-                    renderTWCForecast(normalized);
-                    renderHourlyOutlook(normalized.hourlyData, normalized.timezoneOffset || 0);
-                    SkyDB.set(SkyDB.S.weather, 'nws_forecast', {
-                        ts: Date.now(), data: normalized,
-                        hourlyData: normalized.hourlyData,
-                        tzOffset: normalized.timezoneOffset || 0
-                    });
-                }).catch(function() {});
-            }
         } catch (e) {
             if (_isOffline) {
                 var cached = await SkyDB.get(SkyDB.S.weather, 'nws_forecast');
