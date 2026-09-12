@@ -1073,6 +1073,13 @@
             <button onclick="closeAdvancedSettings()" style="background:none; border:none; color:#445566; cursor:pointer; font-size:1.2em;">&#10005;</button>
         </div>
         <div class="settings-row">
+            <span class="settings-label">Forecast Provider</span>
+            <div class="btn-group">
+                <button id="opt-forecast-twc" class="btn-opt active" onclick="setForecastProvider('twc')">TWC / PIRATE</button>
+                <button id="opt-forecast-nws" class="btn-opt" onclick="setForecastProvider('nws')">NWS</button>
+            </div>
+        </div>
+        <div class="settings-row">
             <span class="settings-label">Wind Direction Mode</span>
             <div class="btn-group">
                 <button id="opt-wind-compass" class="btn-opt active" onclick="setWindDirMode('compass')">COMPASS</button>
@@ -2701,6 +2708,9 @@
     function openAdvancedSettings() {
         var modal = document.getElementById('advanced-settings-modal');
         if (!modal) return;
+        var forecastProvider = localStorage.getItem('forecast_provider') || 'twc';
+        document.getElementById('opt-forecast-twc')?.classList.toggle('active', forecastProvider === 'twc');
+        document.getElementById('opt-forecast-nws')?.classList.toggle('active', forecastProvider === 'nws');
         var mode = localStorage.getItem('wind_dir_mode') || 'compass';
         document.getElementById('opt-wind-compass')?.classList.toggle('active', mode === 'compass');
         document.getElementById('opt-wind-text')?.classList.toggle('active', mode === 'text');
@@ -2719,6 +2729,21 @@
     function closeAdvancedSettings() {
         var modal = document.getElementById('advanced-settings-modal');
         if (modal) modal.style.display = 'none';
+    }
+
+    function getForecastProvider() {
+        return localStorage.getItem('forecast_provider') === 'nws' ? 'nws' : 'twc';
+    }
+
+    function setForecastProvider(provider) {
+        provider = provider === 'nws' ? 'nws' : 'twc';
+        localStorage.setItem('forecast_provider', provider);
+        SkyDB.set(SkyDB.S.settings, 'forecast_provider', provider);
+        document.getElementById('opt-forecast-twc')?.classList.toggle('active', provider === 'twc');
+        document.getElementById('opt-forecast-nws')?.classList.toggle('active', provider === 'nws');
+        // Forecast source changes do not reload current conditions. They only
+        // replace the daily/hourly forecast cards with the selected provider.
+        fetchSelectedForecast(true);
     }
 
     function setUserReportsEnabled(val) {
@@ -5671,7 +5696,10 @@
                 if (_minuteHeading) _minuteHeading.innerText = 'Minutely Forecast';
                 document.getElementById('minuteSummary').innerText = d.minutely.summary || 'Precipitation possible in the next hour.';
                 if (_minuteChartWrap) _minuteChartWrap.style.display = '';
-                if (_hourlyOutlook) _hourlyOutlook.style.display = 'none';
+                if (_hourlyOutlook) {
+                    if (getForecastProvider() === 'twc') _hourlyOutlook.style.display = 'none';
+                    else renderHourlyOutlook(window.pirateHourlyData || [], window.pirateTimezoneOffset || 0);
+                }
                 timeline.innerHTML = '';
                 d.minutely.data.forEach(function(m) {
                     const bar = document.createElement('div'); bar.className = 'bar';
@@ -5689,7 +5717,9 @@
                 if (_minuteHeading) _minuteHeading.innerText = '';
                 document.getElementById('minuteSummary').innerText = '';
                 if (_minuteChartWrap) _minuteChartWrap.style.display = 'none';
-                renderHourlyOutlook(d.hourly && d.hourly.data ? d.hourly.data : [], d.offset || 0);
+                if (getForecastProvider() === 'twc') {
+                    renderHourlyOutlook(d.hourly && d.hourly.data ? d.hourly.data : [], d.offset || 0);
+                }
             }
             const currentDist = d.currently?.nearestStormDistance;
             const currentBearing = d.currently?.nearestStormBearing;
@@ -5763,8 +5793,15 @@
                     if (h.cloudCover != null && h.cloudCover < 0)                  { h.cloudCover = null;        _hourlyHasBadOther = true; }
                     if (h.visibility != null && h.visibility < 0)                  { h.visibility = null;        _hourlyHasBadOther = true; }
                 });
-                window.pirateHourlyData = _rawHourly;
-                window.pirateTimezoneOffset = d.offset || 0;
+                // Keep the TWC/Pirate hourly feed available even when NWS is
+                // the selected forecast provider, so switching back does not
+                // require a full current-conditions reload.
+                window._pirateProviderHourlyData = _rawHourly;
+                window._pirateProviderTimezoneOffset = d.offset || 0;
+                if (getForecastProvider() === 'twc') {
+                    window.pirateHourlyData = _rawHourly;
+                    window.pirateTimezoneOffset = d.offset || 0;
+                }
                 renderAnalyticsWhenReady();
                 SkyDB.set(SkyDB.S.weather, 'hourly_data', { ts: Date.now(), data: _rawHourly, tzOffset: d.offset || 0 });
                 computeFloodOutlook();
@@ -5865,14 +5902,20 @@
                 // Restore hourly data → enables hourly strip, comfort modal, UV modal, analytics
                 SkyDB.get(SkyDB.S.weather, 'hourly_data').then(function(h) {
                     if (!h || !h.data || !h.data.length) return;
-                    window.pirateHourlyData = h.data;
-                    window.pirateTimezoneOffset = h.tzOffset || 0;
+                    window._pirateProviderHourlyData = h.data;
+                    window._pirateProviderTimezoneOffset = h.tzOffset || 0;
+                    if (getForecastProvider() === 'twc') {
+                        window.pirateHourlyData = h.data;
+                        window.pirateTimezoneOffset = h.tzOffset || 0;
+                    }
                     renderAnalyticsWhenReady();
                     // Do NOT call computeOutdoorScore here — alerts are not restored yet,
                     // so alert-override descriptions (heat advisory, etc.) would be wrong.
                     // The saved outdoor_score snapshot (captured after alerts ran online) is
                     // restored below and reflects the correct alert-aware state.
-                    renderPirateHourly(h.data, h.tzOffset || 0, null);
+                    if (getForecastProvider() === 'twc') {
+                        renderPirateHourly(h.data, h.tzOffset || 0, null);
+                    }
                 });
                 // Restore outdoor score exactly as it was when last computed online (with alerts)
                 SkyDB.get(SkyDB.S.weather, 'outdoor_score').then(function(os) {
@@ -6399,7 +6442,7 @@
         // The compact outlook is a fallback for a genuinely dry minutely
         // forecast. Never let later NWS/PWS re-renders make both sections
         // visible while minute-by-minute precipitation is active or unknown.
-        if (window._minuteHasPrecip !== false) {
+        if (window._minuteHasPrecip !== false && getForecastProvider() !== 'nws') {
             wrap.style.display = 'none';
             return;
         }
@@ -8413,13 +8456,224 @@
         else startWPCCountdown(day);
     }
 
+    // ——— FORECAST PROVIDERS ————————————————————————————————————————————————
+    // The NWS adapter below deliberately produces the same compact shape as
+    // the existing TWC/Pirate renderer. This keeps the cards, detail modal,
+    // local WU icons, units, and daily summary consistent when the source
+    // changes.
+    function _nwsIsoToEpoch(iso) {
+        var ms = Date.parse(iso || '');
+        return isFinite(ms) ? Math.floor(ms / 1000) : null;
+    }
+
+    function _nwsTimezoneOffset(iso) {
+        var m = String(iso || '').match(/([+-])(\d{2}):?(\d{2})$/);
+        if (!m) return 0;
+        var minutes = Number(m[2]) * 60 + Number(m[3]);
+        return (m[1] === '-' ? -1 : 1) * minutes / 60;
+    }
+
+    function _nwsTemperatureF(value, unit) {
+        if (value == null || !isFinite(Number(value))) return null;
+        var n = Number(value);
+        return String(unit || 'F').toUpperCase() === 'C' ? n * 9 / 5 + 32 : n;
+    }
+
+    function _nwsWindMph(value) {
+        var m = String(value || '').match(/(-?\d+(?:\.\d+)?)\s*(?:to\s*(-?\d+(?:\.\d+)?))?\s*(mph|km\/h|kt|knots?)/i);
+        if (!m) return null;
+        var n = Number(m[2] != null ? (Number(m[1]) + Number(m[2])) / 2 : m[1]);
+        var unit = m[3].toLowerCase();
+        if (unit === 'km/h') n *= 0.621371;
+        else if (unit === 'kt' || unit.indexOf('knot') === 0) n *= 1.15078;
+        return isFinite(n) ? n : null;
+    }
+
+    function _nwsForecastIconCode(period) {
+        var text = period && (period.shortForecast || period.detailedForecast || '');
+        var epoch = _nwsIsoToEpoch(period && period.startTime);
+        return _twcIconCodeForWeather(null, text, {
+            time: epoch,
+            timezoneOffset: _nwsTimezoneOffset(period && period.startTime)
+        });
+    }
+
+    function _normalizeNWSForecast(forecastJson, hourlyJson) {
+        var periods = forecastJson && forecastJson.properties && forecastJson.properties.periods;
+        var hourlyPeriods = hourlyJson && hourlyJson.properties && hourlyJson.properties.periods;
+        if (!Array.isArray(periods) || !periods.length) throw new Error('NWS daily forecast unavailable');
+        if (!Array.isArray(hourlyPeriods)) hourlyPeriods = [];
+
+        var groups = [], byDate = {};
+        periods.forEach(function(period) {
+            var dateKey = String(period.startTime || '').slice(0, 10);
+            if (!dateKey) return;
+            if (!byDate[dateKey]) {
+                byDate[dateKey] = { date: dateKey, day: null, night: null };
+                groups.push(byDate[dateKey]);
+            }
+            if (period.isDaytime && !byDate[dateKey].day) byDate[dateKey].day = period;
+            else if (!period.isDaytime && !byDate[dateKey].night) byDate[dateKey].night = period;
+            else if (!byDate[dateKey].day) byDate[dateKey].day = period;
+            else if (!byDate[dateKey].night) byDate[dateKey].night = period;
+        });
+        groups = groups.slice(0, 7);
+
+        var dayOfWeek = [], highs = [], lows = [], validTimeLocal = [];
+        var daypart = {
+            iconCode: [], wxPhraseLong: [], precipChance: [], qpf: [], narrative: [],
+            daypartName: [], temperature: [], humidity: [], relativeHumidity: [],
+            windSpeed: [], windGust: [], windDirection: [], windDirectionCardinal: [],
+            uvIndex: [], uvDescription: [], cloudCoverPhrase: [], qpfSnow: [],
+            temperatureHeatIndex: [], temperatureWindChill: [], thunderCategory: []
+        };
+        function addPart(period) {
+            if (!period) {
+                daypart.iconCode.push(null); daypart.wxPhraseLong.push(null);
+                daypart.precipChance.push(0); daypart.qpf.push(0);
+                daypart.narrative.push(null); daypart.daypartName.push(null);
+                daypart.temperature.push(null); daypart.humidity.push(null);
+                daypart.relativeHumidity.push(null); daypart.windSpeed.push(null);
+                daypart.windGust.push(null); daypart.windDirection.push(null);
+                daypart.windDirectionCardinal.push(null); daypart.uvIndex.push(null);
+                daypart.uvDescription.push(null); daypart.cloudCoverPhrase.push(null);
+                daypart.qpfSnow.push(0); daypart.temperatureHeatIndex.push(null);
+                daypart.temperatureWindChill.push(null); daypart.thunderCategory.push(null);
+                return;
+            }
+            var temp = _nwsTemperatureF(period.temperature, period.temperatureUnit);
+            var rh = period.relativeHumidity && period.relativeHumidity.value;
+            var pop = period.probabilityOfPrecipitation && period.probabilityOfPrecipitation.value;
+            var wind = _nwsWindMph(period.windSpeed);
+            daypart.iconCode.push(_nwsForecastIconCode(period));
+            daypart.wxPhraseLong.push(period.shortForecast || period.detailedForecast || '');
+            daypart.precipChance.push(pop != null && isFinite(Number(pop)) ? Number(pop) : 0);
+            daypart.qpf.push(0);
+            daypart.narrative.push(period.detailedForecast || period.shortForecast || '');
+            daypart.daypartName.push(period.name || (period.isDaytime ? 'Day' : 'Night'));
+            daypart.temperature.push(temp);
+            daypart.humidity.push(rh != null ? Number(rh) : null);
+            daypart.relativeHumidity.push(rh != null ? Number(rh) : null);
+            daypart.windSpeed.push(wind);
+            daypart.windGust.push(null);
+            daypart.windDirection.push(period.windDirection || null);
+            daypart.windDirectionCardinal.push(period.windDirection || null);
+            daypart.uvIndex.push(null); daypart.uvDescription.push(null);
+            daypart.cloudCoverPhrase.push(period.shortForecast || null);
+            daypart.qpfSnow.push(0); daypart.temperatureHeatIndex.push(null);
+            daypart.temperatureWindChill.push(null);
+            daypart.thunderCategory.push(/thunder/i.test(period.shortForecast || '') ? 'Thunderstorms' : null);
+        }
+        groups.forEach(function(group, i) {
+            var dateObj = new Date(group.date + 'T12:00:00Z');
+            dayOfWeek.push(i === 0 ? 'Today' : dateObj.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' }));
+            highs.push(group.day ? _nwsTemperatureF(group.day.temperature, group.day.temperatureUnit) : null);
+            lows.push(group.night ? _nwsTemperatureF(group.night.temperature, group.night.temperatureUnit) : null);
+            validTimeLocal.push(group.date + 'T12:00:00');
+            addPart(group.day); addPart(group.night);
+        });
+
+        var hourly = hourlyPeriods.slice(0, 168).map(function(period) {
+            var pop = period.probabilityOfPrecipitation && period.probabilityOfPrecipitation.value;
+            var rh = period.relativeHumidity && period.relativeHumidity.value;
+            var temp = _nwsTemperatureF(period.temperature, period.temperatureUnit);
+            var epoch = _nwsIsoToEpoch(period.startTime);
+            return {
+                time: epoch,
+                temperature: temp,
+                apparentTemperature: temp,
+                humidity: rh != null ? Number(rh) / 100 : null,
+                windSpeed: _nwsWindMph(period.windSpeed),
+                windGust: null,
+                windBearing: null,
+                precipProbability: pop != null && isFinite(Number(pop)) ? Number(pop) / 100 : 0,
+                precipIntensity: 0,
+                precipAccumulation: 0,
+                summary: period.shortForecast || period.name || '',
+                icon: period.shortForecast || '',
+                uvIndex: null,
+                timeZone: period.startTime ? _nwsTimezoneOffset(period.startTime) : 0
+            };
+        }).filter(function(hour) { return hour.time != null; });
+        var timezoneOffset = hourly.length ? _nwsTimezoneOffset(hourlyPeriods[0] && hourlyPeriods[0].startTime) : 0;
+        return {
+            dayOfWeek: dayOfWeek,
+            calendarDayTemperatureMax: highs,
+            calendarDayTemperatureMin: lows,
+            validTimeLocal: validTimeLocal,
+            daypart: [daypart],
+            hourlyData: hourly,
+            timezoneOffset: timezoneOffset
+        };
+    }
+
+    async function fetchNWSForecast() {
+        var dailyEl = document.getElementById('twc-daily-forecast');
+        try {
+            if (getForecastProvider() !== 'nws') return;
+            if (dailyEl) dailyEl.innerHTML = "<div style='opacity:0.7'>Loading NWS forecast...</div>";
+            var pointsRes = await _weatherFetch('https://api.weather.gov/points/' + lat + ',' + lon, undefined, 15000);
+            if (!pointsRes.ok) throw new Error('NWS forecast is only available in the US');
+            var points = await pointsRes.json();
+            var props = points && points.properties;
+            if (!props || !props.forecast || !props.forecastHourly) throw new Error('NWS forecast links unavailable');
+            var responses = await Promise.all([
+                _weatherFetch(props.forecast, undefined, 15000),
+                _weatherFetch(props.forecastHourly, undefined, 15000)
+            ]);
+            if (!responses[0].ok || !responses[1].ok) throw new Error('NWS forecast request failed');
+            var normalized = _normalizeNWSForecast(await responses[0].json(), await responses[1].json());
+            if (getForecastProvider() !== 'nws') return;
+            window.nwsForecastData = normalized;
+            window.pirateHourlyData = normalized.hourlyData;
+            window.pirateTimezoneOffset = normalized.timezoneOffset || 0;
+            window._forecastHourlyProvider = 'nws';
+            renderTWCForecast(normalized);
+            renderHourlyOutlook(normalized.hourlyData, normalized.timezoneOffset || 0);
+            renderAnalyticsWhenReady();
+            SkyDB.set(SkyDB.S.weather, 'nws_forecast', {
+                ts: Date.now(), data: normalized,
+                hourlyData: normalized.hourlyData,
+                tzOffset: normalized.timezoneOffset || 0
+            });
+        } catch (e) {
+            if (_isOffline) {
+                var cached = await SkyDB.get(SkyDB.S.weather, 'nws_forecast');
+                if (getForecastProvider() === 'nws' && cached && cached.data) {
+                    window.nwsForecastData = cached.data;
+                    window.pirateHourlyData = cached.hourlyData || cached.data.hourlyData || [];
+                    window.pirateTimezoneOffset = cached.tzOffset || cached.data.timezoneOffset || 0;
+                    window._forecastHourlyProvider = 'nws';
+                    renderTWCForecast(cached.data);
+                    renderHourlyOutlook(window.pirateHourlyData, window.pirateTimezoneOffset);
+                    return;
+                }
+            }
+            if (getForecastProvider() === 'nws' && dailyEl) {
+                dailyEl.innerHTML = "<div style='opacity:0.6'>NWS forecast temporarily unavailable.</div>";
+            }
+        }
+    }
+
+    async function fetchSelectedForecast(force) {
+        if (getForecastProvider() === 'nws') return fetchNWSForecast();
+        return fetchTWCForecast(force);
+    }
+
     // ——— TWC FORECAST (v1.0.4: removed windPhrase/precipType/thunderCat; added swipe) ———
     async function fetchTWCForecast() {
         try {
+            if (getForecastProvider() !== 'twc') return;
             const enrichment = await getWeatherEnrichment();
             const d = (enrichment && enrichment.twc) ||
                 (window._fastProviderData && window._fastProviderData.twc);
             if (!d) throw new Error('TWC data not included in enrichment response');
+            if (getForecastProvider() !== 'twc') return;
+            if (window._pirateProviderHourlyData && window._pirateProviderHourlyData.length) {
+                window.pirateHourlyData = window._pirateProviderHourlyData;
+                window.pirateTimezoneOffset = window._pirateProviderTimezoneOffset || 0;
+            }
+            window._forecastHourlyProvider = 'twc';
             renderTWCForecast(d);
             // Only cache the fields actually used by renderTWCForecast / openTWCDetailModal
             var _dp = d.daypart && d.daypart[0];
@@ -8473,12 +8727,14 @@
         } catch(e) {
             // Do not display an old daily forecast merely because the optional
             // enrichment request failed while the primary weather is online.
-            if (!_isOffline) {
+            if (!_isOffline && getForecastProvider() === 'twc') {
                 var unavailable = document.getElementById('twc-daily-forecast');
                 if (unavailable) unavailable.innerHTML = "<div style='opacity:0.6'>Forecast temporarily unavailable.</div>";
                 return;
             }
+            if (getForecastProvider() !== 'twc') return;
             SkyDB.get(SkyDB.S.weather, 'twc_forecast').then(function(cached) {
+                if (getForecastProvider() !== 'twc') return;
                 if (cached && cached.data) renderTWCForecast(cached.data);
                 else document.getElementById('twc-daily-forecast').innerHTML = "<div style='opacity:0.6'>Forecast unavailable.</div>";
             });
@@ -12219,7 +12475,7 @@
                         loadFailed = true;
                     });
                     const _openWeatherPromise = Promise.resolve(fetchOpenWeather()).catch(function() {});
-                    const _twcPromise = Promise.resolve(fetchTWCForecast()).catch(function() {});
+            const _twcPromise = Promise.resolve(fetchSelectedForecast()).catch(function() {});
 
                     // The splash screen waits for this promise only. The NWS
                     // chain includes the PWS/NWS source decision and the home
