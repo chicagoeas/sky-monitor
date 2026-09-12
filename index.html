@@ -2822,7 +2822,10 @@
                     size: 'invisible',
                     execution: 'execute',
                     appearance: 'interaction-only',
-                    action: 'report_gate_renewal',
+                    // Keep the silent renewal action identical to the
+                    // first visible challenge. The reports Worker validates
+                    // this action when it verifies the token.
+                    action: 'report_gate',
                     callback: function(token) {
                         _finishSilentTurnstileRequest(token, null);
                     },
@@ -11149,13 +11152,14 @@
                     /turnstile verification required|verification failed|verification expired|bot detected/i.test(errorBody);
                 invalidateTurnstile();
                 if (needsVerification) {
-                    _turnstileVerified = false;
-                    localStorage.removeItem('turnstile_verified');
+                    // Do not erase the device-level verification just because
+                    // a one-use renewal token failed. The user should not be
+                    // challenged again on the next visit.
+                    _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
                     if (status) {
-                        status.textContent = 'Verification expired. Please complete it again.';
+                        status.textContent = 'Report verification could not be refreshed. Please try submitting again.';
                         status.style.color = 'var(--warning)';
                     }
-                    showTurnstileGate();
                 } else if (status) {
                     status.textContent = 'Report failed. Please try again.';
                     status.style.color = 'var(--danger)';
