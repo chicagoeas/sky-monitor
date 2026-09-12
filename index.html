@@ -8582,15 +8582,28 @@
             });
             if (firstDay < 0) return;
             // WPC's later products are official 48-hour totals (Days 4-5
-            // and Days 6-7), so split each total across its two forecast
-            // dates. The amount remains an official WPC total; only the
-            // card-level daily allocation is estimated.
-            var perDay = total / 2;
-            [firstDay, firstDay + 1].forEach(function(dayIndex) {
+            // and Days 6-7), not separate daily point totals. Preserve the
+            // official two-day total, but allocate it using the NWS daily
+            // precipitation probabilities instead of showing the same
+            // invented half-total on both cards.
+            var targetDays = [firstDay, firstDay + 1].filter(function(dayIndex) {
+                return dayIndex >= 0 && dayIndex < nwsData.validTimeLocal.length;
+            });
+            var weights = targetDays.map(function(dayIndex) {
+                var daySlot = dayIndex * 2;
+                var nightSlot = daySlot + 1;
+                return Math.max(Number(nwsDp.precipChance && nwsDp.precipChance[daySlot]) || 0,
+                    Number(nwsDp.precipChance && nwsDp.precipChance[nightSlot]) || 0);
+            });
+            var weightTotal = weights.reduce(function(sum, value) { return sum + value; }, 0);
+            targetDays.forEach(function(dayIndex, targetIndex) {
                 if (dayIndex < 0 || dayIndex >= nwsData.validTimeLocal.length) return;
                 var daySlot = dayIndex * 2;
                 var nightSlot = daySlot + 1;
                 var existing = Number(nwsDp.qpf[daySlot]) + Number(nwsDp.qpf[nightSlot]);
+                var perDay = weightTotal > 0
+                    ? total * (weights[targetIndex] / weightTotal)
+                    : total / targetDays.length;
                 if ((!isFinite(existing) || existing <= 0) && perDay > 0) {
                     nwsDp.qpf[daySlot] = perDay;
                     if (nwsDp.qpf[nightSlot] == null) nwsDp.qpf[nightSlot] = 0;
