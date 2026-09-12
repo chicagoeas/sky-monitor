@@ -8498,11 +8498,52 @@
         });
     }
 
-    function _normalizeNWSForecast(forecastJson, hourlyJson) {
+    // NWS gridpoint QPF is expressed in kg/m², which is numerically equal to
+    // millimetres of liquid precipitation. Sum the portions of each gridpoint
+    // interval that overlap a forecast period, then convert to inches for the
+    // app's internal unit convention.
+    function _nwsQPFForWindow(startMs, endMs, qpfValues) {
+        if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs || !Array.isArray(qpfValues)) return 0;
+        var totalMm = 0;
+        qpfValues.forEach(function(entry) {
+            if (!entry || entry.value == null || !isFinite(Number(entry.value))) return;
+            var vtStr = String(entry.validTime || '');
+            var slashIdx = vtStr.indexOf('/');
+            if (slashIdx < 0) return;
+            var entryStart = Date.parse(vtStr.slice(0, slashIdx));
+            if (!isFinite(entryStart)) return;
+            var duration = vtStr.slice(slashIdx + 1);
+            var hours = 0;
+            var dayMatch = duration.match(/^P(\d+(?:\.\d+)?)D/i);
+            var hourMatch = duration.match(/T(\d+(?:\.\d+)?)H/i);
+            if (dayMatch) hours += Number(dayMatch[1]) * 24;
+            if (hourMatch) hours += Number(hourMatch[1]);
+            if (!hours) {
+                var minuteMatch = duration.match(/T(?:\d+(?:\.\d+)?H)?(\d+(?:\.\d+)?)M/i);
+                if (minuteMatch) hours += Number(minuteMatch[1]) / 60;
+            }
+            if (!hours) hours = 1;
+            var entryEnd = entryStart + hours * 3600000;
+            var overlapStart = Math.max(entryStart, startMs);
+            var overlapEnd = Math.min(entryEnd, endMs);
+            if (overlapEnd > overlapStart) {
+                totalMm += Number(entry.value) * ((overlapEnd - overlapStart) / (entryEnd - entryStart));
+            }
+        });
+        return totalMm / 25.4;
+    }
+
+    function _nwsPeriodQPF(period, qpfValues) {
+        if (!period || !period.startTime || !period.endTime) return 0;
+        return _nwsQPFForWindow(Date.parse(period.startTime), Date.parse(period.endTime), qpfValues);
+    }
+
+    function _normalizeNWSForecast(forecastJson, hourlyJson, qpfValues) {
         var periods = forecastJson && forecastJson.properties && forecastJson.properties.periods;
         var hourlyPeriods = hourlyJson && hourlyJson.properties && hourlyJson.properties.periods;
         if (!Array.isArray(periods) || !periods.length) throw new Error('NWS daily forecast unavailable');
         if (!Array.isArray(hourlyPeriods)) hourlyPeriods = [];
+        qpfValues = Array.isArray(qpfValues) ? qpfValues : [];
 
         var groups = [], byDate = {};
         periods.forEach(function(period) {
@@ -8548,7 +8589,7 @@
             daypart.iconCode.push(_nwsForecastIconCode(period));
             daypart.wxPhraseLong.push(period.shortForecast || period.detailedForecast || '');
             daypart.precipChance.push(pop != null && isFinite(Number(pop)) ? Number(pop) : 0);
-            daypart.qpf.push(0);
+            daypart.qpf.push(_nwsPeriodQPF(period, qpfValues));
             daypart.narrative.push(period.detailedForecast || period.shortForecast || '');
             daypart.daypartName.push(period.name || (period.isDaytime ? 'Day' : 'Night'));
             daypart.temperature.push(temp);
@@ -8587,8 +8628,8 @@
                 windGust: null,
                 windBearing: null,
                 precipProbability: pop != null && isFinite(Number(pop)) ? Number(pop) / 100 : 0,
-                precipIntensity: 0,
-                precipAccumulation: 0,
+                precipIntensity: _nwsQPFForWindow(Date.parse(period.startTime), Date.parse(period.endTime), qpfValues),
+                precipAccumulation: _nwsQPFForWindow(Date.parse(period.startTime), Date.parse(period.endTime), qpfValues),
                 summary: period.shortForecast || period.name || '',
                 icon: period.shortForecast || '',
                 uvIndex: null,
@@ -8619,10 +8660,29 @@
             if (!props || !props.forecast || !props.forecastHourly) throw new Error('NWS forecast links unavailable');
             var responses = await Promise.all([
                 _weatherFetch(props.forecast, undefined, 15000),
-                _weatherFetch(props.forecastHourly, undefined, 15000)
+                _weatherFetch(props.forecastHourly, undefined, 15000),
+                props.forecastGridData
+                    ? _weatherFetch(props.forecastGridData, undefined, 15000).catch(function() { return null; })
+                    : Promise.resolve(null)
             ]);
             if (!responses[0].ok || !responses[1].ok) throw new Error('NWS forecast request failed');
-            var normalized = _normalizeNWSForecast(await responses[0].json(), await responses[1].json());
+            var dailyJson = await responses[0].json();
+            var hourlyJson = await responses[1].json();
+            var gridJson = responses[2] && responses[2].ok ? await responses[2].json() : null;
+            var gridProps = gridJson && gridJson.properties;
+            var qpfValues = gridProps && gridProps.quantitativePrecipitation &&
+                Array.isArray(gridProps.quantitativePrecipitation.values)
+                ? gridProps.quantitativePrecipitation.values : [];
+            if (qpfValues.length) window.nwsQPFValues = qpfValues;
+            if (gridProps && gridProps.probabilityOfPrecipitation &&
+                Array.isArray(gridProps.probabilityOfPrecipitation.values)) {
+                window.nwsPopValues = gridProps.probabilityOfPrecipitation.values;
+            }
+            var normalized = _normalizeNWSForecast(
+                dailyJson,
+                hourlyJson,
+                qpfValues.length ? qpfValues : (window.nwsQPFValues || [])
+            );
             if (getForecastProvider() !== 'nws') return;
             window.nwsForecastData = normalized;
             window.pirateHourlyData = normalized.hourlyData;
@@ -9081,11 +9141,29 @@
             const shortText = daypart.wxPhraseLong?.[baseIdx] ?? daypart.wxPhraseLong?.[baseIdx + 1] ?? '--';
             const precipPct = daypart.precipChance?.[baseIdx] ?? daypart.precipChance?.[baseIdx + 1] ?? 0;
             const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
+            // NWS can begin a forecast after sunset, so today's daytime/high
+            // period may be absent while tonight's low is still available.
+            // Do not render a "--°" high placeholder or a broken-looking
+            // high/low pair in that case.
+            const highText = high !== '--'
+                ? (_isMetric() ? Math.round((high - 32) * 5 / 9) + '\u00b0' : high + '\u00b0')
+                : '';
+            const lowText = low !== '--'
+                ? (_isMetric() ? Math.round((low - 32) * 5 / 9) + '\u00b0' : low + '\u00b0')
+                : '';
+            const tempHtml = highText && lowText
+                ? highText + ' / <span style="color:white">' + lowText + '</span>'
+                : (highText || lowText || '--');
             const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer'; card.style.position = 'relative';
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
             // Icons are locally hosted and SW-cached — serve the same path online and offline.
             const iconHtml = '<img src="' + _twcIconSrc(iconNum || 50) + '" alt="Weather conditions" style="width:48px;height:48px;object-fit:contain;display:block;margin:auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
-            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + (_isMetric() && high !== '--' ? Math.round((high-32)*5/9) + '\u00b0' : high + '\u00b0') + ' / <span style="color:white">' + (_isMetric() && low !== '--' ? Math.round((low-32)*5/9) + '\u00b0' : low + '\u00b0') + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + (_isMetric() ? (precipAmt * 25.4).toFixed(1) + ' mm' : precipAmt.toFixed(2) + '"') : '') + '</div>' : '');
+            const precipHtml = (precipPct > 0 || precipAmt > 0)
+                ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">' +
+                    (precipPct > 0 ? '\uD83D\uDCA7 ' + precipPct + '%' : '') +
+                    (precipAmt > 0 ? (precipPct > 0 ? ' &nbsp;&middot;&nbsp; Amount: ' : '\uD83C\uDF27 Amount: ') + (_isMetric() ? (precipAmt * 25.4).toFixed(1) + ' mm' : precipAmt.toFixed(2) + '"') : '') +
+                    '</div>' : '';
+            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + tempHtml + '</div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + precipHtml;
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
@@ -9136,7 +9214,6 @@
         const humidity = [daypart.humidity?.[base], daypart.humidity?.[base + 1]];
         const uvIndex = [daypart.uvIndex?.[base], daypart.uvIndex?.[base + 1]];
         const uvDesc2 = [daypart.uvDescription?.[base], daypart.uvDescription?.[base + 1]];
-        const cloudCover = [daypart.cloudCoverPhrase?.[base], daypart.cloudCoverPhrase?.[base + 1]];
         const snowQpf = [daypart.qpfSnow?.[base], daypart.qpfSnow?.[base + 1]];
         const heatIdx   = [daypart.temperatureHeatIndex?.[base],  daypart.temperatureHeatIndex?.[base + 1]];
         const windChill = [daypart.temperatureWindChill?.[base],  daypart.temperatureWindChill?.[base + 1]];
@@ -9158,7 +9235,6 @@
                 humidity[part] != null ? '<span style="opacity:0.55">\uD83D\uDCA7 Humidity</span><span>' + humidity[part] + '%</span>' : null,
                 (uvIndex[part] != null && uvIndex[part] > 0) ? '<span style="opacity:0.55">\u2600\uFE0F UV Index</span><span>' + uvIndex[part] + (uvDesc2[part] ? ' \u2014 ' + uvDesc2[part] : '') + '</span>' : null,
                 feelsLikeParts[part] != null ? '<span style="opacity:0.55">\uD83C\uDF21\uFE0F Feels Like</span><span>' + _fmtTemp(feelsLikeParts[part]) + '</span>' : null,
-                cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + (_isMetric() ? (snowQpf[part] * 25.4).toFixed(1) + ' mm' : snowQpf[part] + '"') + '</span>' : null
             ].filter(Boolean);
             html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + (_isMetric() && lohi[0] !== '--' ? Math.round((lohi[0]-32)*5/9) + '\u00b0' : lohi[0] + '\u00b0') : 'Low: ' + (_isMetric() && lohi[1] !== '--' ? Math.round((lohi[1]-32)*5/9) + '\u00b0' : lohi[1] + '\u00b0')) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + (_isMetric() ? (qpf[part] * 25.4).toFixed(1) + ' mm' : qpf[part] + '"') : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
