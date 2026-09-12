@@ -1746,6 +1746,9 @@
     // The Worker still requires a fresh, server-validated token for each POST.
     var _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
     var _turnstileToken = '';
+    // Turnstile tokens are short-lived and single-use. Keep the issue time so
+    // a user who leaves the report form open does not submit an expired token.
+    var _turnstileTokenIssuedAt = 0;
     var _turnstileWidgetId = null;
     var _turnstileSilentWidgetId = null;
     var _turnstileSilentRequestActive = false;
@@ -2785,11 +2788,15 @@
     // ——— Cloudflare Turnstile Gate ———
     function invalidateTurnstile() {
         _turnstileToken = '';
+        _turnstileTokenIssuedAt = 0;
     }
 
     function _finishSilentTurnstileRequest(token, error) {
         _turnstileSilentRequestActive = false;
-        if (token) _turnstileToken = token;
+        if (token) {
+            _turnstileToken = token;
+            _turnstileTokenIssuedAt = Date.now();
+        }
         var waiters = _turnstileSilentWaiters.splice(0);
         waiters.forEach(function(waiter) {
             if (error) waiter.reject(error);
@@ -2838,7 +2845,12 @@
     // Every later POST still receives a fresh one-use token, but renewal is
     // invisible unless Cloudflare itself decides an interaction is necessary.
     function getTurnstileTokenForReport() {
-        if (_turnstileToken) return Promise.resolve(_turnstileToken);
+        // Renew before the provider's token lifetime expires. This avoids a
+        // confusing 403 from the Worker when the report form was left open.
+        if (_turnstileToken && Date.now() - _turnstileTokenIssuedAt < 120000) {
+            return Promise.resolve(_turnstileToken);
+        }
+        if (_turnstileToken) invalidateTurnstile();
         if (!_turnstileVerified) {
             showTurnstileGate();
             return Promise.resolve(null);
@@ -2890,6 +2902,7 @@
                 action: 'report_gate',
                 callback: function(token) {
                     _turnstileToken = token;
+                        _turnstileTokenIssuedAt = Date.now();
                     _turnstileVerified = true;
                     localStorage.setItem('turnstile_verified', 'true');
                     if (statusEl) {
@@ -11129,8 +11142,26 @@
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
             } else {
+                // The Worker uses 403 specifically when Turnstile rejects or
+                // has expired. Re-open the visible gate so the user can
+                // recover without guessing why the submission failed.
+                var errorBody = '';
+                try { errorBody = await res.text(); } catch (_) {}
+                var needsVerification = res.status === 403 &&
+                    /turnstile verification required|verification failed|verification expired/i.test(errorBody);
                 invalidateTurnstile();
-                if (status) { status.textContent = 'Report failed. Please try again.'; status.style.color = 'var(--danger)'; }
+                if (needsVerification) {
+                    _turnstileVerified = false;
+                    localStorage.removeItem('turnstile_verified');
+                    if (status) {
+                        status.textContent = 'Verification expired. Please complete it again.';
+                        status.style.color = 'var(--warning)';
+                    }
+                    showTurnstileGate();
+                } else if (status) {
+                    status.textContent = 'Report failed. Please try again.';
+                    status.style.color = 'var(--danger)';
+                }
             }
         } catch(e) {
             invalidateTurnstile();
