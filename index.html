@@ -226,6 +226,7 @@
             width: 100vw;
             max-width: none;
             height: 100vh;
+            height: 100dvh;
             margin: 0;
             padding: 0;
             border: 0;
@@ -241,11 +242,13 @@
         html.radar-route #reporting-tab {
             display: block !important;
             height: 100vh;
+            height: 100dvh;
             overflow: hidden;
         }
         html.radar-route #reporting-map-card {
             position: relative;
             height: 100vh;
+            height: 100dvh;
             margin: 0;
             padding: 0;
             border: 0;
@@ -255,15 +258,16 @@
         html.radar-route #reporting-map-card .toolkit-header {
             position: relative;
             z-index: 1200;
-            height: 48px;
+            height: calc(48px + env(safe-area-inset-top));
             box-sizing: border-box;
             margin: 0;
-            padding: 0 12px;
+            padding: env(safe-area-inset-top) 12px 0;
             background: rgba(2, 8, 14, 0.94);
             border-bottom: 1px solid rgba(255,255,255,0.12);
         }
         html.radar-route #reporting-map {
-            height: calc(100vh - 48px);
+            height: calc(100vh - 48px - env(safe-area-inset-top));
+            height: calc(100dvh - 48px - env(safe-area-inset-top));
             margin: 0;
             border-radius: 0;
         }
@@ -285,7 +289,7 @@
             position: absolute;
             left: 12px;
             right: 12px;
-            bottom: 12px;
+            bottom: calc(12px + env(safe-area-inset-bottom));
             z-index: 1000;
             pointer-events: none;
         }
@@ -2419,6 +2423,7 @@
                 window._locFromGPS = true;
                 if (moved) {
                     _updateLivePanelCity(lat, lon);
+                    recalculateReportPinForLocation(lat, lon, true);
                     loadAll();
                 }
             }, function() {
@@ -3163,6 +3168,7 @@
                 const cityBox = document.getElementById('cityInput');
                 if (cityBox) cityBox.value = '';
                 window._locFromGPS = true;
+                recalculateReportPinForLocation(lat, lon, true);
                 updateLocation();
             }, function() { alert('GPS Access Denied'); });
         }
@@ -10528,15 +10534,9 @@
     }
 
     function saveReportingMapView() {
-        if (!reportingMap) return;
-        const center = reportingMap.getCenter();
-        try {
-            localStorage.setItem('skymonitor_reporting_view_v2', JSON.stringify({
-                lat: center.lat,
-                lon: center.lng,
-                zoom: reportingMap.getZoom()
-            }));
-        } catch (e) {}
+        // The map viewport is intentionally session-only. A fresh reporting
+        // map must start at the current adjusted report pin, never at a
+        // previously saved (possibly exact) location.
     }
 
     function setRadarRouteState(isRadar) {
@@ -10618,27 +10618,10 @@
 
     function findMeReporting() {
         if (!navigator.geolocation) { alert('Geolocation not supported by your browser.'); return; }
-        const privacyMode = document.getElementById('privacy-mode-cb')?.checked;
         navigator.geolocation.getCurrentPosition(function(pos) {
             const rawLa = pos.coords.latitude;
             const rawLo = pos.coords.longitude;
-            if (privacyMode) {
-                // Privacy Mode: resolve a named neighborhood/community center
-                // first, then fall back to the containing city or town. Never
-                // use the raw reverse-geocoder point as the report location.
-                moveReportPinToPrivacyCenter(rawLa, rawLo, true);
-            } else {
-                ++privacySnapGeneration;
-                // Default: apply ~200m random offset for basic privacy
-                const offsetMeters = 150 + Math.random() * 100;
-                const angle = Math.random() * 2 * Math.PI;
-                const dLat = (offsetMeters * Math.cos(angle)) / 111000;
-                const dLon = (offsetMeters * Math.sin(angle)) / (111000 * Math.cos(rawLa * Math.PI / 180));
-                const la = parseFloat((rawLa + dLat).toFixed(5));
-                const lo = parseFloat((rawLo + dLon).toFixed(5));
-                setReportPin(la, lo);
-                if (reportingMap) reportingMap.setView([la, lo], reportingMap.getZoom());
-            }
+            recalculateReportPinForLocation(rawLa, rawLo, true);
         }, function() {
             alert('Could not get your location. Check browser permissions.');
         }, { enableHighAccuracy: true, timeout: 8000 });
@@ -10666,6 +10649,31 @@
         const dLat = (offsetMeters * Math.cos(angle)) / 111000;
         const dLon = (offsetMeters * Math.sin(angle)) / (111000 * Math.cos(rawLat * Math.PI / 180));
         return { la: parseFloat((rawLat + dLat).toFixed(5)), lo: parseFloat((rawLon + dLon).toFixed(5)) };
+    }
+
+    function recalculateReportPinForLocation(rawLat, rawLon, recenterMap) {
+        rawLat = parseFloat(rawLat);
+        rawLon = parseFloat(rawLon);
+        if (!isFinite(rawLat) || !isFinite(rawLon)) return;
+
+        const privacyCb = document.getElementById('privacy-mode-cb');
+        const privacyMode = privacyCb
+            ? privacyCb.checked
+            : localStorage.getItem('report_privacy_mode') === '1';
+
+        if (privacyMode) {
+            // Privacy Mode resolves a named neighborhood/community center
+            // rather than exposing the raw GPS coordinate.
+            moveReportPinToPrivacyCenter(rawLat, rawLon, false);
+            return;
+        }
+
+        ++privacySnapGeneration;
+        const offset = applyPrivacyOffset(rawLat, rawLon);
+        setReportPin(offset.la, offset.lo);
+        if (recenterMap && reportingMap) {
+            reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
+        }
     }
 
     function moveReportPinToPrivacyCenter(rawLat, rawLon, showError) {
@@ -10718,18 +10726,13 @@
             lon: reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
-        try {
-            const savedView = JSON.parse(localStorage.getItem('skymonitor_reporting_view_v2') || 'null');
-            if (savedView && isFinite(Number(savedView.lat)) && isFinite(Number(savedView.lon)) &&
-                isFinite(Number(savedView.zoom))) {
-                initialView = {
-                    lat: Number(savedView.lat),
-                    lon: Number(savedView.lon),
-                    zoom: Math.max(2, Math.min(18, Number(savedView.zoom)))
-                };
-            }
-        } catch (e) {}
-        reportingMap = L_ref.map('reporting-map', { zoomControl: true })
+        reportingMap = L_ref.map('reporting-map', {
+            zoomControl: true,
+            preferCanvas: true,
+            zoomAnimation: false,
+            fadeAnimation: false,
+            markerZoomAnimation: false
+        })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
         reportingMap.on('moveend zoomend', saveReportingMapView);
@@ -10759,7 +10762,13 @@
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
         customSkyAlertLayer = L_ref.layerGroup();
-        lsrLayer = L_ref.layerGroup().addTo(reportingMap);
+        lsrLayer = L_ref.markerClusterGroup({
+            maxClusterRadius: 42,
+            disableClusteringAtZoom: 10,
+            chunkedLoading: true,
+            chunkInterval: 50,
+            chunkDelay: 10
+        }).addTo(reportingMap);
 
         // Restore saved toggle state — sync iOS toggle checkboxes
         if (!radarVisible) {
@@ -10795,6 +10804,9 @@
         if (_privacyCb) _privacyCb.checked = localStorage.getItem('report_privacy_mode') === '1';
         userReportLayer = L_ref.markerClusterGroup({
             maxClusterRadius: 40,
+            chunkedLoading: true,
+            chunkInterval: 50,
+            chunkDelay: 10,
             iconCreateFunction: function(cluster) {
                 const count = cluster.getChildCount();
                 return L_ref.divIcon({
@@ -10872,6 +10884,10 @@
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
         syncReportingMapLayers();
+        // These feeds populate independent layers. Fetch them concurrently so
+        // a slow custom-alert or report endpoint does not hold up the others.
+        const customAlertsPromise = loadCustomSkyAlerts();
+        const mapReportsPromise = loadMapReports();
 
         // NWS Short-Fused alert polygons via IEM Storm-Based Warnings (always has polygon geometry)
         try {
@@ -10923,10 +10939,7 @@
             }
         } catch(e) {}
 
-        // Active SkyMonitor custom alert polygons from the Cloudflare Worker
-        await loadCustomSkyAlerts();
-
-        await loadMapReports();
+        await Promise.all([customAlertsPromise, mapReportsPromise]);
         syncReportingMapLayers();
     }
 
@@ -12816,7 +12829,6 @@
                 if (reportingMap) {
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
-                    loadReportingMapData();
                 }
             }, 80);
             window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
