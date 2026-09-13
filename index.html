@@ -3090,7 +3090,6 @@
         localStorage.setItem('alerts_language', val);
         document.getElementById('opt-lang-default')?.classList.toggle('active', val === 'default');
         document.getElementById('opt-lang-en')?.classList.toggle('active', val === 'en');
-        window.alertTranslationCache = {};
         fetchAlerts();
     }
 
@@ -4265,8 +4264,11 @@
         var requestSignal = window._weatherRequestController
             ? window._weatherRequestController.signal : undefined;
         var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
-            + '&lon=' + encodeURIComponent(requestLon == null ? lon : requestLon)
-            + '&language=en';
+            + '&lon=' + encodeURIComponent(requestLon == null ? lon : requestLon);
+        // MeteoAlarm provides the translation itself. "Default" leaves the
+        // language unset so the originating national service's default text is
+        // used; "English" explicitly requests the API's English info block.
+        if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
         var res = await _weatherFetch(url, {
             cache: 'no-store',
             signal: requestSignal
@@ -4444,7 +4446,6 @@
     async function renderPirateAlerts(stack, banner) {
         const alerts = window.pirateAlerts || [];
         if (!alerts.length) { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; return; }
-        window.alertTranslationCache = window.alertTranslationCache || {};
         const _severityRank = { 'extreme': 4, 'severe': 3, 'moderate': 2, 'minor': 1 };
         const _topSeverity = alerts.reduce(function(top, a) {
             return (_severityRank[(a.severity || '').toLowerCase()] || 0) > (_severityRank[(top.severity || '').toLowerCase()] || 0) ? a : top;
@@ -4453,20 +4454,8 @@
         banner.style.display = 'block'; banner.style.background = _bannerColor;
         banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '');
         stack.innerHTML = '';
-        const _doTranslate = localStorage.getItem('alerts_language') === 'en';
         for (const alert of alerts) {
-            const _rawTitle = alert.title || 'Weather Alert';
-            let title = _rawTitle;
-            if (_doTranslate) {
-                if (window.alertTranslationCache[_rawTitle]) title = window.alertTranslationCache[_rawTitle];
-                else {
-                    try {
-                        const tr = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(_rawTitle));
-                        const td = await tr.json();
-                        if (td?.[0]?.[0]?.[0]) { window.alertTranslationCache[_rawTitle] = td[0][0][0]; title = td[0][0][0]; }
-                    } catch(e) {}
-                }
-            }
+            let title = alert.title || 'Weather Alert';
             const _nowMs = Date.now();
             const _onsetMs = alert.time ? alert.time * 1000 : 0;
             const _inEffect = !_onsetMs || _onsetMs <= _nowMs;
@@ -4483,21 +4472,6 @@
                       ? '<div class="alert-timing" style="font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;">Expires ' + escapeHtml(_expiresText) + '</div>'
                      : '');
             let desc = alert.description || '';
-            if (desc && _doTranslate) {
-                const cacheKey = 'desc:' + desc.slice(0, 80);
-                if (window.alertTranslationCache[cacheKey]) {
-                    desc = window.alertTranslationCache[cacheKey];
-                } else {
-                    try {
-                        const tr2 = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(desc));
-                        const td2 = await tr2.json();
-                        if (td2?.[0]) {
-                            const translated = td2[0].map(function(s) { return s?.[0] || ''; }).join('');
-                            if (translated) { window.alertTranslationCache[cacheKey] = translated; desc = translated; }
-                        }
-                    } catch(e) {}
-                }
-            }
             title = _localizePirateAlertUnits(title);
             desc = _localizePirateAlertUnits(desc);
             const isTruncated = desc.length > 140;
@@ -8411,7 +8385,7 @@
                 if ((_intlSeverityRank[_sev] || 0) > (_intlSeverityRank[_intlMaxSeverity] || 0)) _intlMaxSeverity = _sev;
                 score += _intlSeverityPoints[_sev] || 2;
                 var _factorTitle = alert.title || (_sev.charAt(0).toUpperCase() + _sev.slice(1) + ' alert');
-                 var _translatedFactorTitle = (window.alertTranslationCache || {})[_factorTitle] || _factorTitle;
+                 var _translatedFactorTitle = _factorTitle;
                  _translatedFactorTitle = _localizePirateAlertUnits(_translatedFactorTitle);
                  factorList.push({ label: _translatedFactorTitle, color: _meteoAlarmColor(_sev) });
             });
