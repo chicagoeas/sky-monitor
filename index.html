@@ -4372,6 +4372,13 @@
             seen[key] = true;
             return true;
         });
+        // Do not render records that have already ended. Some international
+        // feeds keep recently expired CAP notices in their response, and the
+        // active-window query is not consistent across national services.
+        alerts = alerts.filter(function(a) {
+            var expiresMs = _meteoAlarmTimestamp(a.expires);
+            return !expiresMs || expiresMs > Date.now();
+        });
         window.meteoAlarmAlerts = alerts;
         // Keep legacy consumers (threat scoring and offline state from older
         // builds) fed while the visible provider is now explicitly MeteoAlarm.
@@ -4394,8 +4401,8 @@
         const topSeverity = _meteoAlarmSeverity(topAlert);
         const topColor = _meteoAlarmColor(topSeverity);
         const topTextColor = topSeverity === 'moderate' ? '#111' : '#fff';
-        const topStart = topAlert.onset ? new Date(topAlert.onset).getTime() : 0;
-        const topEnd = topAlert.expires ? new Date(topAlert.expires).getTime() : 0;
+        const topStart = _meteoAlarmTimestamp(topAlert.onset);
+        const topEnd = _meteoAlarmTimestamp(topAlert.expires);
         const topActive = !topStart || topStart <= Date.now();
         const topPrefix = topAlert.title || 'European weather alert';
         banner.className = '';
@@ -4409,7 +4416,7 @@
                     if (alertIntervalGen !== _gen) { clearInterval(_iv); return; }
                     const diff = _end - Date.now();
                     if (diff <= 0) {
-                        banner.innerText = _prefix + ' (EXPIRED)';
+                        banner.style.display = 'none';
                         clearInterval(_iv);
                     } else {
                         banner.innerText = _prefix + ' - Expires in ' + getFormattedTime('advisory', diff);
@@ -5662,6 +5669,15 @@
                 // visible and the next refresh will try again.
                 return false;
             }
+            // The active endpoint normally excludes expired alerts, but
+            // discard them defensively before selecting the banner and
+            // computing threat state.
+            data.features = data.features.filter(function(feature) {
+                var props = feature && feature.properties || {};
+                var rawEnd = props.ends || props.expires;
+                var endMs = rawEnd ? new Date(rawEnd).getTime() : 0;
+                return !endMs || isNaN(endMs) || endMs > Date.now();
+            });
             const _expandedAlertIds = new Set();
             const _savedAlertScrolls = {};
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
@@ -5725,7 +5741,7 @@
                             const _iv = setInterval(function() {
                                 if (alertIntervalGen !== _gen) { clearInterval(_iv); return; }
                                 const diff = _exp - new Date().getTime();
-                                if (diff <= 0) { banner.innerText = _prefix + ' (EXPIRED)'; clearInterval(_iv); }
+                                if (diff <= 0) { banner.style.display = 'none'; clearInterval(_iv); }
                                 else banner.innerText = _prefix + ' - Expires in ' + getFormattedTime(_evt, diff);
                             }, 1000);
                             alertIntervalId = _iv;
@@ -6050,6 +6066,14 @@
         }
     }
 
+    function _alertLocationOffsetHours() {
+        var offsetHours = Number(window.pirateTimezoneOffset);
+        if (Number(stationTzOffset)) {
+            offsetHours = Number(stationTzOffset) / 3600;
+        }
+        return isFinite(offsetHours) ? offsetHours : 0;
+    }
+
     function _meteoAlarmTimestamp(value) {
         if (Array.isArray(value)) value = value[0];
         if (typeof value === 'number' && isFinite(value)) {
@@ -6062,7 +6086,18 @@
             var numeric = Number(raw);
             return Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric;
         }
-        var parsed = Date.parse(raw);
+        var parsed;
+        // CAP feeds are supposed to include an offset, but some national
+        // services return a timezone-less local wall-clock value. Parsing that
+        // string directly makes the browser assume the user's timezone, which
+        // can shift the alert across its expiration boundary. Interpret such
+        // values in the selected location's timezone instead.
+        if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) {
+            parsed = Date.parse(raw);
+        } else {
+            var asUtc = Date.parse(raw + 'Z');
+            parsed = asUtc - (_alertLocationOffsetHours() * 3600000);
+        }
         return isNaN(parsed) ? 0 : parsed;
     }
 
@@ -6089,7 +6124,7 @@
         var d = new Date(isoStr);
         if (isNaN(d.getTime())) return '';
         // Shift to location's local time by applying its UTC offset
-        var offsetMs = (window.pirateTimezoneOffset || 0) * 3600000;
+        var offsetMs = _alertLocationOffsetHours() * 3600000;
         var localMs = d.getTime() + offsetMs;
         var fakeDate = new Date(localMs);
         var timeStr = fakeDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
@@ -8462,8 +8497,8 @@
             var _intlSeverityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
             window.meteoAlarmAlerts.forEach(function(alert) {
                 var _nowMsIntl = Date.now();
-                var _startsIntl = alert.onset ? new Date(alert.onset).getTime() : 0;
-                var _endsIntl = alert.expires ? new Date(alert.expires).getTime() : 0;
+                var _startsIntl = _meteoAlarmTimestamp(alert.onset);
+                var _endsIntl = _meteoAlarmTimestamp(alert.expires);
                 if ((_startsIntl && _startsIntl > _nowMsIntl) || (_endsIntl && _endsIntl <= _nowMsIntl)) return;
                 var _sev = _meteoAlarmSeverity(alert);
                 // A few international feeds encode the color level only in
