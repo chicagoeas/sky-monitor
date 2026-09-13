@@ -4380,8 +4380,13 @@
                 fullContent += '<div style="font-weight:bold;margin:8px 0 3px;font-size:0.88em;">'
                     + 'PRECAUTIONARY/PREPAREDNESS ACTIONS</div>' + formatNWSText(alert.instruction);
             }
-            var timing = '<div style="display:inline-block;font-size:0.72em;background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">'
-                + escapeHtml(_meteoAlarmTimingText(alert)) + '</div>';
+            var timingText = _meteoAlarmTimingText(alert);
+            var timing = timingText
+                ? '<div style="display:inline-block;font-size:0.72em;'
+                    + (timingText.indexOf('In effect ') === 0 ? 'font-weight:600;background:rgba(0,0,0,0.32);' : 'background:rgba(0,0,0,0.22);')
+                    + 'border-radius:4px;padding:2px 7px;margin-top:4px;">'
+                    + escapeHtml(timingText) + '</div>'
+                : '';
             var source = /^https?:\/\//i.test(alert.sourceUrl || '') ? alert.sourceUrl : '';
             var cardTag = source ? 'a href="' + escapeHtml(source) + '" target="_blank" rel="noopener noreferrer"' : 'div';
             var cardClose = source ? '</a>' : '</div>';
@@ -6010,42 +6015,20 @@
         return isNaN(parsed) ? 0 : parsed;
     }
 
-    function _meteoAlarmRelative(ms) {
-        var minutes = Math.max(1, Math.round(Math.abs(ms) / 60000));
-        if (minutes < 60) return minutes + (minutes === 1 ? ' minute' : ' minutes');
-        var hours = Math.floor(minutes / 60);
-        var days = Math.floor(hours / 24);
-        if (days > 0) {
-            var remainderHours = hours % 24;
-            return days + (days === 1 ? ' day' : ' days') +
-                (remainderHours ? ' ' + remainderHours + (remainderHours === 1 ? ' hour' : ' hours') : '');
-        }
-        return hours + (hours === 1 ? ' hour' : ' hours');
-    }
-
     function _meteoAlarmTimingText(alert) {
         var now = Date.now();
         var onsetMs = _meteoAlarmTimestamp(alert && alert.onset);
         var expiresMs = _meteoAlarmTimestamp(alert && alert.expires);
-        var parts = [];
+
+        // Match the NWS alert cards exactly: future alerts show their onset;
+        // active alerts show only their expiration.
         if (onsetMs > now) {
-            parts.push('Starts in ' + _meteoAlarmRelative(onsetMs - now) +
-                ' (' + _fmtAlertTime(new Date(onsetMs).toISOString()) + ')');
-        } else if (onsetMs) {
-            parts.push('In effect since ' +
-                _fmtAlertTime(new Date(onsetMs).toISOString()));
-        } else {
-            parts.push('Start time unavailable');
+            return 'In effect ' +
+                _fmtAlertTime(new Date(onsetMs).toISOString());
         }
-        if (expiresMs > now) {
-            parts.push('Expires in ' + _meteoAlarmRelative(expiresMs - now) +
-                ' (' + _fmtAlertTime(new Date(expiresMs).toISOString()) + ')');
-        } else if (expiresMs) {
-            parts.push('Expired ' + _fmtAlertTime(new Date(expiresMs).toISOString()));
-        } else {
-            parts.push('Expiration unavailable');
-        }
-        return parts.join(' \u00B7 ');
+        return expiresMs && !isNaN(expiresMs)
+            ? 'Expires ' + _fmtAlertTime(new Date(expiresMs).toISOString())
+            : '';
     }
 
     // Format an ISO alert time as "today at 2:00 PM", "tomorrow at 2:00 PM", or "Jun 17 at 2:00 PM"
