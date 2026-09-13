@@ -4494,13 +4494,18 @@
         if (humidity <= 1) humidity *= 100;
         var phrase = String(dp.wxPhraseLong?.[j] || '').toLowerCase();
         var narrative = String(dp.narrative?.[j] || '').toLowerCase();
-        var hasThunder = /thunder|t-storm|tstorm|tstm/.test(phrase + ' ' + narrative);
+        var precipText = phrase + ' ' + narrative;
+        var hasThunder = /thunder|t-storm|tstorm|tstm/.test(precipText);
         // Do not let a passing mention of thunderstorms dominate the score.
         // TWC's probability must be above 30% before the forecast counts as
         // meaningful storm risk.
         var stormRisk = hasThunder && chance > 30;
-        var hasFrozen = /snow|sleet|ice pellet|freezing rain/.test(phrase);
-        var hasRain = /rain|drizzle|shower/.test(phrase);
+        var hasFrozen = /snow|sleet|ice pellet|freezing rain/.test(precipText);
+        var hasRain = /rain|drizzle|shower/.test(precipText);
+        // TWC's daily narrative consistently uses "heavy rainfall" when the
+        // forecast calls for genuinely heavy rain. Keep this separate from
+        // ordinary rain so a high rain probability is not overstated.
+        var hasHeavyRain = /heavy rainfall/.test(precipText);
 
         var score = 100;
         if (chance >= 80) score -= 50;
@@ -4533,19 +4538,27 @@
         if (humidity > 85 && temp > 70) score -= 10;
         else if (humidity > 75 && temp > 75) score -= 5;
         else if (humidity < 20) score -= 4;
-        // Ordinary rain is inconvenient, not automatically unsafe. Keep a
-        // moderate rain-only forecast from collapsing into the danger range,
-        // while allowing dangerous heat or high winds to remain influential.
-        if (hasRain && !stormRisk && chance < 70 && feels < 103 && effectiveWind <= 40) {
-            score = Math.max(score, 60);
+        // Rain is inconvenient, not automatically unsafe. Calibrate ordinary
+        // rain separately from genuinely heavy rain, while allowing dangerous
+        // heat or high winds to remain influential.
+        if (hasRain && !stormRisk && feels < 103 && effectiveWind <= 40) {
+            if (hasHeavyRain) {
+                score = Math.max(score, 60);
+            } else if (chance >= 80) {
+                score = Math.max(score, 68);
+            } else if (chance >= 70) {
+                score = Math.max(score, 65);
+            } else if (chance >= 40) {
+                score = Math.max(score, 60);
+            }
         }
         // Calibrate ordinary storm forecasts by probability. A low-chance
         // mention should not produce an alarmingly low score, while storms
         // above 50% should progressively pull the score down. Active severe
         // weather warnings still use the safety overrides below.
         if (stormRisk) {
-            if (chance < 50) score = Math.max(score, 64);
-            else if (chance < 70) score = Math.max(score, 56);
+            if (chance < 50) score = Math.max(score, 60);
+            else if (chance < 70) score = Math.max(score, 55);
             else score = Math.max(score, 50);
         }
         // Genuine score floor: forecast conditions alone can never produce a
@@ -4835,8 +4848,10 @@
             desc = 'Freezing temperatures. Dress warmly before heading out.';
         } else if (minFeels < 45) {
             desc = 'Chilly — jacket required. Otherwise manageable.';
-        } else if (rainSeverityChance >= 80) {
+        } else if (rainSeverityChance >= 80 && hasHeavyRain) {
             desc = 'Heavy rain very likely' + (rainWindow ? ' ' + rainWindow : '') + '. Best to stay inside.';
+        } else if (rainSeverityChance >= 80) {
+            desc = 'Rain very likely' + (rainWindow ? ' ' + rainWindow : '') + '. Plan accordingly.';
         } else if (avgScore >= 75 && hasRain) {
             desc = 'Mostly good, but watch for rain' + (rainWindow ? ' ' + rainWindow : '') + '.';
         } else if (avgScore >= 75) {
@@ -10604,7 +10619,7 @@
         // The Integrate User Reports and Alerts setting controls whether
         // SkyMonitor custom alerts participate in the home page, threat level,
         // hazards, and reporting map.
-        if (localStorage.getItem('user_reports_enabled') !== 'true' || window.isOutsideUS) {
+        if (localStorage.getItem('user_reports_enabled') !== 'true') {
             window.customSkyThreatAlerts = [];
             window.customSkyActiveFeatures = [];
             window.customSkyActiveMDs = [];
