@@ -4287,7 +4287,20 @@
         // can therefore return repeated records with the same CAP identifier.
         var seen = {};
         alerts = alerts.filter(function(a) {
-            var key = a.id + '|' + a.title;
+            // A provider feature id can identify a polygon rather than the
+            // underlying CAP warning. Deduplicate by the warning content so
+            // repeated area polygons render as one card, while different
+            // regions or validity windows remain separate.
+            var key = [
+                a.countryCode,
+                a.title || a.headline || a.event,
+                a.areaDesc,
+                a.onset,
+                a.expires
+            ].map(function(value) {
+                return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            }).join('|');
+            if (!key.replace(/\|/g, '')) key = a.id;
             if (seen[key]) return false;
             seen[key] = true;
             return true;
