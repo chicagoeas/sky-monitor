@@ -3340,6 +3340,42 @@
     }
 
     // v1.0.4 FIX: Button BEFORE text div; proper HTML bullet rendering
+    function captureAlertViewState() {
+        const state = {
+            pageX: window.scrollX || 0,
+            pageY: window.scrollY || 0,
+            expanded: {},
+            innerScroll: {}
+        };
+        document.querySelectorAll('.alert-full-text').forEach(function(el) {
+            if (el.style.display === 'block' && el.id) {
+                const id = el.id.replace('full-', '');
+                state.expanded[id] = true;
+                state.innerScroll[id] = el.scrollTop;
+            }
+        });
+        return state;
+    }
+
+    function restoreAlertViewState(state) {
+        if (!state) return;
+        Object.keys(state.expanded || {}).forEach(function(id) {
+            const el = document.getElementById('full-' + id);
+            const btn = document.getElementById('btn-' + id);
+            if (!el || !btn) return;
+            el.style.display = 'block';
+            btn.textContent = '\u25b2 Show less';
+            el.scrollTop = state.innerScroll[id] || 0;
+        });
+        requestAnimationFrame(function() {
+            window.scrollTo({
+                left: state.pageX || 0,
+                top: state.pageY || 0,
+                behavior: 'auto'
+            });
+        });
+    }
+
     function toggleAlertText(id) {
         const el = document.getElementById('full-' + id);
         const btn = document.getElementById('btn-' + id);
@@ -4214,7 +4250,8 @@
         var a = raw || {};
         var p = a.properties || a;
         var info = p.info || a.info || {};
-        var source = a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
+        var source = a.officialUrl || a.official_url || a.web || p.web ||
+            a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
         var severity = _meteoAlarmSeverity(Object.assign({}, a, p, info));
         var hazard = _meteoAlarmText(
             a.hazard || a.awarenessType || a.awareness_type ||
@@ -4254,6 +4291,36 @@
             details: details,
             geometry: a.geometry || null
         };
+    }
+
+    function _meteoAlarmOfficialUrl(alert) {
+        var candidates = [
+            alert && (alert.officialUrl || alert.official_url || alert.web),
+            alert && alert.sourceUrl,
+            alert && alert.url
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            var candidate = String(candidates[i] || '').trim();
+            if (!/^https?:\/\//i.test(candidate)) continue;
+            try {
+                var parsed = new URL(candidate);
+                var path = (parsed.pathname || '').toLowerCase();
+                // MeteoGate supplies signed XML/JSON archive links for CAP
+                // records. Those are data downloads, not user-facing sources.
+                if (path.endsWith('.xml') || path.endsWith('.json')) continue;
+                if (parsed.hostname.toLowerCase().includes('digitaloceanspaces.com') &&
+                    path.includes('/api/archive/')) continue;
+                return parsed.href;
+            } catch (e) {}
+        }
+
+        // ARSO is Slovenia's official warning authority. For providers that
+        // expose only an XML archive link, send the user to the official
+        // MeteoAlarm live page instead of downloading an unknown file.
+        if (String(alert && alert.countryCode || '').toUpperCase() === 'SI') {
+            return 'https://meteo.arso.gov.si/met/sl/warning/';
+        }
+        return 'https://www.meteoalarm.org/en/live/';
     }
 
     // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
@@ -4352,15 +4419,7 @@
             })(alertIntervalGen, topEnd, '\u26A0\uFE0F ' + topPrefix);
         }
 
-        const expandedIds = new Set();
-        const savedScrolls = {};
-        document.querySelectorAll('.alert-full-text').forEach(function(el) {
-            if (el.style.display === 'block' && el.id) {
-                const id = el.id.replace('full-', '');
-                expandedIds.add(id);
-                savedScrolls[id] = el.scrollTop;
-            }
-        });
+        const alertViewState = captureAlertViewState();
         stack.innerHTML = '';
         alerts.slice().sort(function(a, b) {
             return (severityRank[_meteoAlarmSeverity(b)] || 0) -
@@ -4387,7 +4446,7 @@
                     + 'border-radius:4px;padding:2px 7px;margin-top:4px;">'
                     + escapeHtml(timingText) + '</div>'
                 : '';
-            var source = /^https?:\/\//i.test(alert.sourceUrl || '') ? alert.sourceUrl : '';
+            var source = _meteoAlarmOfficialUrl(alert);
             var cardTag = source ? 'a href="' + escapeHtml(source) + '" target="_blank" rel="noopener noreferrer"' : 'div';
             var cardClose = source ? '</a>' : '</div>';
             var icon = /^https?:\/\//i.test(alert.iconUrl || '')
@@ -4400,15 +4459,7 @@
                 + '</div>' + (fullContent ? '<div id="full-' + id + '" class="alert-full-text">' + fullContent + '</div>' : '')
                 + '</div>' + cardClose;
         });
-        expandedIds.forEach(function(id) {
-            var el = document.getElementById('full-' + id);
-            var btn = document.getElementById('btn-' + id);
-            if (el && btn) {
-                el.style.display = 'block';
-                btn.textContent = '\u25B2 Show less';
-                if (savedScrolls[id]) el.scrollTop = savedScrolls[id];
-            }
-        });
+        restoreAlertViewState(alertViewState);
         computeOutdoorScore();
         computeFloodOutlook();
     }
