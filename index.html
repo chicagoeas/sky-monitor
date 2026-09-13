@@ -579,6 +579,7 @@
         .spc-btn-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0; }
         .sky-hd { display:flex; justify-content:space-between; align-items:center; font-weight:700; color:#f1f5f9; font-size:0.92em; margin-bottom:12px; letter-spacing:0.2px; }
         .sky-hd::after { content:'›'; color:#4b5563; font-size:1.15em; font-weight:400; }
+        .analytics-header-row .sky-hd::after { display:none; }
         #minute-heading:empty { display:none; }
         #hourly-outlook-title { display:flex; justify-content:space-between; align-items:center; }
         #hourly-outlook-title::after { content:'›'; color:#4b5563; font-size:1.35em; font-weight:400; line-height:1; margin-left:10px; }
@@ -1696,11 +1697,6 @@
                         <option value="mixed">Mixed</option>
                         <option value="line">Lines</option>
                         <option value="bar">Bars</option>
-                    </select>
-                    <label class="analytics-control-label" for="analytics-precip-mode">Precip</label>
-                    <select id="analytics-precip-mode" class="analytics-select" onchange="setAnalyticsPrecipMode(this.value)">
-                        <option value="cumulative">Cumulative</option>
-                        <option value="hourly">Hourly</option>
                     </select>
                 </div>
                 <div class="analytics-control-group analytics-metric-controls">
@@ -8579,8 +8575,6 @@
         if ([6, 12, 24].indexOf(range) === -1) range = 12;
         var chartMode = localStorage.getItem('analytics_chart_mode') || 'mixed';
         if (['mixed', 'line', 'bar'].indexOf(chartMode) === -1) chartMode = 'mixed';
-        var precipMode = localStorage.getItem('analytics_precip_mode') || 'cumulative';
-        if (['cumulative', 'hourly'].indexOf(precipMode) === -1) precipMode = 'cumulative';
         var metrics = { pressure: true, dewpoint: true, wind: true, precip: true };
         try {
             var savedMetrics = JSON.parse(localStorage.getItem('analytics_metrics') || 'null');
@@ -8591,13 +8585,12 @@
             }
         } catch (e) {}
         if (!Object.keys(metrics).some(function(key) { return metrics[key]; })) metrics.pressure = true;
-        return { range: range, chartMode: chartMode, precipMode: precipMode, metrics: metrics };
+        return { range: range, chartMode: chartMode, metrics: metrics };
     }
 
     function _saveAnalyticsConfig(config) {
         localStorage.setItem('analytics_range', String(config.range));
         localStorage.setItem('analytics_chart_mode', config.chartMode);
-        localStorage.setItem('analytics_precip_mode', config.precipMode);
         localStorage.setItem('analytics_metrics', JSON.stringify(config.metrics));
     }
 
@@ -8607,9 +8600,7 @@
             if (button) button.classList.toggle('active', config.range === range);
         });
         var chartMode = document.getElementById('analytics-chart-mode');
-        var precipMode = document.getElementById('analytics-precip-mode');
         if (chartMode) chartMode.value = config.chartMode;
-        if (precipMode) precipMode.value = config.precipMode;
         Object.keys(config.metrics).forEach(function(metric) {
             var button = document.getElementById('analytics-metric-' + metric);
             var wrap = document.getElementById('analytics-wrap-' + metric);
@@ -8631,13 +8622,6 @@
     function setAnalyticsChartMode(mode) {
         var config = _analyticsConfig();
         config.chartMode = ['mixed', 'line', 'bar'].indexOf(mode) !== -1 ? mode : 'mixed';
-        _saveAnalyticsConfig(config);
-        renderAnalytics();
-    }
-
-    function setAnalyticsPrecipMode(mode) {
-        var config = _analyticsConfig();
-        config.precipMode = ['cumulative', 'hourly'].indexOf(mode) !== -1 ? mode : 'cumulative';
         _saveAnalyticsConfig(config);
         renderAnalytics();
     }
@@ -8680,7 +8664,7 @@
     function _analyticsChartType(metric, config) {
         if (config.chartMode === 'line') return 'line';
         if (config.chartMode === 'bar') return 'bar';
-        return metric === 'wind' || (metric === 'precip' && config.precipMode === 'hourly') ? 'bar' : 'line';
+        return metric === 'wind' ? 'bar' : 'line';
     }
 
     function renderAnalytics() {
@@ -8743,7 +8727,7 @@
         if (pressureLabel) pressureLabel.textContent = 'Pressure Trend (' + units.pressure + ')';
         if (dewpointLabel) dewpointLabel.textContent = 'Dewpoint Trend (' + dewUnit + ')';
         if (windLabelEl) windLabelEl.textContent = 'Wind Gust Trend (' + windLabel + ')';
-        if (precipLabelEl) precipLabelEl.textContent = 'Precip. ' + (config.precipMode === 'hourly' ? 'Hourly' : 'Accumulation') + ' Trend (' + precipLabel + ')';
+        if (precipLabelEl) precipLabelEl.textContent = 'Precip. Accumulation Trend (' + precipLabel + ')';
 
         var pressureVals = hrs.map(function(h) { return h.pressure != null ? _pressureValue(h.pressure) : null; });
         var dewpointVals = hrs.map(function(h) {
@@ -8756,7 +8740,7 @@
         var accum = 0;
         precipAmounts.forEach(function(amount) {
             accum += amount;
-            precipVals.push(config.precipMode === 'hourly' ? _precipValue(amount) : _precipValue(accum));
+            precipVals.push(_precipValue(accum));
         });
         var chartSpecs = {
             pressure: {
@@ -8779,7 +8763,7 @@
             },
             precip: {
                 id: 'chart-precip', type: _analyticsChartType('precip', config), values: precipVals,
-                label: (config.precipMode === 'hourly' ? 'Hourly Precipitation (' : 'Precip Accumulation (') + precipLabel + ')',
+                label: 'Precip Accumulation (' + precipLabel + ')',
                 color: '#29b6f6', fill: 'rgba(41,182,246,0.14)',
                 yMin: 0, decimals: units.precipitation === 'mm' ? 1 : 2,
                 callback: function(v) { return _unitValue(v, units.precipitation === 'mm' ? 1 : 2) + (units.precipitation === 'mm' ? ' mm' : '"'); }
@@ -8834,7 +8818,7 @@
         setSummary('wind', _unitValue(peakWind, units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) + ' ' + windLabel,
             peakWindIndex >= 0 ? 'Peak near ' + labels[peakWindIndex] : 'No data');
         var totalPrecip = precipAmounts.reduce(function(sum, value) { return sum + value; }, 0);
-        setSummary('precip', _fmtPrecip(totalPrecip), config.precipMode === 'hourly' ? 'Hourly total' : 'Cumulative total');
+        setSummary('precip', _fmtPrecip(totalPrecip), 'Cumulative total');
     }
 
     // ——— SPC RISK LEVELS ———
