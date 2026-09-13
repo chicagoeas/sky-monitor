@@ -4380,16 +4380,8 @@
                 fullContent += '<div style="font-weight:bold;margin:8px 0 3px;font-size:0.88em;">'
                     + 'PRECAUTIONARY/PREPAREDNESS ACTIONS</div>' + formatNWSText(alert.instruction);
             }
-            var onsetMs = alert.onset ? new Date(alert.onset).getTime() : 0;
-            var endMs = alert.expires ? new Date(alert.expires).getTime() : 0;
-            var timing = '';
-            if (onsetMs && onsetMs > Date.now()) {
-                timing = '<div style="display:inline-block;font-size:0.72em;font-weight:600;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:4px;">In effect '
-                    + escapeHtml(_fmtAlertTime(alert.onset)) + '</div>';
-            } else if (endMs && !isNaN(endMs)) {
-                timing = '<div style="display:inline-block;font-size:0.72em;background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires '
-                    + escapeHtml(_fmtAlertTime(alert.expires)) + '</div>';
-            }
+            var timing = '<div style="display:inline-block;font-size:0.72em;background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">'
+                + escapeHtml(_meteoAlarmTimingText(alert)) + '</div>';
             var source = /^https?:\/\//i.test(alert.sourceUrl || '') ? alert.sourceUrl : '';
             var cardTag = source ? 'a href="' + escapeHtml(source) + '" target="_blank" rel="noopener noreferrer"' : 'div';
             var cardClose = source ? '</a>' : '</div>';
@@ -6000,6 +5992,60 @@
             console.warn('[SkyMonitor] Alert refresh failed:', e);
             return false;
         }
+    }
+
+    function _meteoAlarmTimestamp(value) {
+        if (Array.isArray(value)) value = value[0];
+        if (typeof value === 'number' && isFinite(value)) {
+            return Math.abs(value) < 1e12 ? value * 1000 : value;
+        }
+        if (typeof value !== 'string') return 0;
+        var raw = value.trim();
+        if (!raw) return 0;
+        if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
+            var numeric = Number(raw);
+            return Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric;
+        }
+        var parsed = Date.parse(raw);
+        return isNaN(parsed) ? 0 : parsed;
+    }
+
+    function _meteoAlarmRelative(ms) {
+        var minutes = Math.max(1, Math.round(Math.abs(ms) / 60000));
+        if (minutes < 60) return minutes + (minutes === 1 ? ' minute' : ' minutes');
+        var hours = Math.floor(minutes / 60);
+        var days = Math.floor(hours / 24);
+        if (days > 0) {
+            var remainderHours = hours % 24;
+            return days + (days === 1 ? ' day' : ' days') +
+                (remainderHours ? ' ' + remainderHours + (remainderHours === 1 ? ' hour' : ' hours') : '');
+        }
+        return hours + (hours === 1 ? ' hour' : ' hours');
+    }
+
+    function _meteoAlarmTimingText(alert) {
+        var now = Date.now();
+        var onsetMs = _meteoAlarmTimestamp(alert && alert.onset);
+        var expiresMs = _meteoAlarmTimestamp(alert && alert.expires);
+        var parts = [];
+        if (onsetMs > now) {
+            parts.push('Starts in ' + _meteoAlarmRelative(onsetMs - now) +
+                ' (' + _fmtAlertTime(new Date(onsetMs).toISOString()) + ')');
+        } else if (onsetMs) {
+            parts.push('In effect since ' +
+                _fmtAlertTime(new Date(onsetMs).toISOString()));
+        } else {
+            parts.push('Start time unavailable');
+        }
+        if (expiresMs > now) {
+            parts.push('Expires in ' + _meteoAlarmRelative(expiresMs - now) +
+                ' (' + _fmtAlertTime(new Date(expiresMs).toISOString()) + ')');
+        } else if (expiresMs) {
+            parts.push('Expired ' + _fmtAlertTime(new Date(expiresMs).toISOString()));
+        } else {
+            parts.push('Expiration unavailable');
+        }
+        return parts.join(' \u00B7 ');
     }
 
     // Format an ISO alert time as "today at 2:00 PM", "tomorrow at 2:00 PM", or "Jun 17 at 2:00 PM"
