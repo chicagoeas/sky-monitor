@@ -1909,6 +1909,10 @@
     // Weather provider credentials live in the Cloudflare Worker, never in this file.
     // Replace this URL with the deployed worker URL during integration.
     const WEATHER_WORKER_URL = 'https://skymonitor-apis.skymonitor-account.workers.dev';
+    // MeteoAlarm access is server-side. The worker route authenticates with the
+    // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
+    // alerts; never put the portal token in this HTML file or localStorage.
+    const METEOALARM_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/meteoalarm';
     const PIRATE_API_KEY = null; // legacy compatibility; do not put a key here
     const OW_API_KEY = null;      // legacy compatibility; do not put a key here
     const TWC_API_KEY = null;     // legacy compatibility; do not put a key here
@@ -1973,6 +1977,7 @@
     window._maybeHideSync = function() {};
     window.pirateCurrently = null;
     window.pirateAlerts = [];
+    window.meteoAlarmAlerts = [];
     window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
@@ -4169,6 +4174,232 @@
         }
     }
 
+    // MeteoAlarm uses awareness levels rather than NWS severity strings:
+    // yellow = moderate, orange = severe, red = extreme.
+    function _meteoAlarmSeverity(alert) {
+        var raw = String(
+            alert && (alert.severity || alert.awarenessLevel || alert.level || alert.awareness_level || '')
+        ).toLowerCase();
+        if (raw.includes('red') || raw.includes('extreme') || raw === '4') return 'extreme';
+        if (raw.includes('orange') || raw.includes('severe') || raw === '3') return 'severe';
+        if (raw.includes('yellow') || raw.includes('moderate') || raw === '2') return 'moderate';
+        if (raw.includes('green') || raw.includes('minor') || raw === '1') return 'minor';
+        var title = String(alert && (alert.title || alert.event || '')).toLowerCase();
+        if (title.includes('red') || title.includes('extreme')) return 'extreme';
+        if (title.includes('orange') || title.includes('severe')) return 'severe';
+        return 'moderate';
+    }
+
+    function _meteoAlarmColor(severity) {
+        switch ((severity || '').toLowerCase()) {
+            case 'extreme':  return '#c62828';
+            case 'severe':   return '#ef6c00';
+            case 'moderate': return '#f9a825';
+            case 'minor':    return '#388e3c';
+            default:         return '#546e7a';
+        }
+    }
+
+    function _meteoAlarmText(value) {
+        if (Array.isArray(value)) return value.filter(Boolean).join('\n');
+        return value == null ? '' : String(value);
+    }
+
+    function _meteoAlarmAlertId(alert, index) {
+        return String(
+            alert && (alert.id || alert.alertId || alert.identifier || alert.objectId || ('meteoalarm-' + index))
+        ).replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    function _normalizeMeteoAlarmAlert(raw, index) {
+        var a = raw || {};
+        var p = a.properties || a;
+        var info = p.info || a.info || {};
+        var source = a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
+        var severity = _meteoAlarmSeverity(Object.assign({}, a, p, info));
+        var hazard = _meteoAlarmText(
+            a.hazard || a.awarenessType || a.awareness_type ||
+            p.hazard || p.awarenessType || p.awareness_type ||
+            info.event || p.event || a.event
+        );
+        var title = _meteoAlarmText(
+            a.title || a.headline || p.title || p.headline || info.headline ||
+            (hazard ? hazard + ' alert' : 'European weather alert')
+        );
+        var description = _meteoAlarmText(
+            a.description || p.description || info.description || a.desc
+        );
+        var instruction = _meteoAlarmText(
+            a.instruction || p.instruction || info.instruction || a.action
+        );
+        var onset = a.onset || a.effective || p.onset || p.effective || info.onset || '';
+        var expires = a.expires || a.ends || p.expires || p.ends || info.expires || '';
+        var areaDesc = _meteoAlarmText(a.areaDesc || p.areaDesc || info.areaDesc || p.location || '');
+        var iconUrl = a.iconUrl || a.icon_url || p.iconUrl || '';
+        var details = a.details || p.details || {};
+        return {
+            id: _meteoAlarmAlertId(a, index),
+            title: title,
+            event: hazard || title,
+            severity: severity,
+            awarenessLevel: a.awarenessLevel || p.awarenessLevel || a.awareness_level || p.awareness_level || '',
+            description: description,
+            instruction: instruction,
+            onset: onset,
+            expires: expires,
+            areaDesc: areaDesc,
+            countryCode: a.countryCode || p.countryCode || '',
+            iconUrl: iconUrl,
+            icon: a.icon || p.icon || '\u26A0\uFE0F',
+            sourceUrl: source,
+            details: details,
+            geometry: a.geometry || null
+        };
+    }
+
+    // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
+    // That worker owns METEOALARM_API_TOKEN, resolves the selected coordinate to
+    // the relevant country/regions, fetches the official OGC API EDR records,
+    // and follows their signed detail links before returning {alerts: [...]}.
+    async function fetchMeteoAlarmAlerts(requestLat, requestLon) {
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
+            + '&lon=' + encodeURIComponent(requestLon == null ? lon : requestLon)
+            + '&language=en';
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
+        var payload = await res.json();
+        var sourceAlerts = Array.isArray(payload)
+            ? payload
+            : (Array.isArray(payload.alerts) ? payload.alerts
+                : (Array.isArray(payload.features) ? payload.features : []));
+        var alerts = sourceAlerts.map(_normalizeMeteoAlarmAlert).filter(function(a) {
+            return a.title || a.description;
+        });
+        // One alert can cover multiple European administrative areas. The API
+        // can therefore return repeated records with the same CAP identifier.
+        var seen = {};
+        alerts = alerts.filter(function(a) {
+            var key = a.id + '|' + a.title;
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+        window.meteoAlarmAlerts = alerts;
+        // Keep legacy consumers (threat scoring and offline state from older
+        // builds) fed while the visible provider is now explicitly MeteoAlarm.
+        window.pirateAlerts = alerts;
+        return alerts;
+    }
+
+    async function renderMeteoAlarmAlerts(stack, banner) {
+        const alerts = window.meteoAlarmAlerts || [];
+        if (!alerts.length) {
+            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+            banner.style.display = 'none';
+            return;
+        }
+        const severityRank = { extreme: 4, severe: 3, moderate: 2, minor: 1 };
+        const topAlert = alerts.reduce(function(top, a) {
+            return (severityRank[_meteoAlarmSeverity(a)] || 0) >
+                (severityRank[_meteoAlarmSeverity(top)] || 0) ? a : top;
+        }, alerts[0]);
+        const topSeverity = _meteoAlarmSeverity(topAlert);
+        const topColor = _meteoAlarmColor(topSeverity);
+        const topTextColor = topSeverity === 'moderate' ? '#111' : '#fff';
+        const topStart = topAlert.onset ? new Date(topAlert.onset).getTime() : 0;
+        const topEnd = topAlert.expires ? new Date(topAlert.expires).getTime() : 0;
+        const topActive = !topStart || topStart <= Date.now();
+        const topPrefix = topAlert.title || 'European weather alert';
+        banner.className = '';
+        banner.style.display = 'block';
+        banner.style.background = topColor;
+        banner.style.color = topTextColor;
+        banner.innerText = '\u26A0\uFE0F ' + topPrefix;
+        if (topEnd && topActive) {
+            (function(_gen, _end, _prefix) {
+                const _iv = setInterval(function() {
+                    if (alertIntervalGen !== _gen) { clearInterval(_iv); return; }
+                    const diff = _end - Date.now();
+                    if (diff <= 0) {
+                        banner.innerText = _prefix + ' (EXPIRED)';
+                        clearInterval(_iv);
+                    } else {
+                        banner.innerText = _prefix + ' - Expires in ' + getFormattedTime('advisory', diff);
+                    }
+                }, 1000);
+                alertIntervalId = _iv;
+            })(alertIntervalGen, topEnd, '\u26A0\uFE0F ' + topPrefix);
+        }
+
+        const expandedIds = new Set();
+        const savedScrolls = {};
+        document.querySelectorAll('.alert-full-text').forEach(function(el) {
+            if (el.style.display === 'block' && el.id) {
+                const id = el.id.replace('full-', '');
+                expandedIds.add(id);
+                savedScrolls[id] = el.scrollTop;
+            }
+        });
+        stack.innerHTML = '';
+        alerts.slice().sort(function(a, b) {
+            return (severityRank[_meteoAlarmSeverity(b)] || 0) -
+                (severityRank[_meteoAlarmSeverity(a)] || 0);
+        }).forEach(function(alert, index) {
+            var severity = _meteoAlarmSeverity(alert);
+            var color = _meteoAlarmColor(severity);
+            var textColor = severity === 'moderate' ? '#111' : '#fff';
+            var id = _meteoAlarmAlertId(alert, index);
+            var fullContent = '';
+            if (alert.areaDesc) {
+                fullContent += '<div style="font-weight:bold;margin-bottom:6px;font-size:0.88em;">'
+                    + escapeHtml(alert.areaDesc) + '</div>';
+            }
+            if (alert.description) fullContent += formatNWSText(alert.description);
+            if (alert.instruction) {
+                fullContent += '<div style="font-weight:bold;margin:8px 0 3px;font-size:0.88em;">'
+                    + 'PRECAUTIONARY/PREPAREDNESS ACTIONS</div>' + formatNWSText(alert.instruction);
+            }
+            var onsetMs = alert.onset ? new Date(alert.onset).getTime() : 0;
+            var endMs = alert.expires ? new Date(alert.expires).getTime() : 0;
+            var timing = '';
+            if (onsetMs && onsetMs > Date.now()) {
+                timing = '<div style="display:inline-block;font-size:0.72em;font-weight:600;background:rgba(0,0,0,0.32);border-radius:4px;padding:2px 7px;margin-top:4px;">In effect '
+                    + escapeHtml(_fmtAlertTime(alert.onset)) + '</div>';
+            } else if (endMs && !isNaN(endMs)) {
+                timing = '<div style="display:inline-block;font-size:0.72em;background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires '
+                    + escapeHtml(_fmtAlertTime(alert.expires)) + '</div>';
+            }
+            var source = /^https?:\/\//i.test(alert.sourceUrl || '') ? alert.sourceUrl : '';
+            var cardTag = source ? 'a href="' + escapeHtml(source) + '" target="_blank" rel="noopener noreferrer"' : 'div';
+            var cardClose = source ? '</a>' : '</div>';
+            var icon = /^https?:\/\//i.test(alert.iconUrl || '')
+                ? '<img src="' + escapeHtml(alert.iconUrl) + '" alt="" style="width:55px;height:55px;object-fit:contain;border-radius:5px;margin-top:2px;flex-shrink:0;">'
+                : '<div style="font-size:1.8em;padding-top:2px;flex-shrink:0;">' + escapeHtml(alert.icon || '\u26A0\uFE0F') + '</div>';
+            stack.innerHTML += '<' + cardTag + ' class="alert-card" style="background:' + color + ';color:' + textColor + ';align-items:flex-start;text-decoration:none;">'
+                + icon + '<div style="flex:1;min-width:0;"><div style="font-weight:bold;">' + escapeHtml(alert.title) + '</div>'
+                + '<div class="alert-meta-row">' + timing + (fullContent
+                    ? '<button class="alert-expand-btn" id="btn-' + id + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + id + '\')">\u25BC Show more</button>' : '')
+                + '</div>' + (fullContent ? '<div id="full-' + id + '" class="alert-full-text">' + fullContent + '</div>' : '')
+                + '</div>' + cardClose;
+        });
+        expandedIds.forEach(function(id) {
+            var el = document.getElementById('full-' + id);
+            var btn = document.getElementById('btn-' + id);
+            if (el && btn) {
+                el.style.display = 'block';
+                btn.textContent = '\u25B2 Show less';
+                if (savedScrolls[id]) el.scrollTop = savedScrolls[id];
+            }
+        });
+        computeOutdoorScore();
+        computeFloodOutlook();
+    }
+
     function _localizePirateAlertUnits(text) {
         if (!text) return text;
         var p = _unitPrefs();
@@ -5337,10 +5568,18 @@
         window.activeHeatWarning = false;
 
         if (window.isOutsideUS) {
-            stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
-            document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-            await renderPirateAlerts(stack, banner);
-            return true;
+            try {
+                await fetchMeteoAlarmAlerts(lat, lon);
+                stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
+                document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
+                await renderMeteoAlarmAlerts(stack, banner);
+                return true;
+            } catch (meteoAlarmError) {
+                console.warn('[SkyMonitor] MeteoAlarm refresh failed:', meteoAlarmError);
+                // Keep a previous successful display intact instead of
+                // turning a transient API/proxy failure into "No active hazards."
+                return false;
+            }
         }
 
         try {
@@ -8145,20 +8384,20 @@
         const hazardCats = {}; // tracks distinct hazard categories active
 
         // ── 0. International alert severity ───────────────────────────────
-        // PirateWeather carries alert severity for non-US providers, while
-        // NWS event names are unavailable outside the US.  Translate the
-        // provider's generic severity into the same score bands used below.
+        // MeteoAlarm carries color/awareness severity for non-US providers,
+        // while NWS event names are unavailable outside the US. Translate the
+        // official levels into the same score bands used below.
         var _intlAlertCount = 0;
         var _intlMaxSeverity = '';
-        if (window.isOutsideUS && Array.isArray(window.pirateAlerts)) {
+        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts)) {
             var _intlSeverityRank = { minor: 1, moderate: 2, severe: 3, extreme: 4 };
             var _intlSeverityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
-            window.pirateAlerts.forEach(function(alert) {
+            window.meteoAlarmAlerts.forEach(function(alert) {
                 var _nowMsIntl = Date.now();
-                var _startsIntl = Number(alert.time || 0) * 1000;
-                var _endsIntl = Number(alert.expires || 0) * 1000;
+                var _startsIntl = alert.onset ? new Date(alert.onset).getTime() : 0;
+                var _endsIntl = alert.expires ? new Date(alert.expires).getTime() : 0;
                 if ((_startsIntl && _startsIntl > _nowMsIntl) || (_endsIntl && _endsIntl <= _nowMsIntl)) return;
-                var _sev = String(alert.severity || '').toLowerCase();
+                var _sev = _meteoAlarmSeverity(alert);
                 // A few international feeds encode the color level only in
                 // the title; retain a useful fallback when severity is absent.
                 var _intlText = String(alert.title || '').toLowerCase();
@@ -8174,7 +8413,7 @@
                 var _factorTitle = alert.title || (_sev.charAt(0).toUpperCase() + _sev.slice(1) + ' alert');
                  var _translatedFactorTitle = (window.alertTranslationCache || {})[_factorTitle] || _factorTitle;
                  _translatedFactorTitle = _localizePirateAlertUnits(_translatedFactorTitle);
-                factorList.push({ label: _translatedFactorTitle, color: _pirateAlertColor(_sev) });
+                 factorList.push({ label: _translatedFactorTitle, color: _meteoAlarmColor(_sev) });
             });
             // Several notices can describe the same system; prevent stacking
             // from overwhelming the normal threat bands while preserving the
