@@ -726,6 +726,30 @@
 
         .analytics-canvas-wrap { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.07); }
         .analytics-label { font-size: 0.7em; font-weight: bold; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .analytics-header-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+        .analytics-period-label { color:#718496; font-size:0.68em; font-weight:700; letter-spacing:0.5px; white-space:nowrap; }
+        .analytics-summary-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-bottom:12px; }
+        .analytics-summary-card { min-width:0; padding:10px 11px; border:1px solid rgba(79,195,247,0.13); border-radius:10px; background:linear-gradient(145deg, rgba(79,195,247,0.09), rgba(255,255,255,0.025)); }
+        .analytics-summary-label { display:block; color:#718496; font-size:0.58em; font-weight:900; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:5px; }
+        .analytics-summary-value { display:block; color:#e7f6ff; font-size:0.86em; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .analytics-summary-detail { display:block; color:#6f8799; font-size:0.61em; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .analytics-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.07); border-radius:10px; background:rgba(0,0,0,0.16); }
+        .analytics-control-group { display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+        .analytics-control-label { color:#718496; font-size:0.58em; font-weight:900; letter-spacing:0.7px; text-transform:uppercase; margin-right:2px; }
+        .analytics-control-btn { border:1px solid rgba(144,202,249,0.16); background:rgba(255,255,255,0.04); color:#8297a9; border-radius:6px; padding:5px 8px; font-size:0.64em; font-weight:800; cursor:pointer; transition:background 0.2s, color 0.2s, border-color 0.2s; }
+        .analytics-control-btn:hover { color:#e7f6ff; border-color:rgba(79,195,247,0.45); }
+        .analytics-control-btn.active { color:#07131d; background:var(--primary); border-color:var(--primary); }
+        .analytics-select { border:1px solid rgba(144,202,249,0.18); background:#102838; color:#d9edf7; border-radius:6px; padding:5px 7px; font-size:0.64em; font-weight:700; cursor:pointer; }
+        .analytics-metric-controls { flex-basis:100%; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06); }
+        .analytics-chart-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+        .analytics-chart-grid .analytics-canvas-wrap { margin-bottom:0; min-width:0; }
+        .analytics-canvas-wrap.analytics-hidden { display:none; }
+        .analytics-chart-note { color:#60798b; font-size:0.59em; font-weight:700; }
+        @media (max-width: 680px) {
+            .analytics-summary-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+            .analytics-chart-grid { grid-template-columns:1fr; }
+            .analytics-header-row { align-items:flex-start; }
+        }
 
         /* v1.0.4: alert expand button */
         .alert-expand-btn {
@@ -1633,22 +1657,77 @@
 
         <!-- v1.0.4: Advanced analytics hidden by default, shown only in Advanced mode -->
         <div id="analytics-section" style="display:none; margin-top:20px;">
-            <div class="sky-hd" style="margin-bottom:12px;">📊 Advanced Analytics</div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#127777; Pressure Trend (inHg)</div>
+            <div class="analytics-header-row">
+                <div class="sky-hd" style="margin-bottom:0;">📊 Advanced Analytics</div>
+                <span id="analytics-period-label" class="analytics-period-label">NEXT 12 HOURS</span>
+            </div>
+            <div class="analytics-summary-grid">
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#127777; Pressure</span>
+                    <strong id="analytics-summary-pressure" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-pressure-detail" class="analytics-summary-detail">--</small>
+                </div>
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#128167; Dewpoint</span>
+                    <strong id="analytics-summary-dewpoint" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-dewpoint-detail" class="analytics-summary-detail">--</small>
+                </div>
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#128168; Peak gust</span>
+                    <strong id="analytics-summary-wind" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-wind-detail" class="analytics-summary-detail">--</small>
+                </div>
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#127783; Precipitation</span>
+                    <strong id="analytics-summary-precip" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-precip-detail" class="analytics-summary-detail">--</small>
+                </div>
+            </div>
+            <div class="analytics-toolbar">
+                <div class="analytics-control-group">
+                    <span class="analytics-control-label">Window</span>
+                    <button type="button" class="analytics-control-btn" id="analytics-range-6" onclick="setAnalyticsRange(6)">6h</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-range-12" onclick="setAnalyticsRange(12)">12h</button>
+                    <button type="button" class="analytics-control-btn" id="analytics-range-24" onclick="setAnalyticsRange(24)">24h</button>
+                </div>
+                <div class="analytics-control-group">
+                    <label class="analytics-control-label" for="analytics-chart-mode">Charts</label>
+                    <select id="analytics-chart-mode" class="analytics-select" onchange="setAnalyticsChartMode(this.value)">
+                        <option value="mixed">Mixed</option>
+                        <option value="line">Lines</option>
+                        <option value="bar">Bars</option>
+                    </select>
+                    <label class="analytics-control-label" for="analytics-precip-mode">Precip</label>
+                    <select id="analytics-precip-mode" class="analytics-select" onchange="setAnalyticsPrecipMode(this.value)">
+                        <option value="cumulative">Cumulative</option>
+                        <option value="hourly">Hourly</option>
+                    </select>
+                </div>
+                <div class="analytics-control-group analytics-metric-controls">
+                    <span class="analytics-control-label">Show</span>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-pressure" aria-pressed="true" onclick="toggleAnalyticsMetric('pressure')">Pressure</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-dewpoint" aria-pressed="true" onclick="toggleAnalyticsMetric('dewpoint')">Dewpoint</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-wind" aria-pressed="true" onclick="toggleAnalyticsMetric('wind')">Wind</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-precip" aria-pressed="true" onclick="toggleAnalyticsMetric('precip')">Precip</button>
+                </div>
+            </div>
+            <div class="analytics-chart-grid">
+            <div id="analytics-wrap-pressure" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#127777; <span id="analytics-label-pressure">Pressure Trend</span> <span class="analytics-chart-note">· click points for details</span></div>
                 <canvas id="chart-pressure" height="120" style="width:100%; display:block;"></canvas>
             </div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#128167; Dewpoint Trend (&deg;F)</div>
+            <div id="analytics-wrap-dewpoint" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#128167; <span id="analytics-label-dewpoint">Dewpoint Trend</span></div>
                 <canvas id="chart-dewpoint" height="120" style="width:100%; display:block;"></canvas>
             </div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#128168; Wind Gust Trend (mph)</div>
+            <div id="analytics-wrap-wind" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#128168; <span id="analytics-label-wind">Wind Gust Trend</span></div>
                 <canvas id="chart-wind" height="120" style="width:100%; display:block;"></canvas>
             </div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#127783; Precip. Accumulation Trend (in)</div>
+            <div id="analytics-wrap-precip" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#127783; <span id="analytics-label-precip">Precip. Accumulation Trend</span></div>
                 <canvas id="chart-precip" height="120" style="width:100%; display:block;"></canvas>
+            </div>
             </div>
         </div>
     </div>
@@ -8495,55 +8574,267 @@
         }, 0);
     }
 
+    function _analyticsConfig() {
+        var range = Number(localStorage.getItem('analytics_range') || 12);
+        if ([6, 12, 24].indexOf(range) === -1) range = 12;
+        var chartMode = localStorage.getItem('analytics_chart_mode') || 'mixed';
+        if (['mixed', 'line', 'bar'].indexOf(chartMode) === -1) chartMode = 'mixed';
+        var precipMode = localStorage.getItem('analytics_precip_mode') || 'cumulative';
+        if (['cumulative', 'hourly'].indexOf(precipMode) === -1) precipMode = 'cumulative';
+        var metrics = { pressure: true, dewpoint: true, wind: true, precip: true };
+        try {
+            var savedMetrics = JSON.parse(localStorage.getItem('analytics_metrics') || 'null');
+            if (savedMetrics && typeof savedMetrics === 'object') {
+                Object.keys(metrics).forEach(function(key) {
+                    if (typeof savedMetrics[key] === 'boolean') metrics[key] = savedMetrics[key];
+                });
+            }
+        } catch (e) {}
+        if (!Object.keys(metrics).some(function(key) { return metrics[key]; })) metrics.pressure = true;
+        return { range: range, chartMode: chartMode, precipMode: precipMode, metrics: metrics };
+    }
+
+    function _saveAnalyticsConfig(config) {
+        localStorage.setItem('analytics_range', String(config.range));
+        localStorage.setItem('analytics_chart_mode', config.chartMode);
+        localStorage.setItem('analytics_precip_mode', config.precipMode);
+        localStorage.setItem('analytics_metrics', JSON.stringify(config.metrics));
+    }
+
+    function _syncAnalyticsControls(config) {
+        [6, 12, 24].forEach(function(range) {
+            var button = document.getElementById('analytics-range-' + range);
+            if (button) button.classList.toggle('active', config.range === range);
+        });
+        var chartMode = document.getElementById('analytics-chart-mode');
+        var precipMode = document.getElementById('analytics-precip-mode');
+        if (chartMode) chartMode.value = config.chartMode;
+        if (precipMode) precipMode.value = config.precipMode;
+        Object.keys(config.metrics).forEach(function(metric) {
+            var button = document.getElementById('analytics-metric-' + metric);
+            var wrap = document.getElementById('analytics-wrap-' + metric);
+            if (button) {
+                button.classList.toggle('active', config.metrics[metric]);
+                button.setAttribute('aria-pressed', config.metrics[metric] ? 'true' : 'false');
+            }
+            if (wrap) wrap.classList.toggle('analytics-hidden', !config.metrics[metric]);
+        });
+    }
+
+    function setAnalyticsRange(range) {
+        var config = _analyticsConfig();
+        config.range = [6, 12, 24].indexOf(Number(range)) !== -1 ? Number(range) : 12;
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function setAnalyticsChartMode(mode) {
+        var config = _analyticsConfig();
+        config.chartMode = ['mixed', 'line', 'bar'].indexOf(mode) !== -1 ? mode : 'mixed';
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function setAnalyticsPrecipMode(mode) {
+        var config = _analyticsConfig();
+        config.precipMode = ['cumulative', 'hourly'].indexOf(mode) !== -1 ? mode : 'cumulative';
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function toggleAnalyticsMetric(metric) {
+        var config = _analyticsConfig();
+        if (!Object.prototype.hasOwnProperty.call(config.metrics, metric)) return;
+        var activeCount = Object.keys(config.metrics).filter(function(key) { return config.metrics[key]; }).length;
+        if (config.metrics[metric] && activeCount === 1) return;
+        config.metrics[metric] = !config.metrics[metric];
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function _analyticsDewpoint(h, units) {
+        var tempF = Number(h && h.temperature);
+        if (!isFinite(tempF)) return null;
+        var rawHumidity = h && h.humidity;
+        var humidity = rawHumidity == null ? 50 : Number(rawHumidity);
+        if (!isFinite(humidity)) humidity = 50;
+        if (humidity <= 1) humidity *= 100;
+        humidity = Math.max(1, Math.min(100, humidity));
+        var tempC = (tempF - 32) * 5 / 9;
+        var dewC = tempC - (100 - humidity) / 5;
+        return units.temperature === 'C' ? dewC : dewC * 9 / 5 + 32;
+    }
+
+    function _analyticsPrecipAmount(h) {
+        var value = h && h.precipAccumulation != null ? h.precipAccumulation : (h && h.precipIntensity);
+        return isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+    }
+
+    function _analyticsSigned(value, decimals) {
+        var rounded = Number(value);
+        if (!isFinite(rounded)) return '--';
+        var text = _unitValue(Math.abs(rounded), decimals);
+        return (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + text;
+    }
+
+    function _analyticsChartType(metric, config) {
+        if (config.chartMode === 'line') return 'line';
+        if (config.chartMode === 'bar') return 'bar';
+        return metric === 'wind' || (metric === 'precip' && config.precipMode === 'hourly') ? 'bar' : 'line';
+    }
+
     function renderAnalytics() {
         if (!window.pirateHourlyData || !window.pirateHourlyData.length) return;
         if (typeof Chart === 'undefined') return;
-        // Show/clear offline notice inside the analytics section
-        var _aSec = document.getElementById('analytics-section');
-        if (_aSec) {
-            }
-        const hrs = window.pirateHourlyData.slice(0, 12);
-        const tzOff = (window.pirateTimezoneOffset || 0) * 3600;
-        const labels = hrs.map(function(h) { return new Date((h.time + tzOff) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' }); });
-        const chartDefaults = {
+        var config = _analyticsConfig();
+        _syncAnalyticsControls(config);
+        var hrs = window.pirateHourlyData.slice(0, config.range);
+        var tzOff = (window.pirateTimezoneOffset || 0) * 3600;
+        var labels = hrs.map(function(h) {
+            return new Date((h.time + tzOff) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+        });
+        var units = _unitPrefs();
+        var precipLabel = units.precipitation === 'mm' ? 'mm' : '"';
+        var dewUnit = units.temperature === 'C' ? '\u00b0C' : '\u00b0F';
+        var windLabel = _windLabel();
+        var periodLabel = document.getElementById('analytics-period-label');
+        if (periodLabel) periodLabel.textContent = 'NEXT ' + hrs.length + ' HOURS';
+        var chartDefaults = {
             responsive: false,
-            plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(7,19,29,0.95)', borderColor: 'rgba(79,195,247,0.3)', borderWidth: 1, titleColor: '#4fc3f7', bodyColor: '#fff', padding: 10, cornerRadius: 8 } },
-            scales: { x: { ticks: { color: '#555', font: { size: 9 }, maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } }, y: { ticks: { color: '#666', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } } },
+            plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(7,19,29,0.96)', borderColor: 'rgba(79,195,247,0.4)', borderWidth: 1, titleColor: '#4fc3f7', bodyColor: '#fff', padding: 10, cornerRadius: 8 } },
+            scales: { x: { ticks: { color: '#718496', font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.055)' } }, y: { ticks: { color: '#8297a9', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.06)' } } },
             animation: { duration: 500, easing: 'easeInOutQuad' },
             interaction: { mode: 'nearest', axis: 'x', intersect: false }
         };
-        function makeChart(id, type, data, extraOpts) {
+        function makeChart(metric, id, type, data, extraOpts) {
             extraOpts = extraOpts || {};
-            const canvas = document.getElementById(id); if (!canvas) return;
+            var canvas = document.getElementById(id); if (!canvas) return;
             if (window.chartInstances[id]) { window.chartInstances[id].destroy(); delete window.chartInstances[id]; }
-            const wrap = canvas.parentElement;
-            canvas.width = (wrap ? wrap.clientWidth - 20 : 0) || 300; canvas.height = 120;
-            const opts = JSON.parse(JSON.stringify(chartDefaults));
+            var wrap = canvas.parentElement;
+            canvas.width = (wrap ? wrap.clientWidth - 20 : 0) || 300; canvas.height = 132;
+            var opts = JSON.parse(JSON.stringify(chartDefaults));
             if (extraOpts.yMin !== undefined) opts.scales.y.min = extraOpts.yMin;
             if (extraOpts.yCallback) opts.scales.y.ticks.callback = extraOpts.yCallback;
+            if (type === 'bar') {
+                data.borderWidth = 0;
+                data.pointRadius = 0;
+                data.fill = false;
+                data.borderRadius = 4;
+            }
+            opts.plugins.tooltip.callbacks = {
+                label: function(context) {
+                    var value = context.parsed && context.parsed.y;
+                    var decimals = metric === 'pressure' ? (units.pressure === 'hPa' ? 0 : 2) :
+                        metric === 'precip' ? (units.precipitation === 'mm' ? 1 : 2) :
+                        metric === 'wind' ? (units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) : 1;
+                    var suffix = metric === 'pressure' ? ' ' + units.pressure :
+                        metric === 'precip' ? (units.precipitation === 'mm' ? ' mm' : '"') :
+                        metric === 'wind' ? ' ' + windLabel : dewUnit;
+                    return ' ' + context.dataset.label + ': ' + _unitValue(value, decimals) + suffix;
+                }
+            };
             window.chartInstances[id] = new Chart(canvas, { type: type, data: { labels: labels, datasets: [data] }, options: opts });
         }
-        // Update analytics labels for current unit system
-        var _units = _unitPrefs();
-        var _pLbl = document.getElementById('chart-pressure')?.previousElementSibling;
-        var _dLbl = document.getElementById('chart-dewpoint')?.previousElementSibling;
-        var _wLbl = document.getElementById('chart-wind')?.previousElementSibling;
-        if (_pLbl) _pLbl.innerHTML = '\uD83C\uDF21\uFE0F Pressure Trend (' + _units.pressure + ')';
-        if (_dLbl) _dLbl.innerHTML = '\uD83D\uDCA7 Dewpoint Trend (\u00b0)';
-        if (_wLbl) _wLbl.innerHTML = '\uD83D\uDCA8 Wind Gust Trend (' + _windLabel() + ')';
-        const pressureVals = hrs.map(function(h) { return h.pressure ? _pressureValue(h.pressure) : null; });
-        makeChart('chart-pressure', 'line', { data: pressureVals, label: 'Pressure (' + _units.pressure + ')', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return _unitValue(v, _units.pressure === 'hPa' ? 0 : 2) + ' ' + _units.pressure; } });
-        const _dewUnit = '\u00b0';
-        const _dewDecimals = _units.temperature === 'C' ? 1 : 1;
-        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return _units.temperature === 'C' ? parseFloat(TdC.toFixed(_dewDecimals)) : parseFloat((TdC * 9 / 5 + 32).toFixed(_dewDecimals)); });
-        makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: 'Dewpoint (' + _dewUnit + ')', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (Math.round(v * 10) / 10) + _dewUnit; } });
-        const windVals = hrs.map(function(h) { return _windValue(h.windGust || h.windSpeed || 0); });
-        makeChart('chart-wind', 'bar', { data: windVals, label: 'Wind Gust (' + _windLabel() + ')', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return _unitValue(v, _units.wind === 'mph' || _units.wind === 'kmh' ? 0 : 1) + ' ' + _windLabel(); } });
-        var _precipLbl = document.getElementById('chart-precip')?.previousElementSibling;
-        if (_precipLbl) _precipLbl.innerHTML = '\uD83C\uDF27\uFE0F Precip. Accumulation Trend (' + _units.precipitation + ')';
-        let accum = 0;
-        const precipVals = hrs.map(function(h) { accum += (h.precipAccumulation || h.precipIntensity || 0); return parseFloat(_precipValue(accum).toFixed(_units.precipitation === 'mm' ? 1 : 2)); });
-        makeChart('chart-precip', 'line', { data: precipVals, label: 'Precip Accum (' + _units.precipitation + ')', borderColor: '#29b6f6', backgroundColor: 'rgba(41,182,246,0.12)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.3, fill: true, spanGaps: true }, { yMin: 0, yCallback: function(v) { return _unitValue(v, _units.precipitation === 'mm' ? 1 : 2) + ' ' + _units.precipitation; } });
+
+        var pressureLabel = document.getElementById('analytics-label-pressure');
+        var dewpointLabel = document.getElementById('analytics-label-dewpoint');
+        var windLabelEl = document.getElementById('analytics-label-wind');
+        var precipLabelEl = document.getElementById('analytics-label-precip');
+        if (pressureLabel) pressureLabel.textContent = 'Pressure Trend (' + units.pressure + ')';
+        if (dewpointLabel) dewpointLabel.textContent = 'Dewpoint Trend (' + dewUnit + ')';
+        if (windLabelEl) windLabelEl.textContent = 'Wind Gust Trend (' + windLabel + ')';
+        if (precipLabelEl) precipLabelEl.textContent = 'Precip. ' + (config.precipMode === 'hourly' ? 'Hourly' : 'Accumulation') + ' Trend (' + precipLabel + ')';
+
+        var pressureVals = hrs.map(function(h) { return h.pressure != null ? _pressureValue(h.pressure) : null; });
+        var dewpointVals = hrs.map(function(h) {
+            var value = _analyticsDewpoint(h, units);
+            return value == null ? null : parseFloat(value.toFixed(1));
+        });
+        var windVals = hrs.map(function(h) { return _windValue(h.windGust != null ? h.windGust : (h.windSpeed || 0)); });
+        var precipAmounts = hrs.map(_analyticsPrecipAmount);
+        var precipVals = [];
+        var accum = 0;
+        precipAmounts.forEach(function(amount) {
+            accum += amount;
+            precipVals.push(config.precipMode === 'hourly' ? _precipValue(amount) : _precipValue(accum));
+        });
+        var chartSpecs = {
+            pressure: {
+                id: 'chart-pressure', type: _analyticsChartType('pressure', config), values: pressureVals,
+                label: 'Pressure (' + units.pressure + ')', color: '#4fc3f7', fill: 'rgba(79,195,247,0.10)',
+                yMin: undefined, decimals: units.pressure === 'hPa' ? 0 : 2,
+                callback: function(v) { return _unitValue(v, units.pressure === 'hPa' ? 0 : 2) + ' ' + units.pressure; }
+            },
+            dewpoint: {
+                id: 'chart-dewpoint', type: _analyticsChartType('dewpoint', config), values: dewpointVals,
+                label: 'Dewpoint (' + dewUnit + ')', color: '#81d4fa', fill: 'rgba(129,212,250,0.08)',
+                yMin: undefined, decimals: 1,
+                callback: function(v) { return _unitValue(v, 1) + dewUnit; }
+            },
+            wind: {
+                id: 'chart-wind', type: _analyticsChartType('wind', config), values: windVals,
+                label: 'Wind Gust (' + windLabel + ')', color: '#b0bec5', fill: 'rgba(176,190,197,0.55)',
+                yMin: 0, decimals: units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1,
+                callback: function(v) { return _unitValue(v, units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) + ' ' + windLabel; }
+            },
+            precip: {
+                id: 'chart-precip', type: _analyticsChartType('precip', config), values: precipVals,
+                label: (config.precipMode === 'hourly' ? 'Hourly Precipitation (' : 'Precip Accumulation (') + precipLabel + ')',
+                color: '#29b6f6', fill: 'rgba(41,182,246,0.14)',
+                yMin: 0, decimals: units.precipitation === 'mm' ? 1 : 2,
+                callback: function(v) { return _unitValue(v, units.precipitation === 'mm' ? 1 : 2) + (units.precipitation === 'mm' ? ' mm' : '"'); }
+            }
+        };
+        Object.keys(chartSpecs).forEach(function(metric) {
+            var spec = chartSpecs[metric];
+            if (!config.metrics[metric]) {
+                if (window.chartInstances[spec.id]) {
+                    window.chartInstances[spec.id].destroy();
+                    delete window.chartInstances[spec.id];
+                }
+                return;
+            }
+            makeChart(metric, spec.id, spec.type, {
+                data: spec.values, label: spec.label, borderColor: spec.color,
+                backgroundColor: spec.fill, borderWidth: 2, pointRadius: 2.5,
+                pointHoverRadius: 6, tension: 0.35, fill: true, spanGaps: true
+            }, { yMin: spec.yMin, yCallback: spec.callback });
+        });
+
+        function firstValid(values) {
+            return values.find(function(value) { return value != null && isFinite(Number(value)); });
+        }
+        function lastValid(values) {
+            for (var i = values.length - 1; i >= 0; i--) {
+                if (values[i] != null && isFinite(Number(values[i]))) return values[i];
+            }
+            return null;
+        }
+        function setSummary(id, value, detail) {
+            var valueEl = document.getElementById('analytics-summary-' + id);
+            var detailEl = document.getElementById('analytics-summary-' + id + '-detail');
+            if (valueEl) valueEl.textContent = value;
+            if (detailEl) detailEl.textContent = detail;
+        }
+        var firstPressure = firstValid(pressureVals), lastPressure = lastValid(pressureVals);
+        if (firstPressure != null) {
+            var pressureDelta = (lastPressure == null ? firstPressure : lastPressure) - firstPressure;
+            var pressureTrend = Math.abs(pressureDelta) < 0.005 ? 'Steady' : pressureDelta > 0 ? 'Rising' : 'Falling';
+            setSummary('pressure', _unitValue(firstPressure, units.pressure === 'hPa' ? 0 : 2) + ' ' + units.pressure,
+                pressureTrend + ' ' + _analyticsSigned(pressureDelta, units.pressure === 'hPa' ? 0 : 2) + ' ' + units.pressure);
+        } else setSummary('pressure', '--', 'No data');
+        var firstDew = firstValid(dewpointVals), lastDew = lastValid(dewpointVals);
+        if (firstDew != null) {
+            setSummary('dewpoint', _unitValue(firstDew, 1) + dewUnit,
+                lastDew == null ? 'No end value' : 'Ends ' + _unitValue(lastDew, 1) + dewUnit);
+        } else setSummary('dewpoint', '--', 'No data');
+        var peakWind = Math.max.apply(Math, windVals.filter(function(value) { return isFinite(Number(value)); }));
+        var peakWindIndex = windVals.indexOf(peakWind);
+        if (!isFinite(peakWind)) peakWind = 0;
+        setSummary('wind', _unitValue(peakWind, units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) + ' ' + windLabel,
+            peakWindIndex >= 0 ? 'Peak near ' + labels[peakWindIndex] : 'No data');
+        var totalPrecip = precipAmounts.reduce(function(sum, value) { return sum + value; }, 0);
+        setSummary('precip', _fmtPrecip(totalPrecip), config.precipMode === 'hourly' ? 'Hourly total' : 'Cumulative total');
     }
 
     // ——— SPC RISK LEVELS ———
