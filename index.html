@@ -1913,6 +1913,10 @@
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
     const METEOALARM_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/meteoalarm';
+    // Environment and Climate Change Canada's public GeoMet OGC API.  Unlike
+    // the MeteoAlarm worker route, this endpoint covers Canadian alert
+    // polygons directly and supports browser CORS.
+    const ENVIRONMENT_CANADA_ALERTS_URL = 'https://api.weather.gc.ca/collections/weather-alerts/items';
     const PIRATE_API_KEY = null; // legacy compatibility; do not put a key here
     const OW_API_KEY = null;      // legacy compatibility; do not put a key here
     const TWC_API_KEY = null;     // legacy compatibility; do not put a key here
@@ -4552,6 +4556,142 @@
         return alerts;
     }
 
+    function _environmentCanadaTitleCase(value) {
+        return String(value || '').replace(/\w\S*/g, function(word) {
+            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        });
+    }
+
+    function _normalizeEnvironmentCanadaAlert(feature, index, requestLat, requestLon) {
+        var p = feature && feature.properties || {};
+        var shortName = p.alert_short_name_en || p.alert_name_en || 'Weather alert';
+        var type = _environmentCanadaTitleCase(p.alert_type || 'alert');
+        var colour = _environmentCanadaTitleCase(p.risk_colour_en || '');
+        var title = [colour, type, _environmentCanadaTitleCase(shortName)]
+            .filter(Boolean).join(' - ');
+        var source = 'https://weather.gc.ca/en/location/index.html?coords='
+            + encodeURIComponent(requestLat) + ',' + encodeURIComponent(requestLon);
+        return {
+            id: feature.id || p.feature_id || ('eccc-' + index),
+            provider: 'Environment Canada',
+            title: title,
+            event: shortName,
+            hazard: shortName,
+            alertType: p.alert_type || '',
+            level: p.risk_colour_en || '',
+            severity: p.alert_type === 'warning' ? 'severe'
+                : (p.alert_type === 'watch' ? 'moderate'
+                    : (p.alert_type === 'statement' ? 'minor' : 'moderate')),
+            description: p.alert_text_en || '',
+            instruction: '',
+            onset: p.validity_datetime || p.publication_datetime || '',
+            expires: p.expiration_datetime || p.event_end_datetime || '',
+            areaDesc: p.feature_name_en || '',
+            countryCode: 'CA',
+            sourceUrl: source,
+            officialUrl: source,
+            icon: '\u26A0\uFE0F',
+            geometry: feature.geometry || null,
+            details: p
+        };
+    }
+
+    async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
+        requestLat = requestLat == null ? lat : requestLat;
+        requestLon = requestLon == null ? lon : requestLon;
+        var span = 0.05;
+        var bbox = [
+            requestLon - span, requestLat - span,
+            requestLon + span, requestLat + span
+        ].join(',');
+        var url = ENVIRONMENT_CANADA_ALERTS_URL
+            + '?f=json&limit=100&bbox=' + encodeURIComponent(bbox);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: window._weatherRequestController
+                ? window._weatherRequestController.signal : undefined
+        }, 12000);
+        if (!res.ok) throw new Error('Environment Canada alerts ' + res.status);
+        var payload = await res.json();
+        var alerts = (payload && Array.isArray(payload.features)
+            ? payload.features : []).map(function(feature, index) {
+                return _normalizeEnvironmentCanadaAlert(feature, index, requestLat, requestLon);
+            }).filter(function(alert) {
+                var expiresMs = _meteoAlarmTimestamp(alert.expires);
+                return !expiresMs || expiresMs > Date.now();
+            });
+        window.environmentCanadaAlerts = alerts;
+        window.enviroCanadaAlerts = alerts;
+        window.ecccAlerts = alerts;
+        return alerts;
+    }
+
+    async function _renderInternationalProviderAlerts(stack, banner, checklist, alerts, provider) {
+        window.meteoAlarmAlerts = provider === 'MeteoAlarm' ? alerts : [];
+        window.environmentCanadaAlerts = provider === 'Environment Canada' ? alerts : [];
+        window.enviroCanadaAlerts = window.environmentCanadaAlerts;
+        window.ecccAlerts = window.environmentCanadaAlerts;
+        window.pirateAlerts = alerts;
+        stack.innerHTML = '';
+        checklist.style.display = 'none';
+        banner.style.display = 'none';
+        banner.className = '';
+        document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
+        await renderMeteoAlarmAlerts(stack, banner);
+        return true;
+    }
+
+    async function _fetchInternationalAlertFallback(stack, banner, checklist) {
+        try {
+            var canadaAlerts = await fetchEnvironmentCanadaAlerts(lat, lon);
+            if (canadaAlerts.length) {
+                return await _renderInternationalProviderAlerts(
+                    stack, banner, checklist, canadaAlerts, 'Environment Canada'
+                );
+            }
+        } catch (environmentCanadaError) {
+            console.warn('[SkyMonitor] Environment Canada alert refresh failed:', environmentCanadaError);
+        }
+
+        try {
+            var meteoAlerts = await fetchMeteoAlarmAlerts(lat, lon);
+            if (meteoAlerts.length) {
+                return await _renderInternationalProviderAlerts(
+                    stack, banner, checklist, meteoAlerts, 'MeteoAlarm'
+                );
+            }
+        } catch (meteoAlarmError) {
+            console.warn('[SkyMonitor] MeteoAlarm alert refresh failed:', meteoAlarmError);
+        }
+
+        // PirateWeather remains the final backstop when the alert-specific
+        // providers do not cover the selected location.
+        var pirateAlerts = Array.isArray(window._fastNwsAlerts)
+            ? window._fastNwsAlerts : [];
+        if (pirateAlerts.length) {
+            window.pirateAlerts = pirateAlerts;
+            stack.innerHTML = '';
+            checklist.style.display = 'none';
+            banner.style.display = 'none';
+            await renderPirateAlerts(stack, banner);
+            computeOutdoorScore();
+            computeThreatLevel();
+            return true;
+        }
+
+        window.meteoAlarmAlerts = [];
+        window.environmentCanadaAlerts = [];
+        window.enviroCanadaAlerts = [];
+        window.ecccAlerts = [];
+        window.pirateAlerts = [];
+        stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+        checklist.style.display = 'none';
+        banner.style.display = 'none';
+        computeOutdoorScore();
+        computeThreatLevel();
+        return true;
+    }
+
     async function renderMeteoAlarmAlerts(stack, banner) {
         const alerts = window.meteoAlarmAlerts || [];
         if (!alerts.length) {
@@ -5792,21 +5932,6 @@
         window.alertHasObservedCertainty = false;
         window.activeHeatWarning = false;
 
-        if (window.isOutsideUS) {
-            try {
-                await fetchMeteoAlarmAlerts(lat, lon);
-                stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
-                document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-                await renderMeteoAlarmAlerts(stack, banner);
-                return true;
-            } catch (meteoAlarmError) {
-                console.warn('[SkyMonitor] MeteoAlarm refresh failed:', meteoAlarmError);
-                // Keep a previous successful display intact instead of
-                // turning a transient API/proxy failure into "No active hazards."
-                return false;
-            }
-        }
-
         try {
             let data = null;
             const alertUrl = 'https://api.weather.gov/alerts/active?point=' + lat + ',' + lon;
@@ -5846,6 +5971,9 @@
             }
             if (!data) {
                 console.warn('[SkyMonitor] NWS alerts did not finish after retries:', lastAlertError);
+                if (window.isOutsideUS) {
+                    return await _fetchInternationalAlertFallback(stack, banner, checklist);
+                }
                 // Do not clear a previously successful alert display and do
                 // not render "No active hazards."  The caller keeps UPDATING
                 // visible and the next refresh will try again.
@@ -5860,6 +5988,11 @@
                 var endMs = rawEnd ? new Date(rawEnd).getTime() : 0;
                 return !endMs || isNaN(endMs) || endMs > Date.now();
             });
+            // Outside the NWS service area, an empty point response means the
+            // next provider in the chain gets the opportunity to answer.
+            if (window.isOutsideUS && !data.features.length) {
+                return await _fetchInternationalAlertFallback(stack, banner, checklist);
+            }
             const _expandedAlertIds = new Set();
             const _savedAlertScrolls = {};
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
