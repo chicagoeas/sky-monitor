@@ -4285,6 +4285,24 @@
         return value == null ? '' : String(value);
     }
 
+    function _meteoAlarmDisplayTitle(rawTitle, fallbackTitle) {
+        var title = _meteoAlarmText(rawTitle).replace(/\s+/g, ' ').trim();
+        if (!title) return _meteoAlarmText(fallbackTitle) || 'European weather alert';
+
+        // MeteoAlarm headlines commonly combine the awareness color, event,
+        // location, and level in one string, for example:
+        // "Yellow Thunderstorm Warning for Italy - Lombardia, yellow level".
+        // The card title should identify only the event type.
+        title = title
+            .replace(/^(?:green|yellow|orange|red)(?:\s+level)?\s+/i, '')
+            .replace(/\s+for\s+.*$/i, '')
+            .replace(/\s+-\s+.*$/i, '')
+            .replace(/\s*,\s*(?:green|yellow|orange|red)(?:\s+level)?\s*$/i, '')
+            .replace(/[,:;\s]+$/, '')
+            .trim();
+        return title || _meteoAlarmText(fallbackTitle) || 'European weather alert';
+    }
+
     function _meteoAlarmAlertId(alert, index) {
         return String(
             alert && (alert.id || alert.alertId || alert.identifier || alert.objectId || ('meteoalarm-' + index))
@@ -4303,10 +4321,11 @@
             p.hazard || p.awarenessType || p.awareness_type ||
             info.event || p.event || a.event
         );
-        var title = _meteoAlarmText(
+        var rawTitle = _meteoAlarmText(
             a.title || a.headline || p.title || p.headline || info.headline ||
             (hazard ? hazard + ' alert' : 'European weather alert')
         );
+        var title = _meteoAlarmDisplayTitle(rawTitle, hazard);
         var description = _meteoAlarmText(
             a.description || p.description || info.description || a.desc
         );
