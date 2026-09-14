@@ -4334,7 +4334,7 @@
             .replace(/^thunderstorms?$/i, 'Thunderstorm')
             .replace(/^rains?$/i, 'Rain')
             .replace(/^fogs?$/i, 'Fog');
-        if (!/(warning|watch|advisory|statement|outlook|event|alert)$/i.test(title)) {
+        if (!/(warning|watch|advisory|statement|outlook|alert)$/i.test(title)) {
             title += ' Warning';
         }
         return title.replace(/\b[a-z]/g, function(letter) {
@@ -4355,16 +4355,22 @@
         var source = a.officialUrl || a.official_url || a.web || p.web ||
             a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
         var severity = _meteoAlarmSeverity(Object.assign({}, a, p, info));
+        // eventType/awarenessType is the provider's canonical event. The
+        // headline is deliberately not used to classify the hazard: it may
+        // say "Dangerous Fog" or "Gale" while the API event is Fog or Wind.
         var hazard = _meteoAlarmText(
-            a.hazard || a.awarenessType || a.awareness_type ||
-            p.hazard || p.awarenessType || p.awareness_type ||
-            info.event || p.event || a.event
+            a.eventType || a.event_type ||
+            p.eventType || p.event_type ||
+            a.awarenessType || a.awareness_type ||
+            p.awarenessType || p.awareness_type ||
+            info.awarenessType || info.awareness_type ||
+            a.hazard || p.hazard || info.event || p.event || a.event
         );
         var rawTitle = _meteoAlarmText(
             a.title || a.headline || p.title || p.headline || info.headline ||
             (hazard ? hazard + ' alert' : 'European weather alert')
         );
-        var title = _meteoAlarmDisplayTitle(rawTitle, hazard);
+        var title = _meteoAlarmDisplayTitle(hazard || rawTitle, hazard);
         var description = _meteoAlarmText(
             a.description || p.description || info.description || a.desc
         );
@@ -4380,6 +4386,7 @@
             id: _meteoAlarmAlertId(a, index),
             title: title,
             event: hazard || title,
+            eventType: hazard || '',
             severity: severity,
             awarenessLevel: a.awarenessLevel || p.awarenessLevel || a.awareness_level || p.awareness_level || '',
             description: description,
@@ -4514,20 +4521,44 @@
         return '';
     }
 
+    function _environmentCanadaAlertKind(value) {
+        var match = String(value || '').match(/\b(warning|watch|advisory|statement|alert)\b/i);
+        return match ? match[1].toLowerCase() : '';
+    }
+
+    function _environmentCanadaEventTitle(eventType, alertName) {
+        var event = _normalizeEnvironmentCanadaAlertName(eventType || alertName || 'Weather alert');
+        var kind = _environmentCanadaAlertKind(alertName) ||
+            _environmentCanadaAlertKind(eventType);
+        if (kind && !new RegExp('\\b' + kind + '\\b$', 'i').test(event)) {
+            event += ' ' + kind.charAt(0).toUpperCase() + kind.slice(1);
+        }
+        return event;
+    }
+
     function _normalizeEnvironmentCanadaAlert(feature, index) {
         var p = feature && feature.properties || {};
         var risk = p.risk_colour_en || p.riskColour || p.impact_en || p.alert_type || '';
         var severity = _environmentCanadaSeverity({ riskColour: risk, alertType: p.alert_type });
-        var event = _normalizeEnvironmentCanadaAlertName(
-            p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert'
-        );
+        var alertName = p.alert_name_en || p.alert_short_name_en || '';
+        // Environment Canada exposes the canonical hazard family separately
+        // from the display name. Prefer that API field so "Wave Height
+        // Warning" can correctly render as "Coastal Event Warning" instead
+        // of guessing from the headline.
+        var rawEventType = p.event_type_en || p.event_type ||
+            p.alert_event_en || p.alert_event ||
+            p.awareness_type_en || p.awareness_type ||
+            p.alert_type_en || p.alert_type || '';
+        var eventType = /^(warning|watch|advisory|statement|alert)$/i.test(
+            String(rawEventType).trim()
+        ) ? '' : rawEventType;
+        var event = _normalizeEnvironmentCanadaAlertName(eventType || alertName || 'Weather alert');
+        var title = _environmentCanadaEventTitle(eventType || event, alertName || event);
         var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
         return {
             id: String(p.feature_id || feature.id || 'environment-canada-' + index)
                 .replace(/[^a-zA-Z0-9_-]/g, '_'),
-            title: _normalizeEnvironmentCanadaAlertName(
-                p.alert_name_en || p.alert_short_name_en || event
-            ),
+            title: title,
             event: event,
             severity: severity,
             awarenessLevel: p.risk_colour_en || '',
