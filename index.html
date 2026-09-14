@@ -4327,37 +4327,8 @@
         return 'https://www.meteoalarm.org/en/live/';
     }
 
-    // MeteoAlarm is a European warning network. Keep its country routing
-    // explicit so locations such as Australia, Japan, and South Africa use
-    // PirateWeather instead of receiving an empty European feed response.
-    const METEOALARM_COUNTRIES = {
-        AD: true, AT: true, BE: true, BG: true, CH: true, CY: true, CZ: true,
-        DE: true, DK: true, EE: true, ES: true, FI: true, FR: true, GR: true,
-        HR: true, HU: true, IE: true, IS: true, IT: true, LI: true, LT: true,
-        LU: true, LV: true, ME: true, MK: true, MT: true, NL: true, NO: true,
-        PL: true, PT: true, RO: true, RS: true, SE: true, SI: true, SK: true,
-        TR: true, UK: true, GB: true
-    };
-
     const ENVIRONMENT_CANADA_ALERTS_URL =
         'https://api.weather.gc.ca/collections/weather-alerts/items';
-
-    function _isLikelyCanadianCoordinate(latitude, longitude) {
-        var latValue = Number(latitude);
-        var lonValue = Number(longitude);
-        if (!isFinite(latValue) || !isFinite(lonValue)) return false;
-        // This is intentionally a fallback for remote points where Photon
-        // returns a feature without countrycode. It covers Canada's mainland,
-        // northern territories, and Arctic islands without treating Alaska or
-        // Greenland as Canada.
-        if (latValue < 49.0 || latValue > 83.5 ||
-            lonValue < -141.2 || lonValue > -52.5) return false;
-        if (latValue >= 60.0) return true;
-        if (lonValue >= -114.0) return true;
-        // British Columbia's mainland and coastal islands. The Alaska
-        // panhandle occupies the farther-west portion of this latitude band.
-        return lonValue >= -129.5;
-    }
 
     function _environmentCanadaSeverity(alert) {
         var raw = String(
@@ -4483,7 +4454,7 @@
             var p = feature && feature.properties || {};
             var status = String(p.status_en || '').toLowerCase();
             var endMs = Date.parse(p.event_end_datetime || p.expiration_datetime || '');
-            return (!status || status === 'issued' || status === 'updated') &&
+            return (!status || status === 'issued' || status === 'updated' || status === 'continued') &&
                 (!endMs || endMs > now) &&
                 _pointInGeoJson(Number(requestLon), Number(requestLat), feature.geometry);
         }).map(_normalizeEnvironmentCanadaAlert).filter(function(alert) {
@@ -4782,6 +4753,71 @@
             const _cardColor = _pirateAlertColor(alert.severity);
              stack.innerHTML += '<div class="alert-card" style="background:' + _cardColor + '; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><div class="alert-meta-row">' + timingHtml + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button>' : '') + '</div>' + (!isTruncated ? '<small>' + escapeHtml(desc) + '</small>' : '') + (isTruncated ? '<div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
         }
+    }
+
+    async function _tryInternationalAlertFallback(stack, banner, checklist) {
+        // Provider coverage is not consistently expressed as an HTTP error:
+        // some feeds return a valid empty collection outside their footprint.
+        // Treat an empty collection as "try the next provider", and only
+        // render "No active hazards" after PirateWeather is the final result.
+        var providers = [
+            {
+                name: 'Environment Canada',
+                fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
+                render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+            },
+            {
+                name: 'MeteoAlarm',
+                fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
+                render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+            },
+            {
+                name: 'PirateWeather',
+                fetch: function() { return fetchPirateAlerts(lat, lon); },
+                render: function() { return renderPirateAlerts(stack, banner); }
+            }
+        ];
+        var lastError = null;
+
+        for (var i = 0; i < providers.length; i++) {
+            var provider = providers[i];
+            try {
+                var alerts = await provider.fetch();
+                if (Array.isArray(alerts) && alerts.length > 0) {
+                    stack.innerHTML = '';
+                    checklist.style.display = 'none';
+                    banner.style.display = 'none';
+                    banner.className = '';
+                    document.body.classList.remove(
+                        'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+                    );
+                    await provider.render();
+                    return true;
+                }
+                if (i === providers.length - 1) {
+                    // PirateWeather is the final provider and an empty,
+                    // successful response is a legitimate no-alert result.
+                    stack.innerHTML = '';
+                    checklist.style.display = 'none';
+                    banner.style.display = 'none';
+                    banner.className = '';
+                    document.body.classList.remove(
+                        'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+                    );
+                    await provider.render();
+                    return true;
+                }
+                console.info('[SkyMonitor] ' + provider.name +
+                    ' returned no active alerts; trying the next provider.');
+            } catch (providerError) {
+                lastError = providerError;
+                console.warn('[SkyMonitor] ' + provider.name +
+                    ' alert lookup failed; trying the next provider:', providerError);
+            }
+        }
+
+        console.warn('[SkyMonitor] All alert providers failed:', lastError);
+        return false;
     }
 
     // Resolve a PirateWeather summary string (or icon slug) to an NWS icon URL.
@@ -5845,57 +5881,10 @@
         window.activeHeatWarning = false;
 
         if (window.isOutsideUS) {
-            // The location classifier runs in parallel with the weather
-            // request. Give it a short opportunity to finish so a Canadian
-            // point is not accidentally routed to the PirateWeather branch.
-            if (!window.locationCountryCode && window._locationClassificationPromise) {
-                await Promise.race([
-                    window._locationClassificationPromise,
-                    new Promise(function(resolve) { setTimeout(resolve, 2500); })
-                ]);
-            }
-            var _countryCode = String(window.locationCountryCode || '').toUpperCase();
-            if (!_countryCode && _isLikelyCanadianCoordinate(lat, lon)) {
-                _countryCode = 'CA';
-                window.locationCountryCode = _countryCode;
-            }
-            if (_countryCode === 'CA') {
-                try {
-                    await fetchEnvironmentCanadaAlerts(lat, lon);
-                    stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
-                    document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-                    await renderMeteoAlarmAlerts(stack, banner);
-                    return true;
-                } catch (environmentCanadaError) {
-                    console.warn('[SkyMonitor] Environment Canada refresh failed:', environmentCanadaError);
-                    return false;
-                }
-            }
-
-            if (METEOALARM_COUNTRIES[_countryCode]) {
-                try {
-                    await fetchMeteoAlarmAlerts(lat, lon);
-                    _storeInternationalAlertState(window.meteoAlarmAlerts || []);
-                    stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
-                    document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-                    await renderMeteoAlarmAlerts(stack, banner);
-                    return true;
-                } catch (meteoAlarmError) {
-                    console.warn('[SkyMonitor] MeteoAlarm refresh failed:', meteoAlarmError);
-                    return false;
-                }
-            }
-
-            try {
-                await fetchPirateAlerts(lat, lon);
-                stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
-                document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-                await renderPirateAlerts(stack, banner);
-                return true;
-            } catch (pirateAlertError) {
-                console.warn('[SkyMonitor] PirateWeather alert refresh failed:', pirateAlertError);
-                return false;
-            }
+            // International coverage is determined by the providers, not by
+            // reverse-geocoder country metadata. This matters for remote
+            // islands and border regions where Photon may return no country.
+            return await _tryInternationalAlertFallback(stack, banner, checklist);
         }
 
         try {
@@ -5937,10 +5926,10 @@
             }
             if (!data) {
                 console.warn('[SkyMonitor] NWS alerts did not finish after retries:', lastAlertError);
-                // Do not clear a previously successful alert display and do
-                // not render "No active hazards."  The caller keeps UPDATING
-                // visible and the next refresh will try again.
-                return false;
+                // NWS is the first provider in the chain. If it cannot
+                // answer, try the international providers before preserving
+                // the previous display.
+                return await _tryInternationalAlertFallback(stack, banner, checklist);
             }
             // The active endpoint normally excludes expired alerts, but
             // discard them defensively before selecting the banner and
