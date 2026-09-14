@@ -1913,10 +1913,6 @@
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
     const METEOALARM_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/meteoalarm';
-    // Environment and Climate Change Canada's public GeoMet OGC API.  Unlike
-    // the MeteoAlarm worker route, this endpoint covers Canadian alert
-    // polygons directly and supports browser CORS.
-    const ENVIRONMENT_CANADA_ALERTS_URL = 'https://api.weather.gc.ca/collections/weather-alerts/items';
     const PIRATE_API_KEY = null; // legacy compatibility; do not put a key here
     const OW_API_KEY = null;      // legacy compatibility; do not put a key here
     const TWC_API_KEY = null;     // legacy compatibility; do not put a key here
@@ -1982,6 +1978,8 @@
     window.pirateCurrently = null;
     window.pirateAlerts = [];
     window.meteoAlarmAlerts = [];
+    window.environmentCanadaAlerts = [];
+    window.locationCountryCode = '';
     window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
@@ -2298,6 +2296,8 @@
                 neighbourhood: props.neighbourhood || '',
                 quarter: props.quarter || ''
             },
+            country_code: props.countrycode || props.country_code || '',
+            country: props.country || '',
             // Keep the OSM key/value in the names expected by the existing
             // water and beach classifiers.
             class: props.osm_key || '',
@@ -4239,166 +4239,6 @@
         }
     }
 
-    // Shared named-hazard mapping for non-NWS alerts.
-    //
-    // MeteoAlarm's official CAP profile names the hazard families Wind,
-    // Snow/Ice, Thunderstorm, Fog, High Temperature, Low Temperature,
-    // Coastal event, Forest-fire, Avalanches, Rain, Flooding, Rain-Flood,
-    // Marine-Hazard and Drought. Environment and Climate Change Canada's
-    // public alert products use names such as Tornado, Severe Thunderstorm,
-    // Blizzard, Snowfall, Freezing Rain, Extreme Cold, Heat, Rainfall,
-    // Flood, Wind, Fog, Storm Surge and Special Weather Statement.
-    //
-    // Keep the matching deliberately broad because national services may
-    // translate the same official hazard into a headline, event, or
-    // category field. The point values mirror the existing NWS table:
-    // short-fused/high-impact named hazards affect Threat Level and Outdoor
-    // Score more strongly than informational or environmental notices.
-    function _internationalAlertProfile(alert) {
-        var a = alert || {};
-        var details = a.details && typeof a.details === 'object' ? a.details : {};
-        var text = [
-            a.event, a.hazard, a.awarenessType, a.title, a.headline,
-            a.alertType, a.category, a.phenomenon, a.level, a.alertLevel,
-            details.event, details.hazard, details.alertType, details.category
-        ].filter(Boolean).join(' ').toLowerCase()
-            .replace(/[–—]/g, '-').replace(/[_/]+/g, ' ');
-        var severity = _meteoAlarmSeverity(a);
-        var severityText = [
-            a.severity, a.awarenessLevel, a.awareness_level,
-            a.level, a.alertLevel, a.type
-        ].filter(Boolean).join(' ').toLowerCase();
-        // ECCC feeds commonly expose Warning/Watch/Advisory/Statement rather
-        // than MeteoAlarm's yellow/orange/red awareness colors.
-        if (/\bwarning\b/.test(text + ' ' + severityText)) severity = 'severe';
-        else if (/\bwatch\b/.test(text + ' ' + severityText) && severity === 'moderate') severity = 'moderate';
-        else if (/\b(statement|outlook)\b/.test(text + ' ' + severityText) && !/red|orange|extreme|severe/.test(severityText)) severity = 'minor';
-
-        var rank = { minor: 1, moderate: 2, severe: 3, extreme: 4 };
-        var severityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
-        var profile = {
-            key: 'general',
-            label: a.title || a.event || 'International weather alert',
-            basePoints: 1,
-            outdoorValue: null,
-            color: _meteoAlarmColor(severity),
-            dangerous: false,
-            critical: false,
-            lifeThreatening: false
-        };
-        var rules = [
-            // Coastal and tropical hazards are the closest international
-            // equivalents to the NWS life-safety products.
-            { re: /storm surge/, key: 'storm-surge', base: 8, outdoor: 25, dangerous: true, color: '#e040fb' },
-            { re: /tsunami/, key: 'tsunami', base: 10, outdoor: 0, dangerous: true, life: true, color: '#e040fb' },
-            { re: /\b(hurricane|typhoon)\b/, key: 'tropical', base: 9, outdoor: 0, dangerous: true, life: true, color: '#e040fb' },
-            { re: /tornado/, key: 'tornado', base: 8, outdoor: 25, dangerous: true, color: '#ff1744' },
-            { re: /coastal flood|coastal flooding/, key: 'coastal-flood', base: 6, outdoor: 25, dangerous: true, color: '#0288d1' },
-            { re: /high surf|marine hazard|marine-hazard/, key: 'marine', base: 4, outdoor: 50, color: '#0288d1' },
-            { re: /avalanche/, key: 'avalanche', base: 7, outdoor: 25, dangerous: true, color: '#90caf9' },
-            // Convective and flood families.
-            { re: /severe thunderstorm|thunderstorm/, key: 'thunderstorm', base: 6, outdoor: 25, dangerous: true, color: '#ff9100' },
-            { re: /flash flood|rain flood|rain-flood|flooding|flood|rainfall/, key: 'flood', base: 6, outdoor: 25, color: '#00bcd4' },
-            // Winter hazards.
-            { re: /blizzard/, key: 'blizzard', base: 6, outdoor: 25, dangerous: true, color: '#64b5f6' },
-            { re: /snow squall/, key: 'snow-squall', base: 5, outdoor: 25, dangerous: true, color: '#90caf9' },
-            { re: /ice storm|freezing rain|flash freeze|snow ice|snowfall|winter storm/, key: 'winter', base: 5, outdoor: 25, color: '#90caf9' },
-            { re: /extreme cold|wind chill|low temperature|low-temp/, key: 'cold', base: 5, outdoor: 25, color: '#90caf9' },
-            // Wind, heat, fire and visibility.
-            { re: /extreme wind|high wind|gale|wind/, key: 'wind', base: 5, outdoor: 25, color: '#ffb300' },
-            { re: /heat|high temperature|high-temp|humidex/, key: 'heat', base: 5, outdoor: 25, color: '#ff5722' },
-            { re: /forest fire|wildfire|forest-fire/, key: 'fire', base: 5, outdoor: 50, color: '#ff5722' },
-            { re: /dense fog|fog/, key: 'fog', base: 2, outdoor: 75, color: '#b0bec5' },
-            { re: /air quality|smoke/, key: 'air-quality', base: 1, outdoor: 75, color: '#78909c' },
-            { re: /rain/, key: 'rain', base: 2, outdoor: 75, color: '#4fc3f7' },
-            { re: /drought/, key: 'drought', base: 1, outdoor: 90, color: '#a1887f' },
-            { re: /special weather|special-weather/, key: 'statement', base: 1, outdoor: 90, color: '#aaaaaa' }
-        ];
-        for (var i = 0; i < rules.length; i++) {
-            if (!rules[i].re.test(text)) continue;
-            var rule = rules[i];
-            profile.key = rule.key;
-            profile.basePoints = rule.base;
-            profile.outdoorValue = rule.outdoor;
-            profile.color = rule.color;
-            profile.dangerous = !!rule.dangerous;
-            profile.lifeThreatening = !!rule.life;
-            break;
-        }
-        // A red/extreme named hazard is materially more serious than a
-        // yellow/moderate notice. Keep this separate from the NWS tier flags:
-        // the event name still decides whether a named hazard is dangerous.
-        if (severity === 'extreme' && profile.basePoints >= 5) {
-            profile.critical = !profile.lifeThreatening;
-            profile.dangerous = true;
-        }
-        if (profile.key === 'storm-surge' &&
-            (severity === 'severe' || severity === 'extreme' || /\bwarning\b/.test(text))) {
-            profile.lifeThreatening = true;
-        }
-        if (profile.key === 'flood' && /\bwarning\b/.test(text)) profile.dangerous = true;
-        if (profile.key === 'winter' && /\bwarning\b/.test(text)) profile.dangerous = true;
-        profile.severity = severity;
-        profile.points = Math.min(12, Math.max(severityPoints[severity] || 2, profile.basePoints));
-        if (/\bwarning\b/.test(text)) profile.points = Math.min(12, profile.points + 1);
-        return profile;
-    }
-
-    function _internationalAlertList() {
-        var lists = [
-            window.meteoAlarmAlerts,
-            window.environmentCanadaAlerts,
-            window.enviroCanadaAlerts,
-            window.ecccAlerts
-        ];
-        var result = [], seen = {};
-        lists.forEach(function(list) {
-            if (!Array.isArray(list)) return;
-            list.forEach(function(alert) {
-                var key = String(alert && (alert.id || alert.identifier || alert.title || alert.event) || '');
-                if (!key) key = JSON.stringify(alert || {});
-                if (seen[key]) return;
-                seen[key] = true;
-                result.push(alert);
-            });
-        });
-        return result;
-    }
-
-    function _internationalAlertIsCurrent(alert) {
-        var now = Date.now();
-        var onset = _meteoAlarmTimestamp(alert && (alert.onset || alert.effective));
-        var expires = _meteoAlarmTimestamp(alert && (alert.expires || alert.ends));
-        return (!onset || onset <= now) && (!expires || expires > now);
-    }
-
-    function _activeInternationalAlerts() {
-        return _internationalAlertList().filter(_internationalAlertIsCurrent);
-    }
-
-    function _internationalOutdoorOverride() {
-        var alerts = _activeInternationalAlerts();
-        var best = null;
-        alerts.forEach(function(alert) {
-            var profile = _internationalAlertProfile(alert);
-            if (profile.outdoorValue == null) return;
-            if (!best || profile.outdoorValue < best.profile.outdoorValue ||
-                (profile.outdoorValue === best.profile.outdoorValue && profile.points > best.profile.points)) {
-                best = { alert: alert, profile: profile };
-            }
-        });
-        if (!best) return null;
-        var label = best.alert.title || best.alert.event || best.profile.label;
-        var value = best.profile.outdoorValue;
-        var text;
-        if (value <= 0) text = 'Dangerous to be outside — active ' + label;
-        else if (value <= 25) text = 'Not recommended — active ' + label;
-        else if (value <= 50) text = 'Use caution outdoors — active ' + label;
-        else if (value <= 75) text = 'Be cautious outdoors — active ' + label;
-        else return null;
-        return { value: value, text: text };
-    }
-
     function _meteoAlarmText(value) {
         if (Array.isArray(value)) return value.filter(Boolean).join('\n');
         return value == null ? '' : String(value);
@@ -4441,10 +4281,8 @@
             id: _meteoAlarmAlertId(a, index),
             title: title,
             event: hazard || title,
-            hazard: hazard,
             severity: severity,
             awarenessLevel: a.awarenessLevel || p.awarenessLevel || a.awareness_level || p.awareness_level || '',
-            alertType: a.alertType || p.alertType || info.alertType || a.type || p.type || '',
             description: description,
             instruction: instruction,
             onset: onset,
@@ -4489,6 +4327,203 @@
         return 'https://www.meteoalarm.org/en/live/';
     }
 
+    const ENVIRONMENT_CANADA_ALERTS_URL =
+        'https://api.weather.gc.ca/collections/weather-alerts/items';
+
+    function _environmentCanadaSeverity(alert) {
+        var raw = String(
+            alert && (alert.severity || alert.riskColour || alert.risk_colour ||
+                alert.impact || alert.alertType || '')
+        ).toLowerCase();
+        // Environment Canada publishes an explicit risk colour. Prefer that
+        // over the generic advisory/warning type, because a yellow warning is
+        // still a moderate-level alert in the national feed.
+        if (raw.includes('red') || raw.includes('extreme')) return 'extreme';
+        if (raw.includes('orange') || raw.includes('severe')) return 'severe';
+        if (raw.includes('yellow') || raw.includes('moderate')) return 'moderate';
+        if (raw.includes('green') || raw.includes('minor')) return 'minor';
+        if (raw.includes('warning')) return 'severe';
+        if (raw.includes('advisory')) return 'moderate';
+        return 'moderate';
+    }
+
+    function _environmentCanadaColor(severity) {
+        switch ((severity || '').toLowerCase()) {
+            case 'extreme': return '#c62828';
+            case 'severe': return '#ef6c00';
+            case 'moderate': return '#f9a825';
+            case 'minor': return '#388e3c';
+            default: return '#546e7a';
+        }
+    }
+
+    function _pointInGeoJson(lonP, latP, geometry) {
+        if (!geometry) return false;
+        if (geometry.type === 'Feature') return _pointInGeoJson(lonP, latP, geometry.geometry);
+        if (geometry.type === 'Polygon') {
+            var rings = geometry.coordinates || [];
+            if (!rings.length || !_pointInRing(lonP, latP, rings[0])) return false;
+            return rings.slice(1).every(function(ring) { return !_pointInRing(lonP, latP, ring); });
+        }
+        if (geometry.type === 'MultiPolygon') {
+            return (geometry.coordinates || []).some(function(polygon) {
+                return _pointInGeoJson(lonP, latP, { type: 'Polygon', coordinates: polygon });
+            });
+        }
+        if (geometry.type === 'GeometryCollection') {
+            return (geometry.geometries || []).some(function(item) {
+                return _pointInGeoJson(lonP, latP, item);
+            });
+        }
+        return false;
+    }
+
+    function _pointInRing(lonP, latP, ring) {
+        var inside = false;
+        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            var xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+            var xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+            if (!isFinite(xi) || !isFinite(yi) || !isFinite(xj) || !isFinite(yj)) continue;
+            var intersects = ((yi > latP) !== (yj > latP)) &&
+                (lonP < (xj - xi) * (latP - yi) / ((yj - yi) || 1e-12) + xi);
+            if (intersects) inside = !inside;
+        }
+        return inside;
+    }
+
+    function _normalizeEnvironmentCanadaAlert(feature, index) {
+        var p = feature && feature.properties || {};
+        var risk = p.risk_colour_en || p.riskColour || p.impact_en || p.alert_type || '';
+        var severity = _environmentCanadaSeverity({ riskColour: risk, alertType: p.alert_type });
+        var event = p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert';
+        var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
+        return {
+            id: String(p.feature_id || feature.id || 'environment-canada-' + index)
+                .replace(/[^a-zA-Z0-9_-]/g, '_'),
+            title: p.alert_short_name_en || p.alert_name_en || event,
+            event: event,
+            severity: severity,
+            awarenessLevel: p.risk_colour_en || '',
+            description: p.alert_text_en || p.alert_text || '',
+            instruction: '',
+            onset: p.validity_datetime || p.publication_datetime || '',
+            expires: p.event_end_datetime || p.expiration_datetime || '',
+            areaDesc: area,
+            countryCode: 'CA',
+            icon: '\u26A0\uFE0F',
+            sourceUrl: 'https://weather.gc.ca/warnings/index_e.html',
+            geometry: feature.geometry || null
+        };
+    }
+
+    function _storeInternationalAlertState(alerts) {
+        window.activeAlertEvents = [];
+        window.activeAlertOnsets = {};
+        window.activeAlertExpires = {};
+        (alerts || []).forEach(function(alert) {
+            var name = alert.title || alert.event || 'Weather alert';
+            if (!window.activeAlertEvents.includes(name)) window.activeAlertEvents.push(name);
+            window.activeAlertOnsets[name] = _meteoAlarmTimestamp(alert.onset) || 0;
+            window.activeAlertExpires[name] = _meteoAlarmTimestamp(alert.expires) || 0;
+        });
+    }
+
+    async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
+        var pad = 0.35;
+        var bbox = [
+            Number(requestLon) - pad, Number(requestLat) - pad,
+            Number(requestLon) + pad, Number(requestLat) + pad
+        ].join(',');
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = ENVIRONMENT_CANADA_ALERTS_URL + '?f=json&lang=en-CA&limit=100&bbox=' +
+            encodeURIComponent(bbox);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal,
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }, 12000);
+        if (!res.ok) throw new Error('Environment Canada alerts ' + res.status);
+        var payload = await res.json();
+        if (!payload || !Array.isArray(payload.features)) {
+            throw new Error('Environment Canada response missing features');
+        }
+        var now = Date.now();
+        var seen = {};
+        var alerts = payload.features.filter(function(feature) {
+            var p = feature && feature.properties || {};
+            var status = String(p.status_en || '').toLowerCase();
+            var endMs = Date.parse(p.event_end_datetime || p.expiration_datetime || '');
+            return (!status || status === 'issued' || status === 'updated' || status === 'continued') &&
+                (!endMs || endMs > now) &&
+                _pointInGeoJson(Number(requestLon), Number(requestLat), feature.geometry);
+        }).map(_normalizeEnvironmentCanadaAlert).filter(function(alert) {
+            var key = [alert.title, alert.areaDesc, alert.onset, alert.expires]
+                .map(function(value) { return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim(); })
+                .join('|');
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+        window.environmentCanadaAlerts = alerts;
+        window.meteoAlarmAlerts = alerts;
+        window.pirateAlerts = [];
+        _storeInternationalAlertState(alerts);
+        return alerts;
+    }
+
+    function _normalizePirateAlert(raw, index) {
+        var a = raw || {};
+        var onset = a.time != null ? Number(a.time) * 1000 : Date.parse(a.onset || a.effective || '');
+        var expires = a.expires != null ? Number(a.expires) * 1000 : Date.parse(a.ends || a.expiration || '');
+        var severityRaw = String(a.severity || a.level || '').toLowerCase();
+        var alertText = String(a.title || a.event || '').toLowerCase();
+        var severity = severityRaw.includes('extreme') ? 'extreme' :
+            severityRaw.includes('severe') ? 'severe' :
+            severityRaw.includes('minor') ? 'minor' :
+            severityRaw.includes('moderate') ? 'moderate' :
+            alertText.includes('warning') ? 'severe' :
+            alertText.includes('watch') || alertText.includes('advisory') ? 'moderate' :
+            'moderate';
+        return {
+            id: String(a.id || 'pirate-' + index).replace(/[^a-zA-Z0-9_-]/g, '_'),
+            title: a.title || a.event || 'Weather Alert',
+            event: a.event || a.title || 'Weather Alert',
+            severity: severity,
+            description: a.description || a.headline || '',
+            time: isFinite(onset) ? Math.round(onset / 1000) : 0,
+            expires: isFinite(expires) ? Math.round(expires / 1000) : 0,
+            onset: isFinite(onset) ? new Date(onset).toISOString() : '',
+            sourceUrl: a.sourceUrl || a.url || a.uri || ''
+        };
+    }
+
+    async function fetchPirateAlerts(requestLat, requestLon) {
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = WEATHER_WORKER_URL + '/api/weather/pirate-alerts?lat=' +
+            encodeURIComponent(requestLat == null ? lat : requestLat) + '&lon=' +
+            encodeURIComponent(requestLon == null ? lon : requestLon);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) throw new Error('PirateWeather alerts ' + res.status);
+        var payload = await res.json();
+        var rawAlerts = payload && Array.isArray(payload.alerts) ? payload.alerts : [];
+        var now = Date.now();
+        var alerts = rawAlerts.map(_normalizePirateAlert).filter(function(alert) {
+            return !alert.expires || alert.expires * 1000 > now;
+        });
+        window.pirateAlerts = alerts;
+        // Keep the shared international alert collection populated so threat
+        // scoring can account for PirateWeather alerts as well as the visible
+        // PirateWeather renderer.
+        window.meteoAlarmAlerts = alerts;
+        _storeInternationalAlertState(alerts);
+        return alerts;
+    }
+
     // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
     // That worker owns METEOALARM_API_TOKEN, resolves the selected coordinate to
     // the relevant country/regions, fetches the official OGC API EDR records,
@@ -4508,15 +4543,11 @@
         }, 12000);
         if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
         var payload = await res.json();
-        var sourceAlerts = [];
-        if (Array.isArray(payload)) sourceAlerts = payload;
-        else if (payload && Array.isArray(payload.alerts)) sourceAlerts = payload.alerts;
-        else if (payload && Array.isArray(payload.environmentCanadaAlerts)) sourceAlerts = payload.environmentCanadaAlerts;
-        else if (payload && Array.isArray(payload.enviroCanadaAlerts)) sourceAlerts = payload.enviroCanadaAlerts;
-        else if (payload && Array.isArray(payload.ecccAlerts)) sourceAlerts = payload.ecccAlerts;
-        else if (payload && Array.isArray(payload.canadaAlerts)) sourceAlerts = payload.canadaAlerts;
-        else if (payload && Array.isArray(payload.features)) sourceAlerts = payload.features;
-        else if (payload && payload.type === 'Feature') sourceAlerts = [payload];
+        var sourceAlerts = Array.isArray(payload)
+            ? payload
+            : (Array.isArray(payload.alerts) ? payload.alerts
+                : (Array.isArray(payload.features) ? payload.features
+                    : (payload && payload.type === 'Feature' ? [payload] : [])));
         var alerts = sourceAlerts.map(_normalizeMeteoAlarmAlert).filter(function(a) {
             return a.title || a.description;
         });
@@ -4556,149 +4587,11 @@
         return alerts;
     }
 
-    function _environmentCanadaTitleCase(value) {
-        return String(value || '').replace(/\w\S*/g, function(word) {
-            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        });
-    }
-
-    function _normalizeEnvironmentCanadaAlert(feature, index, requestLat, requestLon) {
-        var p = feature && feature.properties || {};
-        var shortName = p.alert_short_name_en || p.alert_name_en || 'Weather alert';
-        var type = _environmentCanadaTitleCase(p.alert_type || 'alert');
-        var colour = _environmentCanadaTitleCase(p.risk_colour_en || '');
-        var title = [colour, type, _environmentCanadaTitleCase(shortName)]
-            .filter(Boolean).join(' - ');
-        var source = 'https://weather.gc.ca/en/location/index.html?coords='
-            + encodeURIComponent(requestLat) + ',' + encodeURIComponent(requestLon);
-        return {
-            id: feature.id || p.feature_id || ('eccc-' + index),
-            provider: 'Environment Canada',
-            title: title,
-            event: shortName,
-            hazard: shortName,
-            alertType: p.alert_type || '',
-            level: p.risk_colour_en || '',
-            severity: p.alert_type === 'warning' ? 'severe'
-                : (p.alert_type === 'watch' ? 'moderate'
-                    : (p.alert_type === 'statement' ? 'minor' : 'moderate')),
-            description: p.alert_text_en || '',
-            instruction: '',
-            onset: p.validity_datetime || p.publication_datetime || '',
-            expires: p.expiration_datetime || p.event_end_datetime || '',
-            areaDesc: p.feature_name_en || '',
-            countryCode: 'CA',
-            sourceUrl: source,
-            officialUrl: source,
-            icon: '\u26A0\uFE0F',
-            geometry: feature.geometry || null,
-            details: p
-        };
-    }
-
-    async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
-        requestLat = requestLat == null ? lat : requestLat;
-        requestLon = requestLon == null ? lon : requestLon;
-        var span = 0.05;
-        var bbox = [
-            requestLon - span, requestLat - span,
-            requestLon + span, requestLat + span
-        ].join(',');
-        var url = ENVIRONMENT_CANADA_ALERTS_URL
-            + '?f=json&limit=100&bbox=' + encodeURIComponent(bbox);
-        var res = await _weatherFetch(url, {
-            cache: 'no-store',
-            signal: window._weatherRequestController
-                ? window._weatherRequestController.signal : undefined
-        }, 12000);
-        if (!res.ok) throw new Error('Environment Canada alerts ' + res.status);
-        var payload = await res.json();
-        var alerts = (payload && Array.isArray(payload.features)
-            ? payload.features : []).map(function(feature, index) {
-                return _normalizeEnvironmentCanadaAlert(feature, index, requestLat, requestLon);
-            }).filter(function(alert) {
-                var expiresMs = _meteoAlarmTimestamp(alert.expires);
-                return !expiresMs || expiresMs > Date.now();
-            });
-        window.environmentCanadaAlerts = alerts;
-        window.enviroCanadaAlerts = alerts;
-        window.ecccAlerts = alerts;
-        return alerts;
-    }
-
-    async function _renderInternationalProviderAlerts(stack, banner, checklist, alerts, provider) {
-        window.meteoAlarmAlerts = provider === 'MeteoAlarm' ? alerts : [];
-        window.environmentCanadaAlerts = provider === 'Environment Canada' ? alerts : [];
-        window.enviroCanadaAlerts = window.environmentCanadaAlerts;
-        window.ecccAlerts = window.environmentCanadaAlerts;
-        window.pirateAlerts = alerts;
-        stack.innerHTML = '';
-        checklist.style.display = 'none';
-        banner.style.display = 'none';
-        banner.className = '';
-        document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-        await renderMeteoAlarmAlerts(stack, banner);
-        return true;
-    }
-
-    async function _fetchInternationalAlertFallback(stack, banner, checklist) {
-        try {
-            var canadaAlerts = await fetchEnvironmentCanadaAlerts(lat, lon);
-            if (canadaAlerts.length) {
-                return await _renderInternationalProviderAlerts(
-                    stack, banner, checklist, canadaAlerts, 'Environment Canada'
-                );
-            }
-        } catch (environmentCanadaError) {
-            console.warn('[SkyMonitor] Environment Canada alert refresh failed:', environmentCanadaError);
-        }
-
-        try {
-            var meteoAlerts = await fetchMeteoAlarmAlerts(lat, lon);
-            if (meteoAlerts.length) {
-                return await _renderInternationalProviderAlerts(
-                    stack, banner, checklist, meteoAlerts, 'MeteoAlarm'
-                );
-            }
-        } catch (meteoAlarmError) {
-            console.warn('[SkyMonitor] MeteoAlarm alert refresh failed:', meteoAlarmError);
-        }
-
-        // PirateWeather remains the final backstop when the alert-specific
-        // providers do not cover the selected location.
-        var pirateAlerts = Array.isArray(window._fastNwsAlerts)
-            ? window._fastNwsAlerts : [];
-        if (pirateAlerts.length) {
-            window.pirateAlerts = pirateAlerts;
-            stack.innerHTML = '';
-            checklist.style.display = 'none';
-            banner.style.display = 'none';
-            await renderPirateAlerts(stack, banner);
-            computeOutdoorScore();
-            computeThreatLevel();
-            return true;
-        }
-
-        window.meteoAlarmAlerts = [];
-        window.environmentCanadaAlerts = [];
-        window.enviroCanadaAlerts = [];
-        window.ecccAlerts = [];
-        window.pirateAlerts = [];
-        stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
-        checklist.style.display = 'none';
-        banner.style.display = 'none';
-        computeOutdoorScore();
-        computeThreatLevel();
-        return true;
-    }
-
     async function renderMeteoAlarmAlerts(stack, banner) {
         const alerts = window.meteoAlarmAlerts || [];
         if (!alerts.length) {
             stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             banner.style.display = 'none';
-            computeOutdoorScore();
-            computeThreatLevel();
             return;
         }
         const severityRank = { extreme: 4, severe: 3, moderate: 2, minor: 1 };
@@ -4776,7 +4669,6 @@
         });
         restoreAlertViewState(alertViewState);
         computeOutdoorScore();
-        computeThreatLevel();
         computeFloodOutlook();
     }
 
@@ -4823,7 +4715,11 @@
 
     async function renderPirateAlerts(stack, banner) {
         const alerts = window.pirateAlerts || [];
-        if (!alerts.length) { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; return; }
+        if (!alerts.length) {
+            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+            banner.style.display = 'none';
+            return;
+        }
         const _severityRank = { 'extreme': 4, 'severe': 3, 'moderate': 2, 'minor': 1 };
         const _topSeverity = alerts.reduce(function(top, a) {
             return (_severityRank[(a.severity || '').toLowerCase()] || 0) > (_severityRank[(top.severity || '').toLowerCase()] || 0) ? a : top;
@@ -4831,8 +4727,10 @@
         const _bannerColor = _pirateAlertColor(_topSeverity.severity);
         banner.style.display = 'block'; banner.style.background = _bannerColor;
         banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '');
+        const alertViewState = captureAlertViewState();
         stack.innerHTML = '';
-        for (const alert of alerts) {
+        for (let alertIndex = 0; alertIndex < alerts.length; alertIndex++) {
+            const alert = alerts[alertIndex];
             let title = alert.title || 'Weather Alert';
             const _nowMs = Date.now();
             const _onsetMs = alert.time ? alert.time * 1000 : 0;
@@ -4853,10 +4751,80 @@
             title = _localizePirateAlertUnits(title);
             desc = _localizePirateAlertUnits(desc);
             const isTruncated = desc.length > 140;
-            const pwId = 'pw-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
+             // Alert ids must remain stable across the 60-second refresh so
+             // captureAlertViewState can reopen the same card and restore its
+             // internal scroll position.
+             const pwId = 'pw-' + String(alert.id || ('pirate-' + alertIndex))
+                 .replace(/[^a-zA-Z0-9_-]/g, '_');
             const _cardColor = _pirateAlertColor(alert.severity);
              stack.innerHTML += '<div class="alert-card" style="background:' + _cardColor + '; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><div class="alert-meta-row">' + timingHtml + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button>' : '') + '</div>' + (!isTruncated ? '<small>' + escapeHtml(desc) + '</small>' : '') + (isTruncated ? '<div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
         }
+        restoreAlertViewState(alertViewState);
+    }
+
+    async function _tryInternationalAlertFallback(stack, banner, checklist) {
+        // Provider coverage is not consistently expressed as an HTTP error:
+        // some feeds return a valid empty collection outside their footprint.
+        // Treat an empty collection as "try the next provider", and only
+        // render "No active hazards" after PirateWeather is the final result.
+        var providers = [
+            {
+                name: 'Environment Canada',
+                fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
+                render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+            },
+            {
+                name: 'MeteoAlarm',
+                fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
+                render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+            },
+            {
+                name: 'PirateWeather',
+                fetch: function() { return fetchPirateAlerts(lat, lon); },
+                render: function() { return renderPirateAlerts(stack, banner); }
+            }
+        ];
+        var lastError = null;
+
+        for (var i = 0; i < providers.length; i++) {
+            var provider = providers[i];
+            try {
+                var alerts = await provider.fetch();
+                if (Array.isArray(alerts) && alerts.length > 0) {
+                    stack.innerHTML = '';
+                    checklist.style.display = 'none';
+                    banner.style.display = 'none';
+                    banner.className = '';
+                    document.body.classList.remove(
+                        'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+                    );
+                    await provider.render();
+                    return true;
+                }
+                if (i === providers.length - 1) {
+                    // PirateWeather is the final provider and an empty,
+                    // successful response is a legitimate no-alert result.
+                    stack.innerHTML = '';
+                    checklist.style.display = 'none';
+                    banner.style.display = 'none';
+                    banner.className = '';
+                    document.body.classList.remove(
+                        'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+                    );
+                    await provider.render();
+                    return true;
+                }
+                console.info('[SkyMonitor] ' + provider.name +
+                    ' returned no active alerts; trying the next provider.');
+            } catch (providerError) {
+                lastError = providerError;
+                console.warn('[SkyMonitor] ' + provider.name +
+                    ' alert lookup failed; trying the next provider:', providerError);
+            }
+        }
+
+        console.warn('[SkyMonitor] All alert providers failed:', lastError);
+        return false;
     }
 
     // Resolve a PirateWeather summary string (or icon slug) to an NWS icon URL.
@@ -5247,19 +5215,6 @@
 
         // Preserve the safety overrides, but evaluate them independently of
         // any forecast provider.
-        // International feeds do not populate the NWS event array. Use the
-        // normalized named-hazard profiles directly so MeteoAlarm and ECCC
-        // alerts have the same safety effect as their NWS equivalents.
-        var internationalOverride = _internationalOutdoorOverride();
-        if (internationalOverride) {
-            if (scoreEl) scoreEl.innerText = internationalOverride.value;
-            if (descEl) descEl.innerText = internationalOverride.text;
-            SkyDB.set(SkyDB.S.weather, 'outdoor_score', {
-                ts: Date.now(), val: String(internationalOverride.value), desc: internationalOverride.text,
-                boxDisplay: box ? box.style.display : null
-            });
-            return;
-        }
         var activeNow = function(keyword) {
             var onsets = window.activeAlertOnsets || {};
             return (window.activeAlertEvents || []).some(function(eventName) {
@@ -5932,6 +5887,13 @@
         window.alertHasObservedCertainty = false;
         window.activeHeatWarning = false;
 
+        if (window.isOutsideUS) {
+            // International coverage is determined by the providers, not by
+            // reverse-geocoder country metadata. This matters for remote
+            // islands and border regions where Photon may return no country.
+            return await _tryInternationalAlertFallback(stack, banner, checklist);
+        }
+
         try {
             let data = null;
             const alertUrl = 'https://api.weather.gov/alerts/active?point=' + lat + ',' + lon;
@@ -5971,13 +5933,10 @@
             }
             if (!data) {
                 console.warn('[SkyMonitor] NWS alerts did not finish after retries:', lastAlertError);
-                if (window.isOutsideUS) {
-                    return await _fetchInternationalAlertFallback(stack, banner, checklist);
-                }
-                // Do not clear a previously successful alert display and do
-                // not render "No active hazards."  The caller keeps UPDATING
-                // visible and the next refresh will try again.
-                return false;
+                // NWS is the first provider in the chain. If it cannot
+                // answer, try the international providers before preserving
+                // the previous display.
+                return await _tryInternationalAlertFallback(stack, banner, checklist);
             }
             // The active endpoint normally excludes expired alerts, but
             // discard them defensively before selecting the banner and
@@ -5988,11 +5947,6 @@
                 var endMs = rawEnd ? new Date(rawEnd).getTime() : 0;
                 return !endMs || isNaN(endMs) || endMs > Date.now();
             });
-            // Outside the NWS service area, an empty point response means the
-            // next provider in the chain gets the opportunity to answer.
-            if (window.isOutsideUS && !data.features.length) {
-                return await _fetchInternationalAlertFallback(stack, banner, checklist);
-            }
             const _expandedAlertIds = new Set();
             const _savedAlertScrolls = {};
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
@@ -8718,7 +8672,6 @@
         if (flags.typhoonWarning) return 'A TYPHOON WARNING is in effect for your area. This is a life-threatening situation — catastrophic winds, storm surge, and flooding are expected. Complete all preparations and follow evacuation orders immediately.';
         if (flags.tsunamiWarning) return 'A TSUNAMI WARNING is in effect. Life-threatening waves and flooding are possible along the coast. Move immediately to high ground or inland — do not wait to see the wave before moving.';
         if (flags.extremeWindWarning) return 'An EXTREME WIND WARNING is in effect. Life-threatening, hurricane-force winds are imminent or occurring. Take shelter immediately in an interior room away from windows.';
-        if (flags.internationalLifeThreatening) return 'A life-threatening international weather alert is in effect. Follow the local weather authority’s instructions immediately and move away from exposed or low-lying areas.';
         // ── Tier 2: Critical ──────────────────────────────────────────────
         if (flags.torObserved) {
             if (flags.night) return 'A confirmed tornado is on the ground nearby. Tornadoes are nearly impossible to see at night — take shelter immediately in the lowest interior room of a sturdy building. Do not wait.';
@@ -8726,7 +8679,6 @@
         }
         if (flags.destructiveSVR) return 'A Destructive Severe Thunderstorm Warning is in effect. Catastrophic wind damage and very large hail are occurring or imminent. Stay away from windows and take shelter now.';
         if (flags.considerableFFW) return 'A Flash Flood Warning with Considerable flooding impacts is in effect. Life-threatening flooding may be occurring. Move to higher ground immediately — do not wait for official evacuation orders.';
-        if (flags.internationalCritical) return 'A critical international weather alert is active. Significant harm is possible — follow local guidance and take shelter or move to safer ground now.';
         // ── Tier 3: Dangerous warnings ────────────────────────────────────
         if (flags.torWarning) {
             if (flags.night) return 'A tornado warning is in effect for your area. Nighttime tornadoes are especially deadly — take cover now even without visible warning signs.';
@@ -8767,7 +8719,6 @@
         if (hazardCats.heat) return 'Elevated heat conditions are in the area. Limit outdoor exposure, stay hydrated, and check on vulnerable individuals.';
         if (hazardCats.fire) return 'Critical fire weather conditions exist. Extreme fire behavior is possible — follow evacuation orders and air quality guidance.';
         if (flags.denseFogAdvisory) return 'A Dense Fog Advisory is in effect. Visibility may drop below a quarter mile. Slow down, use low-beam headlights, and allow extra following distance.';
-        if (flags.internationalDangerous) return 'A named high-impact weather alert is active. Avoid exposed areas, monitor the issuing weather authority, and follow local safety guidance.';
         if (flags.internationalAlerts) {
             var _intlWord = flags.internationalSeverity === 'extreme' ? 'Extreme' :
                             flags.internationalSeverity === 'severe' ? 'Severe' :
@@ -8804,30 +8755,37 @@
         const factorList = [];
         const hazardCats = {}; // tracks distinct hazard categories active
 
-        // ── 0. International named-alert scoring ──────────────────────────
-        // MeteoAlarm and Environment Canada use different schemas from NWS:
-        // hazard names carry the meaning, while awareness/Warning/Watch
-        // carries the intensity. Score both so "Storm surge", "Blizzard",
-        // "Rainfall", "Thunderstorm", etc. do not collapse into one generic
-        // international alert bucket.
+        // ── 0. International alert severity ───────────────────────────────
+        // MeteoAlarm carries color/awareness severity for non-US providers,
+        // while NWS event names are unavailable outside the US. Translate the
+        // official levels into the same score bands used below.
         var _intlAlertCount = 0;
         var _intlMaxSeverity = '';
-        var _intlLifeThreatening = false;
-        var _intlCritical = false;
-        var _intlDangerous = false;
-        if (window.isOutsideUS && _internationalAlertList().length) {
+        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts)) {
             var _intlSeverityRank = { minor: 1, moderate: 2, severe: 3, extreme: 4 };
-            _activeInternationalAlerts().forEach(function(alert) {
-                var _profile = _internationalAlertProfile(alert);
-                var _sev = _profile.severity;
+            var _intlSeverityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
+            window.meteoAlarmAlerts.forEach(function(alert) {
+                var _nowMsIntl = Date.now();
+                var _startsIntl = _meteoAlarmTimestamp(alert.onset);
+                var _endsIntl = _meteoAlarmTimestamp(alert.expires);
+                if ((_startsIntl && _startsIntl > _nowMsIntl) || (_endsIntl && _endsIntl <= _nowMsIntl)) return;
+                var _sev = _meteoAlarmSeverity(alert);
+                // A few international feeds encode the color level only in
+                // the title; retain a useful fallback when severity is absent.
+                var _intlText = String(alert.title || '').toLowerCase();
+                if (!_intlSeverityRank[_sev]) {
+                    if (_intlText.includes('extreme') || _intlText.includes('red')) _sev = 'extreme';
+                    else if (_intlText.includes('severe') || _intlText.includes('orange')) _sev = 'severe';
+                    else if (_intlText.includes('moderate') || _intlText.includes('yellow')) _sev = 'moderate';
+                    else _sev = 'minor';
+                }
                 _intlAlertCount++;
                 if ((_intlSeverityRank[_sev] || 0) > (_intlSeverityRank[_intlMaxSeverity] || 0)) _intlMaxSeverity = _sev;
-                score += _profile.points;
-                _intlLifeThreatening = _intlLifeThreatening || _profile.lifeThreatening;
-                _intlCritical = _intlCritical || _profile.critical;
-                _intlDangerous = _intlDangerous || _profile.dangerous;
-                var _factorTitle = alert.title || alert.event || _profile.label;
-                factorList.push({ label: _localizePirateAlertUnits(_factorTitle), color: _profile.color });
+                score += _intlSeverityPoints[_sev] || 2;
+                var _factorTitle = alert.title || (_sev.charAt(0).toUpperCase() + _sev.slice(1) + ' alert');
+                 var _translatedFactorTitle = _factorTitle;
+                 _translatedFactorTitle = _localizePirateAlertUnits(_translatedFactorTitle);
+                 factorList.push({ label: _translatedFactorTitle, color: _meteoAlarmColor(_sev) });
             });
             // Several notices can describe the same system; prevent stacking
             // from overwhelming the normal threat bands while preserving the
@@ -9128,32 +9086,32 @@
         // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency,
         // Extreme Wind Warning, and Typhoon/Hurricane/Tsunami Warning — these are all
         // instant, no-score-needed life-threatening situations.
-        const _isLifeThreatening = _intlLifeThreatening || window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE ||
+        const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE ||
             customThreatFlags.tornadoEmergency || customThreatFlags.tornadoPDS || customThreatFlags.ffEmergency ||
             _hasExtremeWindWarning || _hasTyphoonWarning || _hasHurricaneWarningNow || _hasTsunamiWarning;
 
         // CRITICAL: Confirmed (OBSERVED) tornado on the ground, Destructive SVR,
         // or a Considerable/Catastrophic Flash Flood Warning (below FFE threshold).
         // Explicitly excludes anything already life-threatening.
-        const _isCritical = !_isLifeThreatening && (_intlCritical || (
+        const _isCritical = !_isLifeThreatening && (
             (window.activeTornadoWarning && window.activeTornadoObserved) ||
             window.activeSVRDestructive ||
             ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) && !window.activeFFE) ||
             customThreatFlags.tornadoObserved ||
             customThreatFlags.svrDestructive ||
             (customThreatFlags.ffConsiderable && !customThreatFlags.ffEmergency)
-        ));
+        );
 
         // DANGEROUS: Any other short-fused warning (radar-indicated tornado, standard SVR,
         // flash flood warning, snow squall, extreme wind, dust storm).
         const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
-        const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (_intlDangerous || (
+        const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (
             customThreatFlags.tornado ||
             (window.activeAlertEvents || []).some(function(e) {
             var el = e.toLowerCase();
             return _SHORT_FUSED.some(function(w) { return el.includes(w); });
             })
-        ));
+        );
 
         let tier, tierClass, emoji, badgeColor;
         if (_isLifeThreatening)        { tier = 'LIFE THREATENING'; tierClass = 'threat-tier-life';     emoji = '\uD83D\uDFE3'; badgeColor = '#e040fb'; }
@@ -9212,9 +9170,6 @@
             stormSurgeWarning:  _activeNow('storm surge warning'),
             internationalAlerts: _intlAlertCount > 0,
             internationalSeverity: _intlMaxSeverity,
-            internationalLifeThreatening: _intlLifeThreatening,
-            internationalCritical: _intlCritical,
-            internationalDangerous: _intlDangerous,
         };
 
         box.className = 'toolkit-box threat-box ' + tierClass;
@@ -13387,6 +13342,7 @@
         // Reset beach state every load so a previous beach result never bleeds into a new search.
         window.isBeachLocation = false;
         window.isWaterLocation = false;
+        window.locationCountryCode = '';
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
@@ -13415,6 +13371,9 @@
                 var _nomD = await _osmGeocodeFetch('reverse', { lat: loadLat, lon: loadLon });
                 if (loadGeneration !== weatherLoadGeneration) return;
                 if (_nomD && _nomD.lat) {
+                    window.locationCountryCode = String(
+                        _nomD.country_code || _nomD.countryCode || ''
+                    ).toUpperCase();
                     if (_nomD.error) {
                         window.isWaterLocation = true;
                     } else {
@@ -13463,6 +13422,7 @@
                 if (loadGeneration === weatherLoadGeneration) window.isBeachLocation = false;
             }
             })();
+            window._locationClassificationPromise = _locationClassificationPromise;
 
             await fetchPirate(loadGeneration, loadLat, loadLon);
             if (loadGeneration !== weatherLoadGeneration) return;
