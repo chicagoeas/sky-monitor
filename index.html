@@ -4299,6 +4299,12 @@
             .replace(/\s+for\s+.*$/i, '')
             .replace(/\s+-\s+.*$/i, '')
             .replace(/\s*,\s*(?:green|yellow|orange|red)(?:\s+level)?\s*$/i, '')
+            // National feeds are not consistent about where the awareness
+            // colour appears.  "Fog Yellow Warning" and "Rain Orange
+            // Warning" are the same event labels as "Fog Warning" and "Rain
+            // Warning"; the colour belongs to severity, not the card title.
+            .replace(/\b(?:green|yellow|orange|red|severe|moderate|minor)(?:\s+level)?\b/gi, ' ')
+            .replace(/\s+/g, ' ')
             .replace(/[,:;\s]+$/, '')
             .trim();
         if (!title) title = _meteoAlarmText(fallbackTitle) || 'European weather alert';
@@ -4657,27 +4663,34 @@
             return a.title || a.description;
         });
         // One alert can cover multiple European administrative areas. The API
-        // can therefore return repeated records with the same CAP identifier.
+        // can therefore return repeated polygon/region records for the same
+        // underlying CAP warning. Do not use areaDesc in the identity: that
+        // was the source of the "one fog warning becomes four cards" bug.
+        //
+        // Severity MUST remain part of the identity. A yellow and an orange
+        // rain warning can have the same event, validity window, and wording,
+        // but they are distinct warnings and both must remain visible.
         var seen = {};
-        alerts = alerts.filter(function(a) {
-            // A provider feature id can identify a polygon rather than the
-            // underlying CAP warning. Deduplicate by the warning content so
-            // repeated area polygons render as one card, while different
-            // regions or validity windows remain separate.
+        var uniqueAlerts = [];
+        alerts.forEach(function(a) {
             var key = [
                 a.countryCode,
-                a.title || a.headline || a.event,
-                a.areaDesc,
+                a.title || a.event,
+                a.event,
+                a.severity,
                 a.onset,
-                a.expires
+                a.expires,
+                a.description,
+                a.instruction
             ].map(function(value) {
                 return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
             }).join('|');
             if (!key.replace(/\|/g, '')) key = a.id;
-            if (seen[key]) return false;
+            if (seen[key]) return;
             seen[key] = true;
-            return true;
+            uniqueAlerts.push(a);
         });
+        alerts = uniqueAlerts;
         // Do not render records that have already ended. Some international
         // feeds keep recently expired CAP notices in their response, and the
         // active-window query is not consistent across national services.
