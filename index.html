@@ -579,6 +579,7 @@
         .spc-btn-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0; }
         .sky-hd { display:flex; justify-content:space-between; align-items:center; font-weight:700; color:#f1f5f9; font-size:0.92em; margin-bottom:12px; letter-spacing:0.2px; }
         .sky-hd::after { content:'›'; color:#4b5563; font-size:1.15em; font-weight:400; }
+        .analytics-header-row .sky-hd::after { display:none; }
         #minute-heading:empty { display:none; }
         #hourly-outlook-title { display:flex; justify-content:space-between; align-items:center; }
         #hourly-outlook-title::after { content:'›'; color:#4b5563; font-size:1.35em; font-weight:400; line-height:1; margin-left:10px; }
@@ -726,6 +727,30 @@
 
         .analytics-canvas-wrap { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.07); }
         .analytics-label { font-size: 0.7em; font-weight: bold; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .analytics-header-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+        .analytics-period-label { color:#718496; font-size:0.68em; font-weight:700; letter-spacing:0.5px; white-space:nowrap; }
+        .analytics-summary-grid { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:8px; margin-bottom:12px; }
+        .analytics-summary-card { min-width:0; padding:10px 11px; border:1px solid rgba(79,195,247,0.13); border-radius:10px; background:linear-gradient(145deg, rgba(79,195,247,0.09), rgba(255,255,255,0.025)); }
+        .analytics-summary-label { display:block; color:#718496; font-size:0.58em; font-weight:900; letter-spacing:0.8px; text-transform:uppercase; margin-bottom:5px; }
+        .analytics-summary-value { display:block; color:#e7f6ff; font-size:0.86em; font-weight:900; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .analytics-summary-detail { display:block; color:#6f8799; font-size:0.61em; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .analytics-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; padding:10px; margin-bottom:12px; border:1px solid rgba(255,255,255,0.07); border-radius:10px; background:rgba(0,0,0,0.16); }
+        .analytics-control-group { display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+        .analytics-control-label { color:#718496; font-size:0.58em; font-weight:900; letter-spacing:0.7px; text-transform:uppercase; margin-right:2px; }
+        .analytics-control-btn { border:1px solid rgba(144,202,249,0.16); background:rgba(255,255,255,0.04); color:#8297a9; border-radius:6px; padding:5px 8px; font-size:0.64em; font-weight:800; cursor:pointer; transition:background 0.2s, color 0.2s, border-color 0.2s; }
+        .analytics-control-btn:hover { color:#e7f6ff; border-color:rgba(79,195,247,0.45); }
+        .analytics-control-btn.active { color:#07131d; background:var(--primary); border-color:var(--primary); }
+        .analytics-select { border:1px solid rgba(144,202,249,0.18); background:#102838; color:#d9edf7; border-radius:6px; padding:5px 7px; font-size:0.64em; font-weight:700; cursor:pointer; }
+        .analytics-metric-controls { flex-basis:100%; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06); }
+        .analytics-chart-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+        .analytics-chart-grid .analytics-canvas-wrap { margin-bottom:0; min-width:0; }
+        .analytics-canvas-wrap.analytics-hidden { display:none; }
+        .analytics-chart-note { color:#60798b; font-size:0.59em; font-weight:700; }
+        @media (max-width: 680px) {
+            .analytics-summary-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+            .analytics-chart-grid { grid-template-columns:1fr; }
+            .analytics-header-row { align-items:flex-start; }
+        }
 
         /* v1.0.4: alert expand button */
         .alert-expand-btn {
@@ -1633,22 +1658,72 @@
 
         <!-- v1.0.4: Advanced analytics hidden by default, shown only in Advanced mode -->
         <div id="analytics-section" style="display:none; margin-top:20px;">
-            <div class="sky-hd" style="margin-bottom:12px;">📊 Advanced Analytics</div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#127777; Pressure Trend (inHg)</div>
+            <div class="analytics-header-row">
+                <div class="sky-hd" style="margin-bottom:0;">📊 Advanced Analytics</div>
+                <span id="analytics-period-label" class="analytics-period-label">NEXT 12 HOURS</span>
+            </div>
+            <div class="analytics-summary-grid">
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#127777; Pressure</span>
+                    <strong id="analytics-summary-pressure" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-pressure-detail" class="analytics-summary-detail">--</small>
+                </div>
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#128167; Dewpoint</span>
+                    <strong id="analytics-summary-dewpoint" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-dewpoint-detail" class="analytics-summary-detail">--</small>
+                </div>
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#128168; Peak gust</span>
+                    <strong id="analytics-summary-wind" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-wind-detail" class="analytics-summary-detail">--</small>
+                </div>
+                <div class="analytics-summary-card">
+                    <span class="analytics-summary-label">&#127783; Precipitation</span>
+                    <strong id="analytics-summary-precip" class="analytics-summary-value">--</strong>
+                    <small id="analytics-summary-precip-detail" class="analytics-summary-detail">--</small>
+                </div>
+            </div>
+            <div class="analytics-toolbar">
+                <div class="analytics-control-group">
+                    <span class="analytics-control-label">Window</span>
+                    <button type="button" class="analytics-control-btn" id="analytics-range-6" onclick="setAnalyticsRange(6)">6h</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-range-12" onclick="setAnalyticsRange(12)">12h</button>
+                    <button type="button" class="analytics-control-btn" id="analytics-range-24" onclick="setAnalyticsRange(24)">24h</button>
+                </div>
+                <div class="analytics-control-group">
+                    <label class="analytics-control-label" for="analytics-chart-mode">Charts</label>
+                    <select id="analytics-chart-mode" class="analytics-select" onchange="setAnalyticsChartMode(this.value)">
+                        <option value="mixed">Mixed</option>
+                        <option value="line">Lines</option>
+                        <option value="bar">Bars</option>
+                    </select>
+                </div>
+                <div class="analytics-control-group analytics-metric-controls">
+                    <span class="analytics-control-label">Show</span>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-pressure" aria-pressed="true" onclick="toggleAnalyticsMetric('pressure')">Pressure</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-dewpoint" aria-pressed="true" onclick="toggleAnalyticsMetric('dewpoint')">Dewpoint</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-wind" aria-pressed="true" onclick="toggleAnalyticsMetric('wind')">Wind</button>
+                    <button type="button" class="analytics-control-btn active" id="analytics-metric-precip" aria-pressed="true" onclick="toggleAnalyticsMetric('precip')">Precip</button>
+                </div>
+            </div>
+            <div class="analytics-chart-grid">
+            <div id="analytics-wrap-pressure" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#127777; <span id="analytics-label-pressure">Pressure Trend</span> <span class="analytics-chart-note">· click points for details</span></div>
                 <canvas id="chart-pressure" height="120" style="width:100%; display:block;"></canvas>
             </div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#128167; Dewpoint Trend (&deg;F)</div>
+            <div id="analytics-wrap-dewpoint" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#128167; <span id="analytics-label-dewpoint">Dewpoint Trend</span></div>
                 <canvas id="chart-dewpoint" height="120" style="width:100%; display:block;"></canvas>
             </div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#128168; Wind Gust Trend (mph)</div>
+            <div id="analytics-wrap-wind" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#128168; <span id="analytics-label-wind">Wind Gust Trend</span></div>
                 <canvas id="chart-wind" height="120" style="width:100%; display:block;"></canvas>
             </div>
-            <div class="analytics-canvas-wrap">
-                <div class="analytics-label">&#127783; Precip. Accumulation Trend (in)</div>
+            <div id="analytics-wrap-precip" class="analytics-canvas-wrap">
+                <div class="analytics-label">&#127783; <span id="analytics-label-precip">Precip. Accumulation Trend</span></div>
                 <canvas id="chart-precip" height="120" style="width:100%; display:block;"></canvas>
+            </div>
             </div>
         </div>
     </div>
@@ -1834,6 +1909,10 @@
     // Weather provider credentials live in the Cloudflare Worker, never in this file.
     // Replace this URL with the deployed worker URL during integration.
     const WEATHER_WORKER_URL = 'https://skymonitor-apis.skymonitor-account.workers.dev';
+    // MeteoAlarm access is server-side. The worker route authenticates with the
+    // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
+    // alerts; never put the portal token in this HTML file or localStorage.
+    const METEOALARM_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/meteoalarm';
     const PIRATE_API_KEY = null; // legacy compatibility; do not put a key here
     const OW_API_KEY = null;      // legacy compatibility; do not put a key here
     const TWC_API_KEY = null;     // legacy compatibility; do not put a key here
@@ -1898,6 +1977,9 @@
     window._maybeHideSync = function() {};
     window.pirateCurrently = null;
     window.pirateAlerts = [];
+    window.meteoAlarmAlerts = [];
+    window.environmentCanadaAlerts = [];
+    window.locationCountryCode = '';
     window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
@@ -2122,10 +2204,30 @@
         }
     }
 
+    function formatSyncAge(totalSeconds) {
+        var seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        if (seconds < 60) return seconds + 's ago';
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + 'm ago';
+        var hours = Math.floor(minutes / 60);
+        if (hours < 24) {
+            var remainingMinutes = minutes % 60;
+            return hours + 'h' + (remainingMinutes ? ' ' + remainingMinutes + 'm' : '') + ' ago';
+        }
+        var days = Math.floor(hours / 24);
+        if (days < 7) {
+            var remainingHours = hours % 24;
+            return days + 'd' + (remainingHours ? ' ' + remainingHours + 'h' : '') + ' ago';
+        }
+        var weeks = Math.floor(days / 7);
+        var remainingDays = days % 7;
+        return weeks + 'w' + (remainingDays ? ' ' + remainingDays + 'd' : '') + ' ago';
+    }
+
     function updateTimestamp() {
         if (!lastSyncTime) return;
-        const diff = Math.floor((new Date() - lastSyncTime) / 1000);
-        const timeStr = diff < 60 ? diff + 's ago' : Math.floor(diff / 60) + 'm ago';
+        const diff = Math.max(0, Math.floor((new Date() - lastSyncTime) / 1000));
+        const timeStr = formatSyncAge(diff);
         const el = document.getElementById('sync-time-display');
         if (_isOffline) {
             el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
@@ -2194,6 +2296,8 @@
                 neighbourhood: props.neighbourhood || '',
                 quarter: props.quarter || ''
             },
+            country_code: props.countrycode || props.country_code || '',
+            country: props.country || '',
             // Keep the OSM key/value in the names expected by the existing
             // water and beach classifiers.
             class: props.osm_key || '',
@@ -2990,7 +3094,6 @@
         localStorage.setItem('alerts_language', val);
         document.getElementById('opt-lang-default')?.classList.toggle('active', val === 'default');
         document.getElementById('opt-lang-en')?.classList.toggle('active', val === 'en');
-        window.alertTranslationCache = {};
         fetchAlerts();
     }
 
@@ -3241,6 +3344,42 @@
     }
 
     // v1.0.4 FIX: Button BEFORE text div; proper HTML bullet rendering
+    function captureAlertViewState() {
+        const state = {
+            pageX: window.scrollX || 0,
+            pageY: window.scrollY || 0,
+            expanded: {},
+            innerScroll: {}
+        };
+        document.querySelectorAll('.alert-full-text').forEach(function(el) {
+            if (el.style.display === 'block' && el.id) {
+                const id = el.id.replace('full-', '');
+                state.expanded[id] = true;
+                state.innerScroll[id] = el.scrollTop;
+            }
+        });
+        return state;
+    }
+
+    function restoreAlertViewState(state) {
+        if (!state) return;
+        Object.keys(state.expanded || {}).forEach(function(id) {
+            const el = document.getElementById('full-' + id);
+            const btn = document.getElementById('btn-' + id);
+            if (!el || !btn) return;
+            el.style.display = 'block';
+            btn.textContent = '\u25b2 Show less';
+            el.scrollTop = state.innerScroll[id] || 0;
+        });
+        requestAnimationFrame(function() {
+            window.scrollTo({
+                left: state.pageX || 0,
+                top: state.pageY || 0,
+                behavior: 'auto'
+            });
+        });
+    }
+
     function toggleAlertText(id) {
         const el = document.getElementById('full-' + id);
         const btn = document.getElementById('btn-' + id);
@@ -4074,6 +4213,465 @@
         }
     }
 
+    // MeteoAlarm uses awareness levels rather than NWS severity strings:
+    // yellow = moderate, orange = severe, red = extreme.
+    function _meteoAlarmSeverity(alert) {
+        var raw = String(
+            alert && (alert.severity || alert.awarenessLevel || alert.level || alert.awareness_level || '')
+        ).toLowerCase();
+        if (raw.includes('red') || raw.includes('extreme') || raw === '4') return 'extreme';
+        if (raw.includes('orange') || raw.includes('severe') || raw === '3') return 'severe';
+        if (raw.includes('yellow') || raw.includes('moderate') || raw === '2') return 'moderate';
+        if (raw.includes('green') || raw.includes('minor') || raw === '1') return 'minor';
+        var title = String(alert && (alert.title || alert.event || '')).toLowerCase();
+        if (title.includes('red') || title.includes('extreme')) return 'extreme';
+        if (title.includes('orange') || title.includes('severe')) return 'severe';
+        return 'moderate';
+    }
+
+    function _meteoAlarmColor(severity) {
+        switch ((severity || '').toLowerCase()) {
+            case 'extreme':  return '#c62828';
+            case 'severe':   return '#ef6c00';
+            case 'moderate': return '#f9a825';
+            case 'minor':    return '#388e3c';
+            default:         return '#546e7a';
+        }
+    }
+
+    function _meteoAlarmText(value) {
+        if (Array.isArray(value)) return value.filter(Boolean).join('\n');
+        return value == null ? '' : String(value);
+    }
+
+    function _meteoAlarmAlertId(alert, index) {
+        return String(
+            alert && (alert.id || alert.alertId || alert.identifier || alert.objectId || ('meteoalarm-' + index))
+        ).replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    function _normalizeMeteoAlarmAlert(raw, index) {
+        var a = raw || {};
+        var p = a.properties || a;
+        var info = p.info || a.info || {};
+        var source = a.officialUrl || a.official_url || a.web || p.web ||
+            a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
+        var severity = _meteoAlarmSeverity(Object.assign({}, a, p, info));
+        var hazard = _meteoAlarmText(
+            a.hazard || a.awarenessType || a.awareness_type ||
+            p.hazard || p.awarenessType || p.awareness_type ||
+            info.event || p.event || a.event
+        );
+        var title = _meteoAlarmText(
+            a.title || a.headline || p.title || p.headline || info.headline ||
+            (hazard ? hazard + ' alert' : 'European weather alert')
+        );
+        var description = _meteoAlarmText(
+            a.description || p.description || info.description || a.desc
+        );
+        var instruction = _meteoAlarmText(
+            a.instruction || p.instruction || info.instruction || a.action
+        );
+        var onset = a.onset || a.effective || p.onset || p.effective || info.onset || '';
+        var expires = a.expires || a.ends || p.expires || p.ends || info.expires || '';
+        var areaDesc = _meteoAlarmText(a.areaDesc || p.areaDesc || info.areaDesc || p.location || '');
+        var iconUrl = a.iconUrl || a.icon_url || p.iconUrl || '';
+        var details = a.details || p.details || {};
+        return {
+            id: _meteoAlarmAlertId(a, index),
+            title: title,
+            event: hazard || title,
+            severity: severity,
+            awarenessLevel: a.awarenessLevel || p.awarenessLevel || a.awareness_level || p.awareness_level || '',
+            description: description,
+            instruction: instruction,
+            onset: onset,
+            expires: expires,
+            areaDesc: areaDesc,
+            countryCode: a.countryCode || p.countryCode || '',
+            iconUrl: iconUrl,
+            icon: a.icon || p.icon || '\u26A0\uFE0F',
+            sourceUrl: source,
+            details: details,
+            geometry: a.geometry || null
+        };
+    }
+
+    function _meteoAlarmOfficialUrl(alert) {
+        var candidates = [
+            alert && (alert.officialUrl || alert.official_url || alert.web),
+            alert && alert.sourceUrl,
+            alert && alert.url
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            var candidate = String(candidates[i] || '').trim();
+            if (!/^https?:\/\//i.test(candidate)) continue;
+            try {
+                var parsed = new URL(candidate);
+                var path = (parsed.pathname || '').toLowerCase();
+                // MeteoGate supplies signed XML/JSON archive links for CAP
+                // records. Those are data downloads, not user-facing sources.
+                if (path.endsWith('.xml') || path.endsWith('.json')) continue;
+                if (parsed.hostname.toLowerCase().includes('digitaloceanspaces.com') &&
+                    path.includes('/api/archive/')) continue;
+                return parsed.href;
+            } catch (e) {}
+        }
+
+        // ARSO is Slovenia's official warning authority. For providers that
+        // expose only an XML archive link, send the user to the official
+        // MeteoAlarm live page instead of downloading an unknown file.
+        if (String(alert && alert.countryCode || '').toUpperCase() === 'SI') {
+            return 'https://meteo.arso.gov.si/met/sl/warning/';
+        }
+        return 'https://www.meteoalarm.org/en/live/';
+    }
+
+    const ENVIRONMENT_CANADA_ALERTS_URL =
+        'https://api.weather.gc.ca/collections/weather-alerts/items';
+
+    function _environmentCanadaSeverity(alert) {
+        var raw = String(
+            alert && (alert.severity || alert.riskColour || alert.risk_colour ||
+                alert.impact || alert.alertType || '')
+        ).toLowerCase();
+        // Environment Canada publishes an explicit risk colour. Prefer that
+        // over the generic advisory/warning type, because a yellow warning is
+        // still a moderate-level alert in the national feed.
+        if (raw.includes('red') || raw.includes('extreme')) return 'extreme';
+        if (raw.includes('orange') || raw.includes('severe')) return 'severe';
+        if (raw.includes('yellow') || raw.includes('moderate')) return 'moderate';
+        if (raw.includes('green') || raw.includes('minor')) return 'minor';
+        if (raw.includes('warning')) return 'severe';
+        if (raw.includes('advisory')) return 'moderate';
+        return 'moderate';
+    }
+
+    function _environmentCanadaColor(severity) {
+        switch ((severity || '').toLowerCase()) {
+            case 'extreme': return '#c62828';
+            case 'severe': return '#ef6c00';
+            case 'moderate': return '#f9a825';
+            case 'minor': return '#388e3c';
+            default: return '#546e7a';
+        }
+    }
+
+    function _pointInGeoJson(lonP, latP, geometry) {
+        if (!geometry) return false;
+        if (geometry.type === 'Feature') return _pointInGeoJson(lonP, latP, geometry.geometry);
+        if (geometry.type === 'Polygon') {
+            var rings = geometry.coordinates || [];
+            if (!rings.length || !_pointInRing(lonP, latP, rings[0])) return false;
+            return rings.slice(1).every(function(ring) { return !_pointInRing(lonP, latP, ring); });
+        }
+        if (geometry.type === 'MultiPolygon') {
+            return (geometry.coordinates || []).some(function(polygon) {
+                return _pointInGeoJson(lonP, latP, { type: 'Polygon', coordinates: polygon });
+            });
+        }
+        if (geometry.type === 'GeometryCollection') {
+            return (geometry.geometries || []).some(function(item) {
+                return _pointInGeoJson(lonP, latP, item);
+            });
+        }
+        return false;
+    }
+
+    function _pointInRing(lonP, latP, ring) {
+        var inside = false;
+        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            var xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+            var xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+            if (!isFinite(xi) || !isFinite(yi) || !isFinite(xj) || !isFinite(yj)) continue;
+            var intersects = ((yi > latP) !== (yj > latP)) &&
+                (lonP < (xj - xi) * (latP - yi) / ((yj - yi) || 1e-12) + xi);
+            if (intersects) inside = !inside;
+        }
+        return inside;
+    }
+
+    function _normalizeEnvironmentCanadaAlert(feature, index) {
+        var p = feature && feature.properties || {};
+        var risk = p.risk_colour_en || p.riskColour || p.impact_en || p.alert_type || '';
+        var severity = _environmentCanadaSeverity({ riskColour: risk, alertType: p.alert_type });
+        var event = p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert';
+        var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
+        return {
+            id: String(p.feature_id || feature.id || 'environment-canada-' + index)
+                .replace(/[^a-zA-Z0-9_-]/g, '_'),
+            title: p.alert_short_name_en || p.alert_name_en || event,
+            event: event,
+            severity: severity,
+            awarenessLevel: p.risk_colour_en || '',
+            description: p.alert_text_en || p.alert_text || '',
+            instruction: '',
+            onset: p.validity_datetime || p.publication_datetime || '',
+            expires: p.event_end_datetime || p.expiration_datetime || '',
+            areaDesc: area,
+            countryCode: 'CA',
+            icon: '\u26A0\uFE0F',
+            sourceUrl: 'https://weather.gc.ca/warnings/index_e.html',
+            geometry: feature.geometry || null
+        };
+    }
+
+    function _storeInternationalAlertState(alerts) {
+        window.activeAlertEvents = [];
+        window.activeAlertOnsets = {};
+        window.activeAlertExpires = {};
+        (alerts || []).forEach(function(alert) {
+            var name = alert.title || alert.event || 'Weather alert';
+            if (!window.activeAlertEvents.includes(name)) window.activeAlertEvents.push(name);
+            window.activeAlertOnsets[name] = _meteoAlarmTimestamp(alert.onset) || 0;
+            window.activeAlertExpires[name] = _meteoAlarmTimestamp(alert.expires) || 0;
+        });
+    }
+
+    async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
+        var pad = 0.35;
+        var bbox = [
+            Number(requestLon) - pad, Number(requestLat) - pad,
+            Number(requestLon) + pad, Number(requestLat) + pad
+        ].join(',');
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = ENVIRONMENT_CANADA_ALERTS_URL + '?f=json&lang=en-CA&limit=100&bbox=' +
+            encodeURIComponent(bbox);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal,
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }, 12000);
+        if (!res.ok) throw new Error('Environment Canada alerts ' + res.status);
+        var payload = await res.json();
+        if (!payload || !Array.isArray(payload.features)) {
+            throw new Error('Environment Canada response missing features');
+        }
+        var now = Date.now();
+        var seen = {};
+        var alerts = payload.features.filter(function(feature) {
+            var p = feature && feature.properties || {};
+            var status = String(p.status_en || '').toLowerCase();
+            var endMs = Date.parse(p.event_end_datetime || p.expiration_datetime || '');
+            return (!status || status === 'issued' || status === 'updated' || status === 'continued') &&
+                (!endMs || endMs > now) &&
+                _pointInGeoJson(Number(requestLon), Number(requestLat), feature.geometry);
+        }).map(_normalizeEnvironmentCanadaAlert).filter(function(alert) {
+            var key = [alert.title, alert.areaDesc, alert.onset, alert.expires]
+                .map(function(value) { return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim(); })
+                .join('|');
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+        window.environmentCanadaAlerts = alerts;
+        window.meteoAlarmAlerts = alerts;
+        window.pirateAlerts = [];
+        _storeInternationalAlertState(alerts);
+        return alerts;
+    }
+
+    function _normalizePirateAlert(raw, index) {
+        var a = raw || {};
+        var onset = a.time != null ? Number(a.time) * 1000 : Date.parse(a.onset || a.effective || '');
+        var expires = a.expires != null ? Number(a.expires) * 1000 : Date.parse(a.ends || a.expiration || '');
+        var severityRaw = String(a.severity || a.level || '').toLowerCase();
+        var alertText = String(a.title || a.event || '').toLowerCase();
+        var severity = severityRaw.includes('extreme') ? 'extreme' :
+            severityRaw.includes('severe') ? 'severe' :
+            severityRaw.includes('minor') ? 'minor' :
+            severityRaw.includes('moderate') ? 'moderate' :
+            alertText.includes('warning') ? 'severe' :
+            alertText.includes('watch') || alertText.includes('advisory') ? 'moderate' :
+            'moderate';
+        return {
+            id: String(a.id || 'pirate-' + index).replace(/[^a-zA-Z0-9_-]/g, '_'),
+            title: a.title || a.event || 'Weather Alert',
+            event: a.event || a.title || 'Weather Alert',
+            severity: severity,
+            description: a.description || a.headline || '',
+            time: isFinite(onset) ? Math.round(onset / 1000) : 0,
+            expires: isFinite(expires) ? Math.round(expires / 1000) : 0,
+            onset: isFinite(onset) ? new Date(onset).toISOString() : '',
+            sourceUrl: a.sourceUrl || a.url || a.uri || ''
+        };
+    }
+
+    async function fetchPirateAlerts(requestLat, requestLon) {
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = WEATHER_WORKER_URL + '/api/weather/pirate-alerts?lat=' +
+            encodeURIComponent(requestLat == null ? lat : requestLat) + '&lon=' +
+            encodeURIComponent(requestLon == null ? lon : requestLon);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) throw new Error('PirateWeather alerts ' + res.status);
+        var payload = await res.json();
+        var rawAlerts = payload && Array.isArray(payload.alerts) ? payload.alerts : [];
+        var now = Date.now();
+        var alerts = rawAlerts.map(_normalizePirateAlert).filter(function(alert) {
+            return !alert.expires || alert.expires * 1000 > now;
+        });
+        window.pirateAlerts = alerts;
+        // Keep the shared international alert collection populated so threat
+        // scoring can account for PirateWeather alerts as well as the visible
+        // PirateWeather renderer.
+        window.meteoAlarmAlerts = alerts;
+        _storeInternationalAlertState(alerts);
+        return alerts;
+    }
+
+    // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
+    // That worker owns METEOALARM_API_TOKEN, resolves the selected coordinate to
+    // the relevant country/regions, fetches the official OGC API EDR records,
+    // and follows their signed detail links before returning {alerts: [...]}.
+    async function fetchMeteoAlarmAlerts(requestLat, requestLon) {
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
+            + '&lon=' + encodeURIComponent(requestLon == null ? lon : requestLon);
+        // MeteoAlarm provides the translation itself. "Default" leaves the
+        // language unset so the originating national service's default text is
+        // used; "English" explicitly requests the API's English info block.
+        if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
+        var payload = await res.json();
+        var sourceAlerts = Array.isArray(payload)
+            ? payload
+            : (Array.isArray(payload.alerts) ? payload.alerts
+                : (Array.isArray(payload.features) ? payload.features
+                    : (payload && payload.type === 'Feature' ? [payload] : [])));
+        var alerts = sourceAlerts.map(_normalizeMeteoAlarmAlert).filter(function(a) {
+            return a.title || a.description;
+        });
+        // One alert can cover multiple European administrative areas. The API
+        // can therefore return repeated records with the same CAP identifier.
+        var seen = {};
+        alerts = alerts.filter(function(a) {
+            // A provider feature id can identify a polygon rather than the
+            // underlying CAP warning. Deduplicate by the warning content so
+            // repeated area polygons render as one card, while different
+            // regions or validity windows remain separate.
+            var key = [
+                a.countryCode,
+                a.title || a.headline || a.event,
+                a.areaDesc,
+                a.onset,
+                a.expires
+            ].map(function(value) {
+                return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            }).join('|');
+            if (!key.replace(/\|/g, '')) key = a.id;
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+        // Do not render records that have already ended. Some international
+        // feeds keep recently expired CAP notices in their response, and the
+        // active-window query is not consistent across national services.
+        alerts = alerts.filter(function(a) {
+            var expiresMs = _meteoAlarmTimestamp(a.expires);
+            return !expiresMs || expiresMs > Date.now();
+        });
+        window.meteoAlarmAlerts = alerts;
+        // Keep legacy consumers (threat scoring and offline state from older
+        // builds) fed while the visible provider is now explicitly MeteoAlarm.
+        window.pirateAlerts = alerts;
+        return alerts;
+    }
+
+    async function renderMeteoAlarmAlerts(stack, banner) {
+        const alerts = window.meteoAlarmAlerts || [];
+        if (!alerts.length) {
+            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+            banner.style.display = 'none';
+            return;
+        }
+        const severityRank = { extreme: 4, severe: 3, moderate: 2, minor: 1 };
+        const topAlert = alerts.reduce(function(top, a) {
+            return (severityRank[_meteoAlarmSeverity(a)] || 0) >
+                (severityRank[_meteoAlarmSeverity(top)] || 0) ? a : top;
+        }, alerts[0]);
+        const topSeverity = _meteoAlarmSeverity(topAlert);
+        const topColor = _meteoAlarmColor(topSeverity);
+        const topTextColor = topSeverity === 'moderate' ? '#111' : '#fff';
+        const topStart = _meteoAlarmTimestamp(topAlert.onset);
+        const topEnd = _meteoAlarmTimestamp(topAlert.expires);
+        const topActive = !topStart || topStart <= Date.now();
+        const topPrefix = topAlert.title || 'European weather alert';
+        banner.className = '';
+        banner.style.display = 'block';
+        banner.style.background = topColor;
+        banner.style.color = topTextColor;
+        banner.innerText = '\u26A0\uFE0F ' + topPrefix;
+        if (topEnd && topActive) {
+            (function(_gen, _end, _prefix) {
+                const _iv = setInterval(function() {
+                    if (alertIntervalGen !== _gen) { clearInterval(_iv); return; }
+                    const diff = _end - Date.now();
+                    if (diff <= 0) {
+                        banner.style.display = 'none';
+                        clearInterval(_iv);
+                    } else {
+                        banner.innerText = _prefix + ' - Expires in ' + getFormattedTime('advisory', diff);
+                    }
+                }, 1000);
+                alertIntervalId = _iv;
+            })(alertIntervalGen, topEnd, '\u26A0\uFE0F ' + topPrefix);
+        }
+
+        const alertViewState = captureAlertViewState();
+        stack.innerHTML = '';
+        alerts.slice().sort(function(a, b) {
+            return (severityRank[_meteoAlarmSeverity(b)] || 0) -
+                (severityRank[_meteoAlarmSeverity(a)] || 0);
+        }).forEach(function(alert, index) {
+            var severity = _meteoAlarmSeverity(alert);
+            var color = _meteoAlarmColor(severity);
+            var textColor = severity === 'moderate' ? '#111' : '#fff';
+            var id = _meteoAlarmAlertId(alert, index);
+            var fullContent = '';
+            if (alert.areaDesc) {
+                fullContent += '<div style="font-weight:bold;margin-bottom:6px;font-size:0.88em;">'
+                    + escapeHtml(alert.areaDesc) + '</div>';
+            }
+            if (alert.description) fullContent += formatNWSText(alert.description);
+            if (alert.instruction) {
+                fullContent += '<div style="font-weight:bold;margin:8px 0 3px;font-size:0.88em;">'
+                    + 'PRECAUTIONARY/PREPAREDNESS ACTIONS</div>' + formatNWSText(alert.instruction);
+            }
+            var timingText = _meteoAlarmTimingText(alert);
+            var timing = timingText
+                ? '<div style="display:inline-block;font-size:0.72em;'
+                    + (timingText.indexOf('In effect ') === 0 ? 'font-weight:600;background:rgba(0,0,0,0.32);' : 'background:rgba(0,0,0,0.22);')
+                    + 'border-radius:4px;padding:2px 7px;margin-top:4px;">'
+                    + escapeHtml(timingText) + '</div>'
+                : '';
+            var source = _meteoAlarmOfficialUrl(alert);
+            var cardTag = source ? 'a href="' + escapeHtml(source) + '" target="_blank" rel="noopener noreferrer"' : 'div';
+            var cardClose = source ? '</a>' : '</div>';
+            var icon = /^https?:\/\//i.test(alert.iconUrl || '')
+                ? '<img src="' + escapeHtml(alert.iconUrl) + '" alt="" style="width:55px;height:55px;object-fit:contain;border-radius:5px;margin-top:2px;flex-shrink:0;">'
+                : '<div style="font-size:1.8em;padding-top:2px;flex-shrink:0;">' + escapeHtml(alert.icon || '\u26A0\uFE0F') + '</div>';
+            stack.innerHTML += '<' + cardTag + ' class="alert-card" style="background:' + color + ';color:' + textColor + ';align-items:flex-start;text-decoration:none;">'
+                + icon + '<div style="flex:1;min-width:0;"><div style="font-weight:bold;">' + escapeHtml(alert.title) + '</div>'
+                + '<div class="alert-meta-row">' + timing + (fullContent
+                    ? '<button class="alert-expand-btn" id="btn-' + id + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + id + '\')">\u25BC Show more</button>' : '')
+                + '</div>' + (fullContent ? '<div id="full-' + id + '" class="alert-full-text">' + fullContent + '</div>' : '')
+                + '</div>' + cardClose;
+        });
+        restoreAlertViewState(alertViewState);
+        computeOutdoorScore();
+        computeFloodOutlook();
+    }
+
     function _localizePirateAlertUnits(text) {
         if (!text) return text;
         var p = _unitPrefs();
@@ -4117,8 +4715,11 @@
 
     async function renderPirateAlerts(stack, banner) {
         const alerts = window.pirateAlerts || [];
-        if (!alerts.length) { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; return; }
-        window.alertTranslationCache = window.alertTranslationCache || {};
+        if (!alerts.length) {
+            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+            banner.style.display = 'none';
+            return;
+        }
         const _severityRank = { 'extreme': 4, 'severe': 3, 'moderate': 2, 'minor': 1 };
         const _topSeverity = alerts.reduce(function(top, a) {
             return (_severityRank[(a.severity || '').toLowerCase()] || 0) > (_severityRank[(top.severity || '').toLowerCase()] || 0) ? a : top;
@@ -4126,21 +4727,11 @@
         const _bannerColor = _pirateAlertColor(_topSeverity.severity);
         banner.style.display = 'block'; banner.style.background = _bannerColor;
         banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '');
+        const alertViewState = captureAlertViewState();
         stack.innerHTML = '';
-        const _doTranslate = localStorage.getItem('alerts_language') === 'en';
-        for (const alert of alerts) {
-            const _rawTitle = alert.title || 'Weather Alert';
-            let title = _rawTitle;
-            if (_doTranslate) {
-                if (window.alertTranslationCache[_rawTitle]) title = window.alertTranslationCache[_rawTitle];
-                else {
-                    try {
-                        const tr = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(_rawTitle));
-                        const td = await tr.json();
-                        if (td?.[0]?.[0]?.[0]) { window.alertTranslationCache[_rawTitle] = td[0][0][0]; title = td[0][0][0]; }
-                    } catch(e) {}
-                }
-            }
+        for (let alertIndex = 0; alertIndex < alerts.length; alertIndex++) {
+            const alert = alerts[alertIndex];
+            let title = alert.title || 'Weather Alert';
             const _nowMs = Date.now();
             const _onsetMs = alert.time ? alert.time * 1000 : 0;
             const _inEffect = !_onsetMs || _onsetMs <= _nowMs;
@@ -4157,28 +4748,83 @@
                       ? '<div class="alert-timing" style="font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;">Expires ' + escapeHtml(_expiresText) + '</div>'
                      : '');
             let desc = alert.description || '';
-            if (desc && _doTranslate) {
-                const cacheKey = 'desc:' + desc.slice(0, 80);
-                if (window.alertTranslationCache[cacheKey]) {
-                    desc = window.alertTranslationCache[cacheKey];
-                } else {
-                    try {
-                        const tr2 = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(desc));
-                        const td2 = await tr2.json();
-                        if (td2?.[0]) {
-                            const translated = td2[0].map(function(s) { return s?.[0] || ''; }).join('');
-                            if (translated) { window.alertTranslationCache[cacheKey] = translated; desc = translated; }
-                        }
-                    } catch(e) {}
-                }
-            }
             title = _localizePirateAlertUnits(title);
             desc = _localizePirateAlertUnits(desc);
             const isTruncated = desc.length > 140;
-            const pwId = 'pw-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
+             // Alert ids must remain stable across the 60-second refresh so
+             // captureAlertViewState can reopen the same card and restore its
+             // internal scroll position.
+             const pwId = 'pw-' + String(alert.id || ('pirate-' + alertIndex))
+                 .replace(/[^a-zA-Z0-9_-]/g, '_');
             const _cardColor = _pirateAlertColor(alert.severity);
              stack.innerHTML += '<div class="alert-card" style="background:' + _cardColor + '; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><div class="alert-meta-row">' + timingHtml + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button>' : '') + '</div>' + (!isTruncated ? '<small>' + escapeHtml(desc) + '</small>' : '') + (isTruncated ? '<div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
         }
+        restoreAlertViewState(alertViewState);
+    }
+
+    async function _tryInternationalAlertFallback(stack, banner, checklist) {
+        // Provider coverage is not consistently expressed as an HTTP error:
+        // some feeds return a valid empty collection outside their footprint.
+        // Treat an empty collection as "try the next provider", and only
+        // render "No active hazards" after PirateWeather is the final result.
+        var providers = [
+            {
+                name: 'Environment Canada',
+                fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
+                render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+            },
+            {
+                name: 'MeteoAlarm',
+                fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
+                render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+            },
+            {
+                name: 'PirateWeather',
+                fetch: function() { return fetchPirateAlerts(lat, lon); },
+                render: function() { return renderPirateAlerts(stack, banner); }
+            }
+        ];
+        var lastError = null;
+
+        for (var i = 0; i < providers.length; i++) {
+            var provider = providers[i];
+            try {
+                var alerts = await provider.fetch();
+                if (Array.isArray(alerts) && alerts.length > 0) {
+                    stack.innerHTML = '';
+                    checklist.style.display = 'none';
+                    banner.style.display = 'none';
+                    banner.className = '';
+                    document.body.classList.remove(
+                        'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+                    );
+                    await provider.render();
+                    return true;
+                }
+                if (i === providers.length - 1) {
+                    // PirateWeather is the final provider and an empty,
+                    // successful response is a legitimate no-alert result.
+                    stack.innerHTML = '';
+                    checklist.style.display = 'none';
+                    banner.style.display = 'none';
+                    banner.className = '';
+                    document.body.classList.remove(
+                        'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+                    );
+                    await provider.render();
+                    return true;
+                }
+                console.info('[SkyMonitor] ' + provider.name +
+                    ' returned no active alerts; trying the next provider.');
+            } catch (providerError) {
+                lastError = providerError;
+                console.warn('[SkyMonitor] ' + provider.name +
+                    ' alert lookup failed; trying the next provider:', providerError);
+            }
+        }
+
+        console.warn('[SkyMonitor] All alert providers failed:', lastError);
+        return false;
     }
 
     // Resolve a PirateWeather summary string (or icon slug) to an NWS icon URL.
@@ -5242,10 +5888,10 @@
         window.activeHeatWarning = false;
 
         if (window.isOutsideUS) {
-            stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
-            document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-            await renderPirateAlerts(stack, banner);
-            return true;
+            // International coverage is determined by the providers, not by
+            // reverse-geocoder country metadata. This matters for remote
+            // islands and border regions where Photon may return no country.
+            return await _tryInternationalAlertFallback(stack, banner, checklist);
         }
 
         try {
@@ -5287,11 +5933,20 @@
             }
             if (!data) {
                 console.warn('[SkyMonitor] NWS alerts did not finish after retries:', lastAlertError);
-                // Do not clear a previously successful alert display and do
-                // not render "No active hazards."  The caller keeps UPDATING
-                // visible and the next refresh will try again.
-                return false;
+                // NWS is the first provider in the chain. If it cannot
+                // answer, try the international providers before preserving
+                // the previous display.
+                return await _tryInternationalAlertFallback(stack, banner, checklist);
             }
+            // The active endpoint normally excludes expired alerts, but
+            // discard them defensively before selecting the banner and
+            // computing threat state.
+            data.features = data.features.filter(function(feature) {
+                var props = feature && feature.properties || {};
+                var rawEnd = props.ends || props.expires;
+                var endMs = rawEnd ? new Date(rawEnd).getTime() : 0;
+                return !endMs || isNaN(endMs) || endMs > Date.now();
+            });
             const _expandedAlertIds = new Set();
             const _savedAlertScrolls = {};
             document.querySelectorAll('.alert-full-text').forEach(function(el) {
@@ -5355,7 +6010,7 @@
                             const _iv = setInterval(function() {
                                 if (alertIntervalGen !== _gen) { clearInterval(_iv); return; }
                                 const diff = _exp - new Date().getTime();
-                                if (diff <= 0) { banner.innerText = _prefix + ' (EXPIRED)'; clearInterval(_iv); }
+                                if (diff <= 0) { banner.style.display = 'none'; clearInterval(_iv); }
                                 else banner.innerText = _prefix + ' - Expires in ' + getFormattedTime(_evt, diff);
                             }, 1000);
                             alertIntervalId = _iv;
@@ -5680,6 +6335,57 @@
         }
     }
 
+    function _alertLocationOffsetHours() {
+        var offsetHours = Number(window.pirateTimezoneOffset);
+        if (Number(stationTzOffset)) {
+            offsetHours = Number(stationTzOffset) / 3600;
+        }
+        return isFinite(offsetHours) ? offsetHours : 0;
+    }
+
+    function _meteoAlarmTimestamp(value) {
+        if (Array.isArray(value)) value = value[0];
+        if (typeof value === 'number' && isFinite(value)) {
+            return Math.abs(value) < 1e12 ? value * 1000 : value;
+        }
+        if (typeof value !== 'string') return 0;
+        var raw = value.trim();
+        if (!raw) return 0;
+        if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
+            var numeric = Number(raw);
+            return Math.abs(numeric) < 1e12 ? numeric * 1000 : numeric;
+        }
+        var parsed;
+        // CAP feeds are supposed to include an offset, but some national
+        // services return a timezone-less local wall-clock value. Parsing that
+        // string directly makes the browser assume the user's timezone, which
+        // can shift the alert across its expiration boundary. Interpret such
+        // values in the selected location's timezone instead.
+        if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) {
+            parsed = Date.parse(raw);
+        } else {
+            var asUtc = Date.parse(raw + 'Z');
+            parsed = asUtc - (_alertLocationOffsetHours() * 3600000);
+        }
+        return isNaN(parsed) ? 0 : parsed;
+    }
+
+    function _meteoAlarmTimingText(alert) {
+        var now = Date.now();
+        var onsetMs = _meteoAlarmTimestamp(alert && alert.onset);
+        var expiresMs = _meteoAlarmTimestamp(alert && alert.expires);
+
+        // Match the NWS alert cards exactly: future alerts show their onset;
+        // active alerts show only their expiration.
+        if (onsetMs > now) {
+            return 'In effect ' +
+                _fmtAlertTime(new Date(onsetMs).toISOString());
+        }
+        return expiresMs && !isNaN(expiresMs)
+            ? 'Expires ' + _fmtAlertTime(new Date(expiresMs).toISOString())
+            : '';
+    }
+
     // Format an ISO alert time as "today at 2:00 PM", "tomorrow at 2:00 PM", or "Jun 17 at 2:00 PM"
     // All times shown in the LOCATION's local timezone (pirateTimezoneOffset), not the browser's.
     function _fmtAlertTime(isoStr) {
@@ -5687,7 +6393,7 @@
         var d = new Date(isoStr);
         if (isNaN(d.getTime())) return '';
         // Shift to location's local time by applying its UTC offset
-        var offsetMs = (window.pirateTimezoneOffset || 0) * 3600000;
+        var offsetMs = _alertLocationOffsetHours() * 3600000;
         var localMs = d.getTime() + offsetMs;
         var fakeDate = new Date(localMs);
         var timeStr = fakeDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
@@ -8050,20 +8756,20 @@
         const hazardCats = {}; // tracks distinct hazard categories active
 
         // ── 0. International alert severity ───────────────────────────────
-        // PirateWeather carries alert severity for non-US providers, while
-        // NWS event names are unavailable outside the US.  Translate the
-        // provider's generic severity into the same score bands used below.
+        // MeteoAlarm carries color/awareness severity for non-US providers,
+        // while NWS event names are unavailable outside the US. Translate the
+        // official levels into the same score bands used below.
         var _intlAlertCount = 0;
         var _intlMaxSeverity = '';
-        if (window.isOutsideUS && Array.isArray(window.pirateAlerts)) {
+        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts)) {
             var _intlSeverityRank = { minor: 1, moderate: 2, severe: 3, extreme: 4 };
             var _intlSeverityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
-            window.pirateAlerts.forEach(function(alert) {
+            window.meteoAlarmAlerts.forEach(function(alert) {
                 var _nowMsIntl = Date.now();
-                var _startsIntl = Number(alert.time || 0) * 1000;
-                var _endsIntl = Number(alert.expires || 0) * 1000;
+                var _startsIntl = _meteoAlarmTimestamp(alert.onset);
+                var _endsIntl = _meteoAlarmTimestamp(alert.expires);
                 if ((_startsIntl && _startsIntl > _nowMsIntl) || (_endsIntl && _endsIntl <= _nowMsIntl)) return;
-                var _sev = String(alert.severity || '').toLowerCase();
+                var _sev = _meteoAlarmSeverity(alert);
                 // A few international feeds encode the color level only in
                 // the title; retain a useful fallback when severity is absent.
                 var _intlText = String(alert.title || '').toLowerCase();
@@ -8077,9 +8783,9 @@
                 if ((_intlSeverityRank[_sev] || 0) > (_intlSeverityRank[_intlMaxSeverity] || 0)) _intlMaxSeverity = _sev;
                 score += _intlSeverityPoints[_sev] || 2;
                 var _factorTitle = alert.title || (_sev.charAt(0).toUpperCase() + _sev.slice(1) + ' alert');
-                 var _translatedFactorTitle = (window.alertTranslationCache || {})[_factorTitle] || _factorTitle;
+                 var _translatedFactorTitle = _factorTitle;
                  _translatedFactorTitle = _localizePirateAlertUnits(_translatedFactorTitle);
-                factorList.push({ label: _translatedFactorTitle, color: _pirateAlertColor(_sev) });
+                 factorList.push({ label: _translatedFactorTitle, color: _meteoAlarmColor(_sev) });
             });
             // Several notices can describe the same system; prevent stacking
             // from overwhelming the normal threat bands while preserving the
@@ -8495,55 +9201,255 @@
         }, 0);
     }
 
+    function _analyticsConfig() {
+        var range = Number(localStorage.getItem('analytics_range') || 12);
+        if ([6, 12, 24].indexOf(range) === -1) range = 12;
+        var chartMode = localStorage.getItem('analytics_chart_mode') || 'mixed';
+        if (['mixed', 'line', 'bar'].indexOf(chartMode) === -1) chartMode = 'mixed';
+        var metrics = { pressure: true, dewpoint: true, wind: true, precip: true };
+        try {
+            var savedMetrics = JSON.parse(localStorage.getItem('analytics_metrics') || 'null');
+            if (savedMetrics && typeof savedMetrics === 'object') {
+                Object.keys(metrics).forEach(function(key) {
+                    if (typeof savedMetrics[key] === 'boolean') metrics[key] = savedMetrics[key];
+                });
+            }
+        } catch (e) {}
+        if (!Object.keys(metrics).some(function(key) { return metrics[key]; })) metrics.pressure = true;
+        return { range: range, chartMode: chartMode, metrics: metrics };
+    }
+
+    function _saveAnalyticsConfig(config) {
+        localStorage.setItem('analytics_range', String(config.range));
+        localStorage.setItem('analytics_chart_mode', config.chartMode);
+        localStorage.setItem('analytics_metrics', JSON.stringify(config.metrics));
+    }
+
+    function _syncAnalyticsControls(config) {
+        [6, 12, 24].forEach(function(range) {
+            var button = document.getElementById('analytics-range-' + range);
+            if (button) button.classList.toggle('active', config.range === range);
+        });
+        var chartMode = document.getElementById('analytics-chart-mode');
+        if (chartMode) chartMode.value = config.chartMode;
+        Object.keys(config.metrics).forEach(function(metric) {
+            var button = document.getElementById('analytics-metric-' + metric);
+            var wrap = document.getElementById('analytics-wrap-' + metric);
+            if (button) {
+                button.classList.toggle('active', config.metrics[metric]);
+                button.setAttribute('aria-pressed', config.metrics[metric] ? 'true' : 'false');
+            }
+            if (wrap) wrap.classList.toggle('analytics-hidden', !config.metrics[metric]);
+        });
+    }
+
+    function setAnalyticsRange(range) {
+        var config = _analyticsConfig();
+        config.range = [6, 12, 24].indexOf(Number(range)) !== -1 ? Number(range) : 12;
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function setAnalyticsChartMode(mode) {
+        var config = _analyticsConfig();
+        config.chartMode = ['mixed', 'line', 'bar'].indexOf(mode) !== -1 ? mode : 'mixed';
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function toggleAnalyticsMetric(metric) {
+        var config = _analyticsConfig();
+        if (!Object.prototype.hasOwnProperty.call(config.metrics, metric)) return;
+        var activeCount = Object.keys(config.metrics).filter(function(key) { return config.metrics[key]; }).length;
+        if (config.metrics[metric] && activeCount === 1) return;
+        config.metrics[metric] = !config.metrics[metric];
+        _saveAnalyticsConfig(config);
+        renderAnalytics();
+    }
+
+    function _analyticsDewpoint(h, units) {
+        var tempF = Number(h && h.temperature);
+        if (!isFinite(tempF)) return null;
+        var rawHumidity = h && h.humidity;
+        var humidity = rawHumidity == null ? 50 : Number(rawHumidity);
+        if (!isFinite(humidity)) humidity = 50;
+        if (humidity <= 1) humidity *= 100;
+        humidity = Math.max(1, Math.min(100, humidity));
+        var tempC = (tempF - 32) * 5 / 9;
+        var dewC = tempC - (100 - humidity) / 5;
+        return units.temperature === 'C' ? dewC : dewC * 9 / 5 + 32;
+    }
+
+    function _analyticsPrecipAmount(h) {
+        var value = h && h.precipAccumulation != null ? h.precipAccumulation : (h && h.precipIntensity);
+        return isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
+    }
+
+    function _analyticsSigned(value, decimals) {
+        var rounded = Number(value);
+        if (!isFinite(rounded)) return '--';
+        var text = _unitValue(Math.abs(rounded), decimals);
+        return (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + text;
+    }
+
+    function _analyticsChartType(metric, config) {
+        if (config.chartMode === 'line') return 'line';
+        if (config.chartMode === 'bar') return 'bar';
+        return metric === 'wind' ? 'bar' : 'line';
+    }
+
     function renderAnalytics() {
         if (!window.pirateHourlyData || !window.pirateHourlyData.length) return;
         if (typeof Chart === 'undefined') return;
-        // Show/clear offline notice inside the analytics section
-        var _aSec = document.getElementById('analytics-section');
-        if (_aSec) {
-            }
-        const hrs = window.pirateHourlyData.slice(0, 12);
-        const tzOff = (window.pirateTimezoneOffset || 0) * 3600;
-        const labels = hrs.map(function(h) { return new Date((h.time + tzOff) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' }); });
-        const chartDefaults = {
+        var config = _analyticsConfig();
+        _syncAnalyticsControls(config);
+        var hrs = window.pirateHourlyData.slice(0, config.range);
+        var tzOff = (window.pirateTimezoneOffset || 0) * 3600;
+        var labels = hrs.map(function(h) {
+            return new Date((h.time + tzOff) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
+        });
+        var units = _unitPrefs();
+        var precipLabel = units.precipitation === 'mm' ? 'mm' : '"';
+        var dewUnit = units.temperature === 'C' ? '\u00b0C' : '\u00b0F';
+        var windLabel = _windLabel();
+        var periodLabel = document.getElementById('analytics-period-label');
+        if (periodLabel) periodLabel.textContent = 'NEXT ' + hrs.length + ' HOURS';
+        var chartDefaults = {
             responsive: false,
-            plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(7,19,29,0.95)', borderColor: 'rgba(79,195,247,0.3)', borderWidth: 1, titleColor: '#4fc3f7', bodyColor: '#fff', padding: 10, cornerRadius: 8 } },
-            scales: { x: { ticks: { color: '#555', font: { size: 9 }, maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.04)' } }, y: { ticks: { color: '#666', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } } },
+            plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, backgroundColor: 'rgba(7,19,29,0.96)', borderColor: 'rgba(79,195,247,0.4)', borderWidth: 1, titleColor: '#4fc3f7', bodyColor: '#fff', padding: 10, cornerRadius: 8 } },
+            scales: { x: { ticks: { color: '#718496', font: { size: 9 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,0.055)' } }, y: { ticks: { color: '#8297a9', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.06)' } } },
             animation: { duration: 500, easing: 'easeInOutQuad' },
             interaction: { mode: 'nearest', axis: 'x', intersect: false }
         };
-        function makeChart(id, type, data, extraOpts) {
+        function makeChart(metric, id, type, data, extraOpts) {
             extraOpts = extraOpts || {};
-            const canvas = document.getElementById(id); if (!canvas) return;
+            var canvas = document.getElementById(id); if (!canvas) return;
             if (window.chartInstances[id]) { window.chartInstances[id].destroy(); delete window.chartInstances[id]; }
-            const wrap = canvas.parentElement;
-            canvas.width = (wrap ? wrap.clientWidth - 20 : 0) || 300; canvas.height = 120;
-            const opts = JSON.parse(JSON.stringify(chartDefaults));
+            var wrap = canvas.parentElement;
+            canvas.width = (wrap ? wrap.clientWidth - 20 : 0) || 300; canvas.height = 132;
+            var opts = JSON.parse(JSON.stringify(chartDefaults));
             if (extraOpts.yMin !== undefined) opts.scales.y.min = extraOpts.yMin;
             if (extraOpts.yCallback) opts.scales.y.ticks.callback = extraOpts.yCallback;
+            if (type === 'bar') {
+                data.borderWidth = 0;
+                data.pointRadius = 0;
+                data.fill = false;
+                data.borderRadius = 4;
+            }
+            opts.plugins.tooltip.callbacks = {
+                label: function(context) {
+                    var value = context.parsed && context.parsed.y;
+                    var decimals = metric === 'pressure' ? (units.pressure === 'hPa' ? 0 : 2) :
+                        metric === 'precip' ? (units.precipitation === 'mm' ? 1 : 2) :
+                        metric === 'wind' ? (units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) : 1;
+                    var suffix = metric === 'pressure' ? ' ' + units.pressure :
+                        metric === 'precip' ? (units.precipitation === 'mm' ? ' mm' : '"') :
+                        metric === 'wind' ? ' ' + windLabel : dewUnit;
+                    return ' ' + context.dataset.label + ': ' + _unitValue(value, decimals) + suffix;
+                }
+            };
             window.chartInstances[id] = new Chart(canvas, { type: type, data: { labels: labels, datasets: [data] }, options: opts });
         }
-        // Update analytics labels for current unit system
-        var _units = _unitPrefs();
-        var _pLbl = document.getElementById('chart-pressure')?.previousElementSibling;
-        var _dLbl = document.getElementById('chart-dewpoint')?.previousElementSibling;
-        var _wLbl = document.getElementById('chart-wind')?.previousElementSibling;
-        if (_pLbl) _pLbl.innerHTML = '\uD83C\uDF21\uFE0F Pressure Trend (' + _units.pressure + ')';
-        if (_dLbl) _dLbl.innerHTML = '\uD83D\uDCA7 Dewpoint Trend (\u00b0)';
-        if (_wLbl) _wLbl.innerHTML = '\uD83D\uDCA8 Wind Gust Trend (' + _windLabel() + ')';
-        const pressureVals = hrs.map(function(h) { return h.pressure ? _pressureValue(h.pressure) : null; });
-        makeChart('chart-pressure', 'line', { data: pressureVals, label: 'Pressure (' + _units.pressure + ')', borderColor: '#4fc3f7', backgroundColor: 'rgba(79,195,247,0.08)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return _unitValue(v, _units.pressure === 'hPa' ? 0 : 2) + ' ' + _units.pressure; } });
-        const _dewUnit = '\u00b0';
-        const _dewDecimals = _units.temperature === 'C' ? 1 : 1;
-        const dewpointVals = hrs.map(function(h) { const TF = h.temperature, RH = (h.humidity || 0.5) * 100; if (TF === undefined) return null; const TC = (TF - 32) * 5 / 9; const TdC = TC - (100 - RH) / 5; return _units.temperature === 'C' ? parseFloat(TdC.toFixed(_dewDecimals)) : parseFloat((TdC * 9 / 5 + 32).toFixed(_dewDecimals)); });
-        makeChart('chart-dewpoint', 'line', { data: dewpointVals, label: 'Dewpoint (' + _dewUnit + ')', borderColor: '#81d4fa', backgroundColor: 'rgba(129,212,250,0.07)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.4, fill: true, spanGaps: true }, { yCallback: function(v) { return (Math.round(v * 10) / 10) + _dewUnit; } });
-        const windVals = hrs.map(function(h) { return _windValue(h.windGust || h.windSpeed || 0); });
-        makeChart('chart-wind', 'bar', { data: windVals, label: 'Wind Gust (' + _windLabel() + ')', backgroundColor: 'rgba(176,190,197,0.55)', hoverBackgroundColor: 'rgba(176,190,197,0.9)', borderRadius: 3 }, { yMin: 0, yCallback: function(v) { return _unitValue(v, _units.wind === 'mph' || _units.wind === 'kmh' ? 0 : 1) + ' ' + _windLabel(); } });
-        var _precipLbl = document.getElementById('chart-precip')?.previousElementSibling;
-        if (_precipLbl) _precipLbl.innerHTML = '\uD83C\uDF27\uFE0F Precip. Accumulation Trend (' + _units.precipitation + ')';
-        let accum = 0;
-        const precipVals = hrs.map(function(h) { accum += (h.precipAccumulation || h.precipIntensity || 0); return parseFloat(_precipValue(accum).toFixed(_units.precipitation === 'mm' ? 1 : 2)); });
-        makeChart('chart-precip', 'line', { data: precipVals, label: 'Precip Accum (' + _units.precipitation + ')', borderColor: '#29b6f6', backgroundColor: 'rgba(41,182,246,0.12)', borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: 0.3, fill: true, spanGaps: true }, { yMin: 0, yCallback: function(v) { return _unitValue(v, _units.precipitation === 'mm' ? 1 : 2) + ' ' + _units.precipitation; } });
+
+        var pressureLabel = document.getElementById('analytics-label-pressure');
+        var dewpointLabel = document.getElementById('analytics-label-dewpoint');
+        var windLabelEl = document.getElementById('analytics-label-wind');
+        var precipLabelEl = document.getElementById('analytics-label-precip');
+        if (pressureLabel) pressureLabel.textContent = 'Pressure Trend (' + units.pressure + ')';
+        if (dewpointLabel) dewpointLabel.textContent = 'Dewpoint Trend (' + dewUnit + ')';
+        if (windLabelEl) windLabelEl.textContent = 'Wind Gust Trend (' + windLabel + ')';
+        if (precipLabelEl) precipLabelEl.textContent = 'Precip. Accumulation Trend (' + precipLabel + ')';
+
+        var pressureVals = hrs.map(function(h) { return h.pressure != null ? _pressureValue(h.pressure) : null; });
+        var dewpointVals = hrs.map(function(h) {
+            var value = _analyticsDewpoint(h, units);
+            return value == null ? null : parseFloat(value.toFixed(1));
+        });
+        var windVals = hrs.map(function(h) { return _windValue(h.windGust != null ? h.windGust : (h.windSpeed || 0)); });
+        var precipAmounts = hrs.map(_analyticsPrecipAmount);
+        var precipVals = [];
+        var accum = 0;
+        precipAmounts.forEach(function(amount) {
+            accum += amount;
+            precipVals.push(_precipValue(accum));
+        });
+        var chartSpecs = {
+            pressure: {
+                id: 'chart-pressure', type: _analyticsChartType('pressure', config), values: pressureVals,
+                label: 'Pressure (' + units.pressure + ')', color: '#4fc3f7', fill: 'rgba(79,195,247,0.10)',
+                yMin: undefined, decimals: units.pressure === 'hPa' ? 0 : 2,
+                callback: function(v) { return _unitValue(v, units.pressure === 'hPa' ? 0 : 2) + ' ' + units.pressure; }
+            },
+            dewpoint: {
+                id: 'chart-dewpoint', type: _analyticsChartType('dewpoint', config), values: dewpointVals,
+                label: 'Dewpoint (' + dewUnit + ')', color: '#81d4fa', fill: 'rgba(129,212,250,0.08)',
+                yMin: undefined, decimals: 1,
+                callback: function(v) { return _unitValue(v, 1) + dewUnit; }
+            },
+            wind: {
+                id: 'chart-wind', type: _analyticsChartType('wind', config), values: windVals,
+                label: 'Wind Gust (' + windLabel + ')', color: '#b0bec5', fill: 'rgba(176,190,197,0.55)',
+                yMin: 0, decimals: units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1,
+                callback: function(v) { return _unitValue(v, units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) + ' ' + windLabel; }
+            },
+            precip: {
+                id: 'chart-precip', type: _analyticsChartType('precip', config), values: precipVals,
+                label: 'Precip Accumulation (' + precipLabel + ')',
+                color: '#29b6f6', fill: 'rgba(41,182,246,0.14)',
+                yMin: 0, decimals: units.precipitation === 'mm' ? 1 : 2,
+                callback: function(v) { return _unitValue(v, units.precipitation === 'mm' ? 1 : 2) + (units.precipitation === 'mm' ? ' mm' : '"'); }
+            }
+        };
+        Object.keys(chartSpecs).forEach(function(metric) {
+            var spec = chartSpecs[metric];
+            if (!config.metrics[metric]) {
+                if (window.chartInstances[spec.id]) {
+                    window.chartInstances[spec.id].destroy();
+                    delete window.chartInstances[spec.id];
+                }
+                return;
+            }
+            makeChart(metric, spec.id, spec.type, {
+                data: spec.values, label: spec.label, borderColor: spec.color,
+                backgroundColor: spec.fill, borderWidth: 2, pointRadius: 2.5,
+                pointHoverRadius: 6, tension: 0.35, fill: true, spanGaps: true
+            }, { yMin: spec.yMin, yCallback: spec.callback });
+        });
+
+        function firstValid(values) {
+            return values.find(function(value) { return value != null && isFinite(Number(value)); });
+        }
+        function lastValid(values) {
+            for (var i = values.length - 1; i >= 0; i--) {
+                if (values[i] != null && isFinite(Number(values[i]))) return values[i];
+            }
+            return null;
+        }
+        function setSummary(id, value, detail) {
+            var valueEl = document.getElementById('analytics-summary-' + id);
+            var detailEl = document.getElementById('analytics-summary-' + id + '-detail');
+            if (valueEl) valueEl.textContent = value;
+            if (detailEl) detailEl.textContent = detail;
+        }
+        var firstPressure = firstValid(pressureVals), lastPressure = lastValid(pressureVals);
+        if (firstPressure != null) {
+            var pressureDelta = (lastPressure == null ? firstPressure : lastPressure) - firstPressure;
+            var pressureTrend = Math.abs(pressureDelta) < 0.005 ? 'Steady' : pressureDelta > 0 ? 'Rising' : 'Falling';
+            setSummary('pressure', _unitValue(firstPressure, units.pressure === 'hPa' ? 0 : 2) + ' ' + units.pressure,
+                pressureTrend + ' ' + _analyticsSigned(pressureDelta, units.pressure === 'hPa' ? 0 : 2) + ' ' + units.pressure);
+        } else setSummary('pressure', '--', 'No data');
+        var firstDew = firstValid(dewpointVals), lastDew = lastValid(dewpointVals);
+        if (firstDew != null) {
+            setSummary('dewpoint', _unitValue(firstDew, 1) + dewUnit,
+                lastDew == null ? 'No end value' : 'Ends ' + _unitValue(lastDew, 1) + dewUnit);
+        } else setSummary('dewpoint', '--', 'No data');
+        var peakWind = Math.max.apply(Math, windVals.filter(function(value) { return isFinite(Number(value)); }));
+        var peakWindIndex = windVals.indexOf(peakWind);
+        if (!isFinite(peakWind)) peakWind = 0;
+        setSummary('wind', _unitValue(peakWind, units.wind === 'mph' || units.wind === 'kmh' ? 0 : 1) + ' ' + windLabel,
+            peakWindIndex >= 0 ? 'Peak near ' + labels[peakWindIndex] : 'No data');
+        var totalPrecip = precipAmounts.reduce(function(sum, value) { return sum + value; }, 0);
+        setSummary('precip', _fmtPrecip(totalPrecip), 'Cumulative total');
     }
 
     // ——— SPC RISK LEVELS ———
@@ -8906,8 +9812,7 @@
             if (pcPart(j) >= 30 &&
                 (narr.includes('heavy rain') || narr.includes('heavy rainfall'))) {
                 var amt = totalQpf(Math.floor(j / 2));
-                var heavyWord = pcPart(j) >= 70 ? 'likely' : 'possible';
-                s1 = 'Heavy rain ' + heavyWord + ' ' + daypartLabel(j) + (amt >= 0.25 ? ' (' + fmtRain(amt) + ' possible).' : '.');
+                s1 = 'Potential for heavy rain ' + daypartLabel(j) + (amt >= 0.25 ? ' (' + fmtRain(amt) + ' possible).' : '.');
             }
         }
 
@@ -12437,6 +13342,7 @@
         // Reset beach state every load so a previous beach result never bleeds into a new search.
         window.isBeachLocation = false;
         window.isWaterLocation = false;
+        window.locationCountryCode = '';
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
@@ -12465,6 +13371,9 @@
                 var _nomD = await _osmGeocodeFetch('reverse', { lat: loadLat, lon: loadLon });
                 if (loadGeneration !== weatherLoadGeneration) return;
                 if (_nomD && _nomD.lat) {
+                    window.locationCountryCode = String(
+                        _nomD.country_code || _nomD.countryCode || ''
+                    ).toUpperCase();
                     if (_nomD.error) {
                         window.isWaterLocation = true;
                     } else {
@@ -12513,6 +13422,7 @@
                 if (loadGeneration === weatherLoadGeneration) window.isBeachLocation = false;
             }
             })();
+            window._locationClassificationPromise = _locationClassificationPromise;
 
             await fetchPirate(loadGeneration, loadLat, loadLon);
             if (loadGeneration !== weatherLoadGeneration) return;
