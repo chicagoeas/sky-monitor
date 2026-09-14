@@ -3966,6 +3966,39 @@
         "heat advisory":"https://www.weather.gov/images/nws/newicons/hot.png"
     };
 
+    // Environment Canada uses a separate alert vocabulary from NWS. Keep this
+    // map provider-specific so a Canadian alert never changes the U.S. icon
+    // matching behavior above.
+    const ENVIRONMENT_CANADA_ALERT_ICONS = {
+        "tornado warning":"https://www.weather.gov/images/nws/newicons/tor.png",
+        "tornado watch":"https://www.weather.gov/images/nws/newicons/fc.png",
+        "severe thunderstorm warning":"https://www.weather.gov/images/nws/newicons/tsra.png",
+        "severe thunderstorm watch":"https://www.weather.gov/images/nws/newicons/scttsra.png",
+        "rainfall warning":"https://www.weather.gov/images/nws/newicons/shra.png",
+        "snow squall warning":"https://www.weather.gov/images/nws/newicons/snip.png",
+        "snow squall watch":"https://www.weather.gov/images/nws/newicons/snip.png",
+        "blizzard warning":"https://www.weather.gov/images/nws/newicons/blizzard.png",
+        "winter storm warning":"https://www.weather.gov/images/nws/newicons/sn.png",
+        "snowfall warning":"https://www.weather.gov/images/nws/newicons/sn.png",
+        "heat warning":"https://www.weather.gov/images/nws/newicons/hot.png",
+        "extreme cold warning":"https://www.weather.gov/images/nws/newicons/cold.png",
+        "flash freeze warning":"https://www.weather.gov/images/nws/newicons/ip.png",
+        "frost advisory":"https://www.weather.gov/images/nws/newicons/fzra_sn.png",
+        "blowing snow advisory":"https://www.weather.gov/images/nws/newicons/sn.png",
+        "freezing rain warning":"https://www.weather.gov/images/nws/newicons/fzra.png",
+        "dust storm warning":"https://www.weather.gov/images/nws/newicons/du.png",
+        "wind warning":"https://www.weather.gov/images/nws/newicons/wind_skc.png",
+        "hurricane watch":"https://www.weather.gov/images/nws/newicons/hur_watch.png",
+        "hurricane warning":"https://www.weather.gov/images/nws/newicons/hur_warn.png",
+        "tropical storm watch":"https://www.weather.gov/images/nws/newicons/ts_watch.png",
+        "tropical storm warning":"https://www.weather.gov/images/nws/newicons/ts_warn.png",
+        "air quality alert":"https://www.weather.gov/images/nws/newicons/fu.png",
+        "gale warning":"https://forecast.weather.gov/images/wtf/medium/m_ra.png",
+        "fog advisory":"https://www.weather.gov/images/nws/newicons/fg.png",
+        "freezing drizzle advisory":"https://www.weather.gov/images/nws/newicons/fzra.png",
+        "waterspout watch":"https://www.weather.gov/images/nws/newicons/fc.png"
+    };
+
     const EMERGENCY_TYPES = [
         "evacuation immediate","civil emergency message","local area emergency",
         "civil danger warning","law enforcement warning","shelter in place warning",
@@ -4391,16 +4424,39 @@
         return inside;
     }
 
+    function _normalizeEnvironmentCanadaAlertName(value) {
+        var text = String(value || '').replace(/\s+/g, ' ').trim();
+        if (!text) return 'Weather alert';
+        // EC commonly publishes names like "Frost (advisory)" while the
+        // user-facing alert title should match the normal alert terminology.
+        return text.replace(/\s*\(\s*(warning|watch|advisory|statement|alert)\s*\)\s*$/i,
+            function(_, kind) {
+                return ' ' + kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
+            });
+    }
+
+    function _environmentCanadaAlertIcon(alertName) {
+        var event = String(alertName || '').toLowerCase();
+        for (var key in ENVIRONMENT_CANADA_ALERT_ICONS) {
+            if (event.includes(key)) return ENVIRONMENT_CANADA_ALERT_ICONS[key];
+        }
+        return '';
+    }
+
     function _normalizeEnvironmentCanadaAlert(feature, index) {
         var p = feature && feature.properties || {};
         var risk = p.risk_colour_en || p.riskColour || p.impact_en || p.alert_type || '';
         var severity = _environmentCanadaSeverity({ riskColour: risk, alertType: p.alert_type });
-        var event = p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert';
+        var event = _normalizeEnvironmentCanadaAlertName(
+            p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert'
+        );
         var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
         return {
             id: String(p.feature_id || feature.id || 'environment-canada-' + index)
                 .replace(/[^a-zA-Z0-9_-]/g, '_'),
-            title: p.alert_short_name_en || p.alert_name_en || event,
+            title: _normalizeEnvironmentCanadaAlertName(
+                p.alert_name_en || p.alert_short_name_en || event
+            ),
             event: event,
             severity: severity,
             awarenessLevel: p.risk_colour_en || '',
@@ -4410,6 +4466,7 @@
             expires: p.event_end_datetime || p.expiration_datetime || '',
             areaDesc: area,
             countryCode: 'CA',
+            iconUrl: _environmentCanadaAlertIcon(event),
             icon: '\u26A0\uFE0F',
             sourceUrl: 'https://weather.gc.ca/warnings/index_e.html',
             geometry: feature.geometry || null
