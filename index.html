@@ -4727,8 +4727,10 @@
         const _bannerColor = _pirateAlertColor(_topSeverity.severity);
         banner.style.display = 'block'; banner.style.background = _bannerColor;
         banner.innerText = '\u26A0\uFE0F ' + alerts.length + ' ACTIVE ALERT' + (alerts.length > 1 ? 'S' : '');
+        const alertViewState = captureAlertViewState();
         stack.innerHTML = '';
-        for (const alert of alerts) {
+        for (let alertIndex = 0; alertIndex < alerts.length; alertIndex++) {
+            const alert = alerts[alertIndex];
             let title = alert.title || 'Weather Alert';
             const _nowMs = Date.now();
             const _onsetMs = alert.time ? alert.time * 1000 : 0;
@@ -4749,10 +4751,15 @@
             title = _localizePirateAlertUnits(title);
             desc = _localizePirateAlertUnits(desc);
             const isTruncated = desc.length > 140;
-            const pwId = 'pw-' + Date.now() + '-' + Math.floor(Math.random() * 9999);
+             // Alert ids must remain stable across the 60-second refresh so
+             // captureAlertViewState can reopen the same card and restore its
+             // internal scroll position.
+             const pwId = 'pw-' + String(alert.id || ('pirate-' + alertIndex))
+                 .replace(/[^a-zA-Z0-9_-]/g, '_');
             const _cardColor = _pirateAlertColor(alert.severity);
              stack.innerHTML += '<div class="alert-card" style="background:' + _cardColor + '; align-items:flex-start;"><div style="font-size:1.8em; padding-top:2px;">\u26A0\uFE0F</div><div style="flex:1; min-width:0;"><b>' + escapeHtml(title) + '</b><div class="alert-meta-row">' + timingHtml + (isTruncated ? '<button class="alert-expand-btn" id="btn-' + pwId + '" onclick="toggleAlertText(\'' + pwId + '\')">\u25bc Show more</button>' : '') + '</div>' + (!isTruncated ? '<small>' + escapeHtml(desc) + '</small>' : '') + (isTruncated ? '<div id="full-' + pwId + '" class="alert-full-text">' + escapeHtml(desc) + '</div>' : '') + '</div></div>';
         }
+        restoreAlertViewState(alertViewState);
     }
 
     async function _tryInternationalAlertFallback(stack, banner, checklist) {
