@@ -4342,6 +4342,23 @@
     const ENVIRONMENT_CANADA_ALERTS_URL =
         'https://api.weather.gc.ca/collections/weather-alerts/items';
 
+    function _isLikelyCanadianCoordinate(latitude, longitude) {
+        var latValue = Number(latitude);
+        var lonValue = Number(longitude);
+        if (!isFinite(latValue) || !isFinite(lonValue)) return false;
+        // This is intentionally a fallback for remote points where Photon
+        // returns a feature without countrycode. It covers Canada's mainland,
+        // northern territories, and Arctic islands without treating Alaska or
+        // Greenland as Canada.
+        if (latValue < 49.0 || latValue > 83.5 ||
+            lonValue < -141.2 || lonValue > -52.5) return false;
+        if (latValue >= 60.0) return true;
+        if (lonValue >= -114.0) return true;
+        // British Columbia's mainland and coastal islands. The Alaska
+        // panhandle occupies the farther-west portion of this latitude band.
+        return lonValue >= -129.5;
+    }
+
     function _environmentCanadaSeverity(alert) {
         var raw = String(
             alert && (alert.severity || alert.riskColour || alert.risk_colour ||
@@ -5838,6 +5855,10 @@
                 ]);
             }
             var _countryCode = String(window.locationCountryCode || '').toUpperCase();
+            if (!_countryCode && _isLikelyCanadianCoordinate(lat, lon)) {
+                _countryCode = 'CA';
+                window.locationCountryCode = _countryCode;
+            }
             if (_countryCode === 'CA') {
                 try {
                     await fetchEnvironmentCanadaAlerts(lat, lon);
