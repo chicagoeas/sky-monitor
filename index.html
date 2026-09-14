@@ -4007,6 +4007,19 @@
         "waterspout watch":"https://www.weather.gov/images/nws/newicons/fc.png"
     };
 
+    // Alert-provider routing is deliberately conservative.  A successful
+    // PirateWeather response must never replace an official Environment
+    // Canada or MeteoAlarm result just because the official point query is
+    // empty or temporarily unavailable.
+    const METEOALARM_COUNTRY_CODES = {
+        AL:true, AD:true, AT:true, BA:true, BE:true, BG:true, CH:true, CY:true,
+        CZ:true, DE:true, DK:true, EE:true, ES:true, FI:true, FR:true, GB:true,
+        GR:true, HR:true, HU:true, IE:true, IS:true, IT:true, LI:true, LT:true,
+        LU:true, LV:true, MC:true, MD:true, ME:true, MK:true, MT:true, NL:true,
+        NO:true, PL:true, PT:true, RO:true, RS:true, SE:true, SI:true, SK:true,
+        SM:true, TR:true, UA:true, VA:true, XK:true
+    };
+
     const EMERGENCY_TYPES = [
         "evacuation immediate","civil emergency message","local area emergency",
         "civil danger warning","law enforcement warning","shelter in place warning",
@@ -4884,28 +4897,91 @@
         restoreAlertViewState(alertViewState);
     }
 
+    async function _resolveInternationalCountryCode() {
+        var code = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (code) return code;
+
+        // Location classification runs in parallel with the weather load.
+        // Give its reverse-geocode step a short chance to finish, but never
+        // wait indefinitely for it.
+        try {
+            if (window._locationClassificationPromise) {
+                await Promise.race([
+                    window._locationClassificationPromise,
+                    new Promise(function(resolve) { setTimeout(resolve, 2500); })
+                ]);
+            }
+        } catch (e) {}
+        code = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (code) return code;
+
+        // If the parallel enrichment is still busy, make one focused
+        // reverse-geocode attempt. Unknown country remains fail-closed below.
+        try {
+            var reverse = await Promise.race([
+                _osmGeocodeFetch('reverse', { lat: lat, lon: lon }),
+                new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 5000); })
+            ]);
+            var reverseCode = reverse && (reverse.country_code || reverse.countryCode);
+            if (reverseCode) {
+                code = String(reverseCode).trim().toUpperCase();
+                window.locationCountryCode = code;
+            }
+        } catch (e) {}
+        return code;
+    }
+
+    function _internationalAlertRoute(countryCode) {
+        var code = String(countryCode || '').trim().toUpperCase();
+        if (code === 'CA') return 'environment-canada';
+        if (METEOALARM_COUNTRY_CODES[code]) return 'meteoalarm';
+        if (!code) return 'unknown';
+        return 'pirate';
+    }
+
     async function _tryInternationalAlertFallback(stack, banner, checklist) {
-        // Provider coverage is not consistently expressed as an HTTP error:
-        // some feeds return a valid empty collection outside their footprint.
-        // Treat an empty collection as "try the next provider", and only
-        // render "No active hazards" after PirateWeather is the final result.
-        var providers = [
-            {
+        var countryCode = await _resolveInternationalCountryCode();
+        var route = _internationalAlertRoute(countryCode);
+        var providers;
+
+        if (route === 'environment-canada') {
+            providers = [{
                 name: 'Environment Canada',
                 fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
                 render: function() { return renderMeteoAlarmAlerts(stack, banner); }
-            },
-            {
+            }];
+        } else if (route === 'meteoalarm') {
+            providers = [{
                 name: 'MeteoAlarm',
                 fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
                 render: function() { return renderMeteoAlarmAlerts(stack, banner); }
-            },
-            {
+            }];
+        } else if (route === 'pirate') {
+            // PirateWeather is permitted only after the country has been
+            // positively identified as outside the official-provider routes.
+            providers = [{
                 name: 'PirateWeather',
                 fetch: function() { return fetchPirateAlerts(lat, lon); },
                 render: function() { return renderPirateAlerts(stack, banner); }
-            }
-        ];
+            }];
+        } else {
+            // Do not guess. A missing country code could still be Canada or a
+            // MeteoAlarm country, so try official providers only and never
+            // expose PirateWeather on an ambiguous location.
+            providers = [
+                {
+                    name: 'Environment Canada',
+                    fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
+                    render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+                },
+                {
+                    name: 'MeteoAlarm',
+                    fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
+                    render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+                }
+            ];
+        }
+
         var lastError = null;
 
         for (var i = 0; i < providers.length; i++) {
@@ -4927,8 +5003,9 @@
                     return true;
                 }
                 if (i === providers.length - 1) {
-                    // PirateWeather is the final provider and an empty,
-                    // successful response is a legitimate no-alert result.
+                    // An empty official response is a legitimate no-alert
+                    // result. Never advance from an official provider to
+                    // PirateWeather here.
                     stack.innerHTML = '';
                     checklist.style.display = 'none';
                     banner.style.display = 'none';
