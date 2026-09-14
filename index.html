@@ -3363,19 +3363,29 @@
 
     function restoreAlertViewState(state) {
         if (!state) return;
-        Object.keys(state.expanded || {}).forEach(function(id) {
-            const el = document.getElementById('full-' + id);
-            const btn = document.getElementById('btn-' + id);
-            if (!el || !btn) return;
-            el.style.display = 'block';
-            btn.textContent = '\u25b2 Show less';
-            el.scrollTop = state.innerScroll[id] || 0;
-        });
+        const restoreExpanded = function() {
+            Object.keys(state.expanded || {}).forEach(function(id) {
+                const el = document.getElementById('full-' + id);
+                const btn = document.getElementById('btn-' + id);
+                if (!el || !btn) return;
+                el.style.display = 'block';
+                btn.textContent = '\u25b2 Show less';
+                el.scrollTop = state.innerScroll[id] || 0;
+            });
+        };
+        // Apply immediately, then once more after the rebuilt alert cards have
+        // laid out. This keeps both the card expansion and its scroll offset
+        // when refreshed alert text or fonts change the measured height.
+        restoreExpanded();
         requestAnimationFrame(function() {
-            window.scrollTo({
-                left: state.pageX || 0,
-                top: state.pageY || 0,
-                behavior: 'auto'
+            restoreExpanded();
+            requestAnimationFrame(function() {
+                restoreExpanded();
+                window.scrollTo({
+                    left: state.pageX || 0,
+                    top: state.pageY || 0,
+                    behavior: 'auto'
+                });
             });
         });
     }
@@ -3434,8 +3444,6 @@
         if (tabId !== 'severe') {
             document.querySelectorAll('.alert-full-text').forEach(el => { el.style.display = 'none'; });
             document.querySelectorAll('.alert-expand-btn').forEach(btn => { btn.textContent = '\u25bc Show more'; });
-            // Reset saved scroll so returning to Severe tab starts fresh
-            window._severeSavedScroll = 0;
         }
         if (tabId === 'specs') {
             drawOrbit();
@@ -4853,7 +4861,10 @@
             try {
                 var alerts = await provider.fetch();
                 if (Array.isArray(alerts) && alerts.length > 0) {
-                    stack.innerHTML = '';
+                    // Keep the current alert DOM intact until the provider
+                    // renderer captures its view state. Clearing it here
+                    // would erase an open "Show more" card and its inner
+                    // scroll position before captureAlertViewState() runs.
                     checklist.style.display = 'none';
                     banner.style.display = 'none';
                     banner.className = '';
@@ -6009,18 +6020,7 @@
                 var endMs = rawEnd ? new Date(rawEnd).getTime() : 0;
                 return !endMs || isNaN(endMs) || endMs > Date.now();
             });
-            const _expandedAlertIds = new Set();
-            const _savedAlertScrolls = {};
-            document.querySelectorAll('.alert-full-text').forEach(function(el) {
-                if (el.style.display === 'block' && el.id) {
-                    const _aid = el.id.replace('full-', '');
-                    _expandedAlertIds.add(_aid);
-                    _savedAlertScrolls[_aid] = el.scrollTop;
-                }
-            });
-            // Persist page scroll so it survives across auto-refreshes while on the severe tab
-            if (typeof window._severeSavedScroll === 'undefined') window._severeSavedScroll = 0;
-            window._severeSavedScroll = window.scrollY;
+            const alertViewState = captureAlertViewState();
             stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
@@ -6344,21 +6344,7 @@
                     stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><div style="font-weight:bold;">' + escapeHtml(displayName) + '</div><div class="alert-meta-row">' + _timingHtml + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button>' : '') + '</div>' + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
                 });
 
-                _expandedAlertIds.forEach(function(id) {
-                    const el = document.getElementById('full-' + id);
-                    const btn = document.getElementById('btn-' + id);
-                    if (el && btn) {
-                        el.style.display = 'block';
-                        btn.textContent = '\u25b2 Show less';
-                        // Restore the inner scroll position of each expanded alert text
-                        if (_savedAlertScrolls[id]) el.scrollTop = _savedAlertScrolls[id];
-                    }
-                });
-                // Restore page scroll via rAF — waits for repaint so height is fully settled
-                const _scrollTarget = window._severeSavedScroll || 0;
-                if (_scrollTarget > 0) requestAnimationFrame(function() {
-                    window.scrollTo({ top: _scrollTarget, behavior: 'instant' });
-                });
+                restoreAlertViewState(alertViewState);
 
                 if (highestTheme) document.body.classList.add(highestTheme);
                 if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
