@@ -4298,6 +4298,27 @@
         return value == null ? '' : String(value);
     }
 
+    function _meteoAlarmParameterEventType(parameters) {
+        var list = Array.isArray(parameters) ? parameters : [];
+        var parameter = list.find(function(item) {
+            return String(item && (item.valueName || item.name) || '')
+                .toLowerCase().includes('awareness_type');
+        });
+        if (!parameter) return '';
+        var raw = String(parameter.value || '').trim();
+        var token = raw.includes(';') ? raw.split(';').pop().trim() : raw;
+        var compact = token.toLowerCase().replace(/[\s_-]+/g, '');
+        var labels = {
+            coastalevent: 'Coastal Event',
+            wind: 'Wind',
+            fog: 'Fog'
+        };
+        if (labels[compact]) return labels[compact];
+        return token.replace(/[_-]+/g, ' ')
+            .replace(/\b[a-z]/g, function(letter) { return letter.toUpperCase(); })
+            .trim();
+    }
+
     function _meteoAlarmDisplayTitle(rawTitle, fallbackTitle) {
         var title = _meteoAlarmText(rawTitle).replace(/\s+/g, ' ').trim();
         if (!title) return _meteoAlarmText(fallbackTitle) || 'European weather alert';
@@ -4355,10 +4376,12 @@
         var source = a.officialUrl || a.official_url || a.web || p.web ||
             a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
         var severity = _meteoAlarmSeverity(Object.assign({}, a, p, info));
+        var parameters = a.parameters || p.parameters || info.parameter || info.parameters || [];
         // eventType/awarenessType is the provider's canonical event. The
         // headline is deliberately not used to classify the hazard: it may
         // say "Dangerous Fog" or "Gale" while the API event is Fog or Wind.
         var hazard = _meteoAlarmText(
+            _meteoAlarmParameterEventType(parameters) ||
             a.eventType || a.event_type ||
             p.eventType || p.event_type ||
             a.awarenessType || a.awareness_type ||
