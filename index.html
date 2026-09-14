@@ -4289,18 +4289,34 @@
         var title = _meteoAlarmText(rawTitle).replace(/\s+/g, ' ').trim();
         if (!title) return _meteoAlarmText(fallbackTitle) || 'European weather alert';
 
-        // MeteoAlarm headlines commonly combine the awareness color, event,
-        // location, and level in one string, for example:
+        // MeteoAlarm headlines commonly combine an awareness color/severity,
+        // event, location, and level in one string, for example:
         // "Yellow Thunderstorm Warning for Italy - Lombardia, yellow level".
+        // Other records are shorter, such as "Severe rain" or just "fog".
         // The card title should identify only the event type.
         title = title
-            .replace(/^(?:green|yellow|orange|red)(?:\s+level)?\s+/i, '')
+            .replace(/^(?:green|yellow|orange|red|severe|moderate|minor)(?:\s+level)?(?:\s*[-:]\s*|\s+)/i, '')
             .replace(/\s+for\s+.*$/i, '')
             .replace(/\s+-\s+.*$/i, '')
             .replace(/\s*,\s*(?:green|yellow|orange|red)(?:\s+level)?\s*$/i, '')
             .replace(/[,:;\s]+$/, '')
             .trim();
-        return title || _meteoAlarmText(fallbackTitle) || 'European weather alert';
+        if (!title) title = _meteoAlarmText(fallbackTitle) || 'European weather alert';
+
+        // Normalize the common MeteoAlarm event labels before adding the
+        // alert class. This keeps "thunderstorms", "rain", and "fog"
+        // consistent with the map's "Thunderstorm Warning", "Rain Warning",
+        // and "Fog Warning" labels.
+        title = title
+            .replace(/^thunderstorms?$/i, 'Thunderstorm')
+            .replace(/^rains?$/i, 'Rain')
+            .replace(/^fogs?$/i, 'Fog');
+        if (!/(warning|watch|advisory|statement|outlook|event|alert)$/i.test(title)) {
+            title += ' Warning';
+        }
+        return title.replace(/\b[a-z]/g, function(letter) {
+            return letter.toUpperCase();
+        });
     }
 
     function _meteoAlarmAlertId(alert, index) {
