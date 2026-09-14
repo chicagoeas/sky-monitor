@@ -1978,6 +1978,8 @@
     window.pirateCurrently = null;
     window.pirateAlerts = [];
     window.meteoAlarmAlerts = [];
+    window.environmentCanadaAlerts = [];
+    window.locationCountryCode = '';
     window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
@@ -2294,6 +2296,8 @@
                 neighbourhood: props.neighbourhood || '',
                 quarter: props.quarter || ''
             },
+            country_code: props.countrycode || props.country_code || '',
+            country: props.country || '',
             // Keep the OSM key/value in the names expected by the existing
             // water and beach classifiers.
             class: props.osm_key || '',
@@ -4323,6 +4327,215 @@
         return 'https://www.meteoalarm.org/en/live/';
     }
 
+    // MeteoAlarm is a European warning network. Keep its country routing
+    // explicit so locations such as Australia, Japan, and South Africa use
+    // PirateWeather instead of receiving an empty European feed response.
+    const METEOALARM_COUNTRIES = {
+        AD: true, AT: true, BE: true, BG: true, CH: true, CY: true, CZ: true,
+        DE: true, DK: true, EE: true, ES: true, FI: true, FR: true, GR: true,
+        HR: true, HU: true, IE: true, IS: true, IT: true, LI: true, LT: true,
+        LU: true, LV: true, ME: true, MK: true, MT: true, NL: true, NO: true,
+        PL: true, PT: true, RO: true, RS: true, SE: true, SI: true, SK: true,
+        TR: true, UK: true, GB: true
+    };
+
+    const ENVIRONMENT_CANADA_ALERTS_URL =
+        'https://api.weather.gc.ca/collections/weather-alerts/items';
+
+    function _environmentCanadaSeverity(alert) {
+        var raw = String(
+            alert && (alert.severity || alert.riskColour || alert.risk_colour ||
+                alert.impact || alert.alertType || '')
+        ).toLowerCase();
+        // Environment Canada publishes an explicit risk colour. Prefer that
+        // over the generic advisory/warning type, because a yellow warning is
+        // still a moderate-level alert in the national feed.
+        if (raw.includes('red') || raw.includes('extreme')) return 'extreme';
+        if (raw.includes('orange') || raw.includes('severe')) return 'severe';
+        if (raw.includes('yellow') || raw.includes('moderate')) return 'moderate';
+        if (raw.includes('green') || raw.includes('minor')) return 'minor';
+        if (raw.includes('warning')) return 'severe';
+        if (raw.includes('advisory')) return 'moderate';
+        return 'moderate';
+    }
+
+    function _environmentCanadaColor(severity) {
+        switch ((severity || '').toLowerCase()) {
+            case 'extreme': return '#c62828';
+            case 'severe': return '#ef6c00';
+            case 'moderate': return '#f9a825';
+            case 'minor': return '#388e3c';
+            default: return '#546e7a';
+        }
+    }
+
+    function _pointInGeoJson(lonP, latP, geometry) {
+        if (!geometry) return false;
+        if (geometry.type === 'Feature') return _pointInGeoJson(lonP, latP, geometry.geometry);
+        if (geometry.type === 'Polygon') {
+            var rings = geometry.coordinates || [];
+            if (!rings.length || !_pointInRing(lonP, latP, rings[0])) return false;
+            return rings.slice(1).every(function(ring) { return !_pointInRing(lonP, latP, ring); });
+        }
+        if (geometry.type === 'MultiPolygon') {
+            return (geometry.coordinates || []).some(function(polygon) {
+                return _pointInGeoJson(lonP, latP, { type: 'Polygon', coordinates: polygon });
+            });
+        }
+        if (geometry.type === 'GeometryCollection') {
+            return (geometry.geometries || []).some(function(item) {
+                return _pointInGeoJson(lonP, latP, item);
+            });
+        }
+        return false;
+    }
+
+    function _pointInRing(lonP, latP, ring) {
+        var inside = false;
+        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            var xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+            var xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+            if (!isFinite(xi) || !isFinite(yi) || !isFinite(xj) || !isFinite(yj)) continue;
+            var intersects = ((yi > latP) !== (yj > latP)) &&
+                (lonP < (xj - xi) * (latP - yi) / ((yj - yi) || 1e-12) + xi);
+            if (intersects) inside = !inside;
+        }
+        return inside;
+    }
+
+    function _normalizeEnvironmentCanadaAlert(feature, index) {
+        var p = feature && feature.properties || {};
+        var risk = p.risk_colour_en || p.riskColour || p.impact_en || p.alert_type || '';
+        var severity = _environmentCanadaSeverity({ riskColour: risk, alertType: p.alert_type });
+        var event = p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert';
+        var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
+        return {
+            id: String(p.feature_id || feature.id || 'environment-canada-' + index)
+                .replace(/[^a-zA-Z0-9_-]/g, '_'),
+            title: p.alert_short_name_en || p.alert_name_en || event,
+            event: event,
+            severity: severity,
+            awarenessLevel: p.risk_colour_en || '',
+            description: p.alert_text_en || p.alert_text || '',
+            instruction: '',
+            onset: p.validity_datetime || p.publication_datetime || '',
+            expires: p.event_end_datetime || p.expiration_datetime || '',
+            areaDesc: area,
+            countryCode: 'CA',
+            icon: '\u26A0\uFE0F',
+            sourceUrl: 'https://weather.gc.ca/warnings/index_e.html',
+            geometry: feature.geometry || null
+        };
+    }
+
+    function _storeInternationalAlertState(alerts) {
+        window.activeAlertEvents = [];
+        window.activeAlertOnsets = {};
+        window.activeAlertExpires = {};
+        (alerts || []).forEach(function(alert) {
+            var name = alert.title || alert.event || 'Weather alert';
+            if (!window.activeAlertEvents.includes(name)) window.activeAlertEvents.push(name);
+            window.activeAlertOnsets[name] = _meteoAlarmTimestamp(alert.onset) || 0;
+            window.activeAlertExpires[name] = _meteoAlarmTimestamp(alert.expires) || 0;
+        });
+    }
+
+    async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
+        var pad = 0.35;
+        var bbox = [
+            Number(requestLon) - pad, Number(requestLat) - pad,
+            Number(requestLon) + pad, Number(requestLat) + pad
+        ].join(',');
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = ENVIRONMENT_CANADA_ALERTS_URL + '?f=json&lang=en-CA&limit=100&bbox=' +
+            encodeURIComponent(bbox);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal,
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }, 12000);
+        if (!res.ok) throw new Error('Environment Canada alerts ' + res.status);
+        var payload = await res.json();
+        if (!payload || !Array.isArray(payload.features)) {
+            throw new Error('Environment Canada response missing features');
+        }
+        var now = Date.now();
+        var seen = {};
+        var alerts = payload.features.filter(function(feature) {
+            var p = feature && feature.properties || {};
+            var status = String(p.status_en || '').toLowerCase();
+            var endMs = Date.parse(p.event_end_datetime || p.expiration_datetime || '');
+            return (!status || status === 'issued' || status === 'updated') &&
+                (!endMs || endMs > now) &&
+                _pointInGeoJson(Number(requestLon), Number(requestLat), feature.geometry);
+        }).map(_normalizeEnvironmentCanadaAlert).filter(function(alert) {
+            var key = [alert.title, alert.areaDesc, alert.onset, alert.expires]
+                .map(function(value) { return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim(); })
+                .join('|');
+            if (seen[key]) return false;
+            seen[key] = true;
+            return true;
+        });
+        window.environmentCanadaAlerts = alerts;
+        window.meteoAlarmAlerts = alerts;
+        window.pirateAlerts = [];
+        _storeInternationalAlertState(alerts);
+        return alerts;
+    }
+
+    function _normalizePirateAlert(raw, index) {
+        var a = raw || {};
+        var onset = a.time != null ? Number(a.time) * 1000 : Date.parse(a.onset || a.effective || '');
+        var expires = a.expires != null ? Number(a.expires) * 1000 : Date.parse(a.ends || a.expiration || '');
+        var severityRaw = String(a.severity || a.level || '').toLowerCase();
+        var alertText = String(a.title || a.event || '').toLowerCase();
+        var severity = severityRaw.includes('extreme') ? 'extreme' :
+            severityRaw.includes('severe') ? 'severe' :
+            severityRaw.includes('minor') ? 'minor' :
+            severityRaw.includes('moderate') ? 'moderate' :
+            alertText.includes('warning') ? 'severe' :
+            alertText.includes('watch') || alertText.includes('advisory') ? 'moderate' :
+            'moderate';
+        return {
+            id: String(a.id || 'pirate-' + index).replace(/[^a-zA-Z0-9_-]/g, '_'),
+            title: a.title || a.event || 'Weather Alert',
+            event: a.event || a.title || 'Weather Alert',
+            severity: severity,
+            description: a.description || a.headline || '',
+            time: isFinite(onset) ? Math.round(onset / 1000) : 0,
+            expires: isFinite(expires) ? Math.round(expires / 1000) : 0,
+            onset: isFinite(onset) ? new Date(onset).toISOString() : '',
+            sourceUrl: a.sourceUrl || a.url || a.uri || ''
+        };
+    }
+
+    async function fetchPirateAlerts(requestLat, requestLon) {
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var url = WEATHER_WORKER_URL + '/api/weather/pirate-alerts?lat=' +
+            encodeURIComponent(requestLat == null ? lat : requestLat) + '&lon=' +
+            encodeURIComponent(requestLon == null ? lon : requestLon);
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) throw new Error('PirateWeather alerts ' + res.status);
+        var payload = await res.json();
+        var rawAlerts = payload && Array.isArray(payload.alerts) ? payload.alerts : [];
+        var now = Date.now();
+        var alerts = rawAlerts.map(_normalizePirateAlert).filter(function(alert) {
+            return !alert.expires || alert.expires * 1000 > now;
+        });
+        window.pirateAlerts = alerts;
+        // Keep the shared international alert collection populated so threat
+        // scoring can account for PirateWeather alerts as well as the visible
+        // PirateWeather renderer.
+        window.meteoAlarmAlerts = alerts;
+        _storeInternationalAlertState(alerts);
+        return alerts;
+    }
+
     // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
     // That worker owns METEOALARM_API_TOKEN, resolves the selected coordinate to
     // the relevant country/regions, fetches the official OGC API EDR records,
@@ -4514,7 +4727,11 @@
 
     async function renderPirateAlerts(stack, banner) {
         const alerts = window.pirateAlerts || [];
-        if (!alerts.length) { stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>"; return; }
+        if (!alerts.length) {
+            stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
+            banner.style.display = 'none';
+            return;
+        }
         const _severityRank = { 'extreme': 4, 'severe': 3, 'moderate': 2, 'minor': 1 };
         const _topSeverity = alerts.reduce(function(top, a) {
             return (_severityRank[(a.severity || '').toLowerCase()] || 0) > (_severityRank[(top.severity || '').toLowerCase()] || 0) ? a : top;
@@ -5611,16 +5828,51 @@
         window.activeHeatWarning = false;
 
         if (window.isOutsideUS) {
+            // The location classifier runs in parallel with the weather
+            // request. Give it a short opportunity to finish so a Canadian
+            // point is not accidentally routed to the PirateWeather branch.
+            if (!window.locationCountryCode && window._locationClassificationPromise) {
+                await Promise.race([
+                    window._locationClassificationPromise,
+                    new Promise(function(resolve) { setTimeout(resolve, 2500); })
+                ]);
+            }
+            var _countryCode = String(window.locationCountryCode || '').toUpperCase();
+            if (_countryCode === 'CA') {
+                try {
+                    await fetchEnvironmentCanadaAlerts(lat, lon);
+                    stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
+                    document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
+                    await renderMeteoAlarmAlerts(stack, banner);
+                    return true;
+                } catch (environmentCanadaError) {
+                    console.warn('[SkyMonitor] Environment Canada refresh failed:', environmentCanadaError);
+                    return false;
+                }
+            }
+
+            if (METEOALARM_COUNTRIES[_countryCode]) {
+                try {
+                    await fetchMeteoAlarmAlerts(lat, lon);
+                    _storeInternationalAlertState(window.meteoAlarmAlerts || []);
+                    stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
+                    document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
+                    await renderMeteoAlarmAlerts(stack, banner);
+                    return true;
+                } catch (meteoAlarmError) {
+                    console.warn('[SkyMonitor] MeteoAlarm refresh failed:', meteoAlarmError);
+                    return false;
+                }
+            }
+
             try {
-                await fetchMeteoAlarmAlerts(lat, lon);
+                await fetchPirateAlerts(lat, lon);
                 stack.innerHTML = ''; checklist.style.display = 'none'; banner.style.display = 'none'; banner.className = '';
                 document.body.classList.remove('theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner');
-                await renderMeteoAlarmAlerts(stack, banner);
+                await renderPirateAlerts(stack, banner);
                 return true;
-            } catch (meteoAlarmError) {
-                console.warn('[SkyMonitor] MeteoAlarm refresh failed:', meteoAlarmError);
-                // Keep a previous successful display intact instead of
-                // turning a transient API/proxy failure into "No active hazards."
+            } catch (pirateAlertError) {
+                console.warn('[SkyMonitor] PirateWeather alert refresh failed:', pirateAlertError);
                 return false;
             }
         }
@@ -13073,6 +13325,7 @@
         // Reset beach state every load so a previous beach result never bleeds into a new search.
         window.isBeachLocation = false;
         window.isWaterLocation = false;
+        window.locationCountryCode = '';
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
@@ -13101,6 +13354,9 @@
                 var _nomD = await _osmGeocodeFetch('reverse', { lat: loadLat, lon: loadLon });
                 if (loadGeneration !== weatherLoadGeneration) return;
                 if (_nomD && _nomD.lat) {
+                    window.locationCountryCode = String(
+                        _nomD.country_code || _nomD.countryCode || ''
+                    ).toUpperCase();
                     if (_nomD.error) {
                         window.isWaterLocation = true;
                     } else {
@@ -13149,6 +13405,7 @@
                 if (loadGeneration === weatherLoadGeneration) window.isBeachLocation = false;
             }
             })();
+            window._locationClassificationPromise = _locationClassificationPromise;
 
             await fetchPirate(loadGeneration, loadLat, loadLon);
             if (loadGeneration !== weatherLoadGeneration) return;
