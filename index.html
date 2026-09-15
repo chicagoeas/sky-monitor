@@ -3758,7 +3758,7 @@
             return;
         }
         try {
-            const res = await fetch('https://weather-story-api.skymonitor.app/?wfo=' + wfo);
+            const res = await fetch(WEATHER_WORKER_URL + '/api/weather/story?wfo=' + encodeURIComponent(wfo));
             const data = await res.json();
             const validImages = (data.images || []).filter(src => src && !src.includes('spacer') && !src.endsWith('.gif'))
                 .sort(function(a, b) {
@@ -10390,7 +10390,7 @@
         } catch (e) {}
 
         if (_wpcMpdRequest) return _wpcMpdRequest;
-        _wpcMpdRequest = fetch('https://wpc-met-api.skymonitor.app/?lat=' +
+        _wpcMpdRequest = fetch(WEATHER_WORKER_URL + '/api/weather/mpd?lat=' +
             encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon))
             .then(function(res) {
                 if (!res.ok) throw new Error('WPC MPD Worker ' + res.status);
@@ -13495,8 +13495,6 @@
         const userLat = parseFloat(lat), userLon = parseFloat(lon);
         if (isNaN(userLat) || isNaN(userLon)) return;
 
-        const NHC_WORKER_URL = 'https://nhc-api.skymonitor.app';
-
         const MAX_MI = 500;
 
         function _haverMi(la1,lo1,la2,lo2){
@@ -13555,7 +13553,7 @@
 
         // ——— Cloudflare Worker → NHC CurrentStorms.json (CORS-safe, 5-min edge cache) ———
         try {
-            const res = await fetch(NHC_WORKER_URL);
+            const res = await fetch(WEATHER_WORKER_URL + '/api/weather/nhc');
             if (!res.ok) { widget.style.display='none'; return; }
             const nhcData = await res.json();
             const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
@@ -14092,8 +14090,8 @@
             return (best && bestDist < 40.25) ? {buoy: best, distKm: Math.round(bestDist)} : null;
         }
 
-        // Paste your deployed Cloudflare Worker URL here (see cloudflare-worker-ndbc-proxy.js)
-        var _NDBC_PROXY = 'https://ndbc-proxy.skymonitor-account.workers.dev/ndbc';
+        // NDBC is served by the main SkyMonitor weather Worker.
+        var _NDBC_PROXY = WEATHER_WORKER_URL + '/api/weather/ndbc';
 
         async function _fetchNDBC(stationId) {
             var url = _NDBC_PROXY + '?station=' + encodeURIComponent(stationId);
