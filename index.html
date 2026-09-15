@@ -8396,15 +8396,23 @@
         // values reach the card, exactly as it does for NWS.
         applyInternationalMode(true);
 
+        var stationCode = String(
+            stationProps.iata_id || _environmentCanadaProperty(p, ['icao_stn_id', 'msc_id']) ||
+            station.feature.id || ''
+        );
         var displayName = String(
             stationProps.name ||
             _environmentCanadaProperty(p, ['stn_nam']) ||
             'Environment Canada station'
         );
-        var stationCode = String(
-            stationProps.iata_id || _environmentCanadaProperty(p, ['icao_stn_id', 'msc_id']) ||
-            station.feature.id || ''
-        );
+        // The ECCC SWOB station schema truncates some names at 32 characters.
+        // CYTZ is returned as "Billy Bishop Toronto City Airpor"; use the
+        // canonical airport name rather than exposing the cut-off API value.
+        var _ecccCanonicalNames = {
+            'CYTZ': 'Billy Bishop Toronto City Airport'
+        };
+        var _ecccCanonicalName = _ecccCanonicalNames[String(stationCode).trim().toUpperCase()];
+        if (_ecccCanonicalName) displayName = _ecccCanonicalName;
         var stationIdLabel = document.getElementById('meta-id-label');
         if (stationIdLabel) stationIdLabel.innerText = 'Station:';
         document.getElementById('stationName').innerText = displayName;
