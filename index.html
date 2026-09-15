@@ -1748,11 +1748,11 @@
             <!-- Layer settings panel (hidden until gear tapped) -->
             <div id="map-settings-panel" style="display:none; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:8px; border:1px solid rgba(255,255,255,0.08);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#128225; Radar Overlay <span id="radar-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US and Canada only)</span></span>
+                    <span style="font-size:0.82em; color:#ccc;">&#128225; Radar Overlay <span id="radar-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="radar-toggle-cb" checked onchange="toggleReportingRadar()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US and Canada only)</span></span>
+                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;"></span></span>
                     <label class="ios-toggle"><input type="checkbox" id="alerts-toggle-cb" checked onchange="toggleAlertPolygons()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -4465,8 +4465,6 @@
         'https://api.weather.gc.ca/collections/swob-stations/items';
     const ENVIRONMENT_CANADA_OBSERVATIONS_URL =
         'https://api.weather.gc.ca/collections/swob-realtime/items';
-    const ENVIRONMENT_CANADA_RADAR_WMS_URL =
-        'https://geo.weather.gc.ca/geomet';
 
     function _environmentCanadaSeverity(alert) {
         var raw = String(
@@ -5187,18 +5185,18 @@
     }
 
     function updateUSOnlyLayerLabels() {
-        var country = String(window.locationCountryCode || '').trim().toUpperCase();
-        var canadaSupported = !window.isOutsideUS || country === 'CA';
         var radarLabel = document.getElementById('radar-us-only');
         var alertsLabel = document.getElementById('alerts-us-only');
         var lsrLabel = document.getElementById('lsr-us-only');
         if (radarLabel) {
-            radarLabel.innerText = '(US and Canada only)';
-            radarLabel.style.display = canadaSupported ? 'none' : 'inline';
+            radarLabel.innerText = '(US only)';
+            radarLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
         }
         if (alertsLabel) {
-            alertsLabel.innerText = '(US and Canada only)';
-            alertsLabel.style.display = canadaSupported ? 'none' : 'inline';
+            // NWS and Environment Canada polygons are both loaded
+            // regardless of the selected weather location.
+            alertsLabel.innerText = '';
+            alertsLabel.style.display = 'none';
         }
         if (lsrLabel) {
             lsrLabel.innerText = '(US only)';
@@ -11028,7 +11026,6 @@
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
-    let reportingRadarProvider = '';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let normalReportingPopupWidth = null;
     let reportLat = null, reportLon = null;
@@ -12353,49 +12350,19 @@
         }
     }
 
-    function _reportingMapCountryRoute() {
-        var country = String(window.locationCountryCode || '').trim().toUpperCase();
-        if (country === 'CA') return 'canada';
-        if (!window.isOutsideUS) return 'us';
-        return 'unsupported';
-    }
-
-    function _updateReportingMapAttribution(provider) {
+    function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
         if (!el) return;
-        var radarAttribution = provider === 'canada'
-            ? 'Radar: <a href="https://eccc-msc.github.io/open-data/msc-data/obs_radar/readme_radar_geomet_en" target="_blank" rel="noopener noreferrer">ECCC GeoMet</a>'
-            : 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
+        var radarAttribution = 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
         el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
     }
 
     function setReportingRadarLayerForLocation() {
         if (!reportingMap || !window.L) return;
         var L_ref = window.L;
-        var provider = _reportingMapCountryRoute();
-        if (provider === reportingRadarProvider && reportingRadarLayer) {
-            updateUSOnlyLayerLabels();
-            return;
-        }
-        if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
-            reportingMap.removeLayer(reportingRadarLayer);
-        }
-        reportingRadarLayer = null;
-        reportingRadarProvider = provider;
-        if (provider === 'canada') {
-            reportingRadarLayer = L_ref.tileLayer.wms(ENVIRONMENT_CANADA_RADAR_WMS_URL, {
-                layers: 'RADAR_1KM_RRAI',
-                styles: '',
-                format: 'image/png',
-                transparent: true,
-                version: '1.3.0',
-                opacity: 0.65,
-                attribution: 'Radar: ECCC GeoMet',
-                maxZoom: 18,
-                updateWhenIdle: true,
-                updateWhenZooming: false
-            });
-        } else if (provider === 'us') {
+        // IEM/NEXRAD is the single reporting-map radar source. It remains
+        // consistent when the weather location changes between countries.
+        if (!reportingRadarLayer) {
             reportingRadarLayer = L_ref.tileLayer(
                 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
                 {
@@ -12406,7 +12373,7 @@
             );
         }
         if (reportingRadarLayer && radarVisible) reportingRadarLayer.addTo(reportingMap);
-        _updateReportingMapAttribution(provider === 'canada' ? 'canada' : 'us');
+        _updateReportingMapAttribution();
         updateUSOnlyLayerLabels();
     }
 
@@ -12627,9 +12594,7 @@
             subdomains: 'abcd', maxZoom: 19
         }).addTo(reportingMap);
 
-        // Layer 2 — provider-specific radar. The initial route may be US
-        // until the location classifier finishes; loadReportingMapDataNow()
-        // rebinds this to the Canadian GeoMet mosaic when appropriate.
+        // Layer 2 — one consistent IEM/NEXRAD radar source.
         setReportingRadarLayerForLocation();
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
@@ -12752,20 +12717,20 @@
         setReportingRadarLayerForLocation();
         syncReportingMapLayers();
 
-        // Official short-fused alert polygons. NWS uses IEM's storm-based
-        // warning feed; Canada uses ECCC's GeoMet weather-alert polygons.
+        // Load both official alert feeds on every refresh. Alert overlays are
+        // map data, not location-provider routing: a Canadian location should
+        // still show active NWS polygons, and a U.S. location should still
+        // show Canadian polygons whenever they are in the map view.
         try {
             alertPolygonLayer.clearLayers();
             removeReportingPopupEntries('nws');
             removeReportingPopupEntries('environment-canada');
-            if (String(window.locationCountryCode || '').toUpperCase() === 'CA') {
-                var mapBounds = reportingMap.getBounds();
-                var canadaBbox = [
-                    mapBounds.getWest(), mapBounds.getSouth(),
-                    mapBounds.getEast(), mapBounds.getNorth()
-                ].join(',');
+            try {
+                // Fetch the full Canadian alert footprint rather than tying
+                // the feed to the weather-location country or current
+                // viewport. Leaflet will only display the polygons in view.
                 var canadaAlertUrl = ENVIRONMENT_CANADA_ALERTS_URL +
-                    '?f=json&lang=en-CA&limit=100&bbox=' + encodeURIComponent(canadaBbox);
+                    '?f=json&lang=en-CA&limit=200&bbox=-141,41,-52,84';
                 var canadaRes = await fetch(canadaAlertUrl, {
                     cache: 'no-store',
                     headers: { 'Accept': 'application/geo+json, application/json' }
@@ -12816,7 +12781,10 @@
                         polygon.addTo(alertPolygonLayer);
                     });
                 }
-            } else if (!window.isOutsideUS) {
+            } catch (e) {
+                console.warn('[SkyMonitor] Environment Canada map alerts failed:', e);
+            }
+            try {
                 const sbwRes = await fetch('https://mesonet.agron.iastate.edu/geojson/sbw.geojson');
                 if (sbwRes.ok) {
                     const sbwData = await sbwRes.json();
@@ -12857,6 +12825,8 @@
                         _poly.addTo(alertPolygonLayer);
                     });
                 }
+            } catch (e) {
+                console.warn('[SkyMonitor] NWS map alerts failed:', e);
             }
         } catch(e) {}
 
