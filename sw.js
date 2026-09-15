@@ -414,12 +414,10 @@ self.addEventListener('push', (e) => {
 self.addEventListener('notificationclick', (e) => {
     e.notification.close();
 
-    const url = (
-        e.notification.data &&
-        e.notification.data.url
-    )
-        ? e.notification.data.url
-        : BASE_URL;
+    // Keep notification clicks on the main app shell. Older notifications may
+    // still carry a deep-link URL that now lands on the 404 screen, so do not
+    // trust notification.data.url here.
+    const url = BASE_URL;
 
     e.waitUntil(
         (async () => {
