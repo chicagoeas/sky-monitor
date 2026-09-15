@@ -3363,19 +3363,29 @@
 
     function restoreAlertViewState(state) {
         if (!state) return;
-        Object.keys(state.expanded || {}).forEach(function(id) {
-            const el = document.getElementById('full-' + id);
-            const btn = document.getElementById('btn-' + id);
-            if (!el || !btn) return;
-            el.style.display = 'block';
-            btn.textContent = '\u25b2 Show less';
-            el.scrollTop = state.innerScroll[id] || 0;
-        });
+        const restoreExpanded = function() {
+            Object.keys(state.expanded || {}).forEach(function(id) {
+                const el = document.getElementById('full-' + id);
+                const btn = document.getElementById('btn-' + id);
+                if (!el || !btn) return;
+                el.style.display = 'block';
+                btn.textContent = '\u25b2 Show less';
+                el.scrollTop = state.innerScroll[id] || 0;
+            });
+        };
+        // Apply immediately, then once more after the rebuilt alert cards have
+        // laid out. This keeps both the card expansion and its scroll offset
+        // when refreshed alert text or fonts change the measured height.
+        restoreExpanded();
         requestAnimationFrame(function() {
-            window.scrollTo({
-                left: state.pageX || 0,
-                top: state.pageY || 0,
-                behavior: 'auto'
+            restoreExpanded();
+            requestAnimationFrame(function() {
+                restoreExpanded();
+                window.scrollTo({
+                    left: state.pageX || 0,
+                    top: state.pageY || 0,
+                    behavior: 'auto'
+                });
             });
         });
     }
@@ -3434,8 +3444,6 @@
         if (tabId !== 'severe') {
             document.querySelectorAll('.alert-full-text').forEach(el => { el.style.display = 'none'; });
             document.querySelectorAll('.alert-expand-btn').forEach(btn => { btn.textContent = '\u25bc Show more'; });
-            // Reset saved scroll so returning to Severe tab starts fresh
-            window._severeSavedScroll = 0;
         }
         if (tabId === 'specs') {
             drawOrbit();
@@ -3966,6 +3974,52 @@
         "heat advisory":"https://www.weather.gov/images/nws/newicons/hot.png"
     };
 
+    // Environment Canada uses a separate alert vocabulary from NWS. Keep this
+    // map provider-specific so a Canadian alert never changes the U.S. icon
+    // matching behavior above.
+    const ENVIRONMENT_CANADA_ALERT_ICONS = {
+        "tornado warning":"https://www.weather.gov/images/nws/newicons/tor.png",
+        "tornado watch":"https://www.weather.gov/images/nws/newicons/fc.png",
+        "severe thunderstorm warning":"https://www.weather.gov/images/nws/newicons/tsra.png",
+        "severe thunderstorm watch":"https://www.weather.gov/images/nws/newicons/scttsra.png",
+        "rainfall warning":"https://www.weather.gov/images/nws/newicons/shra.png",
+        "snow squall warning":"https://www.weather.gov/images/nws/newicons/snip.png",
+        "snow squall watch":"https://www.weather.gov/images/nws/newicons/snip.png",
+        "blizzard warning":"https://www.weather.gov/images/nws/newicons/blizzard.png",
+        "winter storm warning":"https://www.weather.gov/images/nws/newicons/sn.png",
+        "snowfall warning":"https://www.weather.gov/images/nws/newicons/sn.png",
+        "heat warning":"https://www.weather.gov/images/nws/newicons/hot.png",
+        "extreme cold warning":"https://www.weather.gov/images/nws/newicons/cold.png",
+        "flash freeze warning":"https://www.weather.gov/images/nws/newicons/ip.png",
+        "frost advisory":"https://www.weather.gov/images/nws/newicons/fzra_sn.png",
+        "blowing snow advisory":"https://www.weather.gov/images/nws/newicons/sn.png",
+        "freezing rain warning":"https://www.weather.gov/images/nws/newicons/fzra.png",
+        "dust storm warning":"https://www.weather.gov/images/nws/newicons/du.png",
+        "wind warning":"https://www.weather.gov/images/nws/newicons/wind_skc.png",
+        "hurricane watch":"https://www.weather.gov/images/nws/newicons/hur_watch.png",
+        "hurricane warning":"https://www.weather.gov/images/nws/newicons/hur_warn.png",
+        "tropical storm watch":"https://www.weather.gov/images/nws/newicons/ts_watch.png",
+        "tropical storm warning":"https://www.weather.gov/images/nws/newicons/ts_warn.png",
+        "air quality alert":"https://www.weather.gov/images/nws/newicons/fu.png",
+        "gale warning":"https://forecast.weather.gov/images/wtf/medium/m_ra.png",
+        "fog advisory":"https://www.weather.gov/images/nws/newicons/fg.png",
+        "freezing drizzle advisory":"https://www.weather.gov/images/nws/newicons/fzra.png",
+        "waterspout watch":"https://www.weather.gov/images/nws/newicons/fc.png"
+    };
+
+    // Alert-provider routing is deliberately conservative.  A successful
+    // PirateWeather response must never replace an official Environment
+    // Canada or MeteoAlarm result just because the official point query is
+    // empty or temporarily unavailable.
+    const METEOALARM_COUNTRY_CODES = {
+        AL:true, AD:true, AT:true, BA:true, BE:true, BG:true, CH:true, CY:true,
+        CZ:true, DE:true, DK:true, EE:true, ES:true, FI:true, FR:true, GB:true,
+        GR:true, HR:true, HU:true, IE:true, IS:true, IT:true, LI:true, LT:true,
+        LU:true, LV:true, MC:true, MD:true, ME:true, MK:true, MT:true, NL:true,
+        NO:true, PL:true, PT:true, RO:true, RS:true, SE:true, SI:true, SK:true,
+        SM:true, TR:true, UA:true, VA:true, XK:true
+    };
+
     const EMERGENCY_TYPES = [
         "evacuation immediate","civil emergency message","local area emergency",
         "civil danger warning","law enforcement warning","shelter in place warning",
@@ -4244,6 +4298,71 @@
         return value == null ? '' : String(value);
     }
 
+    function _meteoAlarmParameterEventType(parameters) {
+        var list = Array.isArray(parameters) ? parameters : [];
+        var parameter = list.find(function(item) {
+            return String(item && (item.valueName || item.name) || '')
+                .toLowerCase().includes('awareness_type');
+        });
+        if (!parameter) return '';
+        var raw = String(parameter.value || '').trim();
+        var token = raw.includes(';') ? raw.split(';').pop().trim() : raw;
+        var compact = token.toLowerCase().replace(/[\s_-]+/g, '');
+        var labels = {
+            coastalevent: 'Coastal Event',
+            wind: 'Wind',
+            fog: 'Fog'
+        };
+        if (labels[compact]) return labels[compact];
+        return token.replace(/[_-]+/g, ' ')
+            .replace(/\b[a-z]/g, function(letter) { return letter.toUpperCase(); })
+            .trim();
+    }
+
+    function _meteoAlarmDisplayTitle(rawTitle, fallbackTitle) {
+        var title = _meteoAlarmText(rawTitle).replace(/\s+/g, ' ').trim();
+        if (!title) return _meteoAlarmText(fallbackTitle) || 'European weather alert';
+
+        // MeteoAlarm headlines commonly combine an awareness color/severity,
+        // event, location, and level in one string, for example:
+        // "Yellow Thunderstorm Warning for Italy - Lombardia, yellow level".
+        // Other records are shorter, such as "Severe rain" or just "fog".
+        // The card title should identify only the event type.
+        title = title
+            .replace(/^(?:green|yellow|orange|red|severe|moderate|minor)(?:\s+level)?(?:\s*[-:]\s*|\s+)/i, '')
+            .replace(/\s+for\s+.*$/i, '')
+            .replace(/\s+-\s+.*$/i, '')
+            .replace(/\s*,\s*(?:green|yellow|orange|red)(?:\s+level)?\s*$/i, '')
+            // National feeds are not consistent about where the awareness
+            // colour appears.  "Fog Yellow Warning" and "Rain Orange
+            // Warning" are the same event labels as "Fog Warning" and "Rain
+            // Warning"; the colour belongs to severity, not the card title.
+            .replace(/\b(?:green|yellow|orange|red|severe|moderate|minor)(?:\s+level)?\b/gi, ' ')
+            // Some national feeds use a numeric awareness label in the
+            // headline, such as "Wind Level 1 Warning".  Level is metadata,
+            // not part of the event name.
+            .replace(/\blevel\s+\d+\b/gi, ' ')
+            .replace(/\s+/g, ' ')
+            .replace(/[,:;\s]+$/, '')
+            .trim();
+        if (!title) title = _meteoAlarmText(fallbackTitle) || 'European weather alert';
+
+        // Normalize the common MeteoAlarm event labels before adding the
+        // alert class. This keeps "thunderstorms", "rain", and "fog"
+        // consistent with the map's "Thunderstorm Warning", "Rain Warning",
+        // and "Fog Warning" labels.
+        title = title
+            .replace(/^thunderstorms?$/i, 'Thunderstorm')
+            .replace(/^rains?$/i, 'Rain')
+            .replace(/^fogs?$/i, 'Fog');
+        if (!/(warning|watch|advisory|statement|outlook|alert)$/i.test(title)) {
+            title += ' Warning';
+        }
+        return title.replace(/\b[a-z]/g, function(letter) {
+            return letter.toUpperCase();
+        });
+    }
+
     function _meteoAlarmAlertId(alert, index) {
         return String(
             alert && (alert.id || alert.alertId || alert.identifier || alert.objectId || ('meteoalarm-' + index))
@@ -4257,15 +4376,24 @@
         var source = a.officialUrl || a.official_url || a.web || p.web ||
             a.sourceUrl || a.url || a.hubLink || p.hubLink || '';
         var severity = _meteoAlarmSeverity(Object.assign({}, a, p, info));
+        var parameters = a.parameters || p.parameters || info.parameter || info.parameters || [];
+        // eventType/awarenessType is the provider's canonical event. The
+        // headline is deliberately not used to classify the hazard: it may
+        // say "Dangerous Fog" or "Gale" while the API event is Fog or Wind.
         var hazard = _meteoAlarmText(
-            a.hazard || a.awarenessType || a.awareness_type ||
-            p.hazard || p.awarenessType || p.awareness_type ||
-            info.event || p.event || a.event
+            _meteoAlarmParameterEventType(parameters) ||
+            a.eventType || a.event_type ||
+            p.eventType || p.event_type ||
+            a.awarenessType || a.awareness_type ||
+            p.awarenessType || p.awareness_type ||
+            info.awarenessType || info.awareness_type ||
+            a.hazard || p.hazard || info.event || p.event || a.event
         );
-        var title = _meteoAlarmText(
+        var rawTitle = _meteoAlarmText(
             a.title || a.headline || p.title || p.headline || info.headline ||
             (hazard ? hazard + ' alert' : 'European weather alert')
         );
+        var title = _meteoAlarmDisplayTitle(hazard || rawTitle, hazard);
         var description = _meteoAlarmText(
             a.description || p.description || info.description || a.desc
         );
@@ -4281,6 +4409,7 @@
             id: _meteoAlarmAlertId(a, index),
             title: title,
             event: hazard || title,
+            eventType: hazard || '',
             severity: severity,
             awarenessLevel: a.awarenessLevel || p.awarenessLevel || a.awareness_level || p.awareness_level || '',
             description: description,
@@ -4391,16 +4520,68 @@
         return inside;
     }
 
+    function _normalizeEnvironmentCanadaAlertName(value) {
+        var text = String(value || '').replace(/\s+/g, ' ').trim();
+        if (!text) return 'Weather alert';
+        // EC commonly publishes names like "Frost (advisory)" while the
+        // user-facing alert title should match the normal alert terminology.
+        text = text.replace(/\s*\(\s*(warning|watch|advisory|statement|alert)\s*\)\s*$/i,
+            function(_, kind) {
+                return ' ' + kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
+            });
+        // Some EC records arrive entirely lowercase (for example
+        // "frost (advisory)"). Normalize the complete display label.
+        return text.replace(/\b[a-z]/g, function(letter) {
+            return letter.toUpperCase();
+        });
+    }
+
+    function _environmentCanadaAlertIcon(alertName) {
+        var event = String(alertName || '').toLowerCase();
+        for (var key in ENVIRONMENT_CANADA_ALERT_ICONS) {
+            if (event.includes(key)) return ENVIRONMENT_CANADA_ALERT_ICONS[key];
+        }
+        return '';
+    }
+
+    function _environmentCanadaAlertKind(value) {
+        var match = String(value || '').match(/\b(warning|watch|advisory|statement|alert)\b/i);
+        return match ? match[1].toLowerCase() : '';
+    }
+
+    function _environmentCanadaEventTitle(eventType, alertName) {
+        var event = _normalizeEnvironmentCanadaAlertName(eventType || alertName || 'Weather alert');
+        var kind = _environmentCanadaAlertKind(alertName) ||
+            _environmentCanadaAlertKind(eventType);
+        if (kind && !new RegExp('\\b' + kind + '\\b$', 'i').test(event)) {
+            event += ' ' + kind.charAt(0).toUpperCase() + kind.slice(1);
+        }
+        return event;
+    }
+
     function _normalizeEnvironmentCanadaAlert(feature, index) {
         var p = feature && feature.properties || {};
         var risk = p.risk_colour_en || p.riskColour || p.impact_en || p.alert_type || '';
         var severity = _environmentCanadaSeverity({ riskColour: risk, alertType: p.alert_type });
-        var event = p.alert_name_en || p.alert_short_name_en || p.alert_type || 'Weather alert';
+        var alertName = p.alert_name_en || p.alert_short_name_en || '';
+        // Environment Canada exposes the canonical hazard family separately
+        // from the display name. Prefer that API field so "Wave Height
+        // Warning" can correctly render as "Coastal Event Warning" instead
+        // of guessing from the headline.
+        var rawEventType = p.event_type_en || p.event_type ||
+            p.alert_event_en || p.alert_event ||
+            p.awareness_type_en || p.awareness_type ||
+            p.alert_type_en || p.alert_type || '';
+        var eventType = /^(warning|watch|advisory|statement|alert)$/i.test(
+            String(rawEventType).trim()
+        ) ? '' : rawEventType;
+        var event = _normalizeEnvironmentCanadaAlertName(eventType || alertName || 'Weather alert');
+        var title = _environmentCanadaEventTitle(eventType || event, alertName || event);
         var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
         return {
             id: String(p.feature_id || feature.id || 'environment-canada-' + index)
                 .replace(/[^a-zA-Z0-9_-]/g, '_'),
-            title: p.alert_short_name_en || p.alert_name_en || event,
+            title: title,
             event: event,
             severity: severity,
             awarenessLevel: p.risk_colour_en || '',
@@ -4410,6 +4591,7 @@
             expires: p.event_end_datetime || p.expiration_datetime || '',
             areaDesc: area,
             countryCode: 'CA',
+            iconUrl: _environmentCanadaAlertIcon(event),
             icon: '\u26A0\uFE0F',
             sourceUrl: 'https://weather.gc.ca/warnings/index_e.html',
             geometry: feature.geometry || null
@@ -4552,27 +4734,34 @@
             return a.title || a.description;
         });
         // One alert can cover multiple European administrative areas. The API
-        // can therefore return repeated records with the same CAP identifier.
+        // can therefore return repeated polygon/region records for the same
+        // underlying CAP warning. Do not use areaDesc in the identity: that
+        // was the source of the "one fog warning becomes four cards" bug.
+        //
+        // Severity MUST remain part of the identity. A yellow and an orange
+        // rain warning can have the same event, validity window, and wording,
+        // but they are distinct warnings and both must remain visible.
         var seen = {};
-        alerts = alerts.filter(function(a) {
-            // A provider feature id can identify a polygon rather than the
-            // underlying CAP warning. Deduplicate by the warning content so
-            // repeated area polygons render as one card, while different
-            // regions or validity windows remain separate.
+        var uniqueAlerts = [];
+        alerts.forEach(function(a) {
             var key = [
                 a.countryCode,
-                a.title || a.headline || a.event,
-                a.areaDesc,
+                a.title || a.event,
+                a.event,
+                a.severity,
                 a.onset,
-                a.expires
+                a.expires,
+                a.description,
+                a.instruction
             ].map(function(value) {
                 return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
             }).join('|');
             if (!key.replace(/\|/g, '')) key = a.id;
-            if (seen[key]) return false;
+            if (seen[key]) return;
             seen[key] = true;
-            return true;
+            uniqueAlerts.push(a);
         });
+        alerts = uniqueAlerts;
         // Do not render records that have already ended. Some international
         // feeds keep recently expired CAP notices in their response, and the
         // active-window query is not consistent across national services.
@@ -4762,28 +4951,91 @@
         restoreAlertViewState(alertViewState);
     }
 
+    async function _resolveInternationalCountryCode() {
+        var code = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (code) return code;
+
+        // Location classification runs in parallel with the weather load.
+        // Give its reverse-geocode step a short chance to finish, but never
+        // wait indefinitely for it.
+        try {
+            if (window._locationClassificationPromise) {
+                await Promise.race([
+                    window._locationClassificationPromise,
+                    new Promise(function(resolve) { setTimeout(resolve, 2500); })
+                ]);
+            }
+        } catch (e) {}
+        code = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (code) return code;
+
+        // If the parallel enrichment is still busy, make one focused
+        // reverse-geocode attempt. Unknown country remains fail-closed below.
+        try {
+            var reverse = await Promise.race([
+                _osmGeocodeFetch('reverse', { lat: lat, lon: lon }),
+                new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 5000); })
+            ]);
+            var reverseCode = reverse && (reverse.country_code || reverse.countryCode);
+            if (reverseCode) {
+                code = String(reverseCode).trim().toUpperCase();
+                window.locationCountryCode = code;
+            }
+        } catch (e) {}
+        return code;
+    }
+
+    function _internationalAlertRoute(countryCode) {
+        var code = String(countryCode || '').trim().toUpperCase();
+        if (code === 'CA') return 'environment-canada';
+        if (METEOALARM_COUNTRY_CODES[code]) return 'meteoalarm';
+        if (!code) return 'unknown';
+        return 'pirate';
+    }
+
     async function _tryInternationalAlertFallback(stack, banner, checklist) {
-        // Provider coverage is not consistently expressed as an HTTP error:
-        // some feeds return a valid empty collection outside their footprint.
-        // Treat an empty collection as "try the next provider", and only
-        // render "No active hazards" after PirateWeather is the final result.
-        var providers = [
-            {
+        var countryCode = await _resolveInternationalCountryCode();
+        var route = _internationalAlertRoute(countryCode);
+        var providers;
+
+        if (route === 'environment-canada') {
+            providers = [{
                 name: 'Environment Canada',
                 fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
                 render: function() { return renderMeteoAlarmAlerts(stack, banner); }
-            },
-            {
+            }];
+        } else if (route === 'meteoalarm') {
+            providers = [{
                 name: 'MeteoAlarm',
                 fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
                 render: function() { return renderMeteoAlarmAlerts(stack, banner); }
-            },
-            {
+            }];
+        } else if (route === 'pirate') {
+            // PirateWeather is permitted only after the country has been
+            // positively identified as outside the official-provider routes.
+            providers = [{
                 name: 'PirateWeather',
                 fetch: function() { return fetchPirateAlerts(lat, lon); },
                 render: function() { return renderPirateAlerts(stack, banner); }
-            }
-        ];
+            }];
+        } else {
+            // Do not guess. A missing country code could still be Canada or a
+            // MeteoAlarm country, so try official providers only and never
+            // expose PirateWeather on an ambiguous location.
+            providers = [
+                {
+                    name: 'Environment Canada',
+                    fetch: function() { return fetchEnvironmentCanadaAlerts(lat, lon); },
+                    render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+                },
+                {
+                    name: 'MeteoAlarm',
+                    fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
+                    render: function() { return renderMeteoAlarmAlerts(stack, banner); }
+                }
+            ];
+        }
+
         var lastError = null;
 
         for (var i = 0; i < providers.length; i++) {
@@ -4791,7 +5043,10 @@
             try {
                 var alerts = await provider.fetch();
                 if (Array.isArray(alerts) && alerts.length > 0) {
-                    stack.innerHTML = '';
+                    // Keep the current alert DOM intact until the provider
+                    // renderer captures its view state. Clearing it here
+                    // would erase an open "Show more" card and its inner
+                    // scroll position before captureAlertViewState() runs.
                     checklist.style.display = 'none';
                     banner.style.display = 'none';
                     banner.className = '';
@@ -4802,8 +5057,9 @@
                     return true;
                 }
                 if (i === providers.length - 1) {
-                    // PirateWeather is the final provider and an empty,
-                    // successful response is a legitimate no-alert result.
+                    // An empty official response is a legitimate no-alert
+                    // result. Never advance from an official provider to
+                    // PirateWeather here.
                     stack.innerHTML = '';
                     checklist.style.display = 'none';
                     banner.style.display = 'none';
@@ -5947,18 +6203,7 @@
                 var endMs = rawEnd ? new Date(rawEnd).getTime() : 0;
                 return !endMs || isNaN(endMs) || endMs > Date.now();
             });
-            const _expandedAlertIds = new Set();
-            const _savedAlertScrolls = {};
-            document.querySelectorAll('.alert-full-text').forEach(function(el) {
-                if (el.style.display === 'block' && el.id) {
-                    const _aid = el.id.replace('full-', '');
-                    _expandedAlertIds.add(_aid);
-                    _savedAlertScrolls[_aid] = el.scrollTop;
-                }
-            });
-            // Persist page scroll so it survives across auto-refreshes while on the severe tab
-            if (typeof window._severeSavedScroll === 'undefined') window._severeSavedScroll = 0;
-            window._severeSavedScroll = window.scrollY;
+            const alertViewState = captureAlertViewState();
             stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
@@ -6282,21 +6527,7 @@
                     stack.innerHTML += '<a href="https://forecast.weather.gov/MapClick.php?lat=' + lat + '&lon=' + lon + '" target="_blank" class="alert-card" style="background:' + bgColor + '; align-items:flex-start;"><img src="' + icon + '"' + (isNightAtStation ? ' onerror="this.onerror=null;this.src=\'' + dayIcon + '\'"' : '') + ' style="width:55px; border-radius:5px; margin-top:2px; flex-shrink:0;"><div style="flex:1; min-width:0;"><div style="font-weight:bold;">' + escapeHtml(displayName) + '</div><div class="alert-meta-row">' + _timingHtml + (fullContent ? '<button class="alert-expand-btn" id="btn-' + nwsId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + nwsId + '\')">\u25bc Show more</button>' : '') + '</div>' + (extraDetails ? '<div style="font-size:0.75em; opacity:0.85; margin-top:4px;">' + extraDetails + '</div>' : '') + (fullContent ? '<div id="full-' + nwsId + '" class="alert-full-text">' + fullContent + '</div>' : '') + '</div></a>';
                 });
 
-                _expandedAlertIds.forEach(function(id) {
-                    const el = document.getElementById('full-' + id);
-                    const btn = document.getElementById('btn-' + id);
-                    if (el && btn) {
-                        el.style.display = 'block';
-                        btn.textContent = '\u25b2 Show less';
-                        // Restore the inner scroll position of each expanded alert text
-                        if (_savedAlertScrolls[id]) el.scrollTop = _savedAlertScrolls[id];
-                    }
-                });
-                // Restore page scroll via rAF — waits for repaint so height is fully settled
-                const _scrollTarget = window._severeSavedScroll || 0;
-                if (_scrollTarget > 0) requestAnimationFrame(function() {
-                    window.scrollTo({ top: _scrollTarget, behavior: 'instant' });
-                });
+                restoreAlertViewState(alertViewState);
 
                 if (highestTheme) document.body.classList.add(highestTheme);
                 if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
@@ -7428,7 +7659,9 @@
         var isTonight = /night/i.test(twcPartName);
         titleEl.innerText = isTonight ? "Tonight's Outlook" : "Today's Outlook";
         if (twcNarrative) {
-            summaryEl.innerText = twcNarrative;
+            // Keep the compact Today/Tonight summary in the same unit system
+            // as the TWC detail modal. TWC narratives arrive in US units.
+            summaryEl.innerText = _convertNarrativeToMetric(twcNarrative);
         } else {
             summaryEl.innerText = (first.summary || 'Conditions holding steady.') + '.' + highText + windText + rainText;
         }
