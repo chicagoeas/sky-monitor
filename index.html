@@ -5174,6 +5174,11 @@
             // Definite / likely → tsra
             return base + 'tsra' + sz;
         }
+        if (s.includes('lightning'))                                        return base + 'tsra'           + sz;
+        if (s.includes('funnel cloud'))                                    return base + 'tornado'        + sz;
+        if (s.includes('precipitation nearby'))                             return base + 'rain_showers_hi' + sz;
+        if (s.includes('reduced visibility'))                               return base + 'fog'            + sz;
+        if (s.includes('squall'))                                           return base + 'wind_skc'       + sz;
 
         // ── Frozen precip ──────────────────────────────────────────────────
         if (s.includes('freezing rain') || s.includes('freezing drizzle'))  return base + 'fzra'           + sz;
@@ -8183,13 +8188,91 @@
         return latest;
     }
 
-    function _environmentCanadaCondition(observation) {
+    function _environmentCanadaCondition(observation, fallbackSummary) {
         var p = observation && observation.properties || {};
-        var visibility = Number(_environmentCanadaProperty(p, ['vis', 'avg_vis_pst10mts']));
-        if (isFinite(visibility) && visibility < 1) return 'Low Visibility';
+
+        // SWOB exposes present weather as WMO 4677 numeric codes.  The old
+        // implementation ignored these fields and replaced every Canadian
+        // observation with either "Low Visibility" or "Current conditions".
+        // Those are measurements/fallbacks, not the observed condition.
+        function presentWeatherLabel(value) {
+            if (value === null || value === undefined || value === '') return null;
+            var raw = String(value).trim();
+            if (!raw || /^(nil|none|unknown|not available|n\/a)$/i.test(raw)) return null;
+            var code = Number(raw);
+            if (!isFinite(code)) return raw;
+            code = Math.round(code);
+
+            if (code <= 3) return ['Clear', 'Mainly Clear', 'Partly Cloudy', 'Cloudy'][code];
+            if (code === 4 || code === 5) return 'Haze';
+            if (code >= 6 && code <= 9) return 'Dust';
+            if (code === 10) return 'Mist';
+            if (code >= 11 && code <= 12) return 'Fog';
+            if (code === 13) return 'Lightning';
+            if (code >= 14 && code <= 16) return 'Precipitation Nearby';
+            if (code === 17 || code === 29) return 'Thunderstorm';
+            if (code === 18) return 'Squalls';
+            if (code === 19) return 'Funnel Cloud';
+            if (code === 20 || code === 50 || code === 51 ||
+                (code >= 56 && code <= 57)) return 'Drizzle';
+            if (code === 21 || (code >= 60 && code <= 65) ||
+                (code >= 80 && code <= 82)) return 'Rain';
+            if (code === 22 || (code >= 70 && code <= 77) ||
+                (code >= 85 && code <= 86)) return 'Snow';
+            if (code === 23 || code === 68 || code === 69) return 'Rain and Snow';
+            if (code === 24 || code === 66 || code === 67) return 'Freezing Rain';
+            if (code === 25 || (code >= 80 && code <= 84)) return 'Rain Showers';
+            if (code === 26 || code === 36 || code === 37) return 'Blowing Snow';
+            if (code === 27) return 'Hail';
+            if (code === 28 || (code >= 40 && code <= 49)) return 'Fog';
+            if (code >= 30 && code <= 35) return 'Dust';
+            if (code >= 38 && code <= 39) return 'Snow';
+            if (code >= 87 && code <= 90) return 'Rain and Snow Showers';
+            if (code >= 91 && code <= 99) return 'Thunderstorm';
+            return null;
+        }
+
+        // Prefer the most specific present-weather code reported by the
+        // station.  The numbered fields are commonly used for multiple
+        // simultaneous phenomena (for example rain + fog).
+        var weatherLabels = [];
+        ['prsnt_wx_1', 'prsnt_wx_2'].forEach(function(name) {
+            var label = presentWeatherLabel(_environmentCanadaProperty(p, [name]));
+            if (label && weatherLabels.indexOf(label) === -1) weatherLabels.push(label);
+        });
+        if (weatherLabels.length) return weatherLabels.join(' and ');
+
+        // Cloud amount is still an actual station observation, unlike the
+        // old generic label.  SWOB cloud amount codes run from clear to
+        // overcast; use it only when no present-weather code is available.
+        var cloud = Number(_environmentCanadaProperty(p, ['tot_cld_amt', 'cld_amt_code']));
+        var cloudLabel = null;
+        if (isFinite(cloud)) {
+            if (cloud <= 1) cloudLabel = 'Clear';
+            else if (cloud <= 3) cloudLabel = 'Partly Cloudy';
+            else if (cloud <= 6) cloudLabel = 'Mostly Cloudy';
+            else cloudLabel = 'Overcast';
+        }
+
         var rain = Number(_environmentCanadaProperty(p, ['rnfl_amt_pst1hr', 'pcpn_amt_pst1hr']));
-        if (isFinite(rain) && rain > 0) return 'Precipitation';
-        return 'Current conditions';
+        if (isFinite(rain) && rain > 0) return cloudLabel ? 'Rain and ' + cloudLabel : 'Rain';
+
+        // A valid PirateWeather summary is the established condition fallback
+        // elsewhere in SkyMonitor when an official station has no text
+        // description.  Use it here instead of pretending a visibility
+        // measurement is a weather phenomenon.
+        var fallback = String(fallbackSummary || '').trim();
+        if (fallback && !/^(current conditions|unknown(?: precipitation)?|n\/a|na|not available)$/i.test(fallback)) {
+            return fallback;
+        }
+        if (cloudLabel) return cloudLabel;
+
+        // Visibility is useful evidence, but without a present-weather code
+        // it cannot tell us whether the cause is fog, snow, smoke, or dust.
+        // Keep the measured fact explicit rather than calling it the condition.
+        var visibility = Number(_environmentCanadaProperty(p, ['vis', 'avg_vis_pst10mts']));
+        if (isFinite(visibility) && visibility < 1) return 'Reduced Visibility';
+        return 'No Present Weather Reported';
     }
 
     async function fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon) {
@@ -8338,7 +8421,10 @@
             window.nwsObsPrecip1h = precipMm / 25.4;
             _updatePrecipCache(window.nwsObsPrecip1h);
         }
-        var condition = _environmentCanadaCondition(observation);
+        var condition = _environmentCanadaCondition(
+            observation,
+            window.pirateCurrently && window.pirateCurrently.summary
+        );
         currentCondition = condition;
         document.getElementById('conditionText').innerText = condition;
         // SWOB is the authoritative observation source here. Do not use a
@@ -8350,11 +8436,24 @@
             feelsEl.innerText = _fmtTemp(Math.round(liveFeelsLike));
             feelsEl.style.color = colorFeelsLike(Math.round(liveFeelsLike));
         }
-        var icon = _pwSummaryIcon(condition, !!(pw.icon && pw.icon.includes('night')));
+        // If SWOB supplied no present-weather code, condition is the same
+        // PirateWeather summary used as the explicit fallback above. Resolve
+        // the icon from the displayed condition so text and icon cannot drift.
+        var conditionIconSource = condition;
+        if (condition === 'Reduced Visibility' || condition === 'No Present Weather Reported') {
+            conditionIconSource = window.pirateCurrently &&
+                (window.pirateCurrently.summary || window.pirateCurrently.icon);
+        }
+        var icon = _pwSummaryIcon(conditionIconSource, !!(
+            window.pirateCurrently && window.pirateCurrently.icon &&
+            window.pirateCurrently.icon.includes('night')
+        ));
         var iconEl = document.getElementById('weatherIcon');
         if (iconEl && icon) {
             iconEl.src = icon;
             iconEl.style.display = 'block';
+        } else if (iconEl) {
+            iconEl.style.display = 'none';
         }
         updateSmartComfort(
             tempF != null ? Math.round(tempF) : 70,
