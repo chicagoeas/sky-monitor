@@ -4594,6 +4594,7 @@
             awarenessLevel: p.risk_colour_en || '',
             description: p.alert_text_en || p.alert_text || '',
             instruction: '',
+            issuedAt: p.publication_datetime || '',
             onset: p.validity_datetime || p.publication_datetime || '',
             expires: p.event_end_datetime || p.expiration_datetime || '',
             areaDesc: area,
@@ -4602,6 +4603,60 @@
             icon: '\u26A0\uFE0F',
             sourceUrl: 'https://weather.gc.ca/index_e.html',
             geometry: feature.geometry || null
+        };
+    }
+
+    // Keep the reporting map aligned with the U.S. short-fused layer. Broad
+    // Canadian advisories and routine warnings (frost, rainfall, wind, etc.)
+    // belong in the location alert stack, not on this operational map.
+    const ENVIRONMENT_CANADA_SHORT_FUSED_STYLES = {
+        'tornado warning': { code: 'TO', color: '#ff1744' },
+        'severe thunderstorm warning': { code: 'SV', color: '#ff9100' },
+        'flash flood warning': { code: 'FF', color: '#00c853' },
+        'special marine warning': { code: 'MA', color: '#29b6f6' },
+        'snow squall warning': { code: 'SQ', color: '#81d4fa' },
+        'extreme wind warning': { code: 'EW', color: '#ff9100' },
+        'dust storm warning': { code: 'DS', color: '#c8a800' }
+    };
+
+    function _environmentCanadaShortFusedStyle(feature) {
+        var p = feature && feature.properties || {};
+        var candidates = [p.alert_name_en, p.alert_short_name_en, p.alert_name, p.alert_short_name];
+        for (var i = 0; i < candidates.length; i++) {
+            var key = String(candidates[i] || '').toLowerCase()
+                .replace(/\s*\([^)]*\)\s*/g, ' ')
+                .replace(/\s+/g, ' ').trim();
+            if (ENVIRONMENT_CANADA_SHORT_FUSED_STYLES[key]) {
+                return ENVIRONMENT_CANADA_SHORT_FUSED_STYLES[key];
+            }
+        }
+        return null;
+    }
+
+    function _environmentCanadaPopupCopy(description) {
+        var paragraphs = String(description || '').split(/\n\s*\n/)
+            .map(function(text) { return text.replace(/\s+/g, ' ').trim(); })
+            .filter(Boolean);
+        if (!paragraphs.length) {
+            return { alertText: '', instructions: '' };
+        }
+        // ECCC publishes one bulletin field rather than separate CAP
+        // description/instruction fields. Pull action-oriented paragraphs
+        // into the same Instructions row used by NWS.
+        var instructionPattern = /^(take|move|avoid|seek|stay|do not|if you|cover|please|be |remain|keep|use|prepare|when |for your protection|protect|monitor)/i;
+        var instructions = paragraphs.filter(function(text) {
+            return instructionPattern.test(text);
+        });
+        var alertText = paragraphs.filter(function(text) {
+            return !instructionPattern.test(text);
+        });
+        if (!instructions.length && paragraphs.length > 1) {
+            instructions = paragraphs.slice(1);
+            alertText = paragraphs.slice(0, 1);
+        }
+        return {
+            alertText: alertText.join('\n\n'),
+            instructions: instructions.join('\n\n')
         };
     }
 
@@ -12742,13 +12797,18 @@
                     var seenCanadaAlerts = {};
                     canadaFeatures.forEach(function(feature, index) {
                         if (!feature || !feature.geometry) return;
+                        var shortFusedStyle = _environmentCanadaShortFusedStyle(feature);
+                        if (!shortFusedStyle) return;
                         var normalized = _normalizeEnvironmentCanadaAlert(feature, index);
                         var expiresMs = Date.parse(normalized.expires || '');
                         if (expiresMs && expiresMs <= Date.now()) return;
                         var key = normalized.id || [normalized.title, normalized.areaDesc, normalized.expires].join('|');
                         if (seenCanadaAlerts[key]) return;
                         seenCanadaAlerts[key] = true;
-                        var color = _environmentCanadaColor(normalized.severity);
+                        var color = shortFusedStyle.color;
+                        var popupCopy = _environmentCanadaPopupCopy(normalized.description);
+                        var statusText = String(feature.properties && feature.properties.status_en || '').toLowerCase();
+                        var issuedLabel = statusText.indexOf('update') !== -1 ? 'Updated' : 'Issued';
                         var polygon = L_ref.geoJSON(feature.geometry, {
                             style: {
                                 color: color,
@@ -12763,15 +12823,16 @@
                             isPolygon: true,
                             color: color,
                             title: escapeHtml(normalized.title),
-                            meta: escapeHtml(normalized.areaDesc || 'Environment Canada') +
+                            meta: 'EC' +
                                 (normalized.expires ? ' \u00B7 Expires in ' +
                                     escapeHtml(formatReportingMinutesUntil(normalized.expires)) : ''),
                             detail: reportingPopupDetailRows([
                                 ['Area', normalized.areaDesc],
-                                ['Issued', normalized.onset ? formatReportingDateTimeNoSeconds(normalized.onset) : ''],
+                                [issuedLabel, normalized.issuedAt ? formatReportingDateTimeNoSeconds(normalized.issuedAt) : ''],
+                                ['Issued by', 'Environment Canada'],
                                 ['Valid through', normalized.expires ? formatReportingDateTimeNoSeconds(normalized.expires) : ''],
-                                ['Source', 'Environment and Climate Change Canada'],
-                                ['Alert text', normalized.description]
+                                ['Alert text', popupCopy.alertText],
+                                ['Instructions', popupCopy.instructions]
                             ])
                         });
                         polygon.on('dblclick', function(e) {
