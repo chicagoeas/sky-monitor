@@ -1748,11 +1748,11 @@
             <!-- Layer settings panel (hidden until gear tapped) -->
             <div id="map-settings-panel" style="display:none; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:8px; border:1px solid rgba(255,255,255,0.08);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#128225; Radar Overlay <span id="radar-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
+                    <span style="font-size:0.82em; color:#ccc;">&#128225; Radar Overlay <span id="radar-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US and Canada only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="radar-toggle-cb" checked onchange="toggleReportingRadar()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
+                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US and Canada only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="alerts-toggle-cb" checked onchange="toggleAlertPolygons()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -4458,6 +4458,15 @@
 
     const ENVIRONMENT_CANADA_ALERTS_URL =
         'https://api.weather.gc.ca/collections/weather-alerts/items';
+    // Environment and Climate Change Canada's official GeoMet collections.
+    // SWOB contains both MSC automatic stations and NAV CANADA ASOS/AWOS
+    // observations; the radar mosaic is served by the GeoMet WMS endpoint.
+    const ENVIRONMENT_CANADA_STATIONS_URL =
+        'https://api.weather.gc.ca/collections/swob-stations/items';
+    const ENVIRONMENT_CANADA_OBSERVATIONS_URL =
+        'https://api.weather.gc.ca/collections/swob-realtime/items';
+    const ENVIRONMENT_CANADA_RADAR_WMS_URL =
+        'https://geo.weather.gc.ca/geomet';
 
     function _environmentCanadaSeverity(alert) {
         var raw = String(
@@ -5178,11 +5187,23 @@
     }
 
     function updateUSOnlyLayerLabels() {
-        var display = window.isOutsideUS ? 'inline' : 'none';
-        ['radar-us-only', 'alerts-us-only', 'lsr-us-only'].forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el) el.style.display = display;
-        });
+        var country = String(window.locationCountryCode || '').trim().toUpperCase();
+        var canadaSupported = !window.isOutsideUS || country === 'CA';
+        var radarLabel = document.getElementById('radar-us-only');
+        var alertsLabel = document.getElementById('alerts-us-only');
+        var lsrLabel = document.getElementById('lsr-us-only');
+        if (radarLabel) {
+            radarLabel.innerText = '(US and Canada only)';
+            radarLabel.style.display = canadaSupported ? 'none' : 'inline';
+        }
+        if (alertsLabel) {
+            alertsLabel.innerText = '(US and Canada only)';
+            alertsLabel.style.display = canadaSupported ? 'none' : 'inline';
+        }
+        if (lsrLabel) {
+            lsrLabel.innerText = '(US only)';
+            lsrLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
+        }
     }
 
     function applyInternationalMode() {
@@ -8035,16 +8056,306 @@
         }
     }
 
+    function _environmentCanadaProperty(properties, names) {
+        var p = properties || {};
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i];
+            var direct = p[name];
+            if (direct != null && direct !== '') return direct;
+            var value = p[name + '-value'];
+            if (value != null && value !== '') return value;
+        }
+        return null;
+    }
+
+    function _environmentCanadaDistanceKm(latA, lonA, latB, lonB) {
+        var rad = Math.PI / 180;
+        var dLat = (latB - latA) * rad;
+        var dLon = (lonB - lonA) * rad;
+        var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(latA * rad) * Math.cos(latB * rad) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function _environmentCanadaStationCode(station) {
+        var p = station && station.properties || {};
+        return String(
+            p.iata_id || p.icao_id || p.icao_stn_id || p.msc_id ||
+            p.wmo_id || station && station.id || ''
+        ).trim();
+    }
+
+    function _environmentCanadaStationMatches(properties, station) {
+        var p = properties || {};
+        var stationProps = station && station.properties || {};
+        var code = String(
+            stationProps.iata_id || stationProps.icao_id || stationProps.msc_id ||
+            stationProps.wmo_id || ''
+        ).trim().toUpperCase();
+        var icao = String(_environmentCanadaProperty(p, ['icao_stn_id', 'iata_id']) || '').trim().toUpperCase();
+        var msc = String(_environmentCanadaProperty(p, ['msc_id', 'clim_id']) || '').trim();
+        var wantedMsc = String(stationProps.msc_id || '').trim();
+        return (code && icao === code) || (wantedMsc && msc === wantedMsc);
+    }
+
+    async function _fetchEnvironmentCanadaLatestObservation(station, requestSignal) {
+        var code = _environmentCanadaStationCode(station);
+        if (!code) return null;
+        var since = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+        var url = ENVIRONMENT_CANADA_OBSERVATIONS_URL +
+            '?f=json&lang=en-CA&limit=100&q=' + encodeURIComponent(code) +
+            '&datetime=' + encodeURIComponent(since + '/..');
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) return null;
+        var payload = await res.json();
+        var features = Array.isArray(payload && payload.features) ? payload.features : [];
+        var matching = features.filter(function(feature) {
+            return _environmentCanadaStationMatches(feature && feature.properties, station);
+        });
+        if (!matching.length) matching = features;
+        matching.sort(function(a, b) {
+            var aTime = Date.parse(_environmentCanadaProperty(a && a.properties, ['date_tm', 'obs_date_tm']) || '') || 0;
+            var bTime = Date.parse(_environmentCanadaProperty(b && b.properties, ['date_tm', 'obs_date_tm']) || '') || 0;
+            return bTime - aTime;
+        });
+        var latest = matching[0] || null;
+        var latestTime = Date.parse(_environmentCanadaProperty(
+            latest && latest.properties, ['date_tm', 'obs_date_tm']
+        ) || '');
+        if (latestTime && latestTime < Date.now() - 72 * 60 * 60 * 1000) return null;
+        return latest;
+    }
+
+    function _environmentCanadaCondition(observation) {
+        var p = observation && observation.properties || {};
+        var visibility = Number(_environmentCanadaProperty(p, ['vis', 'avg_vis_pst10mts']));
+        if (isFinite(visibility) && visibility < 1) return 'Low Visibility';
+        var rain = Number(_environmentCanadaProperty(p, ['rnfl_amt_pst1hr', 'pcpn_amt_pst1hr']));
+        if (isFinite(rain) && rain > 0) return 'Precipitation';
+        return 'Current conditions';
+    }
+
+    async function fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon) {
+        requestLat = requestLat == null ? lat : requestLat;
+        requestLon = requestLon == null ? lon : requestLon;
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var pad = 0.75;
+        var stationUrl = ENVIRONMENT_CANADA_STATIONS_URL +
+            '?f=json&lang=en-CA&limit=100&bbox=' +
+            encodeURIComponent([
+                Number(requestLon) - pad, Number(requestLat) - pad,
+                Number(requestLon) + pad, Number(requestLat) + pad
+            ].join(','));
+        var stationRes = await _weatherFetch(stationUrl, {
+            cache: 'no-store',
+            signal: requestSignal,
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }, 12000);
+        if (!stationRes.ok) throw new Error('Environment Canada stations ' + stationRes.status);
+        var stationPayload = await stationRes.json();
+        var stationFeatures = Array.isArray(stationPayload && stationPayload.features)
+            ? stationPayload.features : [];
+        var candidates = stationFeatures.map(function(station) {
+            var coords = station && station.geometry && station.geometry.coordinates || [];
+            var sLat = Number(coords[1]), sLon = Number(coords[0]);
+            if (!isFinite(sLat) || !isFinite(sLon)) return null;
+            var p = station.properties || {};
+            var iata = String(p.iata_id || '').trim();
+            var network = String(p.dataset_network || '').toUpperCase();
+            var provider = String(p.data_provider || '').toUpperCase();
+            return {
+                feature: station,
+                lat: sLat,
+                lon: sLon,
+                distance: _environmentCanadaDistanceKm(requestLat, requestLon, sLat, sLon),
+                iata: iata,
+                airport: !!iata,
+                aviation: !!iata && (network.indexOf('AWOS') !== -1 ||
+                    network.indexOf('HWOS') !== -1 || provider.indexOf('NAV CANADA') !== -1)
+            };
+        }).filter(Boolean);
+        candidates.sort(function(a, b) {
+            // Prefer an official airport observation when one is nearby, then
+            // use distance so remote Canadian locations still get MSC data.
+            return (b.aviation - a.aviation) ||
+                (b.airport - a.airport) || (a.distance - b.distance);
+        });
+        var unique = [];
+        var seenStations = {};
+        candidates.forEach(function(candidate) {
+            var key = _environmentCanadaStationCode(candidate.feature).toUpperCase();
+            if (!key || seenStations[key] || unique.length >= 12) return;
+            seenStations[key] = true;
+            unique.push(candidate);
+        });
+        if (!unique.length) throw new Error('No Environment Canada station nearby');
+
+        var selected = null;
+        for (var i = 0; i < unique.length; i++) {
+            if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return false;
+            try {
+                var observation = await _fetchEnvironmentCanadaLatestObservation(
+                    unique[i].feature, requestSignal
+                );
+                if (observation) {
+                    selected = { station: unique[i], observation: observation };
+                    break;
+                }
+            } catch (e) {
+                if (requestSignal && requestSignal.aborted) throw e;
+            }
+        }
+        if (!selected) throw new Error('No recent Environment Canada observation');
+
+        var station = selected.station;
+        var observation = selected.observation;
+        var stationProps = station.feature.properties || {};
+        var p = observation.properties || {};
+        var tempC = Number(_environmentCanadaProperty(p, ['air_temp']));
+        var humidity = Number(_environmentCanadaProperty(p, ['rel_hum', 'avg_rel_hum_pst1hr']));
+        var windKmh = Number(_environmentCanadaProperty(p, [
+            'avg_wnd_spd_10m_pst2mts',
+            'avg_wnd_spd_10m_pst10mts',
+            'avg_wnd_spd_pcpn_gag_pst10mts',
+            'avg_wnd_spd_pst10mts'
+        ]));
+        var windDir = Number(_environmentCanadaProperty(p, [
+            'avg_wnd_dir_10m_pst2mts',
+            'avg_wnd_dir_10m_pst10mts',
+            'avg_wnd_dir_pst10mts'
+        ]));
+        var pressure = Number(_environmentCanadaProperty(p, ['stn_pres', 'mslp']));
+        var precipMm = Number(_environmentCanadaProperty(p, ['rnfl_amt_pst1hr', 'pcpn_amt_pst1hr']));
+        var hasTemp = isFinite(tempC);
+        var hasHumidity = isFinite(humidity) && humidity >= 0 && humidity <= 100;
+        var hasWind = isFinite(windKmh);
+        if (!hasTemp && !hasHumidity && !hasWind) {
+            throw new Error('Environment Canada observation has no usable values');
+        }
+
+        window.isOutsideUS = true;
+        window.locationCountryCode = 'CA';
+        updateUSOnlyLayerLabels();
+        applyInternationalMode();
+
+        var displayName = String(
+            stationProps.name ||
+            _environmentCanadaProperty(p, ['stn_nam']) ||
+            'Environment Canada station'
+        );
+        var stationCode = String(
+            stationProps.iata_id || _environmentCanadaProperty(p, ['icao_stn_id', 'msc_id']) ||
+            station.feature.id || ''
+        );
+        var stationIdLabel = document.getElementById('meta-id-label');
+        if (stationIdLabel) stationIdLabel.innerText = 'Station:';
+        document.getElementById('stationName').innerText = displayName;
+        document.getElementById('meta-name').innerText = displayName;
+        document.getElementById('meta-id').innerText = stationCode;
+        document.getElementById('meta-elev').innerText = station.feature.geometry &&
+            station.feature.geometry.coordinates && station.feature.geometry.coordinates[2] != null
+            ? _fmtElevation(Number(station.feature.geometry.coordinates[2])) : 'N/A';
+        document.getElementById('stationName').title = 'Official ECCC / NAV CANADA observation';
+
+        var tempF = hasTemp ? tempC * 9 / 5 + 32 : null;
+        if (tempF != null) {
+            window.liveTemp = Math.round(tempF);
+            var tempEl = document.getElementById('tempVal');
+            tempEl.innerText = _fmtTemp(window.liveTemp);
+            tempEl.style.color = colorFeelsLike(window.liveTemp);
+        }
+        if (hasHumidity) {
+            var humEl = document.getElementById('humVal');
+            humEl.innerText = Math.round(humidity) + '%';
+            humEl.style.color = colorHumidity(Math.round(humidity));
+        }
+        var windMph = hasWind ? windKmh * 0.621371 : null;
+        if (windMph != null) {
+            liveWindSpd = Math.round(windMph);
+            document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
+            setWindCompass(liveWindSpd > 0 && isFinite(windDir) ? windDir : null);
+        }
+        if (isFinite(pressure)) lastPressureMb = pressure;
+        if (isFinite(precipMm) && precipMm >= 0) {
+            window.nwsObsPrecip1h = precipMm / 25.4;
+            _updatePrecipCache(window.nwsObsPrecip1h);
+        }
+        var condition = _environmentCanadaCondition(observation);
+        currentCondition = condition;
+        document.getElementById('conditionText').innerText = condition;
+        // SWOB is the authoritative observation source here. Do not use a
+        // PirateWeather value to fill an otherwise usable Canadian report.
+        var pw = {};
+        liveFeelsLike = tempF != null ? tempF : 0;
+        if (tempF != null && liveFeelsLike != null) {
+            var feelsEl = document.getElementById('feelsVal');
+            feelsEl.innerText = _fmtTemp(Math.round(liveFeelsLike));
+            feelsEl.style.color = colorFeelsLike(Math.round(liveFeelsLike));
+        }
+        var icon = _pwSummaryIcon(condition, !!(pw.icon && pw.icon.includes('night')));
+        var iconEl = document.getElementById('weatherIcon');
+        if (iconEl && icon) {
+            iconEl.src = icon;
+            iconEl.style.display = 'block';
+        }
+        updateSmartComfort(
+            tempF != null ? Math.round(tempF) : 70,
+            liveFeelsLike,
+            hasHumidity ? Math.round(humidity) : 50,
+            windMph != null ? liveWindSpd : 0,
+            condition,
+            liveUV,
+            0,
+            condition
+        );
+        _renderPWSQCPanel(window.wuData || null, null, null);
+        startWeatherFX(condition);
+        startSkyFX(condition);
+        _wxReveal();
+        if (window.pirateHourlyData) {
+            renderHourlyOutlook(window.pirateHourlyData, window.pirateTimezoneOffset || 0);
+        }
+        if (reportingMap) setTimeout(loadReportingMapData, 0);
+        return true;
+    }
+
     async function fetchNWSChain(loadGeneration, requestLat, requestLon) {
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
         requestLat = requestLat == null ? lat : requestLat;
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
         try {
+            // Canada has an official airport/ASOS/AWOS observation path.
+            // Use it before the generic international PirateWeather branch.
+            if (String(window.locationCountryCode || '').toUpperCase() === 'CA') {
+                return await fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon);
+            }
             const pointsRes = await _weatherFetch('https://api.weather.gov/points/' + requestLat + ',' + requestLon,
                 requestSignal ? { signal: requestSignal } : undefined, 15000);
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-            if (!pointsRes.ok) { window.isOutsideUS = true; applyInternationalMode(); return; }
+            if (!pointsRes.ok) {
+                // The country lookup normally finishes in parallel, but the
+                // NWS failure is also a reliable signal for Canadian points.
+                var detectedCountry = String(window.locationCountryCode || '').toUpperCase();
+                if (!detectedCountry) detectedCountry = await _resolveInternationalCountryCode();
+                if (detectedCountry === 'CA') {
+                    try {
+                        return await fetchEnvironmentCanadaStationChain(
+                            loadGeneration, requestLat, requestLon
+                        );
+                    } catch (canadaError) {
+                        console.warn('[SkyMonitor] Environment Canada observation failed:', canadaError);
+                    }
+                }
+                window.isOutsideUS = true;
+                applyInternationalMode();
+                return;
+            }
             window.isOutsideUS = false; applyUSMode();
             const p = await pointsRes.json();
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
@@ -10717,6 +11028,7 @@
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
+    let reportingRadarProvider = '';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let normalReportingPopupWidth = null;
     let reportLat = null, reportLon = null;
@@ -11044,6 +11356,10 @@
     function reportingPopupSourceIsVisible(source) {
         if (!reportingMap) return false;
         if (source === 'nws') {
+            const cb = document.getElementById('alerts-toggle-cb');
+            return !!alertPolygonLayer && (cb ? cb.checked : alertsVisible) && reportingMap.hasLayer(alertPolygonLayer);
+        }
+        if (source === 'environment-canada') {
             const cb = document.getElementById('alerts-toggle-cb');
             return !!alertPolygonLayer && (cb ? cb.checked : alertsVisible) && reportingMap.hasLayer(alertPolygonLayer);
         }
@@ -12037,6 +12353,63 @@
         }
     }
 
+    function _reportingMapCountryRoute() {
+        var country = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (country === 'CA') return 'canada';
+        if (!window.isOutsideUS) return 'us';
+        return 'unsupported';
+    }
+
+    function _updateReportingMapAttribution(provider) {
+        var el = document.getElementById('reporting-map-attribution');
+        if (!el) return;
+        var radarAttribution = provider === 'canada'
+            ? 'Radar: <a href="https://eccc-msc.github.io/open-data/msc-data/obs_radar/readme_radar_geomet_en" target="_blank" rel="noopener noreferrer">ECCC GeoMet</a>'
+            : 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
+        el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+    }
+
+    function setReportingRadarLayerForLocation() {
+        if (!reportingMap || !window.L) return;
+        var L_ref = window.L;
+        var provider = _reportingMapCountryRoute();
+        if (provider === reportingRadarProvider && reportingRadarLayer) {
+            updateUSOnlyLayerLabels();
+            return;
+        }
+        if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
+            reportingMap.removeLayer(reportingRadarLayer);
+        }
+        reportingRadarLayer = null;
+        reportingRadarProvider = provider;
+        if (provider === 'canada') {
+            reportingRadarLayer = L_ref.tileLayer.wms(ENVIRONMENT_CANADA_RADAR_WMS_URL, {
+                layers: 'RADAR_1KM_RRAI',
+                styles: '',
+                format: 'image/png',
+                transparent: true,
+                version: '1.3.0',
+                opacity: 0.65,
+                attribution: 'Radar: ECCC GeoMet',
+                maxZoom: 18,
+                updateWhenIdle: true,
+                updateWhenZooming: false
+            });
+        } else if (provider === 'us') {
+            reportingRadarLayer = L_ref.tileLayer(
+                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
+                {
+                    opacity: 0.65,
+                    attribution: 'Radar: IEM / NEXRAD',
+                    maxZoom: 18
+                }
+            );
+        }
+        if (reportingRadarLayer && radarVisible) reportingRadarLayer.addTo(reportingMap);
+        _updateReportingMapAttribution(provider === 'canada' ? 'canada' : 'us');
+        updateUSOnlyLayerLabels();
+    }
+
     function toggleReportingRadar() {
         const cb = document.getElementById('radar-toggle-cb');
         if (!reportingRadarLayer || !reportingMap) { if (cb) cb.checked = radarVisible; return; }
@@ -12254,11 +12627,10 @@
             subdomains: 'abcd', maxZoom: 19
         }).addTo(reportingMap);
 
-        // Layer 2 — radar, covers physical tiles
-        reportingRadarLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png', {
-            opacity: 0.65, attribution: 'Radar: IEM', maxZoom: 18
-        });
-        reportingRadarLayer.addTo(reportingMap);
+        // Layer 2 — provider-specific radar. The initial route may be US
+        // until the location classifier finishes; loadReportingMapDataNow()
+        // rebinds this to the Canadian GeoMet mosaic when appropriate.
+        setReportingRadarLayerForLocation();
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
@@ -12270,7 +12642,7 @@
         lsrLayer = L_ref.layerGroup().addTo(reportingMap);
 
         // Restore saved toggle state — sync iOS toggle checkboxes
-        if (!radarVisible) {
+        if (!radarVisible && reportingRadarLayer) {
             reportingMap.removeLayer(reportingRadarLayer);
             const cb = document.getElementById('radar-toggle-cb');
             if (cb) cb.checked = false;
@@ -12377,51 +12749,114 @@
     async function loadReportingMapDataNow() {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
+        setReportingRadarLayerForLocation();
         syncReportingMapLayers();
 
-        // NWS Short-Fused alert polygons via IEM Storm-Based Warnings (always has polygon geometry)
+        // Official short-fused alert polygons. NWS uses IEM's storm-based
+        // warning feed; Canada uses ECCC's GeoMet weather-alert polygons.
         try {
             alertPolygonLayer.clearLayers();
             removeReportingPopupEntries('nws');
-            const sbwRes = await fetch('https://mesonet.agron.iastate.edu/geojson/sbw.geojson');
-            if (sbwRes.ok) {
-                const sbwData = await sbwRes.json();
-                // phenomena codes for short-fused warnings
-                const shortFusedPhenomena = { TO:'#ff1744', SV:'#ff9100', FF:'#00c853', MA:'#29b6f6', SQ:'#81d4fa', EW:'#ff9100', DS:'#c8a800' };
-                (sbwData.features || []).forEach(function(f) {
-                    const ph = (f.properties.phenomena || '').toUpperCase();
-                    const sig = (f.properties.significance || '').toUpperCase();
-                    if (sig !== 'W') return; // warnings only
-                    if (!shortFusedPhenomena[ph]) return;
-                    // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
-                    if ((f.properties.type || '').toLowerCase().includes('statement')) return;
-                    if (!f.geometry) return;
-                    const color = shortFusedPhenomena[ph];
-                    const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
-                    const expiresText = f.properties.expire || f.properties.polygon_end;
-                    const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
-                    registerReportingPopup(_poly, {
-                        source: 'nws',
-                        isPolygon: true,
-                        color: color,
-                        title: escapeHtml(nwsEvent),
-                         meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
-                        detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
-                        loadDetails: function(latlng) {
-                            return loadNwsReportingDetails(
-                                null,
-                                latlng,
-                                nwsEvent,
-                                f.properties.wfo || ''
-                            );
-                        }
-                    });
-                    _poly.on('dblclick', function(e) {
-                        L_ref.DomEvent.stop(e);
-                        setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-                    });
-                    _poly.addTo(alertPolygonLayer);
+            removeReportingPopupEntries('environment-canada');
+            if (String(window.locationCountryCode || '').toUpperCase() === 'CA') {
+                var mapBounds = reportingMap.getBounds();
+                var canadaBbox = [
+                    mapBounds.getWest(), mapBounds.getSouth(),
+                    mapBounds.getEast(), mapBounds.getNorth()
+                ].join(',');
+                var canadaAlertUrl = ENVIRONMENT_CANADA_ALERTS_URL +
+                    '?f=json&lang=en-CA&limit=100&bbox=' + encodeURIComponent(canadaBbox);
+                var canadaRes = await fetch(canadaAlertUrl, {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/geo+json, application/json' }
                 });
+                if (canadaRes.ok) {
+                    var canadaPayload = await canadaRes.json();
+                    var canadaFeatures = Array.isArray(canadaPayload.features)
+                        ? canadaPayload.features : [];
+                    var seenCanadaAlerts = {};
+                    canadaFeatures.forEach(function(feature, index) {
+                        if (!feature || !feature.geometry) return;
+                        var normalized = _normalizeEnvironmentCanadaAlert(feature, index);
+                        var expiresMs = Date.parse(normalized.expires || '');
+                        if (expiresMs && expiresMs <= Date.now()) return;
+                        var key = normalized.id || [normalized.title, normalized.areaDesc, normalized.expires].join('|');
+                        if (seenCanadaAlerts[key]) return;
+                        seenCanadaAlerts[key] = true;
+                        var color = _environmentCanadaColor(normalized.severity);
+                        var polygon = L_ref.geoJSON(feature.geometry, {
+                            style: {
+                                color: color,
+                                weight: 2.5,
+                                opacity: 0.95,
+                                fillColor: color,
+                                fillOpacity: 0.2
+                            }
+                        });
+                        registerReportingPopup(polygon, {
+                            source: 'environment-canada',
+                            isPolygon: true,
+                            color: color,
+                            title: escapeHtml(normalized.title),
+                            meta: escapeHtml(normalized.areaDesc || 'Environment Canada') +
+                                (normalized.expires ? ' \u00B7 Expires in ' +
+                                    escapeHtml(formatReportingMinutesUntil(normalized.expires)) : ''),
+                            detail: reportingPopupDetailRows([
+                                ['Area', normalized.areaDesc],
+                                ['Issued', normalized.onset ? formatReportingDateTimeNoSeconds(normalized.onset) : ''],
+                                ['Valid through', normalized.expires ? formatReportingDateTimeNoSeconds(normalized.expires) : ''],
+                                ['Source', 'Environment and Climate Change Canada'],
+                                ['Alert text', normalized.description]
+                            ])
+                        });
+                        polygon.on('dblclick', function(e) {
+                            L_ref.DomEvent.stop(e);
+                            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+                        });
+                        polygon.addTo(alertPolygonLayer);
+                    });
+                }
+            } else if (!window.isOutsideUS) {
+                const sbwRes = await fetch('https://mesonet.agron.iastate.edu/geojson/sbw.geojson');
+                if (sbwRes.ok) {
+                    const sbwData = await sbwRes.json();
+                    // phenomena codes for short-fused warnings
+                    const shortFusedPhenomena = { TO:'#ff1744', SV:'#ff9100', FF:'#00c853', MA:'#29b6f6', SQ:'#81d4fa', EW:'#ff9100', DS:'#c8a800' };
+                    (sbwData.features || []).forEach(function(f) {
+                        const ph = (f.properties.phenomena || '').toUpperCase();
+                        const sig = (f.properties.significance || '').toUpperCase();
+                        if (sig !== 'W') return; // warnings only
+                        if (!shortFusedPhenomena[ph]) return;
+                        // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
+                        if ((f.properties.type || '').toLowerCase().includes('statement')) return;
+                        if (!f.geometry) return;
+                        const color = shortFusedPhenomena[ph];
+                        const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
+                        const expiresText = f.properties.expire || f.properties.polygon_end;
+                        const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
+                        registerReportingPopup(_poly, {
+                            source: 'nws',
+                            isPolygon: true,
+                            color: color,
+                            title: escapeHtml(nwsEvent),
+                            meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
+                            detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
+                            loadDetails: function(latlng) {
+                                return loadNwsReportingDetails(
+                                    null,
+                                    latlng,
+                                    nwsEvent,
+                                    f.properties.wfo || ''
+                                );
+                            }
+                        });
+                        _poly.on('dblclick', function(e) {
+                            L_ref.DomEvent.stop(e);
+                            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+                        });
+                        _poly.addTo(alertPolygonLayer);
+                    });
+                }
             }
         } catch(e) {}
 
