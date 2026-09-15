@@ -1752,7 +1752,7 @@
                     <label class="ios-toggle"><input type="checkbox" id="radar-toggle-cb" checked onchange="toggleReportingRadar()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
+                    <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;"></span></span>
                     <label class="ios-toggle"><input type="checkbox" id="alerts-toggle-cb" checked onchange="toggleAlertPolygons()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -4458,6 +4458,13 @@
 
     const ENVIRONMENT_CANADA_ALERTS_URL =
         'https://api.weather.gc.ca/collections/weather-alerts/items';
+    // Environment and Climate Change Canada's official GeoMet collections.
+    // SWOB contains both MSC automatic stations and NAV CANADA ASOS/AWOS
+    // observations; the radar mosaic is served by the GeoMet WMS endpoint.
+    const ENVIRONMENT_CANADA_STATIONS_URL =
+        'https://api.weather.gc.ca/collections/swob-stations/items';
+    const ENVIRONMENT_CANADA_OBSERVATIONS_URL =
+        'https://api.weather.gc.ca/collections/swob-realtime/items';
 
     function _environmentCanadaSeverity(alert) {
         var raw = String(
@@ -4587,6 +4594,7 @@
             awarenessLevel: p.risk_colour_en || '',
             description: p.alert_text_en || p.alert_text || '',
             instruction: '',
+            issuedAt: p.publication_datetime || '',
             onset: p.validity_datetime || p.publication_datetime || '',
             expires: p.event_end_datetime || p.expiration_datetime || '',
             areaDesc: area,
@@ -4595,6 +4603,60 @@
             icon: '\u26A0\uFE0F',
             sourceUrl: 'https://weather.gc.ca/index_e.html',
             geometry: feature.geometry || null
+        };
+    }
+
+    // Keep the reporting map aligned with the U.S. short-fused layer. Broad
+    // Canadian advisories and routine warnings (frost, rainfall, wind, etc.)
+    // belong in the location alert stack, not on this operational map.
+    const ENVIRONMENT_CANADA_SHORT_FUSED_STYLES = {
+        'tornado warning': { code: 'TO', color: '#ff1744' },
+        'severe thunderstorm warning': { code: 'SV', color: '#ff9100' },
+        'flash flood warning': { code: 'FF', color: '#00c853' },
+        'special marine warning': { code: 'MA', color: '#29b6f6' },
+        'snow squall warning': { code: 'SQ', color: '#81d4fa' },
+        'extreme wind warning': { code: 'EW', color: '#ff9100' },
+        'dust storm warning': { code: 'DS', color: '#c8a800' }
+    };
+
+    function _environmentCanadaShortFusedStyle(feature) {
+        var p = feature && feature.properties || {};
+        var candidates = [p.alert_name_en, p.alert_short_name_en, p.alert_name, p.alert_short_name];
+        for (var i = 0; i < candidates.length; i++) {
+            var key = String(candidates[i] || '').toLowerCase()
+                .replace(/\s*\([^)]*\)\s*/g, ' ')
+                .replace(/\s+/g, ' ').trim();
+            if (ENVIRONMENT_CANADA_SHORT_FUSED_STYLES[key]) {
+                return ENVIRONMENT_CANADA_SHORT_FUSED_STYLES[key];
+            }
+        }
+        return null;
+    }
+
+    function _environmentCanadaPopupCopy(description) {
+        var paragraphs = String(description || '').split(/\n\s*\n/)
+            .map(function(text) { return text.replace(/\s+/g, ' ').trim(); })
+            .filter(Boolean);
+        if (!paragraphs.length) {
+            return { alertText: '', instructions: '' };
+        }
+        // ECCC publishes one bulletin field rather than separate CAP
+        // description/instruction fields. Pull action-oriented paragraphs
+        // into the same Instructions row used by NWS.
+        var instructionPattern = /^(take|move|avoid|seek|stay|do not|if you|cover|please|be |remain|keep|use|prepare|when |for your protection|protect|monitor)/i;
+        var instructions = paragraphs.filter(function(text) {
+            return instructionPattern.test(text);
+        });
+        var alertText = paragraphs.filter(function(text) {
+            return !instructionPattern.test(text);
+        });
+        if (!instructions.length && paragraphs.length > 1) {
+            instructions = paragraphs.slice(1);
+            alertText = paragraphs.slice(0, 1);
+        }
+        return {
+            alertText: alertText.join('\n\n'),
+            instructions: instructions.join('\n\n')
         };
     }
 
@@ -5112,6 +5174,11 @@
             // Definite / likely → tsra
             return base + 'tsra' + sz;
         }
+        if (s.includes('lightning'))                                        return base + 'tsra'           + sz;
+        if (s.includes('funnel cloud'))                                    return base + 'tornado'        + sz;
+        if (s.includes('precipitation nearby'))                             return base + 'rain_showers_hi' + sz;
+        if (s.includes('reduced visibility'))                               return base + 'fog'            + sz;
+        if (s.includes('squall'))                                           return base + 'wind_skc'       + sz;
 
         // ── Frozen precip ──────────────────────────────────────────────────
         if (s.includes('freezing rain') || s.includes('freezing drizzle'))  return base + 'fzra'           + sz;
@@ -5178,14 +5245,26 @@
     }
 
     function updateUSOnlyLayerLabels() {
-        var display = window.isOutsideUS ? 'inline' : 'none';
-        ['radar-us-only', 'alerts-us-only', 'lsr-us-only'].forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el) el.style.display = display;
-        });
+        var radarLabel = document.getElementById('radar-us-only');
+        var alertsLabel = document.getElementById('alerts-us-only');
+        var lsrLabel = document.getElementById('lsr-us-only');
+        if (radarLabel) {
+            radarLabel.innerText = '(US only)';
+            radarLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
+        }
+        if (alertsLabel) {
+            // NWS and Environment Canada polygons are both loaded
+            // regardless of the selected weather location.
+            alertsLabel.innerText = '';
+            alertsLabel.style.display = 'none';
+        }
+        if (lsrLabel) {
+            lsrLabel.innerText = '(US only)';
+            lsrLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
+        }
     }
 
-    function applyInternationalMode() {
+    function applyInternationalMode(skipObservation) {
         updateUSOnlyLayerLabels();
         ['spc-outlook-section','wxstory-section','afd-section','hwo-section'].forEach(function(id) {
             const el = document.getElementById(id); if (el) el.style.display = 'none';
@@ -5200,6 +5279,7 @@
         var _metaName = document.getElementById('meta-name');
         if (_metaName) _metaName.innerText = 'Local Observation';
         if (window.pirateCurrently) {
+            if (skipObservation) return;
             const _intlPw = window.pirateCurrently;
             const _intlCandidates = [];
             const _intlIsValidPws = function(s) {
@@ -7849,19 +7929,23 @@
     }
 
     // Renders the PWS QC diagnostic panel.
-    // pws1 is the WU-QC-passing station (or null), nwsTemp/nwsHum are raw NWS obs values.
-    function _renderPWSQCPanel(pws1, nwsTemp, nwsHum) {
+    // pws1 is the WU-QC-passing station (or null), officialTemp/officialHum
+    // are the official fallback observation values. The optional arguments
+    // keep the same panel usable for NWS and Environment Canada.
+    function _renderPWSQCPanel(pws1, officialTemp, officialHum, officialActive, officialLabel) {
         var panel = document.getElementById('pws-qc-panel');
         if (!panel) return;
+        officialActive = officialActive === true ||
+            (!window.isOutsideUS && officialTemp !== null && officialTemp !== undefined);
+        officialLabel = officialLabel || 'NWS Obs';
         function fmt(val, unit) {
             if (val === null || val === undefined) return '--';
             return unit === 'temperature' ? _fmtTemp(val) : Math.round(val) + unit;
         }
         var source = 'PWS (WU QC ✓)';
         if (!pws1) {
-            if (window.isOutsideUS) source = 'PirateWeather (outside US)';
-            else if (nwsTemp !== null) source = 'NWS Obs (no QC-passing PWS nearby)';
-            else source = 'PirateWeather (no PWS or NWS data)';
+            if (officialActive) source = officialLabel + ' (no QC-passing PWS nearby)';
+            else source = 'PirateWeather (no PWS or official data)';
         }
         var rows = '';
         var pws1Color = pws1 ? '#00e676' : '#9e9e9e';
@@ -7870,14 +7954,13 @@
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pws1 && pws1.temp, 'temperature') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pws1 && pws1.humidity, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + pws1Color + ';">' + pws1StatusText + '</td></tr>';
-        var nwsActive = !pws1 && nwsTemp !== null && !window.isOutsideUS;
-        var nwsColor = nwsActive ? '#ffd54f' : '#9e9e9e';
-        rows += '<tr><td style="padding:3px 0; color:' + nwsColor + ';">⬤ NWS Obs</td>'
-              + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsTemp, 'temperature') + '</td>'
-              + '<td style="text-align:right; padding-right:8px;">' + fmt(nwsHum, '%') + '</td>'
-              + '<td style="font-size:0.78em; color:' + nwsColor + ';">' + (window.isOutsideUS ? 'N/A (outside US)' : nwsTemp !== null ? (nwsActive ? 'Override ✓' : 'Standby') : 'Unavailable') + '</td></tr>';
+        var officialColor = officialActive && !pws1 ? '#ffd54f' : '#9e9e9e';
+        rows += '<tr><td style="padding:3px 0; color:' + officialColor + ';">⬤ ' + officialLabel + '</td>'
+              + '<td style="text-align:right; padding-right:8px;">' + fmt(officialTemp, 'temperature') + '</td>'
+              + '<td style="text-align:right; padding-right:8px;">' + fmt(officialHum, '%') + '</td>'
+              + '<td style="font-size:0.78em; color:' + officialColor + ';">' + (officialActive ? (pws1 ? 'Standby' : 'Override ✓') : 'Unavailable') + '</td></tr>';
         var pirateTemp = window.pirateCurrently && window.pirateCurrently.temperature !== null ? window.pirateCurrently.temperature : null;
-        var pirateActive = !pws1 && (window.isOutsideUS || nwsTemp === null);
+        var pirateActive = !pws1 && !officialActive;
         var pirateColor = pirateActive ? '#ffd54f' : '#9e9e9e';
         rows += '<tr><td style="padding:3px 0; color:' + pirateColor + ';">⬤ PirateWeather</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(pirateTemp, 'temperature') + '</td>'
@@ -8035,16 +8118,605 @@
         }
     }
 
+    function _environmentCanadaProperty(properties, names) {
+        var p = properties || {};
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i];
+            var direct = p[name];
+            if (direct != null && direct !== '') return direct;
+            var value = p[name + '-value'];
+            if (value != null && value !== '') return value;
+        }
+        return null;
+    }
+
+    function _environmentCanadaDistanceKm(latA, lonA, latB, lonB) {
+        var rad = Math.PI / 180;
+        var dLat = (latB - latA) * rad;
+        var dLon = (lonB - lonA) * rad;
+        var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(latA * rad) * Math.cos(latB * rad) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function _environmentCanadaStationCode(station) {
+        var p = station && station.properties || {};
+        return String(
+            p.iata_id || p.icao_id || p.icao_stn_id || p.msc_id ||
+            p.wmo_id || station && station.id || ''
+        ).trim();
+    }
+
+    function _environmentCanadaStationMatches(properties, station) {
+        var p = properties || {};
+        var stationProps = station && station.properties || {};
+        var code = String(
+            stationProps.iata_id || stationProps.icao_id || stationProps.msc_id ||
+            stationProps.wmo_id || ''
+        ).trim().toUpperCase();
+        var icao = String(_environmentCanadaProperty(p, ['icao_stn_id', 'iata_id']) || '').trim().toUpperCase();
+        var msc = String(_environmentCanadaProperty(p, ['msc_id', 'clim_id']) || '').trim();
+        var wantedMsc = String(stationProps.msc_id || '').trim();
+        return (code && icao === code) || (wantedMsc && msc === wantedMsc);
+    }
+
+    async function _fetchEnvironmentCanadaLatestObservation(station, requestSignal) {
+        var code = _environmentCanadaStationCode(station);
+        if (!code) return null;
+        var since = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+        var url = ENVIRONMENT_CANADA_OBSERVATIONS_URL +
+            '?f=json&lang=en-CA&limit=100&q=' + encodeURIComponent(code) +
+            '&datetime=' + encodeURIComponent(since + '/..');
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
+        if (!res.ok) return null;
+        var payload = await res.json();
+        var features = Array.isArray(payload && payload.features) ? payload.features : [];
+        var matching = features.filter(function(feature) {
+            return _environmentCanadaStationMatches(feature && feature.properties, station);
+        });
+        if (!matching.length) matching = features;
+        matching.sort(function(a, b) {
+            var aTime = Date.parse(_environmentCanadaProperty(a && a.properties, ['date_tm', 'obs_date_tm']) || '') || 0;
+            var bTime = Date.parse(_environmentCanadaProperty(b && b.properties, ['date_tm', 'obs_date_tm']) || '') || 0;
+            return bTime - aTime;
+        });
+        var latest = matching[0] || null;
+        var latestTime = Date.parse(_environmentCanadaProperty(
+            latest && latest.properties, ['date_tm', 'obs_date_tm']
+        ) || '');
+        if (latestTime && latestTime < Date.now() - 72 * 60 * 60 * 1000) return null;
+        return latest;
+    }
+
+    function _environmentCanadaCondition(observation, fallbackSummary) {
+        var p = observation && observation.properties || {};
+        function numeric(value) {
+            if (value === null || value === undefined || value === '') return null;
+            var number = Number(value);
+            return isFinite(number) ? number : null;
+        }
+
+        // SWOB exposes present weather as WMO 4677 numeric codes.  The old
+        // implementation ignored these fields and replaced every Canadian
+        // observation with either "Low Visibility" or "Current conditions".
+        // Those are measurements/fallbacks, not the observed condition.
+        function presentWeatherLabel(value) {
+            if (value === null || value === undefined || value === '') return null;
+            var raw = String(value).trim();
+            if (!raw || /^(nil|none|unknown|not available|n\/a)$/i.test(raw)) return null;
+            var code = Number(raw);
+            if (!isFinite(code)) return raw;
+            code = Math.round(code);
+
+            if (code <= 3) return ['Clear', 'Mainly Clear', 'Partly Cloudy', 'Cloudy'][code];
+            if (code === 4 || code === 5) return 'Haze';
+            if (code >= 6 && code <= 9) return 'Dust';
+            if (code === 10) return 'Mist';
+            if (code >= 11 && code <= 12) return 'Fog';
+            if (code === 13) return 'Lightning';
+            if (code >= 14 && code <= 16) return 'Precipitation Nearby';
+            if (code === 17 || code === 29) return 'Thunderstorm';
+            if (code === 18) return 'Squalls';
+            if (code === 19) return 'Funnel Cloud';
+            if (code === 20 || code === 50 || code === 51 ||
+                (code >= 56 && code <= 57)) return 'Drizzle';
+            if (code === 21 || (code >= 60 && code <= 65) ||
+                (code >= 80 && code <= 82)) return 'Rain';
+            if (code === 22 || (code >= 70 && code <= 77) ||
+                (code >= 85 && code <= 86)) return 'Snow';
+            if (code === 23 || code === 68 || code === 69) return 'Rain and Snow';
+            if (code === 24 || code === 66 || code === 67) return 'Freezing Rain';
+            if (code === 25 || (code >= 80 && code <= 84)) return 'Rain Showers';
+            if (code === 26 || code === 36 || code === 37) return 'Blowing Snow';
+            if (code === 27) return 'Hail';
+            if (code === 28 || (code >= 40 && code <= 49)) return 'Fog';
+            if (code >= 30 && code <= 35) return 'Dust';
+            if (code >= 38 && code <= 39) return 'Snow';
+            if (code >= 87 && code <= 90) return 'Rain and Snow Showers';
+            if (code >= 91 && code <= 99) return 'Thunderstorm';
+            return null;
+        }
+
+        // Prefer the most specific present-weather code reported by the
+        // station.  The numbered fields are commonly used for multiple
+        // simultaneous phenomena (for example rain + fog).
+        var weatherLabels = [];
+        ['prsnt_wx_1', 'prsnt_wx_2'].forEach(function(name) {
+            var label = presentWeatherLabel(_environmentCanadaProperty(p, [name]));
+            if (label && weatherLabels.indexOf(label) === -1) weatherLabels.push(label);
+        });
+        if (weatherLabels.length) return weatherLabels.join(' and ');
+
+        // Cloud amount is still an actual station observation, unlike the
+        // old generic label.  SWOB cloud amount codes run from clear to
+        // overcast; use it only when no present-weather code is available.
+        var cloud = numeric(_environmentCanadaProperty(p, ['tot_cld_amt', 'cld_amt_code']));
+        var cloudLabel = null;
+        if (cloud !== null) {
+            if (cloud <= 1) cloudLabel = 'Clear';
+            else if (cloud <= 3) cloudLabel = 'Partly Cloudy';
+            else if (cloud <= 6) cloudLabel = 'Mostly Cloudy';
+            else cloudLabel = 'Overcast';
+        }
+
+        var rain = numeric(_environmentCanadaProperty(p, ['rnfl_amt_pst1hr', 'pcpn_amt_pst1hr']));
+        if (rain !== null && rain > 0) return cloudLabel ? 'Rain and ' + cloudLabel : 'Rain';
+
+        // A valid PirateWeather summary is the established condition fallback
+        // elsewhere in SkyMonitor when an official station has no text
+        // description.  Use it here instead of pretending a visibility
+        // measurement is a weather phenomenon.
+        var fallback = String(fallbackSummary || '').trim();
+        if (fallback && !/^(current conditions|unknown(?: precipitation)?|n\/a|na|not available)$/i.test(fallback)) {
+            return fallback;
+        }
+        if (cloudLabel) return cloudLabel;
+
+        // Visibility is useful evidence, but without a present-weather code
+        // it cannot tell us whether the cause is fog, snow, smoke, or dust.
+        // Keep the measured fact explicit rather than calling it the condition.
+        var visibility = numeric(_environmentCanadaProperty(p, ['vis', 'avg_vis_pst10mts']));
+        if (visibility !== null && visibility < 1) return 'Reduced Visibility';
+        return 'No Present Weather Reported';
+    }
+
+    async function fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon) {
+        requestLat = requestLat == null ? lat : requestLat;
+        requestLon = requestLon == null ? lon : requestLon;
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var pad = 0.75;
+        var stationUrl = ENVIRONMENT_CANADA_STATIONS_URL +
+            '?f=json&lang=en-CA&limit=100&bbox=' +
+            encodeURIComponent([
+                Number(requestLon) - pad, Number(requestLat) - pad,
+                Number(requestLon) + pad, Number(requestLat) + pad
+            ].join(','));
+        var stationRes = await _weatherFetch(stationUrl, {
+            cache: 'no-store',
+            signal: requestSignal,
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }, 12000);
+        if (!stationRes.ok) throw new Error('Environment Canada stations ' + stationRes.status);
+        var stationPayload = await stationRes.json();
+        var stationFeatures = Array.isArray(stationPayload && stationPayload.features)
+            ? stationPayload.features : [];
+        var candidates = stationFeatures.map(function(station) {
+            var coords = station && station.geometry && station.geometry.coordinates || [];
+            var sLat = Number(coords[1]), sLon = Number(coords[0]);
+            if (!isFinite(sLat) || !isFinite(sLon)) return null;
+            var p = station.properties || {};
+            var iata = String(p.iata_id || '').trim();
+            var network = String(p.dataset_network || '').toUpperCase();
+            var provider = String(p.data_provider || '').toUpperCase();
+            return {
+                feature: station,
+                lat: sLat,
+                lon: sLon,
+                distance: _environmentCanadaDistanceKm(requestLat, requestLon, sLat, sLon),
+                iata: iata,
+                airport: !!iata,
+                aviation: !!iata && (network.indexOf('AWOS') !== -1 ||
+                    network.indexOf('HWOS') !== -1 || provider.indexOf('NAV CANADA') !== -1)
+            };
+        }).filter(Boolean);
+        candidates.sort(function(a, b) {
+            // Prefer an official airport observation when one is nearby, then
+            // use distance so remote Canadian locations still get MSC data.
+            return (b.aviation - a.aviation) ||
+                (b.airport - a.airport) || (a.distance - b.distance);
+        });
+        var unique = [];
+        var seenStations = {};
+        candidates.forEach(function(candidate) {
+            var key = _environmentCanadaStationCode(candidate.feature).toUpperCase();
+            if (!key || seenStations[key] || unique.length >= 12) return;
+            seenStations[key] = true;
+            unique.push(candidate);
+        });
+        if (!unique.length) throw new Error('No Environment Canada station nearby');
+
+        var selected = null;
+        for (var i = 0; i < unique.length; i++) {
+            if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return false;
+            try {
+                var observation = await _fetchEnvironmentCanadaLatestObservation(
+                    unique[i].feature, requestSignal
+                );
+                if (observation) {
+                    selected = { station: unique[i], observation: observation };
+                    break;
+                }
+            } catch (e) {
+                if (requestSignal && requestSignal.aborted) throw e;
+            }
+        }
+        if (!selected) throw new Error('No recent Environment Canada observation');
+
+        var station = selected.station;
+        var observation = selected.observation;
+        var stationProps = station.feature.properties || {};
+        var p = observation.properties || {};
+        var _eccNumber = function(value) {
+            if (value === null || value === undefined || value === '') return null;
+            var number = Number(value);
+            return isFinite(number) ? number : null;
+        };
+        var tempC = _eccNumber(_environmentCanadaProperty(p, ['air_temp']));
+        var humidity = _eccNumber(_environmentCanadaProperty(p, ['rel_hum', 'avg_rel_hum_pst1hr']));
+        var windKmh = _eccNumber(_environmentCanadaProperty(p, [
+            'avg_wnd_spd_10m_pst2mts',
+            'avg_wnd_spd_10m_pst10mts',
+            'avg_wnd_spd_pcpn_gag_pst10mts',
+            'avg_wnd_spd_pst10mts'
+        ]));
+        var windDir = _eccNumber(_environmentCanadaProperty(p, [
+            'avg_wnd_dir_10m_pst2mts',
+            'avg_wnd_dir_10m_pst10mts',
+            'avg_wnd_dir_pst10mts'
+        ]));
+        var pressure = _eccNumber(_environmentCanadaProperty(p, ['stn_pres', 'mslp']));
+        var precipMm = _eccNumber(_environmentCanadaProperty(p, ['rnfl_amt_pst1hr', 'pcpn_amt_pst1hr']));
+        var hasTemp = tempC !== null;
+        var hasHumidity = humidity !== null && humidity >= 0 && humidity <= 100;
+        var hasWind = windKmh !== null;
+        if (!hasTemp && !hasHumidity && !hasWind) {
+            throw new Error('Environment Canada observation has no usable values');
+        }
+
+        window.isOutsideUS = true;
+        window.locationCountryCode = 'CA';
+        updateUSOnlyLayerLabels();
+        // Set the international/UI labels without painting a second
+        // observation source. The shared PWS QC pass below must decide which
+        // values reach the card, exactly as it does for NWS.
+        applyInternationalMode(true);
+
+        var stationCode = String(
+            stationProps.iata_id || _environmentCanadaProperty(p, ['icao_stn_id', 'msc_id']) ||
+            station.feature.id || ''
+        );
+        var displayName = String(
+            stationProps.name ||
+            _environmentCanadaProperty(p, ['stn_nam']) ||
+            'Environment Canada station'
+        );
+        // The ECCC SWOB station schema truncates some names at 32 characters.
+        // CYTZ is returned as "Billy Bishop Toronto City Airpor"; use the
+        // canonical airport name rather than exposing the cut-off API value.
+        var _ecccCanonicalNames = {
+            'CYTZ': 'Billy Bishop Toronto City Airport'
+        };
+        var _ecccCanonicalName = _ecccCanonicalNames[String(stationCode).trim().toUpperCase()];
+        if (_ecccCanonicalName) displayName = _ecccCanonicalName;
+        var stationIdLabel = document.getElementById('meta-id-label');
+        if (stationIdLabel) stationIdLabel.innerText = 'Station:';
+        document.getElementById('stationName').innerText = displayName;
+        document.getElementById('meta-name').innerText = displayName;
+        document.getElementById('meta-id').innerText = stationCode;
+        document.getElementById('meta-elev').innerText = station.feature.geometry &&
+            station.feature.geometry.coordinates && station.feature.geometry.coordinates[2] != null
+            ? _fmtElevation(Number(station.feature.geometry.coordinates[2])) : 'N/A';
+        document.getElementById('stationName').title = 'Official ECCC / NAV CANADA observation';
+
+        var tempF = hasTemp ? tempC * 9 / 5 + 32 : null;
+        var windMph = hasWind ? windKmh * 0.621371 : null;
+
+        // Match the NWS chain's elevation correction for the official
+        // fallback. This never changes a QC-passing PWS value; it only keeps
+        // an ECCC airport/ASOS fallback representative of the requested
+        // coordinate.
+        var _eccElevCacheKey = requestLat.toFixed(4) + ',' + requestLon.toFixed(4);
+        if (window.userLocElevFt == null || window._userLocElevKey !== _eccElevCacheKey) {
+            try {
+                var _eccElevRes = await _weatherFetch(
+                    'https://api.open-meteo.com/v1/elevation?latitude=' + requestLat +
+                    '&longitude=' + requestLon,
+                    requestSignal ? { signal: requestSignal } : undefined, 12000
+                );
+                if (_eccElevRes.ok) {
+                    var _eccElevData = await _eccElevRes.json();
+                    if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+                    var _eccElevM = _eccElevData && _eccElevData.elevation &&
+                        _eccElevData.elevation[0];
+                    if (_eccElevM != null) {
+                        window.userLocElevFt = _eccElevM * 3.28084;
+                        window._userLocElevKey = _eccElevCacheKey;
+                    }
+                }
+            } catch (e) {}
+        }
+        var _eccOfficialTempF = tempF;
+        var _eccStationElevFt = station.feature.geometry &&
+            station.feature.geometry.coordinates &&
+            station.feature.geometry.coordinates[2] != null
+            ? Number(station.feature.geometry.coordinates[2]) * 3.28084 : null;
+        var _eccUserElevFt = window.userLocElevFt != null
+            ? window.userLocElevFt : window.wuElevFt;
+        if (_eccOfficialTempF !== null && _eccStationElevFt !== null &&
+            _eccUserElevFt !== null) {
+            var _eccLapseDelta = (_eccStationElevFt - _eccUserElevFt) * (3.5 / 1000);
+            if (Math.abs(_eccLapseDelta) >= 0.5) {
+                _eccOfficialTempF += _eccLapseDelta;
+            }
+        }
+
+        // ── Shared PWS quality-control chain ─────────────────────────────────
+        // This deliberately mirrors fetchNWSChain:
+        //   QC-passing PWS → official station fallback → PirateWeather.
+        // The official airport observation is a reference/fallback, never the
+        // first choice when a nearby PWS passes the same QC rules.
+        var _eccWu = window.wuData;
+        var _eccPwNowPre = window.pirateCurrently;
+        var _eccPwTempPre = (_eccPwNowPre && _eccPwNowPre.temperature != null)
+            ? _eccPwNowPre.temperature : null;
+        var _eccMed = function(a) {
+            var m = Math.floor(a.length / 2);
+            return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+        };
+        if (_eccWu && _eccWu.humidity !== null &&
+            (!isFinite(_eccWu.humidity) || _eccWu.humidity < 0 || _eccWu.humidity > 100)) {
+            _eccWu.humidity = null;
+        }
+        var _eccWuRawAvail = _eccWu && _eccWu.temp !== null && _eccWu.humidity !== null;
+        var _eccIsValidStation = function(s) {
+            if (!s || s.temp === null || s.humidity === null) return false;
+            if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
+            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > 20) return false;
+            return true;
+        };
+        var _eccNeighbors = (window.wuNeighborData || []).filter(_eccIsValidStation);
+        var _eccNeighborMedianTemp = null;
+        if (_eccNeighbors.length > 0) {
+            var _eccNeighborTemps = _eccNeighbors.map(function(n) { return n.temp; })
+                .sort(function(a, b) { return a - b; });
+            _eccNeighborMedianTemp = _eccMed(_eccNeighborTemps);
+        }
+        var _eccPwTemp = (_eccPwNowPre && _eccPwNowPre.temperature != null)
+            ? _eccPwNowPre.temperature : null;
+        var _eccReferenceTemp = tempF !== null
+            ? tempF
+            : (_eccNeighborMedianTemp !== null ? _eccNeighborMedianTemp : _eccPwTemp);
+        var _eccPool = [];
+        if (_eccIsValidStation(_eccWu)) _eccPool.push({ s: _eccWu, rank: 0 });
+        _eccNeighbors.forEach(function(n, i) { _eccPool.push({ s: n, rank: i + 1 }); });
+        if (_eccPool.length > 0) {
+            _eccPool.sort(function(a, b) {
+                var aComplete = a.s.windSpeed !== null && a.s.windSpeed !== undefined ? 1 : 0;
+                var bComplete = b.s.windSpeed !== null && b.s.windSpeed !== undefined ? 1 : 0;
+                if (aComplete !== bComplete) return bComplete - aComplete;
+                var da = _eccReferenceTemp !== null
+                    ? Math.abs(a.s.temp - _eccReferenceTemp) : 0;
+                var db = _eccReferenceTemp !== null
+                    ? Math.abs(b.s.temp - _eccReferenceTemp) : 0;
+                return Math.abs(da - db) > 1.5 ? da - db : a.rank - b.rank;
+            });
+            var _eccWinner = _eccPool[0].s;
+            if (_eccWinner !== _eccWu) {
+                _eccWu = _eccWinner;
+                window.wuData = _eccWinner;
+            }
+        }
+        var _eccWuAvail = _eccPool.length > 0 && _eccIsValidStation(_eccWu);
+        window.wuDeviates = !_eccWuAvail;
+        var _eccWuStationEl = document.getElementById('wuStation');
+        var _eccWuLinkEl = document.getElementById('wuLink');
+        if (_eccWuAvail && _eccWu.stationId && _eccWuStationEl && _eccWuLinkEl) {
+            _eccWuLinkEl.innerText = _eccWu.stationId;
+            _eccWuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + _eccWu.stationId;
+            _eccWuStationEl.style.display = 'block';
+        } else if (_eccWuStationEl) {
+            _eccWuStationEl.style.display = 'none';
+        }
+
+        var _eccOfficialFallback = !_eccWuAvail && _eccOfficialTempF !== null;
+        var _eccPw = window.pirateCurrently || {};
+        var _eccSource = _eccWuAvail ? 'pws' : (_eccOfficialFallback ? 'ecc' : 'pirate');
+        var _eccTemp = null, _eccHumidity = null, _eccWind = null, _eccWindDir = null;
+        if (_eccSource === 'pws') {
+            _eccTemp = _eccWu.temp;
+            _eccHumidity = _eccWu.humidity;
+            _eccWind = _eccWu.windSpeed != null ? _eccWu.windSpeed
+                : (windMph != null ? windMph : _eccPw.windSpeed);
+            _eccWindDir = _eccWu.windSpeed != null ? _eccWu.windDir
+                : (windDir != null ? windDir : _eccPw.windBearing);
+        } else if (_eccSource === 'ecc') {
+            _eccTemp = _eccOfficialTempF;
+            _eccHumidity = hasHumidity ? humidity
+                : (_eccPw.humidity != null ? _eccPw.humidity * 100 : null);
+            _eccWind = windMph != null ? windMph : _eccPw.windSpeed;
+            _eccWindDir = windMph != null ? windDir : _eccPw.windBearing;
+        } else {
+            _eccTemp = _eccPw.temperature;
+            _eccHumidity = _eccPw.humidity != null ? _eccPw.humidity * 100 : null;
+            _eccWind = _eccPw.windSpeed;
+            _eccWindDir = _eccPw.windBearing;
+        }
+        if (_eccTemp != null && isFinite(_eccTemp)) {
+            window.liveTemp = Math.round(_eccTemp);
+            var _eccTempEl = document.getElementById('tempVal');
+            _eccTempEl.innerText = _fmtTemp(window.liveTemp);
+            _eccTempEl.style.color = colorFeelsLike(window.liveTemp);
+        }
+        if (_eccHumidity != null && isFinite(_eccHumidity)) {
+            var _eccHumEl = document.getElementById('humVal');
+            _eccHumEl.innerText = Math.round(_eccHumidity) + '%';
+            _eccHumEl.style.color = colorHumidity(Math.round(_eccHumidity));
+        }
+        if (_eccWind != null && isFinite(_eccWind)) {
+            liveWindSpd = Math.round(_eccWind);
+            document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
+            setWindCompass(liveWindSpd > 0 && _eccWindDir != null && isFinite(_eccWindDir)
+                ? _eccWindDir : null);
+        }
+
+        if (pressure !== null) lastPressureMb = pressure;
+        if (precipMm !== null && precipMm >= 0) {
+            window.nwsObsPrecip1h = precipMm / 25.4;
+            _updatePrecipCache(window.nwsObsPrecip1h);
+        }
+        var condition = _environmentCanadaCondition(
+            observation,
+            window.pirateCurrently && window.pirateCurrently.summary
+        );
+        currentCondition = condition;
+        document.getElementById('conditionText').innerText = condition;
+
+        // Feels-like calculation is the same NWS wind-chill/heat-index
+        // calculation, using the selected source values above.
+        var _eccFeels = null;
+        if (_eccSource === 'pirate' && _eccPw.apparentTemperature != null) {
+            _eccFeels = _eccPw.apparentTemperature;
+        } else if (_eccTemp != null && isFinite(_eccTemp)) {
+            var _eccRhForFeels = _eccHumidity;
+            if (_eccSource === 'pws') {
+                _eccRhForFeels = isFinite(_eccRhForFeels)
+                    ? Math.min(100, Math.max(0, _eccRhForFeels)) : 50;
+            } else {
+                _eccRhForFeels = isFinite(_eccRhForFeels)
+                    ? Math.min(100, Math.max(0, _eccRhForFeels)) : null;
+            }
+            if (_eccRhForFeels !== null && !(_eccTemp <= 50 && _eccWind == null)) {
+                _eccFeels = _eccTemp;
+                if (_eccTemp <= 50 && _eccWind >= 3) {
+                    _eccFeels = 35.74 + 0.6215 * _eccTemp -
+                        35.75 * Math.pow(_eccWind, 0.16) +
+                        0.4275 * _eccTemp * Math.pow(_eccWind, 0.16);
+                } else if (_eccTemp >= 70) {
+                    var _eccHiSimple = 0.5 * (_eccTemp + 61.0 +
+                        (_eccTemp - 68.0) * 1.2 + _eccRhForFeels * 0.094);
+                    if (_eccHiSimple >= 80) {
+                        var _eccHiRoth = -42.379 + 2.04901523 * _eccTemp +
+                            10.14333127 * _eccRhForFeels -
+                            0.22475541 * _eccTemp * _eccRhForFeels -
+                            0.00683783 * _eccTemp * _eccTemp -
+                            0.05391317 * _eccRhForFeels * _eccRhForFeels +
+                            0.00122874 * _eccTemp * _eccTemp * _eccRhForFeels +
+                            0.00085282 * _eccTemp * _eccRhForFeels * _eccRhForFeels -
+                            0.00000199 * _eccTemp * _eccTemp * _eccRhForFeels * _eccRhForFeels;
+                        if (_eccRhForFeels < 13 && _eccTemp >= 80 && _eccTemp <= 112) {
+                            _eccHiRoth -= (13 - _eccRhForFeels) / 4 *
+                                Math.sqrt((17 - Math.abs(_eccTemp - 95)) / 17);
+                        }
+                        if (_eccRhForFeels > 85 && _eccTemp >= 80 && _eccTemp <= 87) {
+                            _eccHiRoth += (_eccRhForFeels - 85) / 10 *
+                                (87 - _eccTemp) / 5;
+                        }
+                        _eccFeels = (_eccTemp + _eccHiRoth) / 2;
+                    } else {
+                        _eccFeels = _eccHiSimple;
+                    }
+                }
+            }
+        }
+        liveFeelsLike = _eccFeels;
+        if (liveFeelsLike !== null && isFinite(liveFeelsLike)) {
+            var _eccFeelsEl = document.getElementById('feelsVal');
+            _eccFeelsEl.innerText = _fmtTemp(Math.round(liveFeelsLike));
+            _eccFeelsEl.style.color = colorFeelsLike(Math.round(liveFeelsLike));
+        }
+        // If SWOB supplied no present-weather code, condition is the same
+        // PirateWeather summary used as the explicit fallback above. Resolve
+        // the icon from the displayed condition so text and icon cannot drift.
+        var conditionIconSource = condition;
+        if (condition === 'Reduced Visibility' || condition === 'No Present Weather Reported') {
+            conditionIconSource = window.pirateCurrently &&
+                (window.pirateCurrently.summary || window.pirateCurrently.icon);
+        }
+        var icon = _pwSummaryIcon(conditionIconSource, !!(
+            window.pirateCurrently && window.pirateCurrently.icon &&
+            window.pirateCurrently.icon.includes('night')
+        ));
+        var iconEl = document.getElementById('weatherIcon');
+        if (iconEl && icon) {
+            iconEl.src = icon;
+            iconEl.style.display = 'block';
+        } else if (iconEl) {
+            iconEl.style.display = 'none';
+        }
+        updateSmartComfort(
+            _eccTemp != null ? Math.round(_eccTemp) : 70,
+            liveFeelsLike,
+            _eccHumidity != null ? Math.round(_eccHumidity) : 50,
+            _eccWind != null ? Math.round(_eccWind) : 0,
+            condition,
+            liveUV,
+            (_eccPw.precipProbability || 0) * 100,
+            condition
+        );
+        _renderPWSQCPanel(
+            _eccWuAvail ? _eccWu : null,
+            tempF,
+            hasHumidity ? humidity : null,
+            tempF !== null,
+            'ECCC Obs'
+        );
+        startWeatherFX(condition);
+        startSkyFX(condition);
+        _wxReveal();
+        if (window.pirateHourlyData) {
+            renderHourlyOutlook(window.pirateHourlyData, window.pirateTimezoneOffset || 0);
+        }
+        if (reportingMap) setTimeout(loadReportingMapData, 0);
+        return true;
+    }
+
     async function fetchNWSChain(loadGeneration, requestLat, requestLon) {
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
         requestLat = requestLat == null ? lat : requestLat;
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
         try {
+            // Canada has an official airport/ASOS/AWOS observation path.
+            // Use it before the generic international PirateWeather branch.
+            if (String(window.locationCountryCode || '').toUpperCase() === 'CA') {
+                return await fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon);
+            }
             const pointsRes = await _weatherFetch('https://api.weather.gov/points/' + requestLat + ',' + requestLon,
                 requestSignal ? { signal: requestSignal } : undefined, 15000);
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-            if (!pointsRes.ok) { window.isOutsideUS = true; applyInternationalMode(); return; }
+            if (!pointsRes.ok) {
+                // The country lookup normally finishes in parallel, but the
+                // NWS failure is also a reliable signal for Canadian points.
+                var detectedCountry = String(window.locationCountryCode || '').toUpperCase();
+                if (!detectedCountry) detectedCountry = await _resolveInternationalCountryCode();
+                if (detectedCountry === 'CA') {
+                    try {
+                        return await fetchEnvironmentCanadaStationChain(
+                            loadGeneration, requestLat, requestLon
+                        );
+                    } catch (canadaError) {
+                        console.warn('[SkyMonitor] Environment Canada observation failed:', canadaError);
+                    }
+                }
+                window.isOutsideUS = true;
+                applyInternationalMode();
+                return;
+            }
             window.isOutsideUS = false; applyUSMode();
             const p = await pointsRes.json();
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
@@ -11047,6 +11719,10 @@
             const cb = document.getElementById('alerts-toggle-cb');
             return !!alertPolygonLayer && (cb ? cb.checked : alertsVisible) && reportingMap.hasLayer(alertPolygonLayer);
         }
+        if (source === 'environment-canada') {
+            const cb = document.getElementById('alerts-toggle-cb');
+            return !!alertPolygonLayer && (cb ? cb.checked : alertsVisible) && reportingMap.hasLayer(alertPolygonLayer);
+        }
         if (source === 'iem-lsr') {
             const cb = document.getElementById('lsr-toggle-cb');
             return !!lsrLayer && (cb ? cb.checked : lsrVisible) && reportingMap.hasLayer(lsrLayer);
@@ -12037,6 +12713,33 @@
         }
     }
 
+    function _updateReportingMapAttribution() {
+        var el = document.getElementById('reporting-map-attribution');
+        if (!el) return;
+        var radarAttribution = 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
+        el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+    }
+
+    function setReportingRadarLayerForLocation() {
+        if (!reportingMap || !window.L) return;
+        var L_ref = window.L;
+        // IEM/NEXRAD is the single reporting-map radar source. It remains
+        // consistent when the weather location changes between countries.
+        if (!reportingRadarLayer) {
+            reportingRadarLayer = L_ref.tileLayer(
+                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
+                {
+                    opacity: 0.65,
+                    attribution: 'Radar: IEM / NEXRAD',
+                    maxZoom: 18
+                }
+            );
+        }
+        if (reportingRadarLayer && radarVisible) reportingRadarLayer.addTo(reportingMap);
+        _updateReportingMapAttribution();
+        updateUSOnlyLayerLabels();
+    }
+
     function toggleReportingRadar() {
         const cb = document.getElementById('radar-toggle-cb');
         if (!reportingRadarLayer || !reportingMap) { if (cb) cb.checked = radarVisible; return; }
@@ -12254,11 +12957,8 @@
             subdomains: 'abcd', maxZoom: 19
         }).addTo(reportingMap);
 
-        // Layer 2 — radar, covers physical tiles
-        reportingRadarLayer = L_ref.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png', {
-            opacity: 0.65, attribution: 'Radar: IEM', maxZoom: 18
-        });
-        reportingRadarLayer.addTo(reportingMap);
+        // Layer 2 — one consistent IEM/NEXRAD radar source.
+        setReportingRadarLayerForLocation();
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
@@ -12270,7 +12970,7 @@
         lsrLayer = L_ref.layerGroup().addTo(reportingMap);
 
         // Restore saved toggle state — sync iOS toggle checkboxes
-        if (!radarVisible) {
+        if (!radarVisible && reportingRadarLayer) {
             reportingMap.removeLayer(reportingRadarLayer);
             const cb = document.getElementById('radar-toggle-cb');
             if (cb) cb.checked = false;
@@ -12377,51 +13077,125 @@
     async function loadReportingMapDataNow() {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
+        setReportingRadarLayerForLocation();
         syncReportingMapLayers();
 
-        // NWS Short-Fused alert polygons via IEM Storm-Based Warnings (always has polygon geometry)
+        // Load both official alert feeds on every refresh. Alert overlays are
+        // map data, not location-provider routing: a Canadian location should
+        // still show active NWS polygons, and a U.S. location should still
+        // show Canadian polygons whenever they are in the map view.
         try {
             alertPolygonLayer.clearLayers();
             removeReportingPopupEntries('nws');
-            const sbwRes = await fetch('https://mesonet.agron.iastate.edu/geojson/sbw.geojson');
-            if (sbwRes.ok) {
-                const sbwData = await sbwRes.json();
-                // phenomena codes for short-fused warnings
-                const shortFusedPhenomena = { TO:'#ff1744', SV:'#ff9100', FF:'#00c853', MA:'#29b6f6', SQ:'#81d4fa', EW:'#ff9100', DS:'#c8a800' };
-                (sbwData.features || []).forEach(function(f) {
-                    const ph = (f.properties.phenomena || '').toUpperCase();
-                    const sig = (f.properties.significance || '').toUpperCase();
-                    if (sig !== 'W') return; // warnings only
-                    if (!shortFusedPhenomena[ph]) return;
-                    // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
-                    if ((f.properties.type || '').toLowerCase().includes('statement')) return;
-                    if (!f.geometry) return;
-                    const color = shortFusedPhenomena[ph];
-                    const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
-                    const expiresText = f.properties.expire || f.properties.polygon_end;
-                    const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
-                    registerReportingPopup(_poly, {
-                        source: 'nws',
-                        isPolygon: true,
-                        color: color,
-                        title: escapeHtml(nwsEvent),
-                         meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
-                        detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
-                        loadDetails: function(latlng) {
-                            return loadNwsReportingDetails(
-                                null,
-                                latlng,
-                                nwsEvent,
-                                f.properties.wfo || ''
-                            );
-                        }
-                    });
-                    _poly.on('dblclick', function(e) {
-                        L_ref.DomEvent.stop(e);
-                        setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-                    });
-                    _poly.addTo(alertPolygonLayer);
+            removeReportingPopupEntries('environment-canada');
+            try {
+                // Fetch the full Canadian alert footprint rather than tying
+                // the feed to the weather-location country or current
+                // viewport. Leaflet will only display the polygons in view.
+                var canadaAlertUrl = ENVIRONMENT_CANADA_ALERTS_URL +
+                    '?f=json&lang=en-CA&limit=200&bbox=-141,41,-52,84';
+                var canadaRes = await fetch(canadaAlertUrl, {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/geo+json, application/json' }
                 });
+                if (canadaRes.ok) {
+                    var canadaPayload = await canadaRes.json();
+                    var canadaFeatures = Array.isArray(canadaPayload.features)
+                        ? canadaPayload.features : [];
+                    var seenCanadaAlerts = {};
+                    canadaFeatures.forEach(function(feature, index) {
+                        if (!feature || !feature.geometry) return;
+                        var shortFusedStyle = _environmentCanadaShortFusedStyle(feature);
+                        if (!shortFusedStyle) return;
+                        var normalized = _normalizeEnvironmentCanadaAlert(feature, index);
+                        var expiresMs = Date.parse(normalized.expires || '');
+                        if (expiresMs && expiresMs <= Date.now()) return;
+                        var key = normalized.id || [normalized.title, normalized.areaDesc, normalized.expires].join('|');
+                        if (seenCanadaAlerts[key]) return;
+                        seenCanadaAlerts[key] = true;
+                        var color = shortFusedStyle.color;
+                        var popupCopy = _environmentCanadaPopupCopy(normalized.description);
+                        var statusText = String(feature.properties && feature.properties.status_en || '').toLowerCase();
+                        var issuedLabel = statusText.indexOf('update') !== -1 ? 'Updated' : 'Issued';
+                        var polygon = L_ref.geoJSON(feature.geometry, {
+                            style: {
+                                color: color,
+                                weight: 2.5,
+                                opacity: 0.95,
+                                fillColor: color,
+                                fillOpacity: 0.2
+                            }
+                        });
+                        registerReportingPopup(polygon, {
+                            source: 'environment-canada',
+                            isPolygon: true,
+                            color: color,
+                            title: escapeHtml(normalized.title),
+                            meta: 'EC' +
+                                (normalized.expires ? ' \u00B7 Expires in ' +
+                                    escapeHtml(formatReportingMinutesUntil(normalized.expires)) : ''),
+                            detail: reportingPopupDetailRows([
+                                ['Area', normalized.areaDesc],
+                                [issuedLabel, normalized.issuedAt ? formatReportingDateTimeNoSeconds(normalized.issuedAt) : ''],
+                                ['Issued by', 'Environment Canada'],
+                                ['Valid through', normalized.expires ? formatReportingDateTimeNoSeconds(normalized.expires) : ''],
+                                ['Alert text', popupCopy.alertText],
+                                ['Instructions', popupCopy.instructions]
+                            ])
+                        });
+                        polygon.on('dblclick', function(e) {
+                            L_ref.DomEvent.stop(e);
+                            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+                        });
+                        polygon.addTo(alertPolygonLayer);
+                    });
+                }
+            } catch (e) {
+                console.warn('[SkyMonitor] Environment Canada map alerts failed:', e);
+            }
+            try {
+                const sbwRes = await fetch('https://mesonet.agron.iastate.edu/geojson/sbw.geojson');
+                if (sbwRes.ok) {
+                    const sbwData = await sbwRes.json();
+                    // phenomena codes for short-fused warnings
+                    const shortFusedPhenomena = { TO:'#ff1744', SV:'#ff9100', FF:'#00c853', MA:'#29b6f6', SQ:'#81d4fa', EW:'#ff9100', DS:'#c8a800' };
+                    (sbwData.features || []).forEach(function(f) {
+                        const ph = (f.properties.phenomena || '').toUpperCase();
+                        const sig = (f.properties.significance || '').toUpperCase();
+                        if (sig !== 'W') return; // warnings only
+                        if (!shortFusedPhenomena[ph]) return;
+                        // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
+                        if ((f.properties.type || '').toLowerCase().includes('statement')) return;
+                        if (!f.geometry) return;
+                        const color = shortFusedPhenomena[ph];
+                        const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
+                        const expiresText = f.properties.expire || f.properties.polygon_end;
+                        const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
+                        registerReportingPopup(_poly, {
+                            source: 'nws',
+                            isPolygon: true,
+                            color: color,
+                            title: escapeHtml(nwsEvent),
+                            meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
+                            detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
+                            loadDetails: function(latlng) {
+                                return loadNwsReportingDetails(
+                                    null,
+                                    latlng,
+                                    nwsEvent,
+                                    f.properties.wfo || ''
+                                );
+                            }
+                        });
+                        _poly.on('dblclick', function(e) {
+                            L_ref.DomEvent.stop(e);
+                            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+                        });
+                        _poly.addTo(alertPolygonLayer);
+                    });
+                }
+            } catch (e) {
+                console.warn('[SkyMonitor] NWS map alerts failed:', e);
             }
         } catch(e) {}
 
