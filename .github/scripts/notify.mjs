@@ -555,7 +555,7 @@ async function checkSPCAndWPC(row, vapid) {
     let mpdFetchOk = false;
     try {
       const mpdRes = await fetch(
-        `https://wpcmetwatch.skymonitor-account.workers.dev/?lat=${row.lat}&lon=${row.lon}`,
+        `https://api.skymonitor.app/api/weather/mpd?lat=${row.lat}&lon=${row.lon}`,
         { signal: AbortSignal.timeout(6000) }
       );
       if (mpdRes.ok) {
@@ -641,9 +641,9 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 // /api/push/vapid-public-key.  If that key differs from VAPID_PUBLIC_KEY
 // here, Apple will reject every push with BadJwtToken.
 {
-  const WORKER_URL = "https://skymonitor-push.skymonitor-account.workers.dev";
+  const WORKER_URL = "https://api.skymonitor.app";
   try {
-    const res  = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, { signal: AbortSignal.timeout(8000) });
+    const res  = await fetch(`${WORKER_URL}/api/push/broadcast`, { signal: AbortSignal.timeout(8000) });
     const data = await res.json();
     const workerKey = (data.publicKey || "").trim();
     const githubKey = (VAPID_PUB || "").trim();
