@@ -516,7 +516,7 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 {
   const WORKER_URL = "https://api.skymonitor.app";
   try {
-    const res  = await fetch(`${WORKER_URL}/api/push/broadcast`, { signal: AbortSignal.timeout(8000) });
+    const res  = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, { signal: AbortSignal.timeout(8000) });
     const data = await res.json();
     const workerKey = (data.publicKey || "").trim();
     const githubKey = (VAPID_PUB || "").trim();
