@@ -5084,6 +5084,23 @@
         return 'pirate';
     }
 
+    function _showInternationalAlertFallbackState(stack, banner, checklist) {
+        if (stack) {
+            stack.innerHTML =
+                "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>" +
+                "<div style='opacity:0.42; padding:0 20px 20px; font-size:0.72em;'>" +
+                "The alert feed is temporarily unavailable; weather loading will continue.</div>";
+        }
+        if (banner) {
+            banner.style.display = 'none';
+            banner.className = '';
+        }
+        if (checklist) checklist.style.display = 'none';
+        document.body.classList.remove(
+            'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
+        );
+    }
+
     async function _tryInternationalAlertFallback(stack, banner, checklist) {
         var countryCode = await _resolveInternationalCountryCode();
         var route = _internationalAlertRoute(countryCode);
@@ -5171,6 +5188,7 @@
         }
 
         console.warn('[SkyMonitor] All alert providers failed:', lastError);
+        _showInternationalAlertFallbackState(stack, banner, checklist);
         return false;
     }
 
@@ -6258,16 +6276,35 @@
             // International coverage is determined by the providers, not by
             // reverse-geocoder country metadata. This matters for remote
             // islands and border regions where Photon may return no country.
-            const internationalOk = await _tryInternationalAlertFallback(stack, banner, checklist);
+            // Alert lookup is secondary to the weather observation. A provider
+            // outage or rate limit must never strand the page in its loading
+            // state, so cap this branch independently.
+            const internationalOk = await Promise.race([
+                _tryInternationalAlertFallback(stack, banner, checklist),
+                new Promise(function(resolve) {
+                    setTimeout(function() {
+                        console.warn('[SkyMonitor] International alert lookup timed out; continuing weather load.');
+                        _showInternationalAlertFallbackState(stack, banner, checklist);
+                        resolve(false);
+                    }, 12000);
+                })
+            ]);
             if (!internationalOk && previousInternationalAlerts.length) {
                 // A transient international-provider failure must not leave the
                 // visible cards and the threat-state arrays out of sync.
                 window.meteoAlarmAlerts = previousInternationalAlerts;
                 window.pirateAlerts = previousInternationalAlerts;
                 _storeInternationalAlertState(previousInternationalAlerts);
+                if (_internationalAlertRoute(window.locationCountryCode) === 'pirate') {
+                    await renderPirateAlerts(stack, banner);
+                } else {
+                    await renderMeteoAlarmAlerts(stack, banner);
+                }
                 return true;
             }
-            return internationalOk;
+            // A failed alert provider is handled as an empty, non-blocking
+            // alert result. The next refresh will retry it.
+            return true;
         }
 
         try {
