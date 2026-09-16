@@ -4426,6 +4426,14 @@
         };
     }
 
+    function _isGenericMeteoAlarmAlert(alert) {
+        var generic = /^(?:european\s+weather\s+alert)(?:,\s*(?:red|orange|yellow|green)\s+level)?$/i;
+        var title = String(alert && alert.title || '').replace(/\s+/g, ' ').trim();
+        var event = String(alert && (alert.event || alert.eventType) || '')
+            .replace(/\s+/g, ' ').trim();
+        return generic.test(title) && (!event || generic.test(event));
+    }
+
     function _meteoAlarmOfficialUrl(alert) {
         var candidates = [
             alert && (alert.officialUrl || alert.official_url || alert.web),
@@ -4812,7 +4820,7 @@
                 : (Array.isArray(payload.features) ? payload.features
                     : (payload && payload.type === 'Feature' ? [payload] : [])));
         var alerts = sourceAlerts.map(_normalizeMeteoAlarmAlert).filter(function(a) {
-            return a.title || a.description;
+            return !_isGenericMeteoAlarmAlert(a) && (a.title || a.description);
         });
         // One alert can cover multiple European administrative areas. The API
         // can therefore return repeated polygon/region records for the same
@@ -4858,7 +4866,9 @@
     }
 
     async function renderMeteoAlarmAlerts(stack, banner) {
-        const alerts = window.meteoAlarmAlerts || [];
+        const alerts = (window.meteoAlarmAlerts || []).filter(function(alert) {
+            return !_isGenericMeteoAlarmAlert(alert);
+        });
         if (!alerts.length) {
             stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             banner.style.display = 'none';
