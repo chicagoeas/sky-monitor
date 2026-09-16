@@ -4787,10 +4787,9 @@
             ? window._weatherRequestController.signal : undefined;
         var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
             + '&lon=' + encodeURIComponent(requestLon == null ? lon : requestLon);
-        // MeteoAlarm provides the translation itself. "Default" leaves the
-        // language unset so the originating national service's default text is
-        // used; "English" explicitly requests the API's English info block.
-        if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
+        // Do not append a generic language=en query here. MeteoGate rejects
+        // that value on the warning endpoint; the Worker already selects the
+        // best available language block from each CAP detail response.
         // MeteoGate is a multi-step proxy request: location lookup, warning
         // pagination, and signed CAP detail retrieval. Give the hardened
         // worker enough time to finish its bounded fallback work instead of
@@ -4801,6 +4800,22 @@
         }, 20000);
         if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
         var payload = await res.json();
+        if (payload && payload.ok === false) {
+            // Expected upstream outages (rate limits, temporary 5xxs, or
+            // network failures) are data-source failures, not page failures.
+            // Keep the last complete set rather than turning the response into
+            // a rejected fetch and a red browser-console network error.
+            if (previousAlerts.length) {
+                window.meteoAlarmAlerts = previousAlerts;
+                window.pirateAlerts = previousAlerts;
+                _storeInternationalAlertState(previousAlerts);
+                return previousAlerts;
+            }
+            window.meteoAlarmAlerts = [];
+            window.pirateAlerts = [];
+            _storeInternationalAlertState([]);
+            return [];
+        }
         // The worker marks a response incomplete when one of MeteoGate's
         // paginated country requests failed. A partial response is not safe to
         // display as the complete current state: it can make one or two cards
@@ -5182,12 +5197,12 @@
                     ' returned no active alerts; trying the next provider.');
             } catch (providerError) {
                 lastError = providerError;
-                console.warn('[SkyMonitor] ' + provider.name +
-                    ' alert lookup failed; trying the next provider:', providerError);
+                console.debug('[SkyMonitor] ' + provider.name +
+                    ' alert lookup unavailable; trying the next provider.');
             }
         }
 
-        console.warn('[SkyMonitor] All alert providers failed:', lastError);
+        console.debug('[SkyMonitor] International alert feed unavailable; using fallback state.', lastError);
         _showInternationalAlertFallbackState(stack, banner, checklist);
         return false;
     }
@@ -6283,7 +6298,7 @@
                 _tryInternationalAlertFallback(stack, banner, checklist),
                 new Promise(function(resolve) {
                     setTimeout(function() {
-                        console.warn('[SkyMonitor] International alert lookup timed out; continuing weather load.');
+                        console.debug('[SkyMonitor] International alert lookup timed out; continuing weather load.');
                         _showInternationalAlertFallbackState(stack, banner, checklist);
                         resolve(false);
                     }, 12000);
