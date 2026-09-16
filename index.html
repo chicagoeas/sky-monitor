@@ -4773,6 +4773,8 @@
     // the relevant country/regions, fetches the official OGC API EDR records,
     // and follows their signed detail links before returning {alerts: [...]}.
     async function fetchMeteoAlarmAlerts(requestLat, requestLon) {
+        var previousAlerts = Array.isArray(window.meteoAlarmAlerts)
+            ? window.meteoAlarmAlerts.slice() : [];
         var requestSignal = window._weatherRequestController
             ? window._weatherRequestController.signal : undefined;
         var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
@@ -4781,12 +4783,29 @@
         // language unset so the originating national service's default text is
         // used; "English" explicitly requests the API's English info block.
         if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
+        // MeteoGate is a multi-step proxy request: location lookup, warning
+        // pagination, and signed CAP detail retrieval. Give the hardened
+        // worker enough time to finish its bounded fallback work instead of
+        // turning a slow-but-valid response into a client-side "no alerts".
         var res = await _weatherFetch(url, {
             cache: 'no-store',
             signal: requestSignal
-        }, 12000);
+        }, 20000);
         if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
         var payload = await res.json();
+        // The worker marks a response incomplete when one of MeteoGate's
+        // paginated country requests failed. A partial response is not safe to
+        // display as the complete current state: it can make one or two cards
+        // disappear until the next refresh. Keep the last known-good snapshot
+        // when one exists; the worker's detail fallback handles individual
+        // warning-detail failures.
+        if (payload && payload.complete === false && previousAlerts.length) {
+            console.warn('[SkyMonitor] MeteoAlarm returned a partial snapshot; keeping the previous alert set.');
+            window.meteoAlarmAlerts = previousAlerts;
+            window.pirateAlerts = previousAlerts;
+            _storeInternationalAlertState(previousAlerts);
+            return previousAlerts;
+        }
         var sourceAlerts = Array.isArray(payload)
             ? payload
             : (Array.isArray(payload.alerts) ? payload.alerts
@@ -6195,6 +6214,8 @@
         const stack = document.getElementById('alert-stack');
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
+        const previousInternationalAlerts = Array.isArray(window.meteoAlarmAlerts)
+            ? window.meteoAlarmAlerts.slice() : [];
         clearInterval(alertIntervalId);
         alertIntervalId = null;
         alertIntervalGen++;
@@ -6227,7 +6248,16 @@
             // International coverage is determined by the providers, not by
             // reverse-geocoder country metadata. This matters for remote
             // islands and border regions where Photon may return no country.
-            return await _tryInternationalAlertFallback(stack, banner, checklist);
+            const internationalOk = await _tryInternationalAlertFallback(stack, banner, checklist);
+            if (!internationalOk && previousInternationalAlerts.length) {
+                // A transient international-provider failure must not leave the
+                // visible cards and the threat-state arrays out of sync.
+                window.meteoAlarmAlerts = previousInternationalAlerts;
+                window.pirateAlerts = previousInternationalAlerts;
+                _storeInternationalAlertState(previousInternationalAlerts);
+                return true;
+            }
+            return internationalOk;
         }
 
         try {
