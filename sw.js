@@ -2,7 +2,7 @@
 // Bump CACHE_VERSION whenever you deploy a breaking change.
 // All three sub-caches share the same version prefix so a single bump clears
 // everything consistently.
-const CACHE_VERSION = 'skymonitor-v1.1.7.7';
+const CACHE_VERSION = 'skymonitor-v1.1.8';
 const STATIC_CACHE  = `${CACHE_VERSION}-static`;   // CDN libs — cache-first
 const IMAGE_CACHE   = `${CACHE_VERSION}-images`;   // small icons — cache-on-use
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;  // HTML + same-origin — network-first
@@ -414,12 +414,10 @@ self.addEventListener('push', (e) => {
 self.addEventListener('notificationclick', (e) => {
     e.notification.close();
 
-    const url = (
-        e.notification.data &&
-        e.notification.data.url
-    )
-        ? e.notification.data.url
-        : BASE_URL;
+    // Keep notification clicks on the main app shell. Older notifications may
+    // still carry a deep-link URL that now lands on the 404 screen, so do not
+    // trust notification.data.url here.
+    const url = BASE_URL;
 
     e.waitUntil(
         (async () => {
