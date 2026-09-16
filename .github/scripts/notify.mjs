@@ -1,6 +1,6 @@
 // SkyMonitor — GitHub Actions notification runner
 // Reads subscribers from Cloudflare D1 via REST API, sends Web Push notifications.
-// Runs every 5 minutes via .github/workflows/weather-notifications.yml
+// Runs every minute via cron-job.org; WPC MPD checks are gated to every fifth minute.
 //
 // Required GitHub Actions secrets:
 //   CF_API_TOKEN       — Cloudflare API token with D1:Edit permission
@@ -9,7 +9,6 @@
 //   VAPID_PUBLIC_KEY
 //   VAPID_PRIVATE_KEY
 //   VAPID_EMAIL        — e.g. mailto:you@example.com
-//   PIRATE_WEATHER_KEY — PirateWeather API key (for rain alerts)
 
 import { webcrypto } from "crypto";
 const { subtle } = webcrypto;
@@ -20,7 +19,6 @@ const CF_D1_DATABASE_ID = process.env.CF_D1_DATABASE_ID;
 const VAPID_PUB         = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIV        = process.env.VAPID_PRIVATE_KEY;
 const VAPID_EMAIL       = process.env.VAPID_EMAIL || "mailto:admin@skymonitor.app";
-const PIRATE_WEATHER    = process.env.PIRATE_WEATHER_KEY;
 
 for (const [k, v] of Object.entries({ CF_API_TOKEN, CF_ACCOUNT_ID, CF_D1_DATABASE_ID, VAPID_PUBLIC_KEY: VAPID_PUB, VAPID_PRIVATE_KEY: VAPID_PRIV })) {
   if (!v) { console.error(`[SkyMonitor] Missing required secret: ${k}`); process.exit(1); }
@@ -346,134 +344,9 @@ async function fetchArcGIS(url) {
   return undefined;
 }
 
-// ── Precipitation check ───────────────────────────────────────
-
-async function checkPrecipitation(row, vapid) {
-  if (!PIRATE_WEATHER) { console.log("[SkyMonitor] rain: skipped (PIRATE_WEATHER_KEY not set)"); return; }
-  if (row.precip_notified_until && new Date(row.precip_notified_until) > new Date()) {
-    console.log(`[SkyMonitor] rain: on cooldown until ${row.precip_notified_until}`); return;
-  }
-
-  let minutely = [], hourly = [], timezone = "UTC";
-  try {
-    const res = await fetch(
-      `https://api.pirateweather.net/forecast/${PIRATE_WEATHER}/${row.lat},${row.lon}?exclude=currently,daily,alerts&units=us`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) return;
-    const data = await res.json();
-    minutely = data.minutely?.data ?? [];
-    hourly   = data.hourly?.data   ?? [];
-    timezone = data.timezone       || "UTC";
-  } catch { return; }
-
-  if (minutely.length < 2) return;
-
-  const TRIGGER_THRESHOLD = 0.15;
-  const THUNDER_THRESHOLD = 0.02;
-  const HEAVY_THRESHOLD   = 0.40;
-  const END_THRESHOLD     = 0.02;
-  const LOOKAHEAD_MINS    = 15;
-  const COOLDOWN_HOURS    = 2;
-
-  const isThunderstorm = hourly.slice(0, 3).some(h => (h.icon || "").includes("thunder"));
-  const lookahead      = minutely.slice(1, LOOKAHEAD_MINS + 1);
-  const threshold      = isThunderstorm ? THUNDER_THRESHOLD : TRIGGER_THRESHOLD;
-  const startIndex     = lookahead.findIndex(m => (m.precipIntensity ?? 0) >= threshold);
-  if (startIndex === -1) { console.log("[SkyMonitor] rain: no precipitation expected in next 15 min"); return; }
-
-  const fullStartIdx = startIndex + 1;
-  const startEntry   = minutely[fullStartIdx];
-  const rawType      = startEntry?.precipType || hourly[0]?.precipType || "rain";
-  const precipType   = rawType.toLowerCase();
-
-  let fullEndIdx    = fullStartIdx;
-  let peakIntensity = startEntry?.precipIntensity ?? 0;
-  for (let i = fullStartIdx + 1; i < minutely.length; i++) {
-    const intensity = minutely[i]?.precipIntensity ?? 0;
-    if (intensity >= END_THRESHOLD) { fullEndIdx = i; if (intensity > peakIntensity) peakIntensity = intensity; }
-    else break;
-  }
-
-  let durationMins         = fullEndIdx - fullStartIdx + 1;
-  const minutelyWindowFull = fullEndIdx >= minutely.length - 2;
-
-  if (minutelyWindowFull && hourly.length > 0) {
-    const hrRainStart = hourly.findIndex(h => (h.precipIntensity ?? 0) >= END_THRESHOLD);
-    if (hrRainStart !== -1) {
-      let lastRainyHr = hrRainStart;
-      for (let i = hrRainStart + 1; i < hourly.length; i++) {
-        if ((hourly[i].precipIntensity ?? 0) >= END_THRESHOLD) {
-          lastRainyHr = i;
-          const hi = hourly[i].precipIntensity ?? 0;
-          if (hi > peakIntensity) peakIntensity = hi;
-        } else break;
-      }
-      durationMins = 60 + (lastRainyHr - hrRainStart) * 60;
-    }
-  }
-
-  const startTimestamp = startEntry?.time ?? (Date.now() / 1000 + (startIndex + 1) * 60);
-  const startTimeStr   = new Intl.DateTimeFormat("en-US", {
-    weekday: "short", month: "short", day: "numeric",
-    hour: "numeric", minute: "2-digit", hour12: true,
-    timeZone: timezone, timeZoneName: "short",
-  }).format(new Date(startTimestamp * 1000));
-
-  let precipWord, showerWord, title, emoji;
-  if      (precipType === "snow")  { precipWord = "Snow";  showerWord = "snow shower";       title = "Snow Alert";           emoji = "🌨️"; }
-  else if (precipType === "sleet") { precipWord = "Sleet"; showerWord = "wintry mix shower"; title = "Winter Weather Alert"; emoji = "🧊"; }
-  else                              { precipWord = "Rain";  showerWord = "rain shower";        title = "Rain Alert";           emoji = "🌧️"; }
-
-  let durationPhrase;
-  if      (durationMins < 20)  durationPhrase = null;
-  else if (durationMins < 50)  durationPhrase = `lasting about ${Math.round(durationMins / 5) * 5} minutes`;
-  else if (durationMins < 90)  durationPhrase = "lasting about an hour";
-  else if (durationMins < 240) durationPhrase = "continuing over the next hour or two";
-  else                          durationPhrase = "continuing over the next few hours";
-
-  const parts = [];
-  if (isThunderstorm) parts.push("Thunderstorms nearby.");
-  if (!durationPhrase) parts.push(`A brief ${showerWord} will begin around ${startTimeStr}.`);
-  else                 parts.push(`${precipWord} will begin around ${startTimeStr}, ${durationPhrase}.`);
-  if (peakIntensity >= HEAVY_THRESHOLD) {
-    if      (precipType === "snow")  parts.push("Snow heavy at times, accumulation likely.");
-    else if (precipType === "sleet") parts.push("Sleet heavy at times.");
-    else                              parts.push("Rain heavy at times.");
-  }
-
-  const subscription = JSON.parse(row.subscription);
-  const payload = JSON.stringify({
-    title: `${emoji} ${title}`, body: parts.join(" "),
-    icon: "https://cdn-icons-png.flaticon.com/512/1779/1779927.png",
-    badge: "https://cdn-icons-png.flaticon.com/512/1779/1779927.png",
-    tag: "precip-alert", url: "/sky-monitor/",
-  });
-
-  console.log(`[SkyMonitor] rain: ${precipType} starting in ~${startIndex + 1} min, sending push`);
-  try {
-    const req     = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
-    const res     = await fetch(req.url, req.init);
-    const rawBody = await res.text().catch(() => "");
-    console.log(`[SkyMonitor] rain push → HTTP ${res.status}${rawBody ? ` — ${rawBody}` : ""}`);
-    if (isDeadSubscription(res.status, rawBody)) {
-      if (res.status === 403) console.warn("[SkyMonitor] ⚠️  VAPID key mismatch (Apple) — subscription registered with a different key. Deleting; user must re-subscribe.");
-      await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
-      return;
-    }
-    if (res.ok || res.status === 201) {
-      const cooldownUntil = new Date(Date.now() + COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
-      await d1Query(
-        "UPDATE push_subscriptions SET precip_notified_until = ? WHERE endpoint = ?",
-        [cooldownUntil, row.endpoint]
-      );
-    }
-  } catch (e) { console.warn(`[SkyMonitor] rain push error: ${e.message}`); }
-}
-
 // ── SPC/WPC check ─────────────────────────────────────────────
 
-async function checkSPCAndWPC(row, vapid) {
+async function checkSPCAndWPC(row, vapid, checkMpd = true) {
   const prefs = row.prefs ? JSON.parse(row.prefs) : {};
   if (!prefs.spcOutlookEnabled && !prefs.spcMdEnabled && !prefs.wpcOutlookEnabled && !prefs.wpcMpdEnabled) {
     console.log("[SkyMonitor] SPC/WPC: skipped (all disabled in subscriber prefs)"); return;
@@ -550,7 +423,7 @@ async function checkSPCAndWPC(row, vapid) {
     }
   }
 
-  if (prefs.wpcMpdEnabled) {
+  if (checkMpd && prefs.wpcMpdEnabled) {
     let currentMpdNums = [];
     let mpdFetchOk = false;
     try {
@@ -659,6 +532,9 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
     console.warn(`[SkyMonitor] Could not reach Worker to verify key: ${e.message} — continuing anyway`);
   }
 }
+
+const CHECK_WPC_MPD_THIS_RUN = Math.floor(Date.now() / 60000) % 5 === 0;
+console.log(`[SkyMonitor] WPC MPD check this run: ${CHECK_WPC_MPD_THIS_RUN ? "yes" : "no"}`);
 
 const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 
@@ -777,16 +653,8 @@ for (const row of rows) {
   // (stale key — no point attempting more pushes that will also 403).
   if (subDeleted) continue;
 
-  // ── Rain (every run — GH Actions is already every 5 min) ──
-  if (prefs.rainEnabled !== false) {
-    try { await checkPrecipitation(row, vapid); }
-    catch (e) { console.warn(`[SkyMonitor] rain check error: ${e.message}`); }
-  } else {
-    console.log("[SkyMonitor] rain: disabled in subscriber prefs");
-  }
-
   // ── SPC/WPC nerd-mode ─────────────────────────────────────
-  try { await checkSPCAndWPC(row, vapid); }
+  try { await checkSPCAndWPC(row, vapid, CHECK_WPC_MPD_THIS_RUN); }
   catch (e) { console.warn(`[SkyMonitor] SPC/WPC check error: ${e.message}`); }
 }
 
