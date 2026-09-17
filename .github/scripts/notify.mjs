@@ -731,7 +731,9 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 // /api/push/vapid-public-key.  If that key differs from VAPID_PUBLIC_KEY
 // here, Apple will reject every push with BadJwtToken.
 {
-  const WORKER_URL = "https://api.skymonitor.app";
+  // Use the direct Worker hostname for the key check. The custom API domain
+  // is protected by Cloudflare Bot Fight Mode, which challenges GitHub Actions.
+  const WORKER_URL = "https://skymonitor-apis.skymonitor-account.workers.dev";
   try {
     const res = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, {
       signal: AbortSignal.timeout(8000),
