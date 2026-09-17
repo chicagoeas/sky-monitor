@@ -14967,6 +14967,10 @@
     // var SKYMONITOR_API = 'https://your-app-domain.example';
     // If your HTML is served from the same server as the API, leave it as '':
     var SKYMONITOR_API = WEATHER_WORKER_URL;
+    // Use the direct Worker hostname for the VAPID-key check. The custom API
+    // hostname is protected by Cloudflare Bot Fight Mode.
+    var SKYMONITOR_VAPID_KEY_URL = 'https://skymonitor-apis.skymonitor-account.workers.dev/api/push/vapid-public-key';
+    var SKYMONITOR_VAPID_KEY_STORAGE = 'skymonitor-vapid-public-key';
 
     // ——— PWA SERVICE WORKER + PUSH NOTIFICATIONS (v1.1.0) ———
     var _swReg = null;
@@ -14996,7 +15000,9 @@
             navigator.serviceWorker.register('./sw.js?v=20260911-radar-turnstile-fix').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
-                    setTimeout(checkNotifStatus, 1500);
+                    setTimeout(function() {
+                        _migratePushSubscriptionIfNeeded().then(checkNotifStatus);
+                    }, 1500);
                 }
                 _clearAppBadge();
             }).catch(function() {});
@@ -15037,6 +15043,134 @@
         var arr = new Uint8Array(raw.length);
         for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
         return arr;
+    }
+
+    function _pushSubscriptionKeyMatches(subscription, publicKey) {
+        try {
+            var storedKey = subscription &&
+                subscription.options &&
+                subscription.options.applicationServerKey;
+            // Some browsers do not expose applicationServerKey. null means
+            // "unknown", not "mismatch", so the one-time storage fallback
+            // below decides whether migration is needed.
+            if (!storedKey) return null;
+
+            var actual = new Uint8Array(storedKey);
+            var expected = _urlB64ToUint8(publicKey);
+            if (actual.length !== expected.length) return false;
+            for (var i = 0; i < expected.length; i++) {
+                if (actual[i] !== expected[i]) return false;
+            }
+            return true;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    var _pushMigrationPromise = null;
+
+    function _migratePushSubscriptionIfNeeded() {
+        if (_pushMigrationPromise) return _pushMigrationPromise;
+        if (!_swReg || !('PushManager' in window) ||
+            !('Notification' in window) ||
+            Notification.permission !== 'granted') {
+            return Promise.resolve(false);
+        }
+
+        _pushMigrationPromise = _swReg.pushManager.getSubscription()
+            .then(function(existing) {
+                // Do not create a subscription for someone who never enabled
+                // notifications. This migration only repairs existing users.
+                if (!existing) return false;
+
+                // The API requires coordinates when saving a subscription.
+                // If location has not loaded yet, the regular sync path will
+                // retry on its next interval.
+                if (!isFinite(Number(lat)) || !isFinite(Number(lon))) return false;
+
+                return fetch(SKYMONITOR_VAPID_KEY_URL, {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' }
+                }).then(function(response) {
+                    if (!response.ok) throw new Error('VAPID key endpoint returned ' + response.status);
+                    return response.json();
+                }).then(function(data) {
+                    var currentKey = String(data.publicKey || '').trim();
+                    if (!currentKey) throw new Error('VAPID key endpoint returned no publicKey');
+
+                    var keyMatches = _pushSubscriptionKeyMatches(existing, currentKey);
+                    var rememberedKey = '';
+                    try { rememberedKey = localStorage.getItem(SKYMONITOR_VAPID_KEY_STORAGE) || ''; } catch (_) {}
+
+                    // If the browser exposes the subscription key, use the
+                    // exact comparison. Otherwise migrate once when this
+                    // browser has not yet recorded the current key.
+                    if (keyMatches === true ||
+                        (keyMatches === null && rememberedKey === currentKey)) {
+                        try { localStorage.setItem(SKYMONITOR_VAPID_KEY_STORAGE, currentKey); } catch (_) {}
+                        syncPushLocation();
+                        return false;
+                    }
+
+                    var oldEndpoint = existing.endpoint;
+                    console.info('[SkyMonitor] Existing push subscription uses an older/unknown VAPID key; refreshing it silently.');
+
+                    // A browser will generally reject subscribe() while an
+                    // old subscription exists with another applicationServerKey.
+                    // Unsubscribe locally first; do not delete the server row
+                    // until the replacement has been saved successfully.
+                    return existing.unsubscribe().then(function() {
+                        return _swReg.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: _urlB64ToUint8(currentKey)
+                        });
+                    }).then(function(freshSubscription) {
+                        return fetch(SKYMONITOR_API + '/api/push/subscribe', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                subscription: freshSubscription.toJSON(),
+                                lat: lat,
+                                lon: lon,
+                                gpsLat: window._gpsLat,
+                                gpsLon: window._gpsLon,
+                                gpsCountryCode: window._gpsCountryCode || '',
+                                prefs: getNotifPrefs()
+                            })
+                        }).then(function(response) {
+                            if (!response.ok) {
+                                throw new Error('saving replacement subscription returned ' + response.status);
+                            }
+                            try { localStorage.setItem(SKYMONITOR_VAPID_KEY_STORAGE, currentKey); } catch (_) {}
+
+                            // Remove the old server record only after the new
+                            // subscription is confirmed saved.
+                            if (oldEndpoint && oldEndpoint !== freshSubscription.endpoint) {
+                                return fetch(SKYMONITOR_API + '/api/push/unsubscribe', {
+                                    method: 'DELETE',
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ endpoint: oldEndpoint })
+                                }).catch(function() {});
+                            }
+                        }).then(function() {
+                            console.info('[SkyMonitor] Push subscription refreshed for the current VAPID key.');
+                            return true;
+                        });
+                    });
+                });
+            })
+            .catch(function(error) {
+                // Keep this invisible during normal app startup. The existing
+                // notification button remains available as a manual fallback.
+                console.warn('[SkyMonitor] Automatic push subscription refresh skipped:', error.message);
+                return false;
+            })
+            .then(function(result) {
+                _pushMigrationPromise = null;
+                return result;
+            });
+
+        return _pushMigrationPromise;
     }
 
     function checkNotifStatus() {
