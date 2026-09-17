@@ -4660,15 +4660,33 @@
         };
     }
 
+    // Threat Level uses the same event vocabulary for every provider. Keep
+    // Environment Canada's user-facing title intact, but map its national
+    // "Wind Warning" product to the equivalent NWS "High Wind Warning" so it
+    // receives the same score, factor, and contextual description.
+    function _threatEventName(value) {
+        var event = String(value || '').replace(/\s+/g, ' ').trim();
+        var lower = event.toLowerCase();
+        if (lower === 'wind warning') return 'High Wind Warning';
+        if (lower === 'wind watch') return 'High Wind Watch';
+        return event;
+    }
+
     function _storeInternationalAlertState(alerts) {
         window.activeAlertEvents = [];
         window.activeAlertOnsets = {};
         window.activeAlertExpires = {};
         (alerts || []).forEach(function(alert) {
             var name = alert.title || alert.event || 'Weather alert';
+            var threatName = _threatEventName(name);
             if (!window.activeAlertEvents.includes(name)) window.activeAlertEvents.push(name);
             window.activeAlertOnsets[name] = _meteoAlarmTimestamp(alert.onset) || 0;
             window.activeAlertExpires[name] = _meteoAlarmTimestamp(alert.expires) || 0;
+            // Keep the normalized NWS-equivalent name time-aware too. This is
+            // important for Canadian alerts such as "Wind Warning", which are
+            // scored as "High Wind Warning" below without changing the card title.
+            window.activeAlertOnsets[threatName] = _meteoAlarmTimestamp(alert.onset) || 0;
+            window.activeAlertExpires[threatName] = _meteoAlarmTimestamp(alert.expires) || 0;
         });
     }
 
@@ -6222,6 +6240,7 @@
         window.alertHasConsiderableFlood = false;
         window.alertHasObservedCertainty = false;
         window.activeHeatWarning = false;
+        window.environmentCanadaAlerts = [];
 
         if (window.isOutsideUS) {
             // International coverage is determined by the providers, not by
@@ -9666,7 +9685,10 @@
         // official levels into the same score bands used below.
         var _intlAlertCount = 0;
         var _intlMaxSeverity = '';
-        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts)) {
+        var _hasEnvironmentCanadaAlerts = window.isOutsideUS &&
+            Array.isArray(window.environmentCanadaAlerts);
+        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts) &&
+            !_hasEnvironmentCanadaAlerts) {
             var _intlSeverityRank = { minor: 1, moderate: 2, severe: 3, extreme: 4 };
             var _intlSeverityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
             window.meteoAlarmAlerts.forEach(function(alert) {
@@ -9697,6 +9719,22 @@
             // strongest alert's severity.
             if (score > 12 && _intlAlertCount > 0) score = 12;
         }
+
+        // Canadian alerts now use the same per-event NWS scoring and
+        // description rules as domestic alerts. The display title remains
+        // provider-native, while _threatEventName supplies any needed
+        // NWS-equivalent vocabulary (for example, Wind Warning -> High Wind
+        // Warning). De-duplicate here so multiple CAP records for one hazard
+        // cannot add the same Threat Level factor twice.
+        const _threatAlertEvents = [];
+        const _seenThreatAlertEvents = {};
+        (window.activeAlertEvents || []).forEach(function(eventName) {
+            var threatName = _threatEventName(eventName);
+            var key = threatName.toLowerCase();
+            if (!key || _seenThreatAlertEvents[key]) return;
+            _seenThreatAlertEvents[key] = true;
+            _threatAlertEvents.push(threatName);
+        });
 
         // ── 1. SPC Convective Outlook ─────────────────or ────────────────────
         const spc = window.spcRisk;
@@ -9803,7 +9841,7 @@
             ['statement',                   1, null, '#aaaaaa', 'other'],
         ];
 
-        (window.activeAlertEvents || []).forEach(function(evtName) {
+        _threatAlertEvents.forEach(function(evtName) {
             var evtLower = evtName.toLowerCase();
             if (evtLower.includes('tornado warning')) return; // handled below with full sub-type logic
 
@@ -9897,11 +9935,11 @@
         }
         if (window.activeSVRWarning) nwsFamilyScores.svr =
             (window.activeSVRDestructive || window.alertHasConsiderableHail || window.alertHasConsiderableWind) ? 7 : 6;
-        if ((window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flash flood warning'); })) {
+        if (_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('flash flood warning'); })) {
             nwsFamilyScores.flashFlood = window.activeFFE ? 16 :
                 ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 9 : 6);
         }
-        if ((window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('special weather statement'); })) nwsFamilyScores.sps = 1;
+        if (_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('special weather statement'); })) nwsFamilyScores.sps = 1;
         (window.customSkyThreatAlerts || []).forEach(function(custom) {
             var existing = nwsFamilyScores[custom.family] || 0;
             var increment = Math.max(0, custom.score - existing);
@@ -9942,7 +9980,7 @@
             if (hasNearbyTornado)  { score += 3; factorList.push({ label: 'Tornado/funnel cloud reported', color: '#e040fb' }); }
             if (hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby rotation reported', color: '#ff1744' }); }
             if ((hasNearbyHail || hasNearbyWind) && !hasNearbyTornado && !hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby storm reports', color: '#ff9100' }); }
-            if (hasNearbyFlood && !(window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flood'); })) {
+            if (hasNearbyFlood && !_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('flood'); })) {
                 score += 1; factorList.push({ label: 'Flooding reported nearby', color: '#00bcd4' });
             }
         }
@@ -9955,7 +9993,7 @@
 
         // Precipitation intensity — only elevates score when a Flash Flood Warning is active
         // (regular Flood Warnings are river/drainage events, not rain-rate dependent)
-        const hasFlashFloodWarning = (window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flash flood warning'); });
+        const hasFlashFloodWarning = _threatAlertEvents.some(function(e) { return e.toLowerCase().includes('flash flood warning'); });
         if (livePrecipInt >= 0.3 && hasFlashFloodWarning)      { score += 2; factorList.push({ label: 'Heavy rainfall', color: '#00bcd4' }); }
         else if (livePrecipInt >= 0.15 && hasFlashFloodWarning) { score += 1; factorList.push({ label: 'Mod. rainfall', color: '#4fc3f7' }); }
 
@@ -9982,7 +10020,7 @@
         // ── 12. Tier Classification ───────────────────────────────────────
         // LIFE THREATENING, CRITICAL, and DANGEROUS are strictly flag-driven.
         // No score, no matter how high, can reach these tiers — only specific alert types can.
-        const _tierEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        const _tierEvtsLower = _threatAlertEvents.map(function(e) { return e.toLowerCase(); });
         const _hasExtremeWindWarning = _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
         const _hasTyphoonWarning     = _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
         const _hasHurricaneWarningNow = _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
@@ -10012,7 +10050,7 @@
         const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
         const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (
             customThreatFlags.tornado ||
-            (window.activeAlertEvents || []).some(function(e) {
+            _threatAlertEvents.some(function(e) {
             var el = e.toLowerCase();
             return _SHORT_FUSED.some(function(w) { return el.includes(w); });
             })
@@ -10028,7 +10066,7 @@
         else                           { tier = 'LOW';              tierClass = 'threat-tier-low';      emoji = '\uD83D\uDFE2'; badgeColor = '#00e676'; }
 
         // ── 13. Smart Contextual Description ─────────────────────────────
-        const _activeEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        const _activeEvtsLower = _threatAlertEvents.map(function(e) { return e.toLowerCase(); });
         // Build lowercase-keyed onset map — activeAlertOnsets stores keys with original casing
         const _onsetsByLower = {};
         Object.keys(window.activeAlertOnsets || {}).forEach(function(k) { _onsetsByLower[k.toLowerCase()] = window.activeAlertOnsets[k]; });
