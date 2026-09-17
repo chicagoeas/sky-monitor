@@ -1,5 +1,6 @@
 // SkyMonitor — GitHub Actions notification runner
-// Reads subscribers from Cloudflare D1 via REST API, sends Web Push notifications.
+// Reads subscribers from Cloudflare D1 via REST API, sends Web Push notifications
+// for NWS, Environment Canada, MeteoAlarm, and a broad international fallback.
 // Runs every minute via cron-job.org; WPC MPD checks are gated to every fifth minute.
 //
 // Required GitHub Actions secrets:
@@ -184,6 +185,214 @@ function isDeadSubscription(status, bodyText) {
   return false;
 }
 
+const METEOALARM_NOTIFICATION_COUNTRIES = new Set([
+  "AL", "AD", "AT", "BA", "BE", "BG", "CH", "CY", "CZ", "DE", "DK",
+  "EE", "ES", "FI", "FR", "GB", "GR", "HR", "HU", "IE", "IS", "IT",
+  "LI", "LT", "LU", "LV", "MC", "MD", "ME", "MK", "MT", "NL", "NO",
+  "PL", "PT", "RO", "RS", "SE", "SI", "SK", "SM", "TR", "UA", "VA", "XK",
+]);
+
+const IMPORTANT_ALERT_TYPES = [
+  "tornado warning", "tornado watch",
+  "severe thunderstorm warning", "severe thunderstorm watch",
+  "flash flood warning", "flash flood emergency", "flash flood watch",
+  "extreme wind", "hurricane warning", "storm surge warning",
+  "blizzard warning", "snow squall warning", "ice storm warning",
+  "winter storm warning", "tsunami warning", "dust storm warning",
+];
+
+function parsePushPreferences(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try { return JSON.parse(value) || {}; } catch { return {}; }
+}
+
+function pushGpsCoordinates(prefs) {
+  const lat = Number(prefs.gpsLat), lon = Number(prefs.gpsLon);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+}
+
+function gpsIsOutsideUS(prefs) {
+  const country = String(prefs.gpsCountryCode || "").trim().toUpperCase();
+  if (country) return country !== "US";
+  const gps = pushGpsCoordinates(prefs);
+  if (!gps) return false;
+  const alaska = gps.lat >= 51.2 && gps.lat <= 71.6 &&
+    gps.lon >= -170.5 && gps.lon <= -129.5;
+  const hawaii = gps.lat >= 18.7 && gps.lat <= 22.4 &&
+    gps.lon >= -160.5 && gps.lon <= -154.5;
+  if (alaska || hawaii) return false;
+  return gps.lat < 24.3 || gps.lat > 49.5 ||
+    gps.lon < -125 || gps.lon > -66.5;
+}
+
+function gpsCoversMeteoAlarm(prefs) {
+  const country = String(prefs.gpsCountryCode || "").trim().toUpperCase();
+  if (METEOALARM_NOTIFICATION_COUNTRIES.has(country)) return true;
+  const gps = pushGpsCoordinates(prefs);
+  return !!gps && gps.lat >= 34 && gps.lat <= 72 &&
+    gps.lon >= -25 && gps.lon <= 45;
+}
+
+function pushProductCoordinates(row, prefs) {
+  const gps = pushGpsCoordinates(prefs);
+  return gps && !gpsIsOutsideUS(prefs) ? gps : { lat: row.lat, lon: row.lon };
+}
+
+function pushPointInRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = Number(ring[i]?.[0]), yi = Number(ring[i]?.[1]);
+    const xj = Number(ring[j]?.[0]), yj = Number(ring[j]?.[1]);
+    if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+    if (((yi > lat) !== (yj > lat)) &&
+        lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function pushPointInGeoJson(lon, lat, geometry) {
+  if (!geometry) return false;
+  if (geometry.type === "Feature") return pushPointInGeoJson(lon, lat, geometry.geometry);
+  if (geometry.type === "Polygon") {
+    const rings = geometry.coordinates || [];
+    return rings.length > 0 &&
+      pushPointInRing(lon, lat, rings[0]) &&
+      rings.slice(1).every(ring => !pushPointInRing(lon, lat, ring));
+  }
+  if (geometry.type === "MultiPolygon") {
+    return (geometry.coordinates || []).some(polygon =>
+      pushPointInGeoJson(lon, lat, { type: "Polygon", coordinates: polygon }));
+  }
+  if (geometry.type === "GeometryCollection") {
+    return (geometry.geometries || []).some(item =>
+      pushPointInGeoJson(lon, lat, item));
+  }
+  return false;
+}
+
+async function fetchEnvironmentCanadaPushAlerts(lat, lon) {
+  const pad = 0.35;
+  const bbox = [lon - pad, lat - pad, lon + pad, lat + pad].join(",");
+  const url = `https://api.weather.gc.ca/collections/weather-alerts/items?f=json&lang=en-CA&limit=100&bbox=${encodeURIComponent(bbox)}`;
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/geo+json, application/json" },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) return [];
+    const payload = await res.json();
+    const now = Date.now();
+    return (payload.features || []).filter(feature => {
+      const p = feature?.properties || {};
+      const status = String(p.status_en || "").toLowerCase();
+      const expires = Date.parse(p.event_end_datetime || p.expiration_datetime || "");
+      return (!status || ["issued", "updated", "continued"].includes(status)) &&
+        (!expires || expires > now) &&
+        pushPointInGeoJson(lon, lat, feature.geometry);
+    }).map((feature, index) => {
+      const p = feature.properties || {};
+      const rawEvent = p.alert_name_en || p.alert_short_name_en ||
+        p.event_type_en || p.event_type || p.alert_event_en ||
+        p.alert_event || "Weather alert";
+      const event = String(rawEvent)
+        .replace(/\s*\(\s*(warning|watch|advisory|statement|alert)\s*\)\s*$/i, " $1")
+        .replace(/\s+/g, " ").trim();
+      const id = String(p.feature_id || feature.id || `environment-canada-${index}`)
+        .replace(/[^a-zA-Z0-9_-]/g, "_");
+      return {
+        provider: "environment-canada",
+        id: `ec:${id}`,
+        properties: {
+          event,
+          headline: p.alert_name_en || p.alert_short_name_en || event,
+          description: p.alert_text_en || p.alert_text || "",
+          expires: p.event_end_datetime || p.expiration_datetime || "",
+          messageType: "Alert",
+          status: "Actual",
+        },
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function fetchMeteoAlarmPushAlerts(lat, lon) {
+  const url = `https://api.skymonitor.app/api/weather/meteoalarm?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) return [];
+    const payload = await res.json();
+    return (payload.alerts || []).map((alert, index) => ({
+      provider: "meteoalarm",
+      id: `ma:${String(alert.id || `meteoalarm-${index}`).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+      properties: {
+        event: alert.event || alert.title || "European weather alert",
+        headline: alert.title || alert.event || "European weather alert",
+        description: alert.description || "",
+        instruction: alert.instruction || "",
+        expires: alert.expires || "",
+        severity: alert.severity || alert.awarenessLevel || "",
+        awarenessLevel: alert.awarenessLevel || "",
+        messageType: "Alert",
+        status: "Actual",
+      },
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchPiratePushAlerts(lat, lon) {
+  const url = `https://api.skymonitor.app/api/weather/pirate-alerts?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!res.ok) return [];
+    const payload = await res.json();
+    return (payload.alerts || []).map((alert, index) => ({
+      provider: "pirate",
+      id: `pw:${String(alert.id || `pirate-${index}`).replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+      properties: {
+        event: alert.event || alert.title || "Weather alert",
+        headline: alert.title || alert.event || "Weather alert",
+        description: alert.description || alert.headline || "",
+        expires: Number.isFinite(Number(alert.expires))
+          ? new Date(Number(alert.expires) * 1000).toISOString()
+          : String(alert.expires || ""),
+        messageType: "Alert",
+        status: "Actual",
+      },
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function pushMeteoAlarmSeverity(value) {
+  const raw = String(value || "").toLowerCase();
+  if (raw.includes("red") || raw.includes("extreme") || raw === "4") return "extreme";
+  if (raw.includes("orange") || raw.includes("severe") || raw === "3") return "severe";
+  if (raw.includes("yellow") || raw.includes("moderate") || raw === "2") return "moderate";
+  if (raw.includes("green") || raw.includes("minor") || raw === "1") return "minor";
+  return "moderate";
+}
+
+function pushAlertIsImportant(alert, prefs) {
+  if (alert.provider === "meteoalarm" && gpsCoversMeteoAlarm(prefs)) {
+    return ["severe", "extreme"].includes(
+      pushMeteoAlarmSeverity(alert.properties?.severity || alert.properties?.awarenessLevel));
+  }
+  const text = [
+    alert.properties?.event,
+    alert.properties?.headline,
+    alert.properties?.description,
+  ].join(" ").toLowerCase();
+  return IMPORTANT_ALERT_TYPES.some(type => text.includes(type));
+}
+
 // ── Notification builders ─────────────────────────────────────
 
 function buildAlertNotification(properties) {
@@ -347,13 +556,18 @@ async function fetchArcGIS(url) {
 // ── SPC/WPC check ─────────────────────────────────────────────
 
 async function checkSPCAndWPC(row, vapid, checkMpd = true) {
-  const prefs = row.prefs ? JSON.parse(row.prefs) : {};
+  const prefs = parsePushPreferences(row.prefs);
+  if (gpsIsOutsideUS(prefs)) {
+    console.log("[SkyMonitor] SPC/WPC: skipped (GPS outside the U.S.)");
+    return;
+  }
   if (!prefs.spcOutlookEnabled && !prefs.spcMdEnabled && !prefs.wpcOutlookEnabled && !prefs.wpcMpdEnabled) {
     console.log("[SkyMonitor] SPC/WPC: skipped (all disabled in subscriber prefs)"); return;
   }
 
   const subscription = JSON.parse(row.subscription);
-  const geo  = `geometry=${row.lon},${row.lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
+  const productCoords = pushProductCoordinates(row, prefs);
+  const geo  = `geometry=${productCoords.lon},${productCoords.lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json`;
   const BASE = "https://mapservices.weather.noaa.gov/vector/rest/services";
 
   const notifs  = [];
@@ -428,7 +642,7 @@ async function checkSPCAndWPC(row, vapid, checkMpd = true) {
     let mpdFetchOk = false;
     try {
       const mpdRes = await fetch(
-        `https://api.skymonitor.app/api/weather/mpd?lat=${row.lat}&lon=${row.lon}`,
+        `https://api.skymonitor.app/api/weather/mpd?lat=${productCoords.lat}&lon=${productCoords.lon}`,
         { signal: AbortSignal.timeout(6000) }
       );
       if (mpdRes.ok) {
@@ -567,7 +781,7 @@ console.log(`[SkyMonitor] ${rows.length} subscriber(s)`);
 
 for (const row of rows) {
   const knownIds = JSON.parse(row.known_alert_ids || "[]");
-  const prefs    = row.prefs ? JSON.parse(row.prefs) : {};
+  const prefs    = parsePushPreferences(row.prefs);
 
   // Diagnostic: show subscription fingerprint so we can verify a re-subscribe landed
   try {
@@ -579,6 +793,7 @@ for (const row of rows) {
 
   // ── NWS alerts ────────────────────────────────────────────
   let subDeleted = false;
+  let nwsPointQuerySucceeded = false;
   if (prefs.alertEnabled !== false) {
     let alerts = [];
     try {
@@ -588,6 +803,7 @@ for (const row of rows) {
       );
       console.log(`[SkyMonitor] NWS API → HTTP ${nwsRes.status} for (${row.lat},${row.lon})`);
       if (nwsRes.ok) {
+        nwsPointQuerySucceeded = true;
         alerts = (await nwsRes.json()).features ?? [];
         console.log(`[SkyMonitor] ${alerts.length} active alert(s): ${alerts.map(a => a.properties?.event).join(", ") || "none"}`);
       }
@@ -644,6 +860,103 @@ for (const row of rows) {
         await d1Query(
           "UPDATE push_subscriptions SET known_alert_ids = ?, updated_at = datetime('now') WHERE endpoint = ?",
           [JSON.stringify(newKnown), row.endpoint]
+        );
+      }
+    }
+  }
+
+  // ── Environment Canada / MeteoAlarm / broad international fallback ──
+  if (!subDeleted && prefs.alertEnabled !== false) {
+    const [canadaResult, meteoResult] = await Promise.allSettled([
+      fetchEnvironmentCanadaPushAlerts(row.lat, row.lon),
+      fetchMeteoAlarmPushAlerts(row.lat, row.lon),
+    ]);
+    let providerAlerts = [
+      ...(canadaResult.status === "fulfilled" ? canadaResult.value : []),
+      ...(meteoResult.status === "fulfilled" ? meteoResult.value : []),
+    ];
+    if (!nwsPointQuerySucceeded && providerAlerts.length === 0) {
+      providerAlerts = await fetchPiratePushAlerts(row.lat, row.lon);
+    }
+
+    // Re-read after the NWS block so a successful NWS send and international
+    // send in the same run share one deduplication state.
+    let rawKnown = knownIds;
+    try {
+      const latest = await d1Query(
+        "SELECT known_alert_ids FROM push_subscriptions WHERE endpoint = ?",
+        [row.endpoint],
+      );
+      rawKnown = JSON.parse(latest?.results?.[0]?.known_alert_ids || "[]");
+    } catch (err) {
+      console.warn(`[SkyMonitor] Could not refresh known alert IDs: ${err.message}`);
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const knownParsed = rawKnown.map(raw => {
+      const text = String(raw);
+      const pipe = text.lastIndexOf("|");
+      if (pipe < 0) return { raw: text, id: text, exp: Infinity };
+      return {
+        raw: text,
+        id: text.slice(0, pipe),
+        exp: parseInt(text.slice(pipe + 1), 10) || Infinity,
+      };
+    }).filter(entry => entry.exp > nowSec);
+    const knownSet = new Set(knownParsed.map(entry => entry.id));
+    const newAlerts = providerAlerts.filter(alert => {
+      if (knownSet.has(alert.id)) return false;
+      if (knownSet.has(String(alert.id).replace(/^(?:ec|ma|pw):/, ""))) return false;
+      return alert.properties?.messageType === "Alert" &&
+        alert.properties?.status === "Actual" &&
+        !String(alert.properties?.event || "").toLowerCase().includes("expir");
+    });
+    const filteredAlerts = prefs.alertType === "important"
+      ? newAlerts.filter(alert => pushAlertIsImportant(alert, prefs))
+      : newAlerts;
+
+    const sentInternationalIds = new Map();
+    const subscription = JSON.parse(row.subscription);
+    for (const alert of filteredAlerts) {
+      const { title, body } = buildAlertNotification(alert.properties);
+      const payload = JSON.stringify({
+        title, body,
+        icon: "https://cdn-icons-png.flaticon.com/512/1779/1779927.png",
+        badge: "https://cdn-icons-png.flaticon.com/512/1779/1779927.png",
+        tag: alert.id, url: "/sky-monitor/",
+      });
+      try {
+        const req = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
+        const res = await fetch(req.url, req.init);
+        const rawBody = res.ok ? "" : await res.text().catch(() => "");
+        if (isDeadSubscription(res.status, rawBody)) {
+          await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
+          subDeleted = true;
+          break;
+        }
+        if (res.ok || res.status === 201) {
+          const expiry = alert.properties?.expires;
+          const expiryTs = expiry
+            ? Math.floor(new Date(expiry).getTime() / 1000)
+            : nowSec + 86400 * 7;
+          sentInternationalIds.set(alert.id, `${alert.id}|${expiryTs}`);
+        }
+      } catch (err) {
+        console.warn(`[SkyMonitor] international alert push error: ${err.message}`);
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    if (!subDeleted) {
+      const merged = [
+        ...knownParsed.map(entry => entry.raw),
+        ...sentInternationalIds.values(),
+      ];
+      const newKnown = [...new Set(merged)].slice(-500);
+      if (JSON.stringify(newKnown) !== JSON.stringify(rawKnown)) {
+        await d1Query(
+          "UPDATE push_subscriptions SET known_alert_ids = ?, updated_at = datetime('now') WHERE endpoint = ?",
+          [JSON.stringify(newKnown), row.endpoint],
         );
       }
     }
