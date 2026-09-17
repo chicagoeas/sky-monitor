@@ -4426,14 +4426,6 @@
         };
     }
 
-    function _isGenericMeteoAlarmAlert(alert) {
-        var generic = /^(?:european\s+weather\s+alert)(?:,\s*(?:red|orange|yellow|green)\s+level)?$/i;
-        var title = String(alert && alert.title || '').replace(/\s+/g, ' ').trim();
-        var event = String(alert && (alert.event || alert.eventType) || '')
-            .replace(/\s+/g, ' ').trim();
-        return generic.test(title) && (!event || generic.test(event));
-    }
-
     function _meteoAlarmOfficialUrl(alert) {
         var candidates = [
             alert && (alert.officialUrl || alert.official_url || alert.web),
@@ -4781,61 +4773,27 @@
     // the relevant country/regions, fetches the official OGC API EDR records,
     // and follows their signed detail links before returning {alerts: [...]}.
     async function fetchMeteoAlarmAlerts(requestLat, requestLon) {
-        var previousAlerts = Array.isArray(window.meteoAlarmAlerts)
-            ? window.meteoAlarmAlerts.slice() : [];
         var requestSignal = window._weatherRequestController
             ? window._weatherRequestController.signal : undefined;
         var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
             + '&lon=' + encodeURIComponent(requestLon == null ? lon : requestLon);
-        // Do not append a generic language=en query here. MeteoGate rejects
-        // that value on the warning endpoint; the Worker already selects the
-        // best available language block from each CAP detail response.
-        // MeteoGate is a multi-step proxy request: location lookup, warning
-        // pagination, and signed CAP detail retrieval. Give the hardened
-        // worker enough time to finish its bounded fallback work instead of
-        // turning a slow-but-valid response into a client-side "no alerts".
+        // MeteoAlarm provides the translation itself. "Default" leaves the
+        // language unset so the originating national service's default text is
+        // used; "English" explicitly requests the API's English info block.
+        if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
         var res = await _weatherFetch(url, {
             cache: 'no-store',
             signal: requestSignal
-        }, 20000);
+        }, 12000);
         if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
         var payload = await res.json();
-        if (payload && payload.ok === false) {
-            // Expected upstream outages (rate limits, temporary 5xxs, or
-            // network failures) are data-source failures, not page failures.
-            // Keep the last complete set rather than turning the response into
-            // a rejected fetch and a red browser-console network error.
-            if (previousAlerts.length) {
-                window.meteoAlarmAlerts = previousAlerts;
-                window.pirateAlerts = previousAlerts;
-                _storeInternationalAlertState(previousAlerts);
-                return previousAlerts;
-            }
-            window.meteoAlarmAlerts = [];
-            window.pirateAlerts = [];
-            _storeInternationalAlertState([]);
-            return [];
-        }
-        // The worker marks a response incomplete when one of MeteoGate's
-        // paginated country requests failed. A partial response is not safe to
-        // display as the complete current state: it can make one or two cards
-        // disappear until the next refresh. Keep the last known-good snapshot
-        // when one exists; the worker's detail fallback handles individual
-        // warning-detail failures.
-        if (payload && payload.complete === false && previousAlerts.length) {
-            console.warn('[SkyMonitor] MeteoAlarm returned a partial snapshot; keeping the previous alert set.');
-            window.meteoAlarmAlerts = previousAlerts;
-            window.pirateAlerts = previousAlerts;
-            _storeInternationalAlertState(previousAlerts);
-            return previousAlerts;
-        }
         var sourceAlerts = Array.isArray(payload)
             ? payload
             : (Array.isArray(payload.alerts) ? payload.alerts
                 : (Array.isArray(payload.features) ? payload.features
                     : (payload && payload.type === 'Feature' ? [payload] : [])));
         var alerts = sourceAlerts.map(_normalizeMeteoAlarmAlert).filter(function(a) {
-            return !_isGenericMeteoAlarmAlert(a) && (a.title || a.description);
+            return a.title || a.description;
         });
         // One alert can cover multiple European administrative areas. The API
         // can therefore return repeated polygon/region records for the same
@@ -4881,9 +4839,7 @@
     }
 
     async function renderMeteoAlarmAlerts(stack, banner) {
-        const alerts = (window.meteoAlarmAlerts || []).filter(function(alert) {
-            return !_isGenericMeteoAlarmAlert(alert);
-        });
+        const alerts = window.meteoAlarmAlerts || [];
         if (!alerts.length) {
             stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             banner.style.display = 'none';
@@ -5099,23 +5055,6 @@
         return 'pirate';
     }
 
-    function _showInternationalAlertFallbackState(stack, banner, checklist) {
-        if (stack) {
-            stack.innerHTML =
-                "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>" +
-                "<div style='opacity:0.42; padding:0 20px 20px; font-size:0.72em;'>" +
-                "The alert feed is temporarily unavailable; weather loading will continue.</div>";
-        }
-        if (banner) {
-            banner.style.display = 'none';
-            banner.className = '';
-        }
-        if (checklist) checklist.style.display = 'none';
-        document.body.classList.remove(
-            'theme-tor', 'theme-svr', 'theme-ffw', 'emergency-banner'
-        );
-    }
-
     async function _tryInternationalAlertFallback(stack, banner, checklist) {
         var countryCode = await _resolveInternationalCountryCode();
         var route = _internationalAlertRoute(countryCode);
@@ -5197,13 +5136,12 @@
                     ' returned no active alerts; trying the next provider.');
             } catch (providerError) {
                 lastError = providerError;
-                console.debug('[SkyMonitor] ' + provider.name +
-                    ' alert lookup unavailable; trying the next provider.');
+                console.warn('[SkyMonitor] ' + provider.name +
+                    ' alert lookup failed; trying the next provider:', providerError);
             }
         }
 
-        console.debug('[SkyMonitor] International alert feed unavailable; using fallback state.', lastError);
-        _showInternationalAlertFallbackState(stack, banner, checklist);
+        console.warn('[SkyMonitor] All alert providers failed:', lastError);
         return false;
     }
 
@@ -6257,8 +6195,6 @@
         const stack = document.getElementById('alert-stack');
         const banner = document.getElementById('alert-banner');
         const checklist = document.getElementById('safety-checklist');
-        const previousInternationalAlerts = Array.isArray(window.meteoAlarmAlerts)
-            ? window.meteoAlarmAlerts.slice() : [];
         clearInterval(alertIntervalId);
         alertIntervalId = null;
         alertIntervalGen++;
@@ -6291,35 +6227,7 @@
             // International coverage is determined by the providers, not by
             // reverse-geocoder country metadata. This matters for remote
             // islands and border regions where Photon may return no country.
-            // Alert lookup is secondary to the weather observation. A provider
-            // outage or rate limit must never strand the page in its loading
-            // state, so cap this branch independently.
-            const internationalOk = await Promise.race([
-                _tryInternationalAlertFallback(stack, banner, checklist),
-                new Promise(function(resolve) {
-                    setTimeout(function() {
-                        console.debug('[SkyMonitor] International alert lookup timed out; continuing weather load.');
-                        _showInternationalAlertFallbackState(stack, banner, checklist);
-                        resolve(false);
-                    }, 12000);
-                })
-            ]);
-            if (!internationalOk && previousInternationalAlerts.length) {
-                // A transient international-provider failure must not leave the
-                // visible cards and the threat-state arrays out of sync.
-                window.meteoAlarmAlerts = previousInternationalAlerts;
-                window.pirateAlerts = previousInternationalAlerts;
-                _storeInternationalAlertState(previousInternationalAlerts);
-                if (_internationalAlertRoute(window.locationCountryCode) === 'pirate') {
-                    await renderPirateAlerts(stack, banner);
-                } else {
-                    await renderMeteoAlarmAlerts(stack, banner);
-                }
-                return true;
-            }
-            // A failed alert provider is handled as an empty, non-blocking
-            // alert result. The next refresh will retry it.
-            return true;
+            return await _tryInternationalAlertFallback(stack, banner, checklist);
         }
 
         try {
