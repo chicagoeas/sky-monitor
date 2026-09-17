@@ -1303,11 +1303,11 @@
                     <button id="pref-alert-all" class="btn-opt active" onclick="setAlertType('all')" style="flex:1;">ALL</button>
                     <button id="pref-alert-important" class="btn-opt" onclick="setAlertType('important')" style="flex:1;">IMPORTANT ONLY</button>
                 </div>
-                <div style="font-size:0.63em; color:#556677; margin-top:8px; line-height:1.4;">Important = tornado, severe thunderstorm, flash flood &amp; other short-fused warnings only</div>
+                <div id="notif-important-help" style="font-size:0.63em; color:#556677; margin-top:8px; line-height:1.4;">Important = tornado, severe thunderstorm, flash flood &amp; other short-fused warnings only</div>
             </div>
         </div>
         <!-- Advanced / Nerd Mode -->
-        <div style="border-top:1px solid rgba(255,255,255,0.07); padding-top:14px; margin-top:4px;">
+        <div id="us-advanced-notifications" style="border-top:1px solid rgba(255,255,255,0.07); padding-top:14px; margin-top:4px;">
             <div style="font-size:0.65em; color:#556677; letter-spacing:2px; font-weight:700; margin-bottom:12px;">ADVANCED NOTIFICATIONS</div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
@@ -1349,6 +1349,9 @@
                     <span class="ios-toggle-track"></span>
                 </label>
             </div>
+        </div>
+        <div id="us-advanced-notifications-note" style="display:none; border-top:1px solid rgba(255,255,255,0.07); padding-top:14px; margin-top:4px; font-size:0.68em; line-height:1.45; color:#778899;">
+            SPC/WPC outlooks and mesoscale discussions are only available for U.S. GPS locations.
         </div>
         <button onclick="saveNotifPrefs(); closeNotifPrefs();" style="width:100%; margin-top:20px; padding:12px; background:#34c759; border:none; border-radius:10px; color:white; font-weight:900; font-size:0.8em; letter-spacing:1px; cursor:pointer;">SAVE</button>
     </div>
@@ -1969,6 +1972,12 @@
     window.pirateHourlyData = null;
     window.pirateTimezoneOffset = 0;
     window._locFromGPS = false;
+    // Keep the last real browser GPS fix separate from the location the user
+    // is currently viewing.  Notification eligibility for U.S.-only products
+    // must follow this value, not a manually entered/search location.
+    window._gpsLat = parseFloat(localStorage.getItem('skymonitor_gps_lat') || '');
+    window._gpsLon = parseFloat(localStorage.getItem('skymonitor_gps_lon') || '');
+    window._gpsCountryCode = String(localStorage.getItem('skymonitor_gps_country') || '').toUpperCase();
     window._reportPinInitialized = false;
     window.isOutsideUS = false;
     window.isWaterLocation = false;
@@ -2643,6 +2652,7 @@
                 localStorage.setItem('waddle_lat', String(lat));
                 localStorage.setItem('waddle_lon', String(lon));
                 window._locFromGPS = true;
+                _rememberGpsLocation(newLat, newLon);
                 if (moved) {
                     _updateLivePanelCity(lat, lon);
                     recalculateReportPinForLocation(lat, lon, true);
@@ -3586,10 +3596,41 @@
                 const cityBox = document.getElementById('cityInput');
                 if (cityBox) cityBox.value = '';
                 window._locFromGPS = true;
+                _rememberGpsLocation(lat, lon);
                 recalculateReportPinForLocation(lat, lon, true);
                 updateLocation();
             }, function() { alert('GPS Access Denied'); });
         }
+    }
+
+    function _rememberGpsLocation(gpsLat, gpsLon) {
+        gpsLat = parseFloat(gpsLat);
+        gpsLon = parseFloat(gpsLon);
+        if (!isFinite(gpsLat) || !isFinite(gpsLon)) return;
+        window._gpsLat = gpsLat;
+        window._gpsLon = gpsLon;
+        window._gpsCountryCode = '';
+        localStorage.setItem('skymonitor_gps_lat', String(gpsLat));
+        localStorage.setItem('skymonitor_gps_lon', String(gpsLon));
+        localStorage.removeItem('skymonitor_gps_country');
+        SkyDB.set(SkyDB.S.settings, 'skymonitor_gps_lat', String(gpsLat));
+        SkyDB.set(SkyDB.S.settings, 'skymonitor_gps_lon', String(gpsLon));
+
+        // Reverse-geocode only the actual GPS fix.  This is deliberately not
+        // tied to the searched weather location.
+        Promise.resolve(_osmGeocodeFetch('reverse', { lat: gpsLat, lon: gpsLon }))
+            .then(function(result) {
+                var code = result && (result.country_code || result.countryCode);
+                if (!code) return;
+                window._gpsCountryCode = String(code).toUpperCase();
+                localStorage.setItem('skymonitor_gps_country', window._gpsCountryCode);
+                SkyDB.set(SkyDB.S.settings, 'skymonitor_gps_country', window._gpsCountryCode);
+                _updateNotificationProviderVisibility();
+                syncPushLocation();
+            })
+            .catch(function() {});
+        _updateNotificationProviderVisibility();
+        syncPushLocation();
     }
 
     function consumeInfoLocationHandoff() {
@@ -14745,7 +14786,15 @@
                 fetch(SKYMONITOR_API + '/api/push/subscribe', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon, prefs: getNotifPrefs() })
+                    body: JSON.stringify({
+                        subscription: sub.toJSON(),
+                        lat: lat,
+                        lon: lon,
+                        gpsLat: window._gpsLat,
+                        gpsLon: window._gpsLon,
+                        gpsCountryCode: window._gpsCountryCode || '',
+                        prefs: getNotifPrefs()
+                    })
                 }).catch(function() {});
             }
         }).catch(function() {});
@@ -15050,7 +15099,15 @@
                     return fetch(SKYMONITOR_API + '/api/push/subscribe', {
                         method: 'POST',
                         headers: {'Content-Type':'application/json'},
-                        body: JSON.stringify({ subscription: sub.toJSON(), lat: lat, lon: lon, prefs: getNotifPrefs() })
+                        body: JSON.stringify({
+                            subscription: sub.toJSON(),
+                            lat: lat,
+                            lon: lon,
+                            gpsLat: window._gpsLat,
+                            gpsLon: window._gpsLon,
+                            gpsCountryCode: window._gpsCountryCode || '',
+                            prefs: getNotifPrefs()
+                        })
                     }).catch(function(e) {
                         alert('Step 3 failed (save to server): ' + e.message + '\n\nThe Worker may still have a CORS issue. Check that you re-pasted the updated worker code.'); throw e;
                     }).then(function() { _setNotifBtnState(true); });
@@ -15069,6 +15126,48 @@
             wpcOutlookEnabled: localStorage.getItem('pref_wpc_outlook') === 'true',
             wpcMpdEnabled:     localStorage.getItem('pref_wpc_mpd') === 'true',
         };
+    }
+
+    const _METEOALARM_NOTIFICATION_COUNTRIES = {
+        AL:true, AD:true, AT:true, BA:true, BE:true, BG:true, CH:true, CY:true,
+        CZ:true, DE:true, DK:true, EE:true, ES:true, FI:true, FR:true, GB:true,
+        GR:true, HR:true, HU:true, IE:true, IS:true, IT:true, LI:true, LT:true,
+        LU:true, LV:true, MC:true, MD:true, ME:true, MK:true, MT:true, NL:true,
+        NO:true, PL:true, PT:true, RO:true, RS:true, SE:true, SI:true, SK:true,
+        SM:true, TR:true, UA:true, VA:true, XK:true
+    };
+
+    function _gpsIsClearlyOutsideUS() {
+        var code = String(window._gpsCountryCode || '').toUpperCase();
+        if (code) return code !== 'US';
+        var la = Number(window._gpsLat), lo = Number(window._gpsLon);
+        if (!isFinite(la) || !isFinite(lo)) return false;
+        var alaska = la >= 51.2 && la <= 71.6 && lo >= -170.5 && lo <= -129.5;
+        var hawaii = la >= 18.7 && la <= 22.4 && lo >= -160.5 && lo <= -154.5;
+        if (alaska || hawaii) return false;
+        // Keep the CONUS rectangle conservative so Canada/Mexico near the
+        // border are resolved by reverse geocoding instead of guessed.
+        return la < 24.3 || la > 49.5 || lo < -125 || lo > -66.5;
+    }
+
+    function _updateNotificationProviderVisibility() {
+        var advanced = document.getElementById('us-advanced-notifications');
+        var note = document.getElementById('us-advanced-notifications-note');
+        var outsideUS = _gpsIsClearlyOutsideUS();
+        if (advanced) advanced.style.display = outsideUS ? 'none' : '';
+        if (note) note.style.display = outsideUS ? 'block' : 'none';
+
+        var help = document.getElementById('notif-important-help');
+        var code = String(window._gpsCountryCode || '').toUpperCase();
+        var gpsLooksEuropean = isFinite(Number(window._gpsLat)) &&
+            isFinite(Number(window._gpsLon)) &&
+            Number(window._gpsLat) >= 34 && Number(window._gpsLat) <= 72 &&
+            Number(window._gpsLon) >= -25 && Number(window._gpsLon) <= 45;
+        if (help) {
+            help.textContent = (_METEOALARM_NOTIFICATION_COUNTRIES[code] || (!code && gpsLooksEuropean))
+                ? 'Important = orange level warnings or higher'
+                : 'Important = tornado, severe thunderstorm, flash flood & other short-fused warnings only';
+        }
     }
 
     function saveNotifPrefs() {
@@ -15103,6 +15202,7 @@
     }
 
     function openNotifPrefs() {
+        _updateNotificationProviderVisibility();
         var prefs = getNotifPrefs();
         document.getElementById('pref-alert-enabled').checked = prefs.alertEnabled;
         document.getElementById('pref-spc-outlook').checked   = prefs.spcOutlookEnabled;
@@ -15224,6 +15324,7 @@
 
     window.onload = function() {
         loadLoc();
+        _updateNotificationProviderVisibility();
         SkyDB.migrate();
         // Dismiss launch screen once data loads, or after 4s max
         window._dismissLaunch = function() {
