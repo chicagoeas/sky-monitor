@@ -4660,10 +4660,10 @@
         };
     }
 
-    // Threat Level uses the same event vocabulary for every provider. Keep
-    // Environment Canada's user-facing title intact, but map its national
-    // "Wind Warning" product to the equivalent NWS "High Wind Warning" so it
-    // receives the same score, factor, and contextual description.
+        // Threat Level uses the same event vocabulary for every provider. Keep
+        // Environment Canada's user-facing title intact, but map its national
+        // "Wind Warning" product internally to the equivalent NWS rule. The
+        // original provider name is restored anywhere this is displayed.
     function _threatEventName(value) {
         var event = String(value || '').replace(/\s+/g, ' ').trim();
         var lower = event.toLowerCase();
@@ -9615,7 +9615,7 @@
         // ── Tier 4: Specific warnings (less severe) ───────────────────────
         if (flags.winterStormWarning) return 'A Winter Storm Warning is in effect. Heavy snow, sleet, or freezing rain will create hazardous travel conditions. Avoid unnecessary travel.';
         if (flags.windChillWarning) return 'A Wind Chill Warning is in effect. Dangerously cold wind chills may cause frostbite on exposed skin in minutes. Limit time outdoors and dress in layers.';
-        if (flags.highWindWarning) return 'A High Wind Warning is in effect. Damaging winds may knock down trees and power lines and make driving difficult. Secure loose outdoor items.';
+        if (flags.highWindWarning) return (flags.windWarningLabel ? 'A Wind Warning' : 'A High Wind Warning') + ' is in effect. Damaging winds may knock down trees and power lines and make driving difficult. Secure loose outdoor items.';
         // ── Multi-hazard check (before single-category fallbacks) ─────────
         const cats = Object.keys(hazardCats);
         if (cats.length >= 3) return 'Multiple simultaneous hazards are active. This is a complex weather event — follow all active NWS guidance closely.';
@@ -9863,7 +9863,19 @@
                 if (evtLower.includes(row[0])) {
                     score += row[1];
                     hazardCats[row[4]] = (hazardCats[row[4]] || 0) + 1;
-                    factorList.push({ label: row[2] || evtName, color: row[3] });
+                    var factorLabel = row[2] || evtName;
+                    // Canonical scoring names are internal only. If a
+                    // provider-specific title was normalized to reach this
+                    // NWS rule, keep that original title in the visible
+                    // factor for every alert type.
+                    var sourceEventName = (window.activeAlertEvents || []).find(function(name) {
+                        return _threatEventName(name).toLowerCase() === evtLower;
+                    });
+                    if (sourceEventName &&
+                        sourceEventName.toLowerCase() !== evtLower) {
+                        factorLabel = sourceEventName;
+                    }
+                    factorList.push({ label: factorLabel, color: row[3] });
                     break;
                 }
             }
@@ -10093,6 +10105,9 @@
             // Wind
             extremeWindWarning: _activeNow('extreme wind warning'),
             highWindWarning:    _activeNow('high wind warning') && !_activeNow('extreme wind warning'),
+            windWarningLabel:   (window.activeAlertEvents || []).some(function(e) {
+                return e.toLowerCase() === 'wind warning';
+            }),
             // Watches
             tornadoWatch:       _activeNow('tornado watch'),
             svrWatch:           _activeNow('severe thunderstorm watch') && !_activeNow('tornado watch'),
