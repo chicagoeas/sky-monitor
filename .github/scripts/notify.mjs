@@ -733,9 +733,21 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 {
   const WORKER_URL = "https://api.skymonitor.app";
   try {
-    const res  = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, { signal: AbortSignal.timeout(8000) });
+    const res = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, {
+      signal: AbortSignal.timeout(8000),
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "SkyMonitor-GitHubActions/1.1",
+      },
+    });
     if (!res.ok) {
-      throw new Error(`Worker returned HTTP ${res.status}`);
+      const responseBody = await res.text().catch(() => "");
+      const rayId = res.headers.get("cf-ray") || "not provided";
+      throw new Error(
+        `Worker returned HTTP ${res.status} ` +
+        `(Cloudflare Ray ID: ${rayId})` +
+        (responseBody ? ` — ${responseBody.slice(0, 300)}` : "")
+      );
     }
     const contentType = res.headers.get("content-type") || "";
     if (!contentType.toLowerCase().includes("application/json")) {
