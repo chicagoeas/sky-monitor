@@ -1993,6 +1993,11 @@
     // v1.0.5: Full per-alert-type scoring
     window.activeAlertEvents = [];
     window.nwsBannerScore = 0;
+    // Keep every alert's time window even when multiple CAP records share the
+    // same event name (for example, one current and one future Red Flag
+    // Warning). The display/scoring list is intentionally de-duplicated, but
+    // timing decisions must consider all matching records.
+    window.activeAlertWindows = {};
     // Per-event expiry timestamps (ms) — lets hourly scoring know exactly which
     // hours a warning like a Flash Flood Warning is actually in effect for.
     window.activeAlertExpires = {};
@@ -4660,16 +4665,59 @@
         };
     }
 
+        // Threat Level uses the same event vocabulary for every provider. Keep
+        // Environment Canada's user-facing title intact, but map its national
+        // "Wind Warning" product internally to the equivalent NWS rule. The
+        // original provider name is restored anywhere this is displayed.
+    function _threatEventName(value) {
+        var event = String(value || '').replace(/\s+/g, ' ').trim();
+        var lower = event.toLowerCase();
+        if (lower === 'wind warning') return 'High Wind Warning';
+        if (lower === 'wind watch') return 'High Wind Watch';
+        return event;
+    }
+
     function _storeInternationalAlertState(alerts) {
         window.activeAlertEvents = [];
         window.activeAlertOnsets = {};
         window.activeAlertExpires = {};
+        window.activeAlertWindows = {};
         (alerts || []).forEach(function(alert) {
             var name = alert.title || alert.event || 'Weather alert';
+            var threatName = _threatEventName(name);
             if (!window.activeAlertEvents.includes(name)) window.activeAlertEvents.push(name);
-            window.activeAlertOnsets[name] = _meteoAlarmTimestamp(alert.onset) || 0;
-            window.activeAlertExpires[name] = _meteoAlarmTimestamp(alert.expires) || 0;
+            var onset = _meteoAlarmTimestamp(alert.onset) || 0;
+            var expires = _meteoAlarmTimestamp(alert.expires) || 0;
+            window.activeAlertOnsets[name] = onset;
+            window.activeAlertExpires[name] = expires;
+            window.activeAlertWindows[name] = [{ onset: onset, expires: expires }];
+            // Keep the normalized NWS-equivalent name time-aware too. This is
+            // important for Canadian alerts such as "Wind Warning", which are
+            // scored as "High Wind Warning" below without changing the card title.
+            window.activeAlertOnsets[threatName] = onset;
+            window.activeAlertExpires[threatName] = expires;
+            window.activeAlertWindows[threatName] = [{ onset: onset, expires: expires }];
         });
+    }
+
+    // Returns true when at least one CAP/alert record for an event is active
+    // at the requested time. This is deliberately "any matching window", not
+    // a single event-level timestamp: providers can publish a current alert
+    // and a future continuation with the same event name.
+    function _isAlertCurrentAt(eventName, atMs) {
+        var name = String(eventName || '');
+        var windows = window.activeAlertWindows && window.activeAlertWindows[name];
+        var when = atMs == null ? Date.now() : atMs;
+        if (Array.isArray(windows) && windows.length) {
+            return windows.some(function(windowState) {
+                var onset = Number(windowState && windowState.onset || 0);
+                var expires = Number(windowState && windowState.expires || 0);
+                return (!onset || onset <= when) && (!expires || expires > when);
+            });
+        }
+        var onsetMs = Number((window.activeAlertOnsets || {})[name] || 0);
+        var expireMs = Number((window.activeAlertExpires || {})[name] || 0);
+        return (!onsetMs || onsetMs <= when) && (!expireMs || expireMs > when);
     }
 
     async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
@@ -5554,8 +5602,9 @@
         var activeNow = function(keyword) {
             var onsets = window.activeAlertOnsets || {};
             return (window.activeAlertEvents || []).some(function(eventName) {
-                var onset = onsets[eventName] || 0;
-                return String(eventName).toLowerCase().includes(keyword) &&
+                var threatEventName = _threatEventName(eventName);
+                var onset = onsets[eventName] || onsets[threatEventName] || 0;
+                return threatEventName.toLowerCase().includes(keyword) &&
                     (!onset || onset <= Date.now());
             });
         };
@@ -6007,12 +6056,22 @@
         evts.forEach(function(evtName) {
             var evtLower = evtName.toLowerCase();
             if (!evtLower.includes('flash flood warning')) return;
+            var windows = window.activeAlertWindows && window.activeAlertWindows[evtName];
+            if (Array.isArray(windows) && windows.length) {
+                var hasWindow = windows.some(function(windowState) {
+                    var onset = Number(windowState && windowState.onset || 0);
+                    var expires = Number(windowState && windowState.expires || 0);
+                    return (!onset || onset <= hourEndMs) && (!expires || expires > hourMs);
+                });
+                if (!hasWindow) return;
+            } else {
             var onsetMs  = onsets[evtName] || 0;
             var expireMs = expires[evtName] || 0;
             // Alert must have started by the end of this hour, and not have expired
             // before this hour begins. Missing onset/expiry (0) is treated as "always".
             if (onsetMs && onsetMs > hourEndMs) return;
             if (expireMs && expireMs <= hourMs) return;
+            }
             var f = window.activeFFE ? 100 : ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 80 : 65);
             floor = Math.max(floor, f);
         });
@@ -6085,10 +6144,7 @@
         // Flood Outlook while its onset has arrived and its expiration has not.
         var alertNowMs = Date.now();
         var isCurrentAlert = function(eventName) {
-            var onsetMs = Number((window.activeAlertOnsets || {})[eventName] || 0);
-            var expireMs = Number((window.activeAlertExpires || {})[eventName] || 0);
-            return (!onsetMs || onsetMs <= alertNowMs) &&
-                (!expireMs || expireMs > alertNowMs);
+            return _isAlertCurrentAt(eventName, alertNowMs);
         };
         var currentAlertNames = (window.activeAlertEvents || []).filter(isCurrentAlert);
         var evts = currentAlertNames.map(function(e) { return e.toLowerCase(); });
@@ -6203,6 +6259,7 @@
         window.activeHighImpactWatches = [];
         window.activeAlertOnsets = {};
         window.activeAlertExpires = {};
+        window.activeAlertWindows = {};
         window.activeStormWarning = false;
         window.activeTornadoWarning = false;
         window.activeSVRWarning = false;
@@ -6222,6 +6279,7 @@
         window.alertHasConsiderableFlood = false;
         window.alertHasObservedCertainty = false;
         window.activeHeatWarning = false;
+        window.environmentCanadaAlerts = [];
 
         if (window.isOutsideUS) {
             // International coverage is determined by the providers, not by
@@ -6464,17 +6522,34 @@
                         const HIGH_WATCH_TYPES = ['tornado watch','severe thunderstorm watch','tropical storm watch','hurricane watch','blizzard watch'];
                         if (HIGH_WATCH_TYPES.some(function(w) { return evt.includes(w); }) && !window.activeHighImpactWatches.includes(p.event)) window.activeHighImpactWatches.push(p.event);
                     }
-                    // v1.0.5: Collect full event names for per-type scoring
+                    // v1.0.5: Collect full event names for per-type scoring.
+                    // Keep the visible/scoring event list unique, but preserve
+                    // every timing window so duplicate event names cannot let a
+                    // future alert hide a currently active one.
                     if (!window.activeAlertEvents.includes(p.event)) window.activeAlertEvents.push(p.event);
                     // Store onset time so computeThreatLevel can skip future-outlook watches
                     // Some NWS products omit `onset` and put the future start
                     // in `effective`; use either value so downstream widgets
                     // do not treat a scheduled alert as active now.
                     var _pOnsetRaw = p.onset || p.effective;
-                    window.activeAlertOnsets[p.event] = _pOnsetRaw ? new Date(_pOnsetRaw).getTime() : 0;
+                    var _pOnsetMs = _pOnsetRaw ? new Date(_pOnsetRaw).getTime() : 0;
                     // Store expiry time so hourly scoring knows exactly when this alert stops applying
                     var _pExpRaw = p.ends || p.expires;
-                    window.activeAlertExpires[p.event] = _pExpRaw ? new Date(_pExpRaw).getTime() : 0;
+                    var _pExpiresMs = _pExpRaw ? new Date(_pExpRaw).getTime() : 0;
+                    if (!window.activeAlertWindows[p.event]) window.activeAlertWindows[p.event] = [];
+                    window.activeAlertWindows[p.event].push({ onset: _pOnsetMs, expires: _pExpiresMs });
+                    // Preserve the legacy maps for callers that do not need
+                    // per-record precision. A missing onset means "active
+                    // now", so it must win over a future duplicate.
+                    if (!(p.event in window.activeAlertOnsets) ||
+                        window.activeAlertOnsets[p.event] === 0 || _pOnsetMs === 0) {
+                        window.activeAlertOnsets[p.event] = (_pOnsetMs === 0 || window.activeAlertOnsets[p.event] === 0) ? 0 : _pOnsetMs;
+                    } else {
+                        window.activeAlertOnsets[p.event] = Math.min(window.activeAlertOnsets[p.event], _pOnsetMs);
+                    }
+                    window.activeAlertExpires[p.event] = Math.max(
+                        Number(window.activeAlertExpires[p.event] || 0), _pExpiresMs
+                    );
                     // v1.0.4: Track TOR vs SVR separately for smarter threat level
                     if (evt.includes('tornado warning')) {
                         window.activeTornadoWarning = true; window.activeStormWarning = true;
@@ -9596,7 +9671,7 @@
         // ── Tier 4: Specific warnings (less severe) ───────────────────────
         if (flags.winterStormWarning) return 'A Winter Storm Warning is in effect. Heavy snow, sleet, or freezing rain will create hazardous travel conditions. Avoid unnecessary travel.';
         if (flags.windChillWarning) return 'A Wind Chill Warning is in effect. Dangerously cold wind chills may cause frostbite on exposed skin in minutes. Limit time outdoors and dress in layers.';
-        if (flags.highWindWarning) return 'A High Wind Warning is in effect. Damaging winds may knock down trees and power lines and make driving difficult. Secure loose outdoor items.';
+        if (flags.highWindWarning) return (flags.windWarningLabel ? 'A Wind Warning' : 'A High Wind Warning') + ' is in effect. Damaging winds may knock down trees and power lines and make driving difficult. Secure loose outdoor items.';
         // ── Multi-hazard check (before single-category fallbacks) ─────────
         const cats = Object.keys(hazardCats);
         if (cats.length >= 3) return 'Multiple simultaneous hazards are active. This is a complex weather event — follow all active NWS guidance closely.';
@@ -9666,7 +9741,10 @@
         // official levels into the same score bands used below.
         var _intlAlertCount = 0;
         var _intlMaxSeverity = '';
-        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts)) {
+        var _hasEnvironmentCanadaAlerts = window.isOutsideUS &&
+            Array.isArray(window.environmentCanadaAlerts);
+        if (window.isOutsideUS && Array.isArray(window.meteoAlarmAlerts) &&
+            !_hasEnvironmentCanadaAlerts) {
             var _intlSeverityRank = { minor: 1, moderate: 2, severe: 3, extreme: 4 };
             var _intlSeverityPoints = { minor: 2, moderate: 4, severe: 6, extreme: 8 };
             window.meteoAlarmAlerts.forEach(function(alert) {
@@ -9697,6 +9775,22 @@
             // strongest alert's severity.
             if (score > 12 && _intlAlertCount > 0) score = 12;
         }
+
+        // Canadian alerts now use the same per-event NWS scoring and
+        // description rules as domestic alerts. The display title remains
+        // provider-native, while _threatEventName supplies any needed
+        // NWS-equivalent vocabulary (for example, Wind Warning -> High Wind
+        // Warning). De-duplicate here so multiple CAP records for one hazard
+        // cannot add the same Threat Level factor twice.
+        const _threatAlertEvents = [];
+        const _seenThreatAlertEvents = {};
+        (window.activeAlertEvents || []).forEach(function(eventName) {
+            var threatName = _threatEventName(eventName);
+            var key = threatName.toLowerCase();
+            if (!key || _seenThreatAlertEvents[key]) return;
+            _seenThreatAlertEvents[key] = true;
+            _threatAlertEvents.push(threatName);
+        });
 
         // ── 1. SPC Convective Outlook ─────────────────or ────────────────────
         const spc = window.spcRisk;
@@ -9787,7 +9881,10 @@
             // Heat (warnings only — heat/cold watches are filtered before this table)
             ['excessive heat warning',      5, 'Excessive Heat Warning',  '#ff5722', 'heat'],
             ['heat advisory',               2, 'Heat Advisory',           '#ff8a65', 'heat'],
-            // Fire / smoke / air-quality are environmental, not acute meteorological hazards —
+            // Red Flag is an active fire-weather warning, so it elevates
+            // Threat Level while remaining below short-fused life-safety alerts.
+            ['red flag warning',            5, 'Red Flag Warning',        '#ff5722', 'fire'],
+            // Smoke and air-quality products remain environmental conditions;
             // they are excluded via _NEVER_SCORE before this table is consulted.
             // Other
             ['dense fog advisory',          2, 'Dense Fog Advisory',      '#b0bec5', 'other'],
@@ -9803,29 +9900,43 @@
             ['statement',                   1, null, '#aaaaaa', 'other'],
         ];
 
-        (window.activeAlertEvents || []).forEach(function(evtName) {
+        _threatAlertEvents.forEach(function(evtName) {
             var evtLower = evtName.toLowerCase();
             if (evtLower.includes('tornado warning')) return; // handled below with full sub-type logic
 
-            // ── Fire, smoke, and air-quality: environmental conditions, not acute weather threats ──
+            // ── Smoke and air-quality remain environmental conditions, not
+            // acute weather threats. Red Flag Warning is scored above.
             var _NEVER_SCORE = [
-                'fire weather', 'red flag warning', 'fire warning', 'dense smoke', 'air quality alert',
+                'fire weather', 'fire warning', 'dense smoke', 'air quality alert',
                 'excessive heat watch', 'extreme heat watch',
                 'wind chill watch', 'extreme cold watch', 'excessive cold watch',
-                'freeze watch', 'frost advisory', 'wind chill advisory', 'blowing dust advisory'
+                'freeze watch', 'wind chill advisory', 'blowing dust advisory'
             ];
             if (_NEVER_SCORE.some(function(s) { return evtLower.includes(s); })) return;
 
-            // ── Any alert not yet in effect should not influence threat level ──
-            var _onsetMs = (window.activeAlertOnsets || {})[evtName] || 0;
-            if (_onsetMs > 0 && _onsetMs > Date.now()) return;
+            // ── Any alert not currently in effect should not influence threat
+            // level. Check every matching record so a future duplicate cannot
+            // mask a current alert with the same event name.
+            if (!_isAlertCurrentAt(evtName, Date.now())) return;
 
             for (var i = 0; i < ALERT_TABLE.length; i++) {
                 var row = ALERT_TABLE[i];
                 if (evtLower.includes(row[0])) {
                     score += row[1];
                     hazardCats[row[4]] = (hazardCats[row[4]] || 0) + 1;
-                    factorList.push({ label: row[2] || evtName, color: row[3] });
+                    var factorLabel = row[2] || evtName;
+                    // Canonical scoring names are internal only. If a
+                    // provider-specific title was normalized to reach this
+                    // NWS rule, keep that original title in the visible
+                    // factor for every alert type.
+                    var sourceEventName = (window.activeAlertEvents || []).find(function(name) {
+                        return _threatEventName(name).toLowerCase() === evtLower;
+                    });
+                    if (sourceEventName &&
+                        sourceEventName.toLowerCase() !== evtLower) {
+                        factorLabel = sourceEventName;
+                    }
+                    factorList.push({ label: factorLabel, color: row[3] });
                     break;
                 }
             }
@@ -9897,11 +10008,11 @@
         }
         if (window.activeSVRWarning) nwsFamilyScores.svr =
             (window.activeSVRDestructive || window.alertHasConsiderableHail || window.alertHasConsiderableWind) ? 7 : 6;
-        if ((window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flash flood warning'); })) {
+        if (_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('flash flood warning'); })) {
             nwsFamilyScores.flashFlood = window.activeFFE ? 16 :
                 ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 9 : 6);
         }
-        if ((window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('special weather statement'); })) nwsFamilyScores.sps = 1;
+        if (_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('special weather statement'); })) nwsFamilyScores.sps = 1;
         (window.customSkyThreatAlerts || []).forEach(function(custom) {
             var existing = nwsFamilyScores[custom.family] || 0;
             var increment = Math.max(0, custom.score - existing);
@@ -9942,7 +10053,7 @@
             if (hasNearbyTornado)  { score += 3; factorList.push({ label: 'Tornado/funnel cloud reported', color: '#e040fb' }); }
             if (hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby rotation reported', color: '#ff1744' }); }
             if ((hasNearbyHail || hasNearbyWind) && !hasNearbyTornado && !hasNearbyRotation) { score += 1; factorList.push({ label: 'Nearby storm reports', color: '#ff9100' }); }
-            if (hasNearbyFlood && !(window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flood'); })) {
+            if (hasNearbyFlood && !_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('flood'); })) {
                 score += 1; factorList.push({ label: 'Flooding reported nearby', color: '#00bcd4' });
             }
         }
@@ -9955,7 +10066,7 @@
 
         // Precipitation intensity — only elevates score when a Flash Flood Warning is active
         // (regular Flood Warnings are river/drainage events, not rain-rate dependent)
-        const hasFlashFloodWarning = (window.activeAlertEvents || []).some(function(e) { return e.toLowerCase().includes('flash flood warning'); });
+        const hasFlashFloodWarning = _threatAlertEvents.some(function(e) { return e.toLowerCase().includes('flash flood warning'); });
         if (livePrecipInt >= 0.3 && hasFlashFloodWarning)      { score += 2; factorList.push({ label: 'Heavy rainfall', color: '#00bcd4' }); }
         else if (livePrecipInt >= 0.15 && hasFlashFloodWarning) { score += 1; factorList.push({ label: 'Mod. rainfall', color: '#4fc3f7' }); }
 
@@ -9982,7 +10093,7 @@
         // ── 12. Tier Classification ───────────────────────────────────────
         // LIFE THREATENING, CRITICAL, and DANGEROUS are strictly flag-driven.
         // No score, no matter how high, can reach these tiers — only specific alert types can.
-        const _tierEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        const _tierEvtsLower = _threatAlertEvents.map(function(e) { return e.toLowerCase(); });
         const _hasExtremeWindWarning = _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
         const _hasTyphoonWarning     = _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
         const _hasHurricaneWarningNow = _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
@@ -10012,7 +10123,7 @@
         const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
         const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (
             customThreatFlags.tornado ||
-            (window.activeAlertEvents || []).some(function(e) {
+            _threatAlertEvents.some(function(e) {
             var el = e.toLowerCase();
             return _SHORT_FUSED.some(function(w) { return el.includes(w); });
             })
@@ -10028,11 +10139,16 @@
         else                           { tier = 'LOW';              tierClass = 'threat-tier-low';      emoji = '\uD83D\uDFE2'; badgeColor = '#00e676'; }
 
         // ── 13. Smart Contextual Description ─────────────────────────────
-        const _activeEvtsLower = (window.activeAlertEvents || []).map(function(e) { return e.toLowerCase(); });
+        const _activeEvtsLower = _threatAlertEvents.map(function(e) { return e.toLowerCase(); });
         // Build lowercase-keyed onset map — activeAlertOnsets stores keys with original casing
         const _onsetsByLower = {};
         Object.keys(window.activeAlertOnsets || {}).forEach(function(k) { _onsetsByLower[k.toLowerCase()] = window.activeAlertOnsets[k]; });
-        const _activeNow = function(kw) { return _activeEvtsLower.some(function(e) { var ms = _onsetsByLower[e] || 0; return e.includes(kw) && (!ms || ms <= Date.now()); }); };
+        const _activeNow = function(kw) {
+            return _threatAlertEvents.some(function(eventName) {
+                return eventName.toLowerCase().includes(kw) &&
+                    _isAlertCurrentAt(eventName, Date.now());
+            });
+        };
         const descFlags = {
             torEmergency:       window.activeTornadoEmergency || customThreatFlags.tornadoEmergency,
             pdsTor:             window.activePDSTornado || customThreatFlags.tornadoPDS,
@@ -10055,6 +10171,9 @@
             // Wind
             extremeWindWarning: _activeNow('extreme wind warning'),
             highWindWarning:    _activeNow('high wind warning') && !_activeNow('extreme wind warning'),
+            windWarningLabel:   (window.activeAlertEvents || []).some(function(e) {
+                return e.toLowerCase() === 'wind warning';
+            }),
             // Watches
             tornadoWatch:       _activeNow('tornado watch'),
             svrWatch:           _activeNow('severe thunderstorm watch') && !_activeNow('tornado watch'),
@@ -13808,7 +13927,7 @@
             (loadGeneration == null || loadGeneration === weatherLoadGeneration);
     }
 
-    function _renderAQIUnavailable(message) {
+    function _renderAQIUnavailable(message, sourceLabel) {
         var section = document.getElementById('aqi-section');
         if (!section) return;
         section.style.display = '';
@@ -13822,13 +13941,13 @@
         var healthEl = document.getElementById('air-health');
         if (numEl) { numEl.innerText = '--'; numEl.style.color = '#888'; }
         if (catEl) { catEl.innerText = 'Unavailable'; catEl.style.color = '#888'; }
-        if (pollEl) pollEl.innerText = 'Source: AirNow';
+        if (pollEl) pollEl.innerText = 'Source: ' + (sourceLabel || 'AirNow');
         if (healthEl) healthEl.innerText = message || 'Air quality data is temporarily unavailable.';
     }
 
-    // AQI is proxied through the weather Worker.  AirNow remains authoritative
-    // for U.S. locations; the Worker only uses Open-Meteo for a genuine
-    // timeout/network/5xx failure, never for a valid empty AirNow response.
+    // AQI is proxied through the weather Worker. AirNow remains authoritative
+    // when it has usable data; an unavailable/empty AirNow response falls
+    // through to Open-Meteo instead of leaving the card blank.
     async function fetchAQI(loadGeneration, requestLat, requestLon) {
         var curLat = requestLat == null ? lat : requestLat;
         var curLon = requestLon == null ? lon : requestLon;
@@ -13842,7 +13961,7 @@
             var data = await res.json();
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
             if (!res.ok || !data || data.source === 'unavailable') {
-                _renderAQIUnavailable(data && data.message);
+                await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
                 return;
             }
             if (data.source === 'airnow') {
@@ -13856,12 +13975,12 @@
                     if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
                     _renderAQIData(data.observations, Array.isArray(data.forecast) ? data.forecast : []);
                 } else {
-                    _renderAQIUnavailable('AirNow has no current monitoring data for this location.');
+                    await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
                 }
             } else if (data.source === 'openmeteo') {
                 _renderAQIDataOM(data.aqi);
             } else {
-                _renderAQIUnavailable();
+                await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
             }
         } catch(e) {
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
@@ -13889,6 +14008,9 @@
             _renderAQIDataOM(curAQI);
         } catch(e) {
             console.warn('[SkyMonitor AQI] Open-Meteo fallback failed:', e);
+            if (_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) {
+                _renderAQIUnavailable('AirNow and Open-Meteo are temporarily unavailable.', 'Open-Meteo');
+            }
         }
     }
 
@@ -13904,8 +14026,14 @@
         if (actionEl) actionEl.style.display = 'none';
 
         if (curAQI == null) {
+            var numEl = document.getElementById('air-num');
+            var catEl = document.getElementById('air-cat');
             var healthEl = document.getElementById('air-health');
+            if (numEl) { numEl.innerText = '--'; numEl.style.color = '#888'; }
+            if (catEl) { catEl.innerText = 'Unavailable'; catEl.style.color = '#888'; }
             if (healthEl) healthEl.innerText = 'Air quality data unavailable for this location.';
+            var pollEl = document.getElementById('air-poll');
+            if (pollEl) pollEl.innerText = 'Source: Open-Meteo';
             return;
         }
 
