@@ -178,6 +178,9 @@ async function buildPushRequest(subscription, payload, vapid, contactEmail) {
 
 function isDeadSubscription(status, bodyText) {
   if (status === 410 || status === 404) return true;
+  if (status === 400 && (bodyText || "").toLowerCase().includes("vapidpkhashmismatch")) {
+    return true;
+  }
   if (status === 403) {
     const lc = (bodyText || "").toLowerCase();
     if (lc.includes("badjwttoken") || lc.includes("expiredjwttoken") || lc.includes("invalidjwt")) return true;
@@ -731,8 +734,18 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
   const WORKER_URL = "https://api.skymonitor.app";
   try {
     const res  = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) {
+      throw new Error(`Worker returned HTTP ${res.status}`);
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().includes("application/json")) {
+      throw new Error(`Worker returned ${contentType || "an unknown content type"} instead of JSON`);
+    }
     const data = await res.json();
     const workerKey = (data.publicKey || "").trim();
+    if (!workerKey) {
+      throw new Error("Worker response did not contain publicKey");
+    }
     const githubKey = (VAPID_PUB || "").trim();
     const match = workerKey === githubKey;
     console.log(`[SkyMonitor] Worker key : ${workerKey}`);
@@ -743,7 +756,9 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
       process.exit(1);
     }
   } catch (e) {
-    console.warn(`[SkyMonitor] Could not reach Worker to verify key: ${e.message} — continuing anyway`);
+    console.error(`[SkyMonitor] Could not verify Worker VAPID key: ${e.message}`);
+    console.error("[SkyMonitor] Aborting before sending pushes. Resolve the Worker endpoint or VAPID configuration first.");
+    process.exit(1);
   }
 }
 
