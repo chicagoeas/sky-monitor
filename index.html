@@ -1993,6 +1993,11 @@
     // v1.0.5: Full per-alert-type scoring
     window.activeAlertEvents = [];
     window.nwsBannerScore = 0;
+    // Keep every alert's time window even when multiple CAP records share the
+    // same event name (for example, one current and one future Red Flag
+    // Warning). The display/scoring list is intentionally de-duplicated, but
+    // timing decisions must consider all matching records.
+    window.activeAlertWindows = {};
     // Per-event expiry timestamps (ms) — lets hourly scoring know exactly which
     // hours a warning like a Flash Flood Warning is actually in effect for.
     window.activeAlertExpires = {};
@@ -4676,18 +4681,43 @@
         window.activeAlertEvents = [];
         window.activeAlertOnsets = {};
         window.activeAlertExpires = {};
+        window.activeAlertWindows = {};
         (alerts || []).forEach(function(alert) {
             var name = alert.title || alert.event || 'Weather alert';
             var threatName = _threatEventName(name);
             if (!window.activeAlertEvents.includes(name)) window.activeAlertEvents.push(name);
-            window.activeAlertOnsets[name] = _meteoAlarmTimestamp(alert.onset) || 0;
-            window.activeAlertExpires[name] = _meteoAlarmTimestamp(alert.expires) || 0;
+            var onset = _meteoAlarmTimestamp(alert.onset) || 0;
+            var expires = _meteoAlarmTimestamp(alert.expires) || 0;
+            window.activeAlertOnsets[name] = onset;
+            window.activeAlertExpires[name] = expires;
+            window.activeAlertWindows[name] = [{ onset: onset, expires: expires }];
             // Keep the normalized NWS-equivalent name time-aware too. This is
             // important for Canadian alerts such as "Wind Warning", which are
             // scored as "High Wind Warning" below without changing the card title.
-            window.activeAlertOnsets[threatName] = _meteoAlarmTimestamp(alert.onset) || 0;
-            window.activeAlertExpires[threatName] = _meteoAlarmTimestamp(alert.expires) || 0;
+            window.activeAlertOnsets[threatName] = onset;
+            window.activeAlertExpires[threatName] = expires;
+            window.activeAlertWindows[threatName] = [{ onset: onset, expires: expires }];
         });
+    }
+
+    // Returns true when at least one CAP/alert record for an event is active
+    // at the requested time. This is deliberately "any matching window", not
+    // a single event-level timestamp: providers can publish a current alert
+    // and a future continuation with the same event name.
+    function _isAlertCurrentAt(eventName, atMs) {
+        var name = String(eventName || '');
+        var windows = window.activeAlertWindows && window.activeAlertWindows[name];
+        var when = atMs == null ? Date.now() : atMs;
+        if (Array.isArray(windows) && windows.length) {
+            return windows.some(function(windowState) {
+                var onset = Number(windowState && windowState.onset || 0);
+                var expires = Number(windowState && windowState.expires || 0);
+                return (!onset || onset <= when) && (!expires || expires > when);
+            });
+        }
+        var onsetMs = Number((window.activeAlertOnsets || {})[name] || 0);
+        var expireMs = Number((window.activeAlertExpires || {})[name] || 0);
+        return (!onsetMs || onsetMs <= when) && (!expireMs || expireMs > when);
     }
 
     async function fetchEnvironmentCanadaAlerts(requestLat, requestLon) {
@@ -6026,12 +6056,22 @@
         evts.forEach(function(evtName) {
             var evtLower = evtName.toLowerCase();
             if (!evtLower.includes('flash flood warning')) return;
+            var windows = window.activeAlertWindows && window.activeAlertWindows[evtName];
+            if (Array.isArray(windows) && windows.length) {
+                var hasWindow = windows.some(function(windowState) {
+                    var onset = Number(windowState && windowState.onset || 0);
+                    var expires = Number(windowState && windowState.expires || 0);
+                    return (!onset || onset <= hourEndMs) && (!expires || expires > hourMs);
+                });
+                if (!hasWindow) return;
+            } else {
             var onsetMs  = onsets[evtName] || 0;
             var expireMs = expires[evtName] || 0;
             // Alert must have started by the end of this hour, and not have expired
             // before this hour begins. Missing onset/expiry (0) is treated as "always".
             if (onsetMs && onsetMs > hourEndMs) return;
             if (expireMs && expireMs <= hourMs) return;
+            }
             var f = window.activeFFE ? 100 : ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 80 : 65);
             floor = Math.max(floor, f);
         });
@@ -6104,10 +6144,7 @@
         // Flood Outlook while its onset has arrived and its expiration has not.
         var alertNowMs = Date.now();
         var isCurrentAlert = function(eventName) {
-            var onsetMs = Number((window.activeAlertOnsets || {})[eventName] || 0);
-            var expireMs = Number((window.activeAlertExpires || {})[eventName] || 0);
-            return (!onsetMs || onsetMs <= alertNowMs) &&
-                (!expireMs || expireMs > alertNowMs);
+            return _isAlertCurrentAt(eventName, alertNowMs);
         };
         var currentAlertNames = (window.activeAlertEvents || []).filter(isCurrentAlert);
         var evts = currentAlertNames.map(function(e) { return e.toLowerCase(); });
@@ -6222,6 +6259,7 @@
         window.activeHighImpactWatches = [];
         window.activeAlertOnsets = {};
         window.activeAlertExpires = {};
+        window.activeAlertWindows = {};
         window.activeStormWarning = false;
         window.activeTornadoWarning = false;
         window.activeSVRWarning = false;
@@ -6484,17 +6522,34 @@
                         const HIGH_WATCH_TYPES = ['tornado watch','severe thunderstorm watch','tropical storm watch','hurricane watch','blizzard watch'];
                         if (HIGH_WATCH_TYPES.some(function(w) { return evt.includes(w); }) && !window.activeHighImpactWatches.includes(p.event)) window.activeHighImpactWatches.push(p.event);
                     }
-                    // v1.0.5: Collect full event names for per-type scoring
+                    // v1.0.5: Collect full event names for per-type scoring.
+                    // Keep the visible/scoring event list unique, but preserve
+                    // every timing window so duplicate event names cannot let a
+                    // future alert hide a currently active one.
                     if (!window.activeAlertEvents.includes(p.event)) window.activeAlertEvents.push(p.event);
                     // Store onset time so computeThreatLevel can skip future-outlook watches
                     // Some NWS products omit `onset` and put the future start
                     // in `effective`; use either value so downstream widgets
                     // do not treat a scheduled alert as active now.
                     var _pOnsetRaw = p.onset || p.effective;
-                    window.activeAlertOnsets[p.event] = _pOnsetRaw ? new Date(_pOnsetRaw).getTime() : 0;
+                    var _pOnsetMs = _pOnsetRaw ? new Date(_pOnsetRaw).getTime() : 0;
                     // Store expiry time so hourly scoring knows exactly when this alert stops applying
                     var _pExpRaw = p.ends || p.expires;
-                    window.activeAlertExpires[p.event] = _pExpRaw ? new Date(_pExpRaw).getTime() : 0;
+                    var _pExpiresMs = _pExpRaw ? new Date(_pExpRaw).getTime() : 0;
+                    if (!window.activeAlertWindows[p.event]) window.activeAlertWindows[p.event] = [];
+                    window.activeAlertWindows[p.event].push({ onset: _pOnsetMs, expires: _pExpiresMs });
+                    // Preserve the legacy maps for callers that do not need
+                    // per-record precision. A missing onset means "active
+                    // now", so it must win over a future duplicate.
+                    if (!(p.event in window.activeAlertOnsets) ||
+                        window.activeAlertOnsets[p.event] === 0 || _pOnsetMs === 0) {
+                        window.activeAlertOnsets[p.event] = (_pOnsetMs === 0 || window.activeAlertOnsets[p.event] === 0) ? 0 : _pOnsetMs;
+                    } else {
+                        window.activeAlertOnsets[p.event] = Math.min(window.activeAlertOnsets[p.event], _pOnsetMs);
+                    }
+                    window.activeAlertExpires[p.event] = Math.max(
+                        Number(window.activeAlertExpires[p.event] || 0), _pExpiresMs
+                    );
                     // v1.0.4: Track TOR vs SVR separately for smarter threat level
                     if (evt.includes('tornado warning')) {
                         window.activeTornadoWarning = true; window.activeStormWarning = true;
@@ -9826,7 +9881,10 @@
             // Heat (warnings only — heat/cold watches are filtered before this table)
             ['excessive heat warning',      5, 'Excessive Heat Warning',  '#ff5722', 'heat'],
             ['heat advisory',               2, 'Heat Advisory',           '#ff8a65', 'heat'],
-            // Fire / smoke / air-quality are environmental, not acute meteorological hazards —
+            // Red Flag is an active fire-weather warning, so it elevates
+            // Threat Level while remaining below short-fused life-safety alerts.
+            ['red flag warning',            5, 'Red Flag Warning',        '#ff5722', 'fire'],
+            // Smoke and air-quality products remain environmental conditions;
             // they are excluded via _NEVER_SCORE before this table is consulted.
             // Other
             ['dense fog advisory',          2, 'Dense Fog Advisory',      '#b0bec5', 'other'],
@@ -9846,18 +9904,20 @@
             var evtLower = evtName.toLowerCase();
             if (evtLower.includes('tornado warning')) return; // handled below with full sub-type logic
 
-            // ── Fire, smoke, and air-quality: environmental conditions, not acute weather threats ──
+            // ── Smoke and air-quality remain environmental conditions, not
+            // acute weather threats. Red Flag Warning is scored above.
             var _NEVER_SCORE = [
-                'fire weather', 'red flag warning', 'fire warning', 'dense smoke', 'air quality alert',
+                'fire weather', 'fire warning', 'dense smoke', 'air quality alert',
                 'excessive heat watch', 'extreme heat watch',
                 'wind chill watch', 'extreme cold watch', 'excessive cold watch',
                 'freeze watch', 'wind chill advisory', 'blowing dust advisory'
             ];
             if (_NEVER_SCORE.some(function(s) { return evtLower.includes(s); })) return;
 
-            // ── Any alert not yet in effect should not influence threat level ──
-            var _onsetMs = (window.activeAlertOnsets || {})[evtName] || 0;
-            if (_onsetMs > 0 && _onsetMs > Date.now()) return;
+            // ── Any alert not currently in effect should not influence threat
+            // level. Check every matching record so a future duplicate cannot
+            // mask a current alert with the same event name.
+            if (!_isAlertCurrentAt(evtName, Date.now())) return;
 
             for (var i = 0; i < ALERT_TABLE.length; i++) {
                 var row = ALERT_TABLE[i];
@@ -10083,7 +10143,12 @@
         // Build lowercase-keyed onset map — activeAlertOnsets stores keys with original casing
         const _onsetsByLower = {};
         Object.keys(window.activeAlertOnsets || {}).forEach(function(k) { _onsetsByLower[k.toLowerCase()] = window.activeAlertOnsets[k]; });
-        const _activeNow = function(kw) { return _activeEvtsLower.some(function(e) { var ms = _onsetsByLower[e] || 0; return e.includes(kw) && (!ms || ms <= Date.now()); }); };
+        const _activeNow = function(kw) {
+            return _threatAlertEvents.some(function(eventName) {
+                return eventName.toLowerCase().includes(kw) &&
+                    _isAlertCurrentAt(eventName, Date.now());
+            });
+        };
         const descFlags = {
             torEmergency:       window.activeTornadoEmergency || customThreatFlags.tornadoEmergency,
             pdsTor:             window.activePDSTornado || customThreatFlags.tornadoPDS,
@@ -13862,7 +13927,7 @@
             (loadGeneration == null || loadGeneration === weatherLoadGeneration);
     }
 
-    function _renderAQIUnavailable(message) {
+    function _renderAQIUnavailable(message, sourceLabel) {
         var section = document.getElementById('aqi-section');
         if (!section) return;
         section.style.display = '';
@@ -13876,13 +13941,13 @@
         var healthEl = document.getElementById('air-health');
         if (numEl) { numEl.innerText = '--'; numEl.style.color = '#888'; }
         if (catEl) { catEl.innerText = 'Unavailable'; catEl.style.color = '#888'; }
-        if (pollEl) pollEl.innerText = 'Source: AirNow';
+        if (pollEl) pollEl.innerText = 'Source: ' + (sourceLabel || 'AirNow');
         if (healthEl) healthEl.innerText = message || 'Air quality data is temporarily unavailable.';
     }
 
-    // AQI is proxied through the weather Worker.  AirNow remains authoritative
-    // for U.S. locations; the Worker only uses Open-Meteo for a genuine
-    // timeout/network/5xx failure, never for a valid empty AirNow response.
+    // AQI is proxied through the weather Worker. AirNow remains authoritative
+    // when it has usable data; an unavailable/empty AirNow response falls
+    // through to Open-Meteo instead of leaving the card blank.
     async function fetchAQI(loadGeneration, requestLat, requestLon) {
         var curLat = requestLat == null ? lat : requestLat;
         var curLon = requestLon == null ? lon : requestLon;
@@ -13896,7 +13961,7 @@
             var data = await res.json();
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
             if (!res.ok || !data || data.source === 'unavailable') {
-                _renderAQIUnavailable(data && data.message);
+                await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
                 return;
             }
             if (data.source === 'airnow') {
@@ -13910,12 +13975,12 @@
                     if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
                     _renderAQIData(data.observations, Array.isArray(data.forecast) ? data.forecast : []);
                 } else {
-                    _renderAQIUnavailable('AirNow has no current monitoring data for this location.');
+                    await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
                 }
             } else if (data.source === 'openmeteo') {
                 _renderAQIDataOM(data.aqi);
             } else {
-                _renderAQIUnavailable();
+                await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
             }
         } catch(e) {
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
@@ -13943,6 +14008,9 @@
             _renderAQIDataOM(curAQI);
         } catch(e) {
             console.warn('[SkyMonitor AQI] Open-Meteo fallback failed:', e);
+            if (_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) {
+                _renderAQIUnavailable('AirNow and Open-Meteo are temporarily unavailable.', 'Open-Meteo');
+            }
         }
     }
 
@@ -13958,8 +14026,14 @@
         if (actionEl) actionEl.style.display = 'none';
 
         if (curAQI == null) {
+            var numEl = document.getElementById('air-num');
+            var catEl = document.getElementById('air-cat');
             var healthEl = document.getElementById('air-health');
+            if (numEl) { numEl.innerText = '--'; numEl.style.color = '#888'; }
+            if (catEl) { catEl.innerText = 'Unavailable'; catEl.style.color = '#888'; }
             if (healthEl) healthEl.innerText = 'Air quality data unavailable for this location.';
+            var pollEl = document.getElementById('air-poll');
+            if (pollEl) pollEl.innerText = 'Source: Open-Meteo';
             return;
         }
 
