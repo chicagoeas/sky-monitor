@@ -6952,18 +6952,38 @@
             window._fastNwsAlerts = fastPayload.nwsAlerts || null;
             window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
-            // Always start the PWS lookup here.  Location classification runs
-            // concurrently, so checking isWaterLocation at this exact moment
-            // made the result timing-dependent: a fast classification skipped
-            // PWS, while a slower one allowed it.  The final NWS/QC pass decides
-            // whether a station is suitable for the coordinate.
-            // Do not hold the primary forecast on PWS discovery/observations.
+            // Start the PWS lookup here for US/Canadian QC. International
+            // locations use the official METAR/ASOS/AWOS chain instead; a
+            // slow or empty WU response must not add ~10 seconds to that path.
             let wuStations;
             const wuPromise = fetchWUMulti(requestLat, requestLon, requestSignal);
-            // The PWS result is part of the authoritative current-observation
-            // load. Do not paint PirateWeather observations and then replace
-            // them a moment later when this check completes.
-            wuStations = await wuPromise;
+            var countryForPws = String(
+                window.locationCountryCode || window._gpsCountryCode || ''
+            ).trim().toUpperCase();
+            if (!countryForPws && window._locationClassificationPromise) {
+                // The reverse-geocoder writes locationCountryCode before its
+                // optional beach lookup finishes. Give that first step a
+                // short head start, but never wait on geocoding indefinitely.
+                await Promise.race([
+                    window._locationClassificationPromise.catch(function() {}),
+                    new Promise(function(resolve) { setTimeout(resolve, 1200); })
+                ]);
+                countryForPws = String(
+                    window.locationCountryCode || window._gpsCountryCode || ''
+                ).trim().toUpperCase();
+            }
+            if (countryForPws && countryForPws !== 'US' && countryForPws !== 'CA') {
+                wuStations = [];
+            } else if (!countryForPws) {
+                // Unknown country: preserve the NWS path without allowing a
+                // slow PWS lookup to become the page's critical path.
+                wuStations = await Promise.race([
+                    wuPromise,
+                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 2500); })
+                ]);
+            } else {
+                wuStations = await wuPromise;
+            }
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Mark the throttle only after the PirateWeather response has been
             // validated. If rendering or the request fails, the next refresh
@@ -8873,9 +8893,19 @@
             var sLat = Number(observation.lat), sLon = Number(observation.lon);
             var tempC = Number(observation.temp);
             if (!isFinite(sLat) || !isFinite(sLon) || !isFinite(tempC)) return null;
-            var obsMs = Number(observation.obsTime) * 1000;
+            var rawObsTime = observation.obsTime;
+            var obsMs = Number(rawObsTime);
+            // AWC has returned both epoch seconds and ISO timestamps over
+            // time. Number("2026-...") is NaN, so parse the original value
+            // before falling back to reportTime.
+            if (isFinite(obsMs) && obsMs > 0) {
+                // Epoch milliseconds are also accepted defensively.
+                if (obsMs < 100000000000) obsMs *= 1000;
+            } else {
+                obsMs = Date.parse(String(rawObsTime || observation.reportTime || ''));
+            }
             if (!isFinite(obsMs) || obsMs <= 0) {
-                obsMs = Date.parse(observation.reportTime || '');
+                obsMs = Date.parse(String(observation.reportTime || ''));
             }
             // AWC's hours filter is a server-side candidate bound; keep the
             // client-side age check too so a stale cached/late report cannot
@@ -8944,22 +8974,24 @@
         var stationElevFt = stationElevM !== null ? stationElevM * 3.28084 : null;
         var elevCacheKey = requestLat.toFixed(4) + ',' + requestLon.toFixed(4);
         if (window.userLocElevFt == null || window._userLocElevKey !== elevCacheKey) {
-            try {
-                var elevRes = await _weatherFetch(
-                    'https://api.open-meteo.com/v1/elevation?latitude=' + requestLat +
-                    '&longitude=' + requestLon,
-                    requestSignal ? { signal: requestSignal } : undefined, 12000
-                );
-                if (elevRes.ok) {
-                    var elevData = await elevRes.json();
-                    if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-                    var elevM = elevData && elevData.elevation && elevData.elevation[0];
-                    if (elevM != null) {
-                        window.userLocElevFt = Number(elevM) * 3.28084;
-                        window._userLocElevKey = elevCacheKey;
-                    }
+            // Elevation is only a small lapse-rate refinement. It must never
+            // delay the official station identity or current observation.
+            // Cache it for the next refresh when the optional request wins.
+            _weatherFetch(
+                'https://api.open-meteo.com/v1/elevation?latitude=' + requestLat +
+                '&longitude=' + requestLon,
+                requestSignal ? { signal: requestSignal } : undefined, 2500
+            ).then(function(elevRes) {
+                if (!elevRes.ok) return null;
+                return elevRes.json();
+            }).then(function(elevData) {
+                if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+                var elevM = elevData && elevData.elevation && elevData.elevation[0];
+                if (elevM != null) {
+                    window.userLocElevFt = Number(elevM) * 3.28084;
+                    window._userLocElevKey = elevCacheKey;
                 }
-            } catch (e) {}
+            }).catch(function() {});
         }
         var officialTempF = tempF;
         var userElevFt = window.userLocElevFt != null
@@ -9165,6 +9197,16 @@
         requestLat = requestLat == null ? lat : requestLat;
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
+        // Country classification runs beside the weather request. Give its
+        // reverse-geocode step a brief chance to identify an international
+        // location before probing the US-only NWS points endpoint.
+        var initialCountry = String(window.locationCountryCode || '').toUpperCase();
+        if (!initialCountry && window._locationClassificationPromise) {
+            await Promise.race([
+                window._locationClassificationPromise.catch(function() {}),
+                new Promise(function(resolve) { setTimeout(resolve, 1200); })
+            ]);
+        }
         try {
             // Canada has an official airport/ASOS/AWOS observation path.
             // Use it before the generic international PirateWeather branch.
@@ -9187,9 +9229,18 @@
                 } catch (globalError) {
                     console.warn('[SkyMonitor] Global aviation observation failed:', globalError);
                 }
+                // Do not fall through to the US-only NWS points request after
+                // an international aviation lookup has already failed. That
+                // second probe is what turns a quick provider failure into a
+                // long blank/loading state.
+                window.isOutsideUS = true;
+                applyInternationalMode();
+                return;
             }
+            var pointsCountry = String(window.locationCountryCode || '').toUpperCase();
             const pointsRes = await _weatherFetch('https://api.weather.gov/points/' + requestLat + ',' + requestLon,
-                requestSignal ? { signal: requestSignal } : undefined, 15000);
+                requestSignal ? { signal: requestSignal } : undefined,
+                pointsCountry ? 15000 : 5000);
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             if (!pointsRes.ok) {
                 // The country lookup normally finishes in parallel, but the
