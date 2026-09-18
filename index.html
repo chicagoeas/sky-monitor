@@ -4879,19 +4879,14 @@
         // language unset so the originating national service's default text is
         // used; "English" explicitly requests the API's English info block.
         if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
-        var res = null;
-        for (var attempt = 0; attempt < 2; attempt++) {
-            res = await _weatherFetch(url, {
-                cache: 'no-store',
-                signal: requestSignal
-            }, 12000);
-            if (res.ok || (res.status !== 429 && res.status < 500) || attempt === 1) {
-                break;
-            }
-            // The Worker retries the upstream request too; this short client
-            // retry covers a cold-cache race between simultaneous page loads.
-            await new Promise(function(resolve) { setTimeout(resolve, 1200); });
-        }
+        // The Worker owns upstream retries, country-feed caching, and
+        // concurrent-request deduplication. Do not retry here: a browser-side
+        // retry turns one provider 429 into another quota-consuming request,
+        // and it defeats the Worker's shared cache during a cold start.
+        var res = await _weatherFetch(url, {
+            cache: 'no-store',
+            signal: requestSignal
+        }, 12000);
         if (!res.ok) throw new Error('MeteoAlarm alerts ' + res.status);
         var payload = await res.json();
         var sourceAlerts = Array.isArray(payload)
