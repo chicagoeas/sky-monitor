@@ -1523,6 +1523,7 @@
                         <option value="spc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">SPC</option>
                         <option value="wpc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">WPC</option>
                         <option value="nhc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">NHC</option>
+                        <option value="cpc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">CPC</option>
                     </select>
                     <div id="outlook-title" style="font-weight:700; color:#f1f5f9; font-size:0.92em;">DAY 1 CONVECTIVE OUTLOOK</div>
                 </div>
@@ -1544,6 +1545,19 @@
                 <div class="spc-btn-tabs btn-group" id="nhc-range-tabs">
                     <button class="btn-opt active" onclick="switchNHCRange('2d', this)">2-Day</button>
                     <button class="btn-opt" onclick="switchNHCRange('7d', this)">7-Day</button>
+                </div>
+            </div>
+            <div id="cpc-controls" style="display:none; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; width:100%;">
+                <div class="spc-btn-tabs btn-group" id="cpc-metric-tabs">
+                    <button class="btn-opt active" onclick="switchCPCMetric('temp', this)">Temp</button>
+                    <button class="btn-opt" onclick="switchCPCMetric('precip', this)">Precip</button>
+                </div>
+                <div class="spc-btn-tabs btn-group" id="cpc-period-tabs">
+                    <button class="btn-opt active" onclick="switchCPCPeriod('610', this)">6-10 Days</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('814', this)">8-14 Days</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('wk34', this)">Week 3-4</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('1mo', this)">One Month</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('3mo', this)">Three Month</button>
                 </div>
             </div>
             <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
@@ -1961,6 +1975,8 @@
     let activeOutlookCenter = 'spc';
     let nhcBasin = 'atl';
     let nhcRange = '2d';
+    let cpcMetric = 'temp';
+    let cpcPeriod = '610';
     let skyAnimId = null;
     let skyStars = [];
     let moonPhaseVal = 0;
@@ -3732,6 +3748,41 @@
             lnk.href = 'https://www.nhc.noaa.gov/gtwo.php';
             if (titleEl) titleEl.innerText = (NHC_BASIN_LABELS[nhcBasin] || nhcBasin.toUpperCase()) + ' ' + (NHC_RANGE_LABELS[nhcRange] || nhcRange.toUpperCase()) + ' TROPICAL OUTLOOK';
             if (countdown) countdown.style.display = '';
+        } else if (center === 'cpc') {
+            const CPC_URLS = {
+                '610': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/610day/610temp.new.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/610day/610prcp.new.gif'
+                },
+                '814': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/814day/814temp.new.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/814day/814prcp.new.gif'
+                },
+                'wk34': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/WK34/gifs/WK34temp.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/WK34/gifs/WK34prcp.gif'
+                },
+                '1mo': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead14/off14_temp.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead14/off14_prcp.gif'
+                },
+                '3mo': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead01/off01_temp.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead01/off01_prcp.gif'
+                }
+            };
+            const CPC_PERIOD_LABELS = {
+                '610': '6-10 DAY',
+                '814': '8-14 DAY',
+                'wk34': 'WEEK 3-4',
+                '1mo': 'ONE MONTH',
+                '3mo': 'THREE MONTH'
+            };
+            const cpcUrl = (CPC_URLS[cpcPeriod] || CPC_URLS['610'])[cpcMetric] || CPC_URLS['610'].temp;
+            img.src = cpcUrl + (cpcUrl.indexOf('?') === -1 ? '?' : '&') + 't=' + Date.now();
+            lnk.href = cpcUrl;
+            if (titleEl) titleEl.innerText = 'CPC ' + (CPC_PERIOD_LABELS[cpcPeriod] || '6-10 DAY') + ' ' + (cpcMetric === 'precip' ? 'PRECIPITATION' : 'TEMPERATURE') + ' OUTLOOK';
+            if (countdown) countdown.style.display = 'none';
         } else {
             const spcUrl = 'www.spc.noaa.gov/products/outlook/day' + day + 'otlk.png';
             img.src = 'https://images.weserv.nl/?url=' + spcUrl + '&t=' + Date.now();
@@ -3751,10 +3802,12 @@
         // Show the right button row
         const spcDayTabs = document.getElementById('spc-day-tabs');
         const nhcControls = document.getElementById('nhc-controls');
-        if (spcDayTabs) spcDayTabs.style.display = center === 'nhc' ? 'none' : '';
+        const cpcControls = document.getElementById('cpc-controls');
+        if (spcDayTabs) spcDayTabs.style.display = center === 'nhc' || center === 'cpc' ? 'none' : '';
         if (nhcControls) nhcControls.style.display = center === 'nhc' ? 'flex' : 'none';
+        if (cpcControls) cpcControls.style.display = center === 'cpc' ? 'flex' : 'none';
 
-        if (center !== 'nhc') {
+        if (center !== 'nhc' && center !== 'cpc') {
             // Show/hide Day 4 & 5 buttons (WPC only)
             ['4','5'].forEach(function(d) {
                 const b = document.getElementById('outlook-day' + d + '-btn');
@@ -3770,9 +3823,11 @@
             updateOutlookMap(center, activeSPCDay);
             if (center === 'spc') startSPCCountdown(activeSPCDay);
             else startWPCCountdown(activeSPCDay);
-        } else {
+        } else if (center === 'nhc') {
             updateOutlookMap('nhc', null);
             startNHCCountdown();
+        } else {
+            updateOutlookMap('cpc', null);
         }
     }
 
@@ -3788,6 +3843,21 @@
         document.querySelectorAll('#nhc-range-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
         element.classList.add('active');
         updateOutlookMap('nhc', null);
+    }
+
+    function switchCPCMetric(metric, element) {
+        cpcMetric = metric === 'precip' ? 'precip' : 'temp';
+        document.querySelectorAll('#cpc-metric-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+        element.classList.add('active');
+        updateOutlookMap('cpc', null);
+    }
+
+    function switchCPCPeriod(period, element) {
+        const validPeriods = ['610', '814', 'wk34', '1mo', '3mo'];
+        cpcPeriod = validPeriods.indexOf(period) !== -1 ? period : '610';
+        document.querySelectorAll('#cpc-period-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+        element.classList.add('active');
+        updateOutlookMap('cpc', null);
     }
 
     async function updateWeatherStory(wfo) {
@@ -15232,6 +15302,8 @@
                     if (activeOutlookCenter === 'nhc') {
                         updateOutlookMap('nhc', null);
                         startNHCCountdown();
+                    } else if (activeOutlookCenter === 'cpc') {
+                        updateOutlookMap('cpc', null);
                     } else {
                         updateOutlookMap(activeOutlookCenter, activeSPCDay);
                         if (activeOutlookCenter === 'spc') startSPCCountdown(activeSPCDay);
