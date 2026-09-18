@@ -3533,6 +3533,10 @@
                 }
             }
         }
+        // A searched or manually entered location is a map view, not proof of
+        // the reporter's physical location. Do not carry a previous GPS report
+        // pin into the manually selected location.
+        if (!window._locFromGPS) clearReportPinForManualLocation();
         saveLoc();
         document.getElementById('stationName').innerText = 'LOADING LOCATION...';
         var _outlookEl = document.getElementById('hourly-outlook');
@@ -3652,6 +3656,7 @@
             var cityInput = document.getElementById('cityInput');
             if (cityInput) cityInput.value = pending.value || '';
             if (isFinite(Number(pending.lat)) && isFinite(Number(pending.lon))) {
+                window._locFromGPS = false;
                 lat = parseFloat(pending.lat);
                 lon = parseFloat(pending.lon);
                 if (pending.city) localStorage.setItem('waddle_city', pending.city);
@@ -12900,6 +12905,20 @@
         }
     }
 
+    function clearReportPinForManualLocation() {
+        ++privacySnapGeneration;
+        reportLat = null;
+        reportLon = null;
+        if (reportPinMarker && reportingMap) {
+            reportingMap.removeLayer(reportPinMarker);
+        }
+        reportPinMarker = null;
+        updatePinCoordsDisplay();
+        if (reportingMap && isFinite(Number(lat)) && isFinite(Number(lon))) {
+            reportingMap.setView([Number(lat), Number(lon)], reportingMap.getZoom(), { animate: false });
+        }
+    }
+
     function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
         if (!el) return;
@@ -13113,24 +13132,24 @@
         const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
         const firstReportMapInit = !window._reportPinInitialized;
         const privacyEnabledAtInit = localStorage.getItem('report_privacy_mode') === '1';
+        const gpsSourcedAtInit = window._locFromGPS === true;
 
-        // Initialize the report pin once per page load. In-app tab and route
-        // transitions reuse the existing pin; a full reload may create a new
-        // randomized offset.
-        if (firstReportMapInit) {
+        // Only a real GPS fix creates an initial report pin. A searched or
+        // manually entered location should center the map without implying
+        // that the reporter is physically there.
+        if (firstReportMapInit && gpsSourcedAtInit && reportLat == null && reportLon == null) {
             const offset = applyPrivacyOffset(rawLat, rawLon);
             reportLat = offset.la;
             reportLon = offset.lo;
             updatePinCoordsDisplay();
         }
 
-        // Center the map on the adjusted report pin, never on the user's raw
-        // weather location. This keeps repeated zooming from exposing the
-        // exact location by revealing that the initial viewport was centered
-        // somewhere different from the report marker.
+        // GPS uses the existing privacy-adjusted report pin. Manual locations
+        // center the actual map on the selected coordinates and do not create
+        // an automatic report pin.
         let initialView = {
-            lat: reportLat != null ? reportLat : rawLat,
-            lon: reportLon != null ? reportLon : rawLon,
+            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
         reportingMap = L_ref.map('reporting-map', { zoomControl: true })
@@ -13209,8 +13228,10 @@
         const isMobile = window.matchMedia('(pointer: coarse)').matches;
         
 
-        // Always create the pin on first load; thereafter only for GPS-sourced locations
-        if (reportLat != null && reportLon != null) {
+        // Only GPS-sourced locations get an automatic report pin. Manual users
+        // can still place one explicitly with a double-click or by dragging a
+        // pin after one has been created.
+        if (gpsSourcedAtInit && reportLat != null && reportLon != null) {
             reportPinMarker = L_ref.marker([reportLat, reportLon], { icon: dotIcon, draggable: true, zIndexOffset: 1000 })
                 .bindTooltip('Report location', { permanent: false })
                 .addTo(reportingMap);
@@ -13224,7 +13245,7 @@
         window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
-        if (firstReportMapInit && privacyEnabledAtInit && _privacyCb && _privacyCb.checked) {
+        if (firstReportMapInit && gpsSourcedAtInit && privacyEnabledAtInit && _privacyCb && _privacyCb.checked) {
             moveReportPinToPrivacyCenter(rawLat, rawLon, false);
         }
 
