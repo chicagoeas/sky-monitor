@@ -1912,6 +1912,10 @@
     // Weather provider credentials live in the Cloudflare Worker, never in this file.
     // Replace this URL with the deployed worker URL during integration.
     const WEATHER_WORKER_URL = 'https://api.skymonitor.app';
+    // Global METAR/ASOS/AWOS observations are fetched through the Cloudflare
+    // Worker because Aviation Weather Center does not reliably expose the
+    // browser-facing CORS headers needed by every deployment.
+    const GLOBAL_AVIATION_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/global-aviation';
     // MeteoAlarm access is server-side. The worker route authenticates with the
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
@@ -8808,6 +8812,349 @@
         return true;
     }
 
+    function _globalAviationCondition(observation, fallbackSummary) {
+        var raw = String(observation && observation.rawOb || '').toUpperCase();
+        var weatherGroups = raw.split(/\s+/).filter(function(token) {
+            return /^[+-]?(?:VC|MI|PR|BC|DR|BL|SH|TS|FZ)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)(?:[A-Z0-9]*)$/.test(token);
+        });
+        var weather = weatherGroups.join(' ');
+        if (/FC/.test(weather)) return 'Funnel Cloud';
+        if (/TS/.test(weather)) return 'Thunderstorm';
+        if (/(?:GR|GS)/.test(weather)) return 'Hail';
+        if (/(?:SN|SG|IC|PL)/.test(weather)) return 'Snow';
+        if (/FZ(?:RA|DZ)/.test(weather)) return 'Freezing Rain';
+        if (/DZ/.test(weather)) return 'Drizzle';
+        if (/SH.*RA|RA.*SH/.test(weather)) return 'Rain Showers';
+        if (/RA/.test(weather)) return 'Rain';
+        if (/(?:BR|FG)/.test(weather)) return 'Fog';
+        if (/(?:HZ|FU|VA)/.test(weather)) return 'Haze';
+        if (/(?:DU|SA|SS|DS)/.test(weather)) return 'Dust';
+        if (/SQ/.test(weather)) return 'Squalls';
+
+        var cover = String(observation && observation.cover || '').toUpperCase();
+        if (cover === 'CLR' || cover === 'SKC') return 'Clear';
+        if (cover === 'FEW') return 'Mostly Clear';
+        if (cover === 'SCT') return 'Partly Cloudy';
+        if (cover === 'BKN') return 'Mostly Cloudy';
+        if (cover === 'OVC') return 'Overcast';
+
+        var fallback = String(fallbackSummary || '').trim();
+        if (fallback && !/^(current conditions|unknown(?: precipitation)?|n\/a|na|not available)$/i.test(fallback)) {
+            return fallback;
+        }
+        if (observation && Number(observation.visib) < 1) return 'Reduced Visibility';
+        return 'No Present Weather Reported';
+    }
+
+    async function fetchGlobalAviationStationChain(loadGeneration, requestLat, requestLon) {
+        if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+        requestLat = requestLat == null ? lat : requestLat;
+        requestLon = requestLon == null ? lon : requestLon;
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var response = await _weatherFetch(
+            GLOBAL_AVIATION_PROXY_URL + '?lat=' + encodeURIComponent(requestLat) +
+            '&lon=' + encodeURIComponent(requestLon),
+            requestSignal ? { signal: requestSignal } : undefined,
+            15000
+        );
+        if (!response.ok) throw new Error('Global aviation observations ' + response.status);
+        var payload = await response.json();
+        var observations = Array.isArray(payload && payload.observations)
+            ? payload.observations : [];
+        var now = Date.now();
+        var candidates = observations.map(function(observation) {
+            if (!observation) return null;
+            var sLat = Number(observation.lat), sLon = Number(observation.lon);
+            var tempC = Number(observation.temp);
+            if (!isFinite(sLat) || !isFinite(sLon) || !isFinite(tempC)) return null;
+            var obsMs = Number(observation.obsTime) * 1000;
+            if (!isFinite(obsMs) || obsMs <= 0) {
+                obsMs = Date.parse(observation.reportTime || '');
+            }
+            // AWC's hours filter is a server-side candidate bound; keep the
+            // client-side age check too so a stale cached/late report cannot
+            // become the displayed current observation.
+            if (!isFinite(obsMs) || obsMs < now - 3 * 60 * 60 * 1000 ||
+                obsMs > now + 15 * 60 * 1000) return null;
+            return {
+                observation: observation,
+                lat: sLat,
+                lon: sLon,
+                distance: _environmentCanadaDistanceKm(requestLat, requestLon, sLat, sLon),
+                obsMs: obsMs
+            };
+        }).filter(Boolean);
+        candidates.sort(function(a, b) {
+            return a.distance - b.distance || b.obsMs - a.obsMs;
+        });
+        var selected = candidates[0];
+        if (!selected) throw new Error('No recent global aviation observation nearby');
+
+        var observation = selected.observation;
+        var tempC = Number(observation.temp);
+        var tempF = tempC * 9 / 5 + 32;
+        var dewpointC = Number(observation.dewp);
+        var humidity = null;
+        if (isFinite(dewpointC)) {
+            // Magnus approximation: METAR supplies temperature/dewpoint, not RH.
+            humidity = 100 * Math.exp(
+                (17.625 * dewpointC) / (243.04 + dewpointC) -
+                (17.625 * tempC) / (243.04 + tempC)
+            );
+            if (!isFinite(humidity)) humidity = null;
+        }
+        if (humidity !== null) humidity = Math.max(0, Math.min(100, humidity));
+        var windKt = Number(observation.wspd);
+        var windMph = isFinite(windKt) ? Math.max(0, windKt) * 1.15077945 : null;
+        var windDir = Number(observation.wdir);
+        if (!isFinite(windDir)) windDir = null;
+        var pressure = Number(observation.altim);
+        if (!isFinite(pressure)) pressure = null;
+        var stationElevM = Number(observation.elev);
+        if (!isFinite(stationElevM)) stationElevM = null;
+        var stationCode = String(
+            observation.icaoId || observation.wmoId || observation.stationId || ''
+        ).trim();
+        var displayName = String(
+            observation.name || stationCode || 'Global aviation station'
+        ).trim();
+        if (!stationCode) stationCode = displayName;
+
+        window.isOutsideUS = true;
+        updateUSOnlyLayerLabels();
+        applyInternationalMode(true);
+        var stationIdLabel = document.getElementById('meta-id-label');
+        if (stationIdLabel) stationIdLabel.innerText = 'Station:';
+        document.getElementById('stationName').innerText = displayName;
+        document.getElementById('meta-name').innerText = displayName;
+        document.getElementById('meta-id').innerText = stationCode;
+        document.getElementById('meta-elev').innerText = stationElevM !== null
+            ? _fmtElevation(stationElevM) : 'N/A';
+        document.getElementById('stationName').title =
+            'Official global METAR / ASOS / AWOS observation';
+
+        // Match the official fallback's elevation correction used by the
+        // NWS and Environment Canada chains.
+        var stationElevFt = stationElevM !== null ? stationElevM * 3.28084 : null;
+        var elevCacheKey = requestLat.toFixed(4) + ',' + requestLon.toFixed(4);
+        if (window.userLocElevFt == null || window._userLocElevKey !== elevCacheKey) {
+            try {
+                var elevRes = await _weatherFetch(
+                    'https://api.open-meteo.com/v1/elevation?latitude=' + requestLat +
+                    '&longitude=' + requestLon,
+                    requestSignal ? { signal: requestSignal } : undefined, 12000
+                );
+                if (elevRes.ok) {
+                    var elevData = await elevRes.json();
+                    if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+                    var elevM = elevData && elevData.elevation && elevData.elevation[0];
+                    if (elevM != null) {
+                        window.userLocElevFt = Number(elevM) * 3.28084;
+                        window._userLocElevKey = elevCacheKey;
+                    }
+                }
+            } catch (e) {}
+        }
+        var officialTempF = tempF;
+        var userElevFt = window.userLocElevFt != null
+            ? window.userLocElevFt : window.wuElevFt;
+        if (stationElevFt !== null && userElevFt != null) {
+            var lapseDelta = (stationElevFt - userElevFt) * (3.5 / 1000);
+            if (Math.abs(lapseDelta) >= 0.5) officialTempF += lapseDelta;
+        }
+
+        // This is intentionally the same PWS QC pass as the ECCC chain:
+        // validate humidity and a 20°F PirateWeather outlier limit, build a
+        // neighbor median, prefer complete observations, then compare to the
+        // independent official station before selecting a source.
+        var wu = window.wuData;
+        var pwNow = window.pirateCurrently;
+        var pwTemp = pwNow && pwNow.temperature != null ? pwNow.temperature : null;
+        var median = function(values) {
+            var middle = Math.floor(values.length / 2);
+            return values.length % 2 ? values[middle] :
+                (values[middle - 1] + values[middle]) / 2;
+        };
+        if (wu && wu.humidity !== null &&
+            (!isFinite(wu.humidity) || wu.humidity < 0 || wu.humidity > 100)) {
+            wu.humidity = null;
+        }
+        var isValidStation = function(station) {
+            if (!station || station.temp === null || station.humidity === null) return false;
+            if (!isFinite(station.humidity) || station.humidity < 0 || station.humidity > 100) return false;
+            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > 20) return false;
+            return true;
+        };
+        var neighbors = (window.wuNeighborData || []).filter(isValidStation);
+        var neighborMedianTemp = null;
+        if (neighbors.length) {
+            var neighborTemps = neighbors.map(function(station) { return station.temp; })
+                .sort(function(a, b) { return a - b; });
+            neighborMedianTemp = median(neighborTemps);
+        }
+        var referenceTemp = officialTempF !== null
+            ? officialTempF
+            : (neighborMedianTemp !== null ? neighborMedianTemp : pwTemp);
+        var pool = [];
+        if (isValidStation(wu)) pool.push({ station: wu, rank: 0 });
+        neighbors.forEach(function(station, index) {
+            pool.push({ station: station, rank: index + 1 });
+        });
+        if (pool.length) {
+            pool.sort(function(a, b) {
+                var aComplete = a.station.windSpeed !== null &&
+                    a.station.windSpeed !== undefined ? 1 : 0;
+                var bComplete = b.station.windSpeed !== null &&
+                    b.station.windSpeed !== undefined ? 1 : 0;
+                if (aComplete !== bComplete) return bComplete - aComplete;
+                var aDelta = referenceTemp !== null
+                    ? Math.abs(a.station.temp - referenceTemp) : 0;
+                var bDelta = referenceTemp !== null
+                    ? Math.abs(b.station.temp - referenceTemp) : 0;
+                return Math.abs(aDelta - bDelta) > 1.5
+                    ? aDelta - bDelta : a.rank - b.rank;
+            });
+            var winner = pool[0].station;
+            if (winner !== wu) {
+                wu = winner;
+                window.wuData = winner;
+            }
+        }
+        var wuAvailable = pool.length > 0 && isValidStation(wu);
+        window.wuDeviates = !wuAvailable;
+        var wuStationEl = document.getElementById('wuStation');
+        var wuLinkEl = document.getElementById('wuLink');
+        if (wuAvailable && wu.stationId && wuStationEl && wuLinkEl) {
+            wuLinkEl.innerText = wu.stationId;
+            wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
+            wuStationEl.style.display = 'block';
+        } else if (wuStationEl) {
+            wuStationEl.style.display = 'none';
+        }
+
+        var officialFallback = !wuAvailable && officialTempF !== null;
+        var source = wuAvailable ? 'pws' : (officialFallback ? 'global' : 'pirate');
+        var pw = window.pirateCurrently || {};
+        var selectedTemp = source === 'pws' ? wu.temp
+            : source === 'global' ? officialTempF : pw.temperature;
+        var selectedHumidity = source === 'pws' ? wu.humidity
+            : source === 'global' ? humidity
+            : (pw.humidity != null ? pw.humidity * 100 : null);
+        var selectedWind = source === 'pws' ? (wu.windSpeed != null ? wu.windSpeed : windMph)
+            : source === 'global' ? (windMph != null ? windMph : pw.windSpeed)
+            : pw.windSpeed;
+        var selectedWindDir = source === 'pws' ? (wu.windSpeed != null ? wu.windDir : windDir)
+            : source === 'global' ? (windMph != null ? windDir : pw.windBearing)
+            : pw.windBearing;
+        if (selectedTemp != null && isFinite(selectedTemp)) {
+            window.liveTemp = Math.round(selectedTemp);
+            var tempEl = document.getElementById('tempVal');
+            tempEl.innerText = _fmtTemp(window.liveTemp);
+            tempEl.style.color = colorFeelsLike(window.liveTemp);
+        }
+        if (selectedHumidity != null && isFinite(selectedHumidity)) {
+            var humidityEl = document.getElementById('humVal');
+            var humidityRounded = Math.round(selectedHumidity);
+            humidityEl.innerText = humidityRounded + '%';
+            humidityEl.style.color = colorHumidity(humidityRounded);
+        }
+        if (selectedWind != null && isFinite(selectedWind)) {
+            liveWindSpd = Math.round(selectedWind);
+            document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
+            setWindCompass(liveWindSpd > 0 && selectedWindDir != null &&
+                isFinite(selectedWindDir) ? selectedWindDir : null);
+        }
+        if (pressure !== null) lastPressureMb = pressure;
+        var condition = _globalAviationCondition(observation, pw.summary);
+        currentCondition = condition;
+        document.getElementById('conditionText').innerText = condition;
+
+        var feelsLike = null;
+        if (source === 'pirate' && pw.apparentTemperature != null) {
+            feelsLike = pw.apparentTemperature;
+        } else if (selectedTemp != null && isFinite(selectedTemp) &&
+            selectedHumidity != null && isFinite(selectedHumidity) &&
+            !(selectedTemp <= 50 && selectedWind == null)) {
+            var rh = Math.min(100, Math.max(0, selectedHumidity));
+            feelsLike = selectedTemp;
+            if (selectedTemp <= 50 && selectedWind >= 3) {
+                feelsLike = 35.74 + 0.6215 * selectedTemp -
+                    35.75 * Math.pow(selectedWind, 0.16) +
+                    0.4275 * selectedTemp * Math.pow(selectedWind, 0.16);
+            } else if (selectedTemp >= 70) {
+                var simpleHeat = 0.5 * (selectedTemp + 61 +
+                    (selectedTemp - 68) * 1.2 + rh * 0.094);
+                if (simpleHeat >= 80) {
+                    var roth = -42.379 + 2.04901523 * selectedTemp +
+                        10.14333127 * rh - 0.22475541 * selectedTemp * rh -
+                        0.00683783 * selectedTemp * selectedTemp -
+                        0.05391317 * rh * rh +
+                        0.00122874 * selectedTemp * selectedTemp * rh +
+                        0.00085282 * selectedTemp * rh * rh -
+                        0.00000199 * selectedTemp * selectedTemp * rh * rh;
+                    feelsLike = (selectedTemp + roth) / 2;
+                } else {
+                    feelsLike = simpleHeat;
+                }
+            }
+        }
+        liveFeelsLike = feelsLike;
+        if (feelsLike !== null && isFinite(feelsLike)) {
+            var feelsEl = document.getElementById('feelsVal');
+            feelsEl.innerText = _fmtTemp(Math.round(feelsLike));
+            feelsEl.style.color = colorFeelsLike(Math.round(feelsLike));
+        }
+        var icon = _pwSummaryIcon(condition, !!(pw.icon && pw.icon.includes('night')));
+        var iconEl = document.getElementById('weatherIcon');
+        if (iconEl && icon) {
+            iconEl.src = icon;
+            iconEl.style.display = 'block';
+        } else if (iconEl) {
+            iconEl.style.display = 'none';
+        }
+        updateSmartComfort(
+            selectedTemp != null ? Math.round(selectedTemp) : 70,
+            liveFeelsLike,
+            selectedHumidity != null ? Math.round(selectedHumidity) : 50,
+            selectedWind != null ? Math.round(selectedWind) : 0,
+            condition,
+            liveUV,
+            (pw.precipProbability || 0) * 100,
+            condition
+        );
+        _renderPWSQCPanel(
+            wuAvailable ? wu : null,
+            tempF,
+            humidity,
+            tempF !== null,
+            'Global ASOS/AWOS'
+        );
+        startWeatherFX(condition);
+        startSkyFX(condition);
+        _wxReveal();
+        if (window.pirateHourlyData) {
+            renderHourlyOutlook(window.pirateHourlyData, window.pirateTimezoneOffset || 0);
+        }
+        if (reportingMap) setTimeout(loadReportingMapData, 0);
+        SkyDB.set(SkyDB.S.weather, 'nws_obs', {
+            ts: Date.now(),
+            stationName: document.getElementById('stationName').innerText,
+            stationId: document.getElementById('meta-id').innerText,
+            stationElev: document.getElementById('meta-elev').innerText,
+            condition: currentCondition,
+            iconSrc: document.getElementById('weatherIcon').src,
+            iconVisible: document.getElementById('weatherIcon').style.display !== 'none',
+            wfo: document.getElementById('wfo-label').innerText,
+            metaName: document.getElementById('meta-name').innerText,
+            liveTemp: window.liveTemp,
+            liveFeelsLike: liveFeelsLike,
+            liveWindSpd: liveWindSpd,
+            liveHumidity: selectedHumidity != null ? Math.round(selectedHumidity) : null
+        });
+        return true;
+    }
+
     async function fetchNWSChain(loadGeneration, requestLat, requestLon) {
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
         requestLat = requestLat == null ? lat : requestLat;
@@ -8818,6 +9165,23 @@
             // Use it before the generic international PirateWeather branch.
             if (String(window.locationCountryCode || '').toUpperCase() === 'CA') {
                 return await fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon);
+            }
+            var knownCountry = String(window.locationCountryCode || '').toUpperCase();
+            // NWS is authoritative for the U.S. and its supported territories.
+            // Everywhere else gets the global METAR/ASOS/AWOS chain before
+            // PirateWeather, except open water where an airport observation
+            // is not relevant.
+            var nwsCoverageCountry = ['US', 'PR', 'GU', 'AS', 'MP', 'VI']
+                .indexOf(knownCountry) !== -1;
+            if (knownCountry && knownCountry !== 'CA' && !nwsCoverageCountry &&
+                !window.isWaterLocation) {
+                try {
+                    return await fetchGlobalAviationStationChain(
+                        loadGeneration, requestLat, requestLon
+                    );
+                } catch (globalError) {
+                    console.warn('[SkyMonitor] Global aviation observation failed:', globalError);
+                }
             }
             const pointsRes = await _weatherFetch('https://api.weather.gov/points/' + requestLat + ',' + requestLon,
                 requestSignal ? { signal: requestSignal } : undefined, 15000);
@@ -8834,6 +9198,15 @@
                         );
                     } catch (canadaError) {
                         console.warn('[SkyMonitor] Environment Canada observation failed:', canadaError);
+                    }
+                }
+                if (detectedCountry !== 'US' && !window.isWaterLocation) {
+                    try {
+                        return await fetchGlobalAviationStationChain(
+                            loadGeneration, requestLat, requestLon
+                        );
+                    } catch (globalError) {
+                        console.warn('[SkyMonitor] Global aviation observation failed:', globalError);
                     }
                 }
                 window.isOutsideUS = true;
