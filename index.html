@@ -1916,6 +1916,11 @@
     // Worker because Aviation Weather Center does not reliably expose the
     // browser-facing CORS headers needed by every deployment.
     const GLOBAL_AVIATION_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/global-aviation';
+    // A METAR/ASOS/AWOS report is only representative of the requested
+    // location when the station is reasonably close. Beyond this limit,
+    // preserve LOCAL OBSERVATION rather than importing conditions from a
+    // distant airport in a different weather regime.
+    const GLOBAL_AVIATION_MAX_DISTANCE_KM = 100;
     // MeteoAlarm access is server-side. The worker route authenticates with the
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
@@ -4857,6 +4862,9 @@
         var alerts = rawAlerts.map(_normalizePirateAlert).filter(function(alert) {
             return !alert.expires || alert.expires * 1000 > now;
         });
+        if (localStorage.getItem('alerts_language') === 'en' && alerts.length) {
+            alerts = await _translatePirateAlertsToEnglish(alerts, requestSignal);
+        }
         window.pirateAlerts = alerts;
         // Keep the shared international alert collection populated so threat
         // scoring can account for PirateWeather alerts as well as the visible
@@ -4864,6 +4872,70 @@
         window.meteoAlarmAlerts = alerts;
         _storeInternationalAlertState(alerts);
         return alerts;
+    }
+
+    // Google exposes the same keyless Translate endpoint used by the
+    // lightweight web client. It supports CORS, so PirateWeather alert text
+    // can be translated in the browser without adding another Worker secret.
+    function _googleTranslateResponseText(payload) {
+        if (!Array.isArray(payload) || !Array.isArray(payload[0])) return '';
+        return payload[0].map(function(part) {
+            return Array.isArray(part) && part[0] ? String(part[0]) : '';
+        }).join('');
+    }
+
+    function _googleTranslateChunks(text, maxLength) {
+        var value = String(text || '');
+        if (value.length <= maxLength) return [value];
+        var chunks = [];
+        var remaining = value;
+        while (remaining.length > maxLength) {
+            var cut = remaining.lastIndexOf(' ', maxLength);
+            if (cut < Math.floor(maxLength * 0.55)) cut = maxLength;
+            chunks.push(remaining.slice(0, cut));
+            remaining = remaining.slice(cut).replace(/^\s+/, '');
+        }
+        if (remaining) chunks.push(remaining);
+        return chunks;
+    }
+
+    async function _googleTranslateFreeText(text, requestSignal) {
+        var chunks = _googleTranslateChunks(text, 1400);
+        var translated = [];
+        for (var i = 0; i < chunks.length; i++) {
+            if (requestSignal && requestSignal.aborted) throw new Error('Translation request aborted');
+            var url = 'https://translate.googleapis.com/translate_a/single?client=gtx'
+                + '&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(chunks[i]);
+            var response = await _weatherFetch(url, {
+                signal: requestSignal
+            }, 7000);
+            if (!response.ok) throw new Error('Google Translate ' + response.status);
+            var payload = await response.json();
+            var result = _googleTranslateResponseText(payload);
+            if (!result) throw new Error('Google Translate returned no text');
+            translated.push(result);
+        }
+        return translated.join(' ');
+    }
+
+    async function _translatePirateAlertsToEnglish(alerts, requestSignal) {
+        var translatedAlerts = alerts.map(function(alert) {
+            return Object.assign({}, alert);
+        });
+        for (var i = 0; i < translatedAlerts.length; i++) {
+            var alert = translatedAlerts[i];
+            for (var field of ['title', 'event', 'description']) {
+                if (!alert[field]) continue;
+                try {
+                    alert[field] = await _googleTranslateFreeText(alert[field], requestSignal);
+                } catch (error) {
+                    // Keep the original alert usable if the free endpoint is
+                    // temporarily unavailable or rate-limits the browser.
+                    console.warn('[SkyMonitor] Alert translation failed:', error);
+                }
+            }
+        }
+        return translatedAlerts;
     }
 
     // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
@@ -8919,12 +8991,19 @@
                 distance: _environmentCanadaDistanceKm(requestLat, requestLon, sLat, sLon),
                 obsMs: obsMs
             };
-        }).filter(Boolean);
+        }).filter(function(candidate) {
+            return candidate && candidate.distance <= GLOBAL_AVIATION_MAX_DISTANCE_KM;
+        });
         candidates.sort(function(a, b) {
             return a.distance - b.distance || b.obsMs - a.obsMs;
         });
         var selected = candidates[0];
-        if (!selected) throw new Error('No recent global aviation observation nearby');
+        if (!selected) {
+            throw new Error(
+                'No recent global aviation observation within ' +
+                GLOBAL_AVIATION_MAX_DISTANCE_KM + ' km'
+            );
+        }
 
         var observation = selected.observation;
         var tempC = Number(observation.temp);
