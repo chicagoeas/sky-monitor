@@ -29,6 +29,9 @@ for (const [k, v] of Object.entries({ CF_API_TOKEN, CF_ACCOUNT_ID, CF_D1_DATABAS
 // Uses the same ?-style positional parameters as D1 in Workers.
 
 const D1_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d1/database/${CF_D1_DATABASE_ID}/query`;
+// GitHub Actions must use the direct Worker hostname. The custom API domain
+// is protected by Cloudflare Bot Fight Mode and can challenge server requests.
+const SKYMONITOR_WORKER_URL = "https://skymonitor-apis.skymonitor-account.workers.dev";
 
 async function d1Query(sql, params = []) {
   const res = await fetch(D1_URL, {
@@ -324,9 +327,15 @@ async function fetchEnvironmentCanadaPushAlerts(lat, lon) {
 }
 
 async function fetchMeteoAlarmPushAlerts(lat, lon) {
-  const url = `https://api.skymonitor.app/api/weather/meteoalarm?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+  const url = `${SKYMONITOR_WORKER_URL}/api/weather/meteoalarm?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "SkyMonitor-GitHubActions/1.1",
+      },
+      signal: AbortSignal.timeout(20000),
+    });
     if (!res.ok) return [];
     const payload = await res.json();
     return (payload.alerts || []).map((alert, index) => ({
@@ -350,9 +359,15 @@ async function fetchMeteoAlarmPushAlerts(lat, lon) {
 }
 
 async function fetchPiratePushAlerts(lat, lon) {
-  const url = `https://api.skymonitor.app/api/weather/pirate-alerts?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+  const url = `${SKYMONITOR_WORKER_URL}/api/weather/pirate-alerts?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    const res = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "SkyMonitor-GitHubActions/1.1",
+      },
+      signal: AbortSignal.timeout(12000),
+    });
     if (!res.ok) return [];
     const payload = await res.json();
     return (payload.alerts || []).map((alert, index) => ({
@@ -645,13 +660,27 @@ async function checkSPCAndWPC(row, vapid, checkMpd = true) {
     let mpdFetchOk = false;
     try {
       const mpdRes = await fetch(
-        `https://api.skymonitor.app/api/weather/mpd?lat=${productCoords.lat}&lon=${productCoords.lon}`,
-        { signal: AbortSignal.timeout(6000) }
+        `${SKYMONITOR_WORKER_URL}/api/weather/mpd?lat=${productCoords.lat}&lon=${productCoords.lon}`,
+        {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "SkyMonitor-GitHubActions/1.1",
+          },
+          signal: AbortSignal.timeout(6000),
+        }
       );
       if (mpdRes.ok) {
         const mpdData = await mpdRes.json();
         currentMpdNums = (mpdData.mpds || []).map(m => String(m.id).replace(/[^0-9]/g, "")).filter(Boolean);
         mpdFetchOk = true;
+      } else {
+        const responseBody = await mpdRes.text().catch(() => "");
+        const rayId = mpdRes.headers.get("cf-ray") || "not provided";
+        console.warn(
+          `[SkyMonitor] WPC MPD endpoint → HTTP ${mpdRes.status} ` +
+          `(Cloudflare Ray ID: ${rayId})` +
+          (responseBody ? ` — ${responseBody.slice(0, 300)}` : "")
+        );
       }
     } catch (e) { console.warn(`[SkyMonitor] WPC MPD fetch error: ${e.message}`); }
 
@@ -733,9 +762,8 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
 {
   // Use the direct Worker hostname for the key check. The custom API domain
   // is protected by Cloudflare Bot Fight Mode, which challenges GitHub Actions.
-  const WORKER_URL = "https://skymonitor-apis.skymonitor-account.workers.dev";
   try {
-    const res = await fetch(`${WORKER_URL}/api/push/vapid-public-key`, {
+    const res = await fetch(`${SKYMONITOR_WORKER_URL}/api/push/vapid-public-key`, {
       signal: AbortSignal.timeout(8000),
       headers: {
         Accept: "application/json",
