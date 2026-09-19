@@ -981,6 +981,14 @@
         .skymonitor-welcome-dot {
             width: 8px; height: 8px; padding: 0; border: 0; border-radius: 50%;
             background: rgba(199,213,232,0.32); transition: background 0.2s, transform 0.2s;
+            cursor: pointer;
+        }
+        .skymonitor-welcome-dot:hover,
+        .skymonitor-welcome-dot:focus-visible {
+            background: rgba(199,213,232,0.7);
+            transform: scale(1.25);
+            outline: 2px solid rgba(79,195,247,0.8);
+            outline-offset: 3px;
         }
         .skymonitor-welcome-dot.is-active {
             width: 22px; border-radius: 5px; background: #4fc3f7; transform: none;
@@ -1112,7 +1120,7 @@
                 <div class="skymonitor-welcome-kicker">WELCOME TO SKYMONITOR</div>
                 <h2 id="skymonitor-welcome-title" class="skymonitor-welcome-title"></h2>
                 <p id="skymonitor-welcome-copy" class="skymonitor-welcome-copy"></p>
-                <div id="skymonitor-welcome-dots" class="skymonitor-welcome-dots" aria-label="Welcome walkthrough progress"></div>
+                <div id="skymonitor-welcome-dots" class="skymonitor-welcome-dots" role="tablist" aria-label="Welcome walkthrough progress"></div>
             </div>
             <div class="skymonitor-welcome-footer">
                 <button class="skymonitor-welcome-skip" type="button" onclick="skipSkyMonitorWelcome()">Skip</button>
@@ -2286,8 +2294,12 @@
         title.textContent = slide.title;
         copy.innerHTML = formatSkyMonitorWelcomeCopy(slide.body);
         dots.innerHTML = skyMonitorWelcomeSlides.map(function(_, index) {
-            return '<span class="skymonitor-welcome-dot' + (index === skyMonitorWelcomeIndex ? ' is-active' : '')
-                + '" aria-hidden="true"></span>';
+            const isActive = index === skyMonitorWelcomeIndex;
+            return '<button class="skymonitor-welcome-dot' + (isActive ? ' is-active' : '')
+                + '" type="button" role="tab" aria-label="Go to welcome step ' + (index + 1)
+                + '" aria-selected="' + isActive + '"'
+                + (isActive ? ' aria-current="step"' : '')
+                + ' onclick="goToSkyMonitorWelcomeSlide(' + index + ')"></button>';
         }).join('');
         next.innerHTML = skyMonitorWelcomeIndex === skyMonitorWelcomeSlides.length - 1
             ? 'Get started &#10003;'
@@ -2305,6 +2317,17 @@
 
     function skipSkyMonitorWelcome() {
         closeSkyMonitorWelcome();
+    }
+
+    function goToSkyMonitorWelcomeSlide(index) {
+        if (!skyMonitorWelcomeSlides.length) return;
+        const nextIndex = Number(index);
+        if (!Number.isInteger(nextIndex) ||
+            nextIndex < 0 ||
+            nextIndex >= skyMonitorWelcomeSlides.length ||
+            nextIndex === skyMonitorWelcomeIndex) return;
+        skyMonitorWelcomeIndex = nextIndex;
+        renderSkyMonitorWelcomeSlide();
     }
 
     function advanceSkyMonitorWelcome() {
