@@ -9061,7 +9061,17 @@
 
     function _globalAviationCondition(observation, fallbackSummary) {
         var raw = String(observation && observation.rawOb || '').toUpperCase();
+        // The raw METAR begins with the station identifier. Some valid ICAO
+        // identifiers also begin with a weather abbreviation—for example,
+        // Brazzaville is FCBB, which starts with FC (funnel cloud). Exclude
+        // the identifier before parsing weather groups or it becomes a false
+        // "Funnel Cloud" observation.
+        var stationId = String(observation && (
+            observation.icaoId || observation.stationId || ''
+        ) || '').toUpperCase().trim();
         var weatherGroups = raw.split(/\s+/).filter(function(token) {
+            return token && token !== stationId;
+        }).filter(function(token) {
             return /^[+-]?(?:VC|MI|PR|BC|DR|BL|SH|TS|FZ)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)(?:[A-Z0-9]*)$/.test(token);
         });
         var weather = weatherGroups.join(' ');
