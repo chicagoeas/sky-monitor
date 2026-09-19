@@ -12302,7 +12302,13 @@
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let normalReportingPopupWidth = null;
-    let reportLat = null, reportLon = null;
+    // Keep the report pin across a full page reload. The map object is
+    // recreated on refresh, so in-memory coordinates alone are not enough to
+    // restore the marker before the next GPS callback arrives.
+    const _savedReportPinLat = parseFloat(localStorage.getItem('skymonitor_report_pin_lat') || '');
+    const _savedReportPinLon = parseFloat(localStorage.getItem('skymonitor_report_pin_lon') || '');
+    let reportLat = isFinite(_savedReportPinLat) ? _savedReportPinLat : null;
+    let reportLon = isFinite(_savedReportPinLon) ? _savedReportPinLon : null;
     let reportPinMarker = null;
     let reportPinIcon = null;
     let privacySnapGeneration = 0;
@@ -13643,6 +13649,8 @@
             const pos = e.target.getLatLng();
             reportLat = parseFloat(pos.lat.toFixed(5));
             reportLon = parseFloat(pos.lng.toFixed(5));
+            localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
+            localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
             updatePinCoordsDisplay();
         });
         return true;
@@ -13653,6 +13661,8 @@
         lo = parseFloat(lo);
         if (!isFinite(la) || !isFinite(lo)) return;
         reportLat = la; reportLon = lo;
+        localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
+        localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
         updatePinCoordsDisplay();
         ensureReportPinMarker();
     }
@@ -13661,6 +13671,8 @@
         ++privacySnapGeneration;
         reportLat = null;
         reportLon = null;
+        localStorage.removeItem('skymonitor_report_pin_lat');
+        localStorage.removeItem('skymonitor_report_pin_lon');
         if (reportPinMarker && reportingMap) {
             reportingMap.removeLayer(reportPinMarker);
         }
@@ -13909,6 +13921,8 @@
             const offset = applyPrivacyOffset(rawLat, rawLon);
             reportLat = offset.la;
             reportLon = offset.lo;
+            localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
+            localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
             updatePinCoordsDisplay();
         }
 
@@ -13916,8 +13930,8 @@
         // center the actual map on the selected coordinates and do not create
         // an automatic report pin.
         let initialView = {
-            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
-            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
+            lat: reportLat != null ? reportLat : rawLat,
+            lon: reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
         // Keep the reporting surface to one world copy. Without noWrap,
@@ -14003,7 +14017,7 @@
         // Only GPS-sourced locations get an automatic report pin. Manual users
         // can still place one explicitly with a double-click or by dragging a
         // pin after one has been created.
-        if (gpsSourcedAtInit && reportLat != null && reportLon != null) ensureReportPinMarker();
+        if (reportLat != null && reportLon != null) ensureReportPinMarker();
         window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
