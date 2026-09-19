@@ -939,6 +939,76 @@
         #pws-qc-panel { display: none !important; }
 
         /* GitHub release update popup */
+        #skymonitor-welcome-modal {
+            display: none; position: fixed; inset: 0; z-index: 5900;
+            background: rgba(0,0,0,0.8); backdrop-filter: blur(7px);
+            align-items: center; justify-content: center; padding: 14px; box-sizing: border-box;
+        }
+        #skymonitor-welcome-modal.is-open { display: flex; }
+        .skymonitor-welcome-window {
+            width: min(100%, 480px); max-height: min(88vh, 720px); overflow: hidden;
+            display: flex; flex-direction: column; background: #14294b;
+            border: 1px solid rgba(79,195,247,0.32); border-radius: 22px;
+            box-shadow: 0 24px 80px rgba(0,0,0,0.78);
+        }
+        .skymonitor-welcome-content {
+            display: flex; flex: 1; min-height: 0; flex-direction: column;
+            align-items: center; justify-content: center; text-align: center;
+            padding: 28px 28px 22px; overflow-y: auto;
+            background: radial-gradient(circle at 50% 0%, rgba(79,195,247,0.14), transparent 55%);
+        }
+        .skymonitor-welcome-icon {
+            width: 74px; height: 74px; object-fit: contain; border-radius: 18px;
+            margin-bottom: 20px; filter: drop-shadow(0 8px 18px rgba(0,0,0,0.25));
+        }
+        .skymonitor-welcome-kicker {
+            color: #ffd54f; font-size: 0.68em; font-weight: 900;
+            letter-spacing: 1.8px; margin-bottom: 9px; text-transform: uppercase;
+        }
+        .skymonitor-welcome-title {
+            margin: 0; color: #fff; font-size: clamp(1.35rem, 5vw, 1.8rem);
+            line-height: 1.18; letter-spacing: -0.35px;
+        }
+        .skymonitor-welcome-copy {
+            margin: 16px 0 0; color: #c7d5e8; font-size: 0.94em;
+            line-height: 1.62; max-width: 390px;
+        }
+        .skymonitor-welcome-copy strong { color: #fff; font-weight: 900; }
+        .skymonitor-welcome-dots {
+            display: flex; align-items: center; justify-content: center;
+            gap: 7px; min-height: 12px; margin-top: 26px;
+        }
+        .skymonitor-welcome-dot {
+            width: 8px; height: 8px; padding: 0; border: 0; border-radius: 50%;
+            background: rgba(199,213,232,0.32); transition: background 0.2s, transform 0.2s;
+        }
+        .skymonitor-welcome-dot.is-active {
+            width: 22px; border-radius: 5px; background: #4fc3f7; transform: none;
+        }
+        .skymonitor-welcome-footer {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 14px; padding: 13px 18px; border-top: 1px solid rgba(255,255,255,0.1);
+            background: rgba(0,0,0,0.16);
+        }
+        .skymonitor-welcome-skip, .skymonitor-welcome-next {
+            min-height: 38px; padding: 8px 15px; border-radius: 9px;
+            font-size: 0.78em; font-weight: 800; cursor: pointer;
+        }
+        .skymonitor-welcome-skip {
+            color: #9fb1c7; background: transparent; border: 1px solid transparent;
+        }
+        .skymonitor-welcome-skip:hover { color: #fff; }
+        .skymonitor-welcome-next {
+            color: #07131d; background: #4fc3f7; border: 1px solid #4fc3f7;
+            box-shadow: 0 4px 14px rgba(79,195,247,0.22);
+        }
+        @media(max-width: 600px) {
+            #skymonitor-welcome-modal { padding: 8px; }
+            .skymonitor-welcome-window { max-height: 92vh; border-radius: 20px; }
+            .skymonitor-welcome-content { padding: 25px 21px 20px; }
+            .skymonitor-welcome-copy { font-size: 0.88em; }
+            .skymonitor-welcome-footer { padding: 11px 14px; }
+        }
         #github-release-modal {
             display: none; position: fixed; inset: 0; z-index: 6000;
             background: rgba(0,0,0,0.78); backdrop-filter: blur(7px);
@@ -1034,6 +1104,22 @@
 
     <div id="ptr-indicator">&#8635; Release to refresh</div>
     <span id="sync-indicator">&#9679; UPDATING</span>
+
+    <div id="skymonitor-welcome-modal" aria-hidden="true">
+        <div class="skymonitor-welcome-window" role="dialog" aria-modal="true" aria-labelledby="skymonitor-welcome-title">
+            <div class="skymonitor-welcome-content">
+                <img class="skymonitor-welcome-icon" src="https://cdn-icons-png.flaticon.com/512/1779/1779927.png" alt="">
+                <div class="skymonitor-welcome-kicker">WELCOME TO SKYMONITOR</div>
+                <h2 id="skymonitor-welcome-title" class="skymonitor-welcome-title"></h2>
+                <p id="skymonitor-welcome-copy" class="skymonitor-welcome-copy"></p>
+                <div id="skymonitor-welcome-dots" class="skymonitor-welcome-dots" aria-label="Welcome walkthrough progress"></div>
+            </div>
+            <div class="skymonitor-welcome-footer">
+                <button class="skymonitor-welcome-skip" type="button" onclick="skipSkyMonitorWelcome()">Skip</button>
+                <button id="skymonitor-welcome-next" class="skymonitor-welcome-next" type="button" onclick="advanceSkyMonitorWelcome()">Next &#8594;</button>
+            </div>
+        </div>
+    </div>
 
     <div id="github-release-modal" aria-hidden="true" onclick="if(event.target===this)closeGitHubReleaseModal()">
         <div class="github-release-window" role="dialog" aria-modal="true" aria-labelledby="github-release-title">
@@ -2105,6 +2191,7 @@
     // Snapshot this before startup writes defaults such as input_mode. This
     // lets a truly new browser profile establish a quiet baseline, while an
     // existing SkyMonitor user still receives the current update notice.
+    const SKYMONITOR_WELCOME_SEEN_KEY = 'skymonitor_welcome_seen_v1';
     const SKYMONITOR_PRIOR_INSTALL_KEYS = [
         'sm_last_sync',
         'waddle_lat',
@@ -2149,6 +2236,103 @@
         // alongside localStorage so the notice remains once per browser/device.
         document.cookie = SKYMONITOR_LAST_SEEN_RELEASE_COOKIE + '=' + tag
             + '; Max-Age=315360000; Path=/; SameSite=Lax';
+    }
+
+    const SKYMONITOR_WELCOME_SLIDES = [
+        {
+            title: 'Welcome to SkyMonitor!',
+            body: 'Your source for official weather information from various sources, all in one website.'
+        },
+        {
+            title: 'Precise current conditions:',
+            body: 'Instead of calculating your current conditions from various models and computer estimates, we use official weather stations when available. If you see small text under your current conditions that says “Observed at,” that means a weather station is being used.'
+        },
+        {
+            title: 'Accurate forecasts:',
+            body: 'Our daily forecast comes directly from The Weather Channel, the leading brand in weather forecasts around the world. You can feel safe and secure knowing the forecasts you are seeing are official and trusted.'
+        },
+        {
+            title: 'SPC, WPC, NHC, and CPC outlooks:',
+            body: 'You can view official Storm Prediction Center, Weather Prediction Center, National Hurricane Center, and Climate Prediction Center outlooks directly in SkyMonitor. Simply click the **Severe tab** at the bottom and scroll all the way down.',
+            usOnly: true
+        },
+        {
+            title: 'Official weather alerts directly from your local agency:',
+            body: 'SkyMonitor sources official weather alerts directly from the National Weather Service, Environment Canada, MeteoAlarm, and more to ensure you are always getting the most up-to-date weather alerts directly from the source.'
+        },
+        {
+            title: 'Comfort Index, Threat Level, and Outdoor Score:',
+            body: 'SkyMonitor exclusive data that makes it simpler than ever to plan your day around weather. **Comfort Index** gives you the current or upcoming weather in a single word, like “Pleasant”, “Fair”, etc. **Threat Level** is exactly what it sounds like: a one-word indicator of the current weather threat level. Finally, **Outdoor Score** is a score out of 100 of how nice it is to be outside on any given day.'
+        },
+        {
+            title: 'Live Radar and Weather Reporting:',
+            body: 'Available in the **Report tab**, you can make live weather reports directly to other users on SkyMonitor, or view live radar and alerts directly on the map!'
+        }
+    ];
+    let skyMonitorWelcomeSlides = [];
+    let skyMonitorWelcomeIndex = 0;
+
+    function formatSkyMonitorWelcomeCopy(value) {
+        return escapeHtml(value).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    }
+
+    function renderSkyMonitorWelcomeSlide() {
+        const title = document.getElementById('skymonitor-welcome-title');
+        const copy = document.getElementById('skymonitor-welcome-copy');
+        const dots = document.getElementById('skymonitor-welcome-dots');
+        const next = document.getElementById('skymonitor-welcome-next');
+        const slide = skyMonitorWelcomeSlides[skyMonitorWelcomeIndex];
+        if (!title || !copy || !dots || !next || !slide) return;
+        title.textContent = slide.title;
+        copy.innerHTML = formatSkyMonitorWelcomeCopy(slide.body);
+        dots.innerHTML = skyMonitorWelcomeSlides.map(function(_, index) {
+            return '<span class="skymonitor-welcome-dot' + (index === skyMonitorWelcomeIndex ? ' is-active' : '')
+                + '" aria-hidden="true"></span>';
+        }).join('');
+        next.innerHTML = skyMonitorWelcomeIndex === skyMonitorWelcomeSlides.length - 1
+            ? 'Get started &#10003;'
+            : 'Next &#8594;';
+    }
+
+    function closeSkyMonitorWelcome() {
+        try { localStorage.setItem(SKYMONITOR_WELCOME_SEEN_KEY, '1'); } catch (error) {}
+        const modal = document.getElementById('skymonitor-welcome-modal');
+        if (!modal) return;
+        modal.classList.remove('is-open');
+        modal.setAttribute('aria-hidden', 'true');
+        setModalOpen(false);
+    }
+
+    function skipSkyMonitorWelcome() {
+        closeSkyMonitorWelcome();
+    }
+
+    function advanceSkyMonitorWelcome() {
+        if (skyMonitorWelcomeIndex >= skyMonitorWelcomeSlides.length - 1) {
+            closeSkyMonitorWelcome();
+            return;
+        }
+        skyMonitorWelcomeIndex++;
+        renderSkyMonitorWelcomeSlide();
+    }
+
+    function showSkyMonitorWelcomeIfNeeded() {
+        if (SKYMONITOR_HAD_PRIOR_INSTALL) return false;
+        try {
+            if (localStorage.getItem(SKYMONITOR_WELCOME_SEEN_KEY) === '1') return false;
+        } catch (error) {}
+        skyMonitorWelcomeSlides = SKYMONITOR_WELCOME_SLIDES.filter(function(slide) {
+            return !slide.usOnly || !window.isOutsideUS;
+        });
+        if (!skyMonitorWelcomeSlides.length) return false;
+        skyMonitorWelcomeIndex = 0;
+        renderSkyMonitorWelcomeSlide();
+        const modal = document.getElementById('skymonitor-welcome-modal');
+        if (!modal) return false;
+        modal.classList.add('is-open');
+        modal.setAttribute('aria-hidden', 'false');
+        setModalOpen(true);
+        return true;
     }
 
     function formatGitHubReleaseAge(value) {
@@ -16205,6 +16389,7 @@
         var handoffHandled = consumeInfoLocationHandoff();
         if (!handoffHandled) loadAll().then(function() {
             syncPushLocation();
+            showSkyMonitorWelcomeIfNeeded();
             window._dismissLaunch();
             checkForGitHubRelease();
         });
