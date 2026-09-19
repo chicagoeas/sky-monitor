@@ -1523,6 +1523,7 @@
                         <option value="spc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">SPC</option>
                         <option value="wpc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">WPC</option>
                         <option value="nhc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">NHC</option>
+                        <option value="cpc" style="background:#07131d; color:#4fc3f7; font-weight:bold;">CPC</option>
                     </select>
                     <div id="outlook-title" style="font-weight:700; color:#f1f5f9; font-size:0.92em;">DAY 1 CONVECTIVE OUTLOOK</div>
                 </div>
@@ -1544,6 +1545,19 @@
                 <div class="spc-btn-tabs btn-group" id="nhc-range-tabs">
                     <button class="btn-opt active" onclick="switchNHCRange('2d', this)">2-Day</button>
                     <button class="btn-opt" onclick="switchNHCRange('7d', this)">7-Day</button>
+                </div>
+            </div>
+            <div id="cpc-controls" style="display:none; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; width:100%;">
+                <div class="spc-btn-tabs btn-group" id="cpc-metric-tabs">
+                    <button class="btn-opt active" onclick="switchCPCMetric('temp', this)">Temp</button>
+                    <button class="btn-opt" onclick="switchCPCMetric('precip', this)">Precip</button>
+                </div>
+                <div class="spc-btn-tabs btn-group" id="cpc-period-tabs">
+                    <button class="btn-opt active" onclick="switchCPCPeriod('610', this)">6-10 Days</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('814', this)">8-14 Days</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('wk34', this)">Week 3-4</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('1mo', this)">One Month</button>
+                    <button class="btn-opt" onclick="switchCPCPeriod('3mo', this)">Three Month</button>
                 </div>
             </div>
             <a id="spc-link" target="_blank" title="Click to view full size on NOAA">
@@ -1693,14 +1707,6 @@
                     <button type="button" class="analytics-control-btn" id="analytics-range-6" onclick="setAnalyticsRange(6)">6h</button>
                     <button type="button" class="analytics-control-btn active" id="analytics-range-12" onclick="setAnalyticsRange(12)">12h</button>
                     <button type="button" class="analytics-control-btn" id="analytics-range-24" onclick="setAnalyticsRange(24)">24h</button>
-                </div>
-                <div class="analytics-control-group">
-                    <label class="analytics-control-label" for="analytics-chart-mode">Charts</label>
-                    <select id="analytics-chart-mode" class="analytics-select" onchange="setAnalyticsChartMode(this.value)">
-                        <option value="mixed">Mixed</option>
-                        <option value="line">Lines</option>
-                        <option value="bar">Bars</option>
-                    </select>
                 </div>
                 <div class="analytics-control-group analytics-metric-controls">
                     <span class="analytics-control-label">Show</span>
@@ -1912,6 +1918,43 @@
     // Weather provider credentials live in the Cloudflare Worker, never in this file.
     // Replace this URL with the deployed worker URL during integration.
     const WEATHER_WORKER_URL = 'https://api.skymonitor.app';
+    // Global METAR/ASOS/AWOS observations are fetched through the Cloudflare
+    // Worker because Aviation Weather Center does not reliably expose the
+    // browser-facing CORS headers needed by every deployment.
+    const GLOBAL_AVIATION_PROXY_URL = WEATHER_WORKER_URL + '/api/weather/global-aviation';
+    // A METAR/ASOS/AWOS report is only representative of the requested
+    // location when the station is reasonably close. Beyond this limit,
+    // preserve LOCAL OBSERVATION rather than importing conditions from a
+    // distant airport in a different weather regime.
+    const GLOBAL_AVIATION_MAX_DISTANCE_KM = 100;
+    // A PWS must stay within this temperature delta of PirateWeather's
+    // independent current observation to be eligible for display.
+    const PWS_MAX_PIRATE_TEMP_DEVIATION_F = 15;
+    // Humidity is checked separately against nearby PWS peers. This is a
+    // percentage-point difference, not a relative percentage.
+    const PWS_MAX_NEIGHBOR_HUMIDITY_DEVIATION_PCT = 30;
+    const PWS_MIN_HUMIDITY_PEERS = 2;
+
+    function pwsPassesNeighborHumidityQC(station, peerStations) {
+        if (!station || station.humidity == null || !isFinite(station.humidity)) return false;
+        const peerValues = (peerStations || [])
+            .filter(function(peer) {
+                return peer && peer !== station &&
+                    peer.humidity != null && isFinite(peer.humidity);
+            })
+            .map(function(peer) { return peer.humidity; })
+            .sort(function(a, b) { return a - b; });
+        // Do not reject based on a single comparison station. Two peers are
+        // the minimum needed to establish a meaningful local humidity signal.
+        if (peerValues.length < PWS_MIN_HUMIDITY_PEERS) return true;
+        const middle = Math.floor(peerValues.length / 2);
+        const peerMedian = peerValues.length % 2
+            ? peerValues[middle]
+            : (peerValues[middle - 1] + peerValues[middle]) / 2;
+        return Math.abs(station.humidity - peerMedian) <=
+            PWS_MAX_NEIGHBOR_HUMIDITY_DEVIATION_PCT;
+    }
+
     // MeteoAlarm access is server-side. The worker route authenticates with the
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
@@ -1946,6 +1989,10 @@
     let isNightAtStation = false;
     let stationTzOffset = 0; // always in seconds
     let weatherLoadGeneration = 0;
+    // "Initial" is a lifecycle state, not a coordinate comparison.  A live
+    // GPS fix can move by a few decimals between refreshes, especially after
+    // a mobile browser resumes, without making the dashboard a new first load.
+    let weatherLoadHasStarted = false;
     let weatherLoadedLocationKey = '';
     let _loadAllPromise = null;
     let _loadAllKey = '';
@@ -1960,6 +2007,8 @@
     let activeOutlookCenter = 'spc';
     let nhcBasin = 'atl';
     let nhcRange = '2d';
+    let cpcMetric = 'temp';
+    let cpcPeriod = '610';
     let skyAnimId = null;
     let skyStars = [];
     let moonPhaseVal = 0;
@@ -2049,10 +2098,27 @@
     }
 
     const SKYMONITOR_GITHUB_RELEASE_URL = 'https://api.github.com/repos/chicagoeas/sky-monitor/releases/latest';
-    // v1.1.7: version the storage key so devices that silently treated the
-    // first fetched release as a baseline get one clean announcement.
+    // Version the storage key so release acknowledgements remain isolated
+    // from older popup logic.
     const SKYMONITOR_LAST_SEEN_RELEASE_KEY = 'skymonitor_last_seen_github_release_v2';
     const SKYMONITOR_LAST_SEEN_RELEASE_COOKIE = 'skymonitor_last_seen_github_release_v2';
+    // Snapshot this before startup writes defaults such as input_mode. This
+    // lets a truly new browser profile establish a quiet baseline, while an
+    // existing SkyMonitor user still receives the current update notice.
+    const SKYMONITOR_PRIOR_INSTALL_KEYS = [
+        'sm_last_sync',
+        'waddle_lat',
+        'waddle_lon',
+        'waddle_city',
+        'input_mode',
+        'skymonitor_gps_lat',
+        'skymonitor_gps_lon',
+        'skymonitor_report_pin_lat',
+        'skymonitor_report_pin_lon'
+    ];
+    const SKYMONITOR_HAD_PRIOR_INSTALL = SKYMONITOR_PRIOR_INSTALL_KEYS.some(function(key) {
+        try { return !!localStorage.getItem(key); } catch (error) { return false; }
+    });
 
     function getLastSeenGitHubRelease() {
         let localTag = '';
@@ -2211,6 +2277,12 @@
             const tag = String(release.tag_name || '').trim();
             if (!tag) return;
             const lastSeenTag = getLastSeenGitHubRelease();
+            if (!lastSeenTag && !SKYMONITOR_HAD_PRIOR_INSTALL) {
+                // First visit: silently establish the release baseline. The
+                // Welcome experience will own this first-run moment later.
+                rememberGitHubRelease(tag);
+                return;
+            }
             if (lastSeenTag === tag) return;
             openGitHubReleaseModal(release);
         } catch (error) {
@@ -3476,6 +3548,7 @@
                 if (!reportingMap) return;
                 reportingMap.invalidateSize({ pan: true, animate: false });
                 syncReportingMapLayers();
+                ensureReportPinMarker();
                 // Mobile Safari can finish revealing the tab after the first
                 // Leaflet/layout pass. Retry once after it is fully visible.
                 if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
@@ -3483,6 +3556,7 @@
                         if (!document.getElementById('reporting-tab')?.classList.contains('active') || !reportingMap) return;
                         reportingMap.invalidateSize({ pan: true, animate: false });
                         syncReportingMapLayers();
+                        ensureReportPinMarker();
                     }, 450);
                 }
             }, 150);
@@ -3505,15 +3579,45 @@
         }
     }
 
+    function parseCoordinateInput(value) {
+        const parts = String(value || '').split(',').map(function(part) {
+            return part.trim();
+        });
+        if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+
+        const parsedLat = Number(parts[0]);
+        const parsedLon = Number(parts[1]);
+        if (!isFinite(parsedLat) || !isFinite(parsedLon) ||
+            parsedLat < -90 || parsedLat > 90 ||
+            parsedLon < -180 || parsedLon > 180) {
+            return null;
+        }
+        return { lat: parsedLat, lon: parsedLon };
+    }
+
+    function showInvalidCoordinateAlert() {
+        alert("That's not a valid coordinate. Try again.");
+    }
+
     function manualUpdateLocation() {
         if (window.SKYMONITOR_INFO_PAGE) {
             var coordInput = document.getElementById('coordInput');
             var coords = coordInput ? coordInput.value.trim() : '';
             if (coords) {
+                if (!parseCoordinateInput(coords)) {
+                    showInvalidCoordinateAlert();
+                    return;
+                }
                 navigateFromInfoPage('coord', coords);
             } else if (isFinite(lat) && isFinite(lon)) {
                 navigateFromInfoPage('coord', lat + ', ' + lon);
             }
+            return;
+        }
+        var mainCoordInput = document.getElementById('coordInput');
+        var mainCoords = mainCoordInput ? mainCoordInput.value.trim() : '';
+        if (mainCoords && !parseCoordinateInput(mainCoords)) {
+            showInvalidCoordinateAlert();
             return;
         }
         window._locFromGPS = false;
@@ -3522,16 +3626,27 @@
 
     function updateLocation() {
         const coordBox = document.getElementById('coordInput');
-        if (coordBox && coordBox.value) {
-            const _parts = coordBox.value.split(',').map(function(s) { return parseFloat(s.trim()); });
-            if (_parts.length >= 2 && !isNaN(_parts[0]) && !isNaN(_parts[1])) {
-                lat = _parts[0]; lon = _parts[1];
-                // When navigating by raw coordinates, wipe any saved city/beach name so
-                // a previously-searched "Montrose Beach" can't bleed into the new location.
-                if (localStorage.getItem('input_mode') === 'coord') {
-                    localStorage.setItem('waddle_city', '');
-                }
+        const coordinateText = coordBox ? coordBox.value.trim() : '';
+        if (coordinateText) {
+            const parsedCoordinates = parseCoordinateInput(coordinateText);
+            if (!parsedCoordinates) {
+                showInvalidCoordinateAlert();
+                return;
             }
+            lat = parsedCoordinates.lat;
+            lon = parsedCoordinates.lon;
+            // When navigating by raw coordinates, wipe any saved city/beach name so
+            // a previously-searched "Montrose Beach" can't bleed into the new location.
+            if (localStorage.getItem('input_mode') === 'coord') {
+                localStorage.setItem('waddle_city', '');
+            }
+        }
+        // The weather location and the report location are independent. A
+        // user can inspect weather in another city while their report pin
+        // remains at their actual location.
+        if (!window._locFromGPS && reportingMap &&
+            isFinite(Number(lat)) && isFinite(Number(lon))) {
+            reportingMap.setView([Number(lat), Number(lon)], reportingMap.getZoom(), { animate: false });
         }
         saveLoc();
         document.getElementById('stationName').innerText = 'LOADING LOCATION...';
@@ -3557,7 +3672,16 @@
         // Keep the current observation visible while the new location loads.
         (function(){['tempVal','feelsVal','windVal','humVal'].forEach(function(id){
             var el=document.getElementById(id);
-            if(el){el.style.transition='none';el.style.opacity='1';el.style.color='';}
+            if(el){
+                el.style.transition='none';
+                el.style.opacity='1';
+                // The old observation remains visible during an explicit
+                // location change.  Do not erase its temperature color while
+                // keeping its value on screen; doing so makes a valid desktop
+                // temperature flash to inherited white text.  Only placeholders
+                // receive the neutral loading color.
+                if (el.innerText === '--') el.style.color = '#94a3b8';
+            }
         });})();
         setWindCompass(null);
         document.getElementById('weatherIcon').style.display = 'none';
@@ -3652,6 +3776,7 @@
             var cityInput = document.getElementById('cityInput');
             if (cityInput) cityInput.value = pending.value || '';
             if (isFinite(Number(pending.lat)) && isFinite(Number(pending.lon))) {
+                window._locFromGPS = false;
                 lat = parseFloat(pending.lat);
                 lon = parseFloat(pending.lon);
                 if (pending.city) localStorage.setItem('waddle_city', pending.city);
@@ -3726,6 +3851,41 @@
             lnk.href = 'https://www.nhc.noaa.gov/gtwo.php';
             if (titleEl) titleEl.innerText = (NHC_BASIN_LABELS[nhcBasin] || nhcBasin.toUpperCase()) + ' ' + (NHC_RANGE_LABELS[nhcRange] || nhcRange.toUpperCase()) + ' TROPICAL OUTLOOK';
             if (countdown) countdown.style.display = '';
+        } else if (center === 'cpc') {
+            const CPC_URLS = {
+                '610': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/610day/610temp.new.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/610day/610prcp.new.gif'
+                },
+                '814': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/814day/814temp.new.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/814day/814prcp.new.gif'
+                },
+                'wk34': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/WK34/gifs/WK34temp.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/WK34/gifs/WK34prcp.gif'
+                },
+                '1mo': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead14/off14_temp.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead14/off14_prcp.gif'
+                },
+                '3mo': {
+                    temp: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead01/off01_temp.gif',
+                    precip: 'https://www.cpc.ncep.noaa.gov/products/predictions/long_range/lead01/off01_prcp.gif'
+                }
+            };
+            const CPC_PERIOD_LABELS = {
+                '610': '6-10 DAY',
+                '814': '8-14 DAY',
+                'wk34': 'WEEK 3-4',
+                '1mo': 'ONE MONTH',
+                '3mo': 'THREE MONTH'
+            };
+            const cpcUrl = (CPC_URLS[cpcPeriod] || CPC_URLS['610'])[cpcMetric] || CPC_URLS['610'].temp;
+            img.src = cpcUrl + (cpcUrl.indexOf('?') === -1 ? '?' : '&') + 't=' + Date.now();
+            lnk.href = cpcUrl;
+            if (titleEl) titleEl.innerText = (CPC_PERIOD_LABELS[cpcPeriod] || '6-10 DAY') + ' ' + (cpcMetric === 'precip' ? 'PRECIPITATION' : 'TEMPERATURE') + ' OUTLOOK';
+            if (countdown) countdown.style.display = 'none';
         } else {
             const spcUrl = 'www.spc.noaa.gov/products/outlook/day' + day + 'otlk.png';
             img.src = 'https://images.weserv.nl/?url=' + spcUrl + '&t=' + Date.now();
@@ -3745,10 +3905,12 @@
         // Show the right button row
         const spcDayTabs = document.getElementById('spc-day-tabs');
         const nhcControls = document.getElementById('nhc-controls');
-        if (spcDayTabs) spcDayTabs.style.display = center === 'nhc' ? 'none' : '';
+        const cpcControls = document.getElementById('cpc-controls');
+        if (spcDayTabs) spcDayTabs.style.display = center === 'nhc' || center === 'cpc' ? 'none' : '';
         if (nhcControls) nhcControls.style.display = center === 'nhc' ? 'flex' : 'none';
+        if (cpcControls) cpcControls.style.display = center === 'cpc' ? 'flex' : 'none';
 
-        if (center !== 'nhc') {
+        if (center !== 'nhc' && center !== 'cpc') {
             // Show/hide Day 4 & 5 buttons (WPC only)
             ['4','5'].forEach(function(d) {
                 const b = document.getElementById('outlook-day' + d + '-btn');
@@ -3764,9 +3926,11 @@
             updateOutlookMap(center, activeSPCDay);
             if (center === 'spc') startSPCCountdown(activeSPCDay);
             else startWPCCountdown(activeSPCDay);
-        } else {
+        } else if (center === 'nhc') {
             updateOutlookMap('nhc', null);
             startNHCCountdown();
+        } else {
+            updateOutlookMap('cpc', null);
         }
     }
 
@@ -3782,6 +3946,21 @@
         document.querySelectorAll('#nhc-range-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
         element.classList.add('active');
         updateOutlookMap('nhc', null);
+    }
+
+    function switchCPCMetric(metric, element) {
+        cpcMetric = metric === 'precip' ? 'precip' : 'temp';
+        document.querySelectorAll('#cpc-metric-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+        element.classList.add('active');
+        updateOutlookMap('cpc', null);
+    }
+
+    function switchCPCPeriod(period, element) {
+        const validPeriods = ['610', '814', 'wk34', '1mo', '3mo'];
+        cpcPeriod = validPeriods.indexOf(period) !== -1 ? period : '610';
+        document.querySelectorAll('#cpc-period-tabs .btn-opt').forEach(function(b) { b.classList.remove('active'); });
+        element.classList.add('active');
+        updateOutlookMap('cpc', null);
     }
 
     async function updateWeatherStory(wfo) {
@@ -4848,6 +5027,9 @@
         var alerts = rawAlerts.map(_normalizePirateAlert).filter(function(alert) {
             return !alert.expires || alert.expires * 1000 > now;
         });
+        if (localStorage.getItem('alerts_language') === 'en' && alerts.length) {
+            alerts = await _translatePirateAlertsToEnglish(alerts, requestSignal);
+        }
         window.pirateAlerts = alerts;
         // Keep the shared international alert collection populated so threat
         // scoring can account for PirateWeather alerts as well as the visible
@@ -4855,6 +5037,70 @@
         window.meteoAlarmAlerts = alerts;
         _storeInternationalAlertState(alerts);
         return alerts;
+    }
+
+    // Google exposes the same keyless Translate endpoint used by the
+    // lightweight web client. It supports CORS, so PirateWeather alert text
+    // can be translated in the browser without adding another Worker secret.
+    function _googleTranslateResponseText(payload) {
+        if (!Array.isArray(payload) || !Array.isArray(payload[0])) return '';
+        return payload[0].map(function(part) {
+            return Array.isArray(part) && part[0] ? String(part[0]) : '';
+        }).join('');
+    }
+
+    function _googleTranslateChunks(text, maxLength) {
+        var value = String(text || '');
+        if (value.length <= maxLength) return [value];
+        var chunks = [];
+        var remaining = value;
+        while (remaining.length > maxLength) {
+            var cut = remaining.lastIndexOf(' ', maxLength);
+            if (cut < Math.floor(maxLength * 0.55)) cut = maxLength;
+            chunks.push(remaining.slice(0, cut));
+            remaining = remaining.slice(cut).replace(/^\s+/, '');
+        }
+        if (remaining) chunks.push(remaining);
+        return chunks;
+    }
+
+    async function _googleTranslateFreeText(text, requestSignal) {
+        var chunks = _googleTranslateChunks(text, 1400);
+        var translated = [];
+        for (var i = 0; i < chunks.length; i++) {
+            if (requestSignal && requestSignal.aborted) throw new Error('Translation request aborted');
+            var url = 'https://translate.googleapis.com/translate_a/single?client=gtx'
+                + '&sl=auto&tl=en&dt=t&q=' + encodeURIComponent(chunks[i]);
+            var response = await _weatherFetch(url, {
+                signal: requestSignal
+            }, 7000);
+            if (!response.ok) throw new Error('Google Translate ' + response.status);
+            var payload = await response.json();
+            var result = _googleTranslateResponseText(payload);
+            if (!result) throw new Error('Google Translate returned no text');
+            translated.push(result);
+        }
+        return translated.join(' ');
+    }
+
+    async function _translatePirateAlertsToEnglish(alerts, requestSignal) {
+        var translatedAlerts = alerts.map(function(alert) {
+            return Object.assign({}, alert);
+        });
+        for (var i = 0; i < translatedAlerts.length; i++) {
+            var alert = translatedAlerts[i];
+            for (var field of ['title', 'event', 'description']) {
+                if (!alert[field]) continue;
+                try {
+                    alert[field] = await _googleTranslateFreeText(alert[field], requestSignal);
+                } catch (error) {
+                    // Keep the original alert usable if the free endpoint is
+                    // temporarily unavailable or rate-limits the browser.
+                    console.warn('[SkyMonitor] Alert translation failed:', error);
+                }
+            }
+        }
+        return translatedAlerts;
     }
 
     // The frontend calls the SkyMonitor worker rather than MeteoAlarm directly.
@@ -4870,6 +5116,10 @@
         // language unset so the originating national service's default text is
         // used; "English" explicitly requests the API's English info block.
         if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
+        // The Worker owns upstream retries, country-feed caching, and
+        // concurrent-request deduplication. Do not retry here: a browser-side
+        // retry turns one provider 429 into another quota-consuming request,
+        // and it defeats the Worker's shared cache during a cold start.
         var res = await _weatherFetch(url, {
             cache: 'no-store',
             signal: requestSignal
@@ -4924,6 +5174,7 @@
         // Keep legacy consumers (threat scoring and offline state from older
         // builds) fed while the visible provider is now explicitly MeteoAlarm.
         window.pirateAlerts = alerts;
+        _storeInternationalAlertState(alerts);
         return alerts;
     }
 
@@ -5370,15 +5621,25 @@
         if (window.pirateCurrently) {
             if (skipObservation) return;
             const _intlPw = window.pirateCurrently;
-            const _intlCandidates = [];
+            const _intlRawCandidates = [];
+            const _intlPwTemp = _intlPw.temperature != null &&
+                isFinite(_intlPw.temperature) ? _intlPw.temperature : null;
             const _intlIsValidPws = function(s) {
                 return s && s.temp != null && s.humidity != null &&
                     isFinite(s.temp) && isFinite(s.humidity) &&
-                    s.humidity >= 0 && s.humidity <= 100;
+                    s.humidity >= 0 && s.humidity <= 100 &&
+                    (_intlPwTemp === null ||
+                        Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_PIRATE_TEMP_DEVIATION_F);
             };
-            if (_intlIsValidPws(window.wuData)) _intlCandidates.push({ s: window.wuData, rank: 0 });
+            if (_intlIsValidPws(window.wuData)) _intlRawCandidates.push({ s: window.wuData, rank: 0 });
             (window.wuNeighborData || []).forEach(function(s, i) {
-                if (_intlIsValidPws(s)) _intlCandidates.push({ s: s, rank: i + 1 });
+                if (_intlIsValidPws(s)) _intlRawCandidates.push({ s: s, rank: i + 1 });
+            });
+            const _intlHumidityCandidates = _intlRawCandidates.map(function(candidate) {
+                return candidate.s;
+            });
+            const _intlCandidates = _intlRawCandidates.filter(function(candidate) {
+                return pwsPassesNeighborHumidityQC(candidate.s, _intlHumidityCandidates);
             });
             _intlCandidates.sort(function(a, b) {
                 var aComplete = a.s.windSpeed != null ? 1 : 0;
@@ -5387,6 +5648,12 @@
             });
             const _intlPws = _intlCandidates.length ? _intlCandidates[0].s : null;
             const _intlSource = _intlPws || _intlPw;
+            window.wuDeviates = !!window.wuData && !_intlPws;
+            if (!_intlPws) {
+                window.wuData = null;
+                var _rejectedIntlWuStation = document.getElementById('wuStation');
+                if (_rejectedIntlWuStation) _rejectedIntlWuStation.style.display = 'none';
+            }
             const summary = _intlPw.summary || 'Clear';
             const _intlTemp = _intlSource.temperature != null ? _intlSource.temperature : _intlSource.temp;
             const _intlHumidity = _intlSource.humidity != null
@@ -6938,18 +7205,38 @@
             window._fastNwsAlerts = fastPayload.nwsAlerts || null;
             window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
-            // Always start the PWS lookup here.  Location classification runs
-            // concurrently, so checking isWaterLocation at this exact moment
-            // made the result timing-dependent: a fast classification skipped
-            // PWS, while a slower one allowed it.  The final NWS/QC pass decides
-            // whether a station is suitable for the coordinate.
-            // Do not hold the primary forecast on PWS discovery/observations.
+            // Start the PWS lookup here for US/Canadian QC. International
+            // locations use the official METAR/ASOS/AWOS chain instead; a
+            // slow or empty WU response must not add ~10 seconds to that path.
             let wuStations;
             const wuPromise = fetchWUMulti(requestLat, requestLon, requestSignal);
-            // The PWS result is part of the authoritative current-observation
-            // load. Do not paint PirateWeather observations and then replace
-            // them a moment later when this check completes.
-            wuStations = await wuPromise;
+            var countryForPws = String(
+                window.locationCountryCode || window._gpsCountryCode || ''
+            ).trim().toUpperCase();
+            if (!countryForPws && window._locationClassificationPromise) {
+                // The reverse-geocoder writes locationCountryCode before its
+                // optional beach lookup finishes. Give that first step a
+                // short head start, but never wait on geocoding indefinitely.
+                await Promise.race([
+                    window._locationClassificationPromise.catch(function() {}),
+                    new Promise(function(resolve) { setTimeout(resolve, 1200); })
+                ]);
+                countryForPws = String(
+                    window.locationCountryCode || window._gpsCountryCode || ''
+                ).trim().toUpperCase();
+            }
+            if (countryForPws && countryForPws !== 'US' && countryForPws !== 'CA') {
+                wuStations = [];
+            } else if (!countryForPws) {
+                // Unknown country: preserve the NWS path without allowing a
+                // slow PWS lookup to become the page's critical path.
+                wuStations = await Promise.race([
+                    wuPromise,
+                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 2500); })
+                ]);
+            } else {
+                wuStations = await wuPromise;
+            }
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Mark the throttle only after the PirateWeather response has been
             // validated. If rendering or the request fails, the next refresh
@@ -8110,7 +8397,14 @@
         // known values visible while the new source-selection pass runs.
         ['tempVal','feelsVal','windVal','humVal','conditionText'].forEach(function(id) {
             var el = document.getElementById(id);
-            if (el) el.innerText = '--';
+            if (el) {
+                el.innerText = '--';
+                // A placeholder must not inherit the normal white body color
+                // on desktop.  Mobile already showed "--" correctly because
+                // it never had an earlier observation style to preserve.
+                if (id === 'tempVal' || id === 'feelsVal') el.style.color = '#94a3b8';
+                else if (id !== 'conditionText') el.style.color = '';
+            }
         });
         var icon = document.getElementById('weatherIcon');
         if (icon) icon.style.display = 'none';
@@ -8604,7 +8898,7 @@
         var _eccIsValidStation = function(s) {
             if (!s || s.temp === null || s.humidity === null) return false;
             if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > 20) return false;
+            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var _eccNeighbors = (window.wuNeighborData || []).filter(_eccIsValidStation);
@@ -8619,9 +8913,19 @@
         var _eccReferenceTemp = tempF !== null
             ? tempF
             : (_eccNeighborMedianTemp !== null ? _eccNeighborMedianTemp : _eccPwTemp);
+        var _eccHumidityCandidates = [];
+        if (_eccIsValidStation(_eccWu)) _eccHumidityCandidates.push(_eccWu);
+        _eccNeighbors.forEach(function(n) { _eccHumidityCandidates.push(n); });
         var _eccPool = [];
-        if (_eccIsValidStation(_eccWu)) _eccPool.push({ s: _eccWu, rank: 0 });
-        _eccNeighbors.forEach(function(n, i) { _eccPool.push({ s: n, rank: i + 1 }); });
+        if (_eccIsValidStation(_eccWu) &&
+            pwsPassesNeighborHumidityQC(_eccWu, _eccHumidityCandidates)) {
+            _eccPool.push({ s: _eccWu, rank: 0 });
+        }
+        _eccNeighbors.forEach(function(n, i) {
+            if (pwsPassesNeighborHumidityQC(n, _eccHumidityCandidates)) {
+                _eccPool.push({ s: n, rank: i + 1 });
+            }
+        });
         if (_eccPool.length > 0) {
             _eccPool.sort(function(a, b) {
                 var aComplete = a.s.windSpeed !== null && a.s.windSpeed !== undefined ? 1 : 0;
@@ -8803,19 +9107,438 @@
         return true;
     }
 
+    function _globalAviationCondition(observation, fallbackSummary) {
+        var raw = String(observation && observation.rawOb || '').toUpperCase();
+        // The raw METAR begins with the station identifier. Some valid ICAO
+        // identifiers also begin with a weather abbreviation—for example,
+        // Brazzaville is FCBB, which starts with FC (funnel cloud). Exclude
+        // the identifier before parsing weather groups or it becomes a false
+        // "Funnel Cloud" observation.
+        var stationId = String(observation && (
+            observation.icaoId || observation.stationId || ''
+        ) || '').toUpperCase().trim();
+        var weatherGroups = raw.split(/\s+/).filter(function(token) {
+            return token && token !== stationId;
+        }).filter(function(token) {
+            return /^[+-]?(?:VC|MI|PR|BC|DR|BL|SH|TS|FZ)?(?:DZ|RA|SN|SG|IC|PL|GR|GS|UP|BR|FG|FU|VA|DU|SA|HZ|PY|PO|SQ|FC|SS|DS)(?:[A-Z0-9]*)$/.test(token);
+        });
+        var weather = weatherGroups.join(' ');
+        if (/FC/.test(weather)) return 'Funnel Cloud';
+        if (/TS/.test(weather)) return 'Thunderstorm';
+        if (/(?:GR|GS)/.test(weather)) return 'Hail';
+        if (/(?:SN|SG|IC|PL)/.test(weather)) return 'Snow';
+        if (/FZ(?:RA|DZ)/.test(weather)) return 'Freezing Rain';
+        if (/DZ/.test(weather)) return 'Drizzle';
+        if (/SH.*RA|RA.*SH/.test(weather)) return 'Rain Showers';
+        if (/RA/.test(weather)) return 'Rain';
+        if (/(?:BR|FG)/.test(weather)) return 'Fog';
+        if (/(?:HZ|FU|VA)/.test(weather)) return 'Haze';
+        if (/(?:DU|SA|SS|DS)/.test(weather)) return 'Dust';
+        if (/SQ/.test(weather)) return 'Squalls';
+
+        var cover = String(observation && observation.cover || '').toUpperCase();
+        if (cover === 'CLR' || cover === 'SKC') return 'Clear';
+        if (cover === 'FEW') return 'Mostly Clear';
+        if (cover === 'SCT') return 'Partly Cloudy';
+        if (cover === 'BKN') return 'Mostly Cloudy';
+        if (cover === 'OVC') return 'Overcast';
+
+        var fallback = String(fallbackSummary || '').trim();
+        if (fallback && !/^(current conditions|unknown(?: precipitation)?|n\/a|na|not available)$/i.test(fallback)) {
+            return fallback;
+        }
+        if (observation && Number(observation.visib) < 1) return 'Reduced Visibility';
+        return 'No Present Weather Reported';
+    }
+
+    async function fetchGlobalAviationStationChain(loadGeneration, requestLat, requestLon) {
+        if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+        requestLat = requestLat == null ? lat : requestLat;
+        requestLon = requestLon == null ? lon : requestLon;
+        var requestSignal = window._weatherRequestController
+            ? window._weatherRequestController.signal : undefined;
+        var response = await _weatherFetch(
+            GLOBAL_AVIATION_PROXY_URL + '?lat=' + encodeURIComponent(requestLat) +
+            '&lon=' + encodeURIComponent(requestLon),
+            requestSignal ? { signal: requestSignal } : undefined,
+            15000
+        );
+        if (!response.ok) throw new Error('Global aviation observations ' + response.status);
+        var payload = await response.json();
+        var observations = Array.isArray(payload && payload.observations)
+            ? payload.observations : [];
+        var now = Date.now();
+        var candidates = observations.map(function(observation) {
+            if (!observation) return null;
+            var sLat = Number(observation.lat), sLon = Number(observation.lon);
+            var tempC = Number(observation.temp);
+            if (!isFinite(sLat) || !isFinite(sLon) || !isFinite(tempC)) return null;
+            var rawObsTime = observation.obsTime;
+            var obsMs = Number(rawObsTime);
+            // AWC has returned both epoch seconds and ISO timestamps over
+            // time. Number("2026-...") is NaN, so parse the original value
+            // before falling back to reportTime.
+            if (isFinite(obsMs) && obsMs > 0) {
+                // Epoch milliseconds are also accepted defensively.
+                if (obsMs < 100000000000) obsMs *= 1000;
+            } else {
+                obsMs = Date.parse(String(rawObsTime || observation.reportTime || ''));
+            }
+            if (!isFinite(obsMs) || obsMs <= 0) {
+                obsMs = Date.parse(String(observation.reportTime || ''));
+            }
+            // AWC's hours filter is a server-side candidate bound; keep the
+            // client-side age check too so a stale cached/late report cannot
+            // become the displayed current observation.
+            if (!isFinite(obsMs) || obsMs < now - 3 * 60 * 60 * 1000 ||
+                obsMs > now + 15 * 60 * 1000) return null;
+            return {
+                observation: observation,
+                lat: sLat,
+                lon: sLon,
+                distance: _environmentCanadaDistanceKm(requestLat, requestLon, sLat, sLon),
+                obsMs: obsMs
+            };
+        }).filter(function(candidate) {
+            return candidate && candidate.distance <= GLOBAL_AVIATION_MAX_DISTANCE_KM;
+        });
+        candidates.sort(function(a, b) {
+            return a.distance - b.distance || b.obsMs - a.obsMs;
+        });
+        var selected = candidates[0];
+        if (!selected) {
+            throw new Error(
+                'No recent global aviation observation within ' +
+                GLOBAL_AVIATION_MAX_DISTANCE_KM + ' km'
+            );
+        }
+
+        var observation = selected.observation;
+        var tempC = Number(observation.temp);
+        var tempF = tempC * 9 / 5 + 32;
+        var dewpointC = Number(observation.dewp);
+        var humidity = null;
+        if (isFinite(dewpointC)) {
+            // Magnus approximation: METAR supplies temperature/dewpoint, not RH.
+            humidity = 100 * Math.exp(
+                (17.625 * dewpointC) / (243.04 + dewpointC) -
+                (17.625 * tempC) / (243.04 + tempC)
+            );
+            if (!isFinite(humidity)) humidity = null;
+        }
+        if (humidity !== null) humidity = Math.max(0, Math.min(100, humidity));
+        var windKt = Number(observation.wspd);
+        var windMph = isFinite(windKt) ? Math.max(0, windKt) * 1.15077945 : null;
+        var windDir = Number(observation.wdir);
+        if (!isFinite(windDir)) windDir = null;
+        var pressure = Number(observation.altim);
+        if (!isFinite(pressure)) pressure = null;
+        var stationElevM = Number(observation.elev);
+        if (!isFinite(stationElevM)) stationElevM = null;
+        var stationCode = String(
+            observation.icaoId || observation.wmoId || observation.stationId || ''
+        ).trim();
+        // Aviation Weather Center appends region and country codes to some
+        // station names, e.g. "Yakutsk Arpt, SA, RU". The station identifier
+        // is shown separately, so keep only the human-readable airport name.
+        var displayName = String(
+            observation.name || stationCode || 'Global aviation station'
+        ).split(',')[0].trim().replace(/\bArpt\b/gi, 'Airport');
+        if (!stationCode) stationCode = displayName;
+
+        window.isOutsideUS = true;
+        updateUSOnlyLayerLabels();
+        applyInternationalMode(true);
+        var stationIdLabel = document.getElementById('meta-id-label');
+        if (stationIdLabel) stationIdLabel.innerText = 'Station:';
+        document.getElementById('stationName').innerText = displayName;
+        document.getElementById('meta-name').innerText = displayName;
+        document.getElementById('meta-id').innerText = stationCode;
+        document.getElementById('meta-elev').innerText = stationElevM !== null
+            ? _fmtElevation(stationElevM) : 'N/A';
+        document.getElementById('stationName').title =
+            'Official global METAR / ASOS / AWOS observation';
+
+        // Match the official fallback's elevation correction used by the
+        // NWS and Environment Canada chains.
+        var stationElevFt = stationElevM !== null ? stationElevM * 3.28084 : null;
+        var elevCacheKey = requestLat.toFixed(4) + ',' + requestLon.toFixed(4);
+        if (window.userLocElevFt == null || window._userLocElevKey !== elevCacheKey) {
+            // Elevation is only a small lapse-rate refinement. It must never
+            // delay the official station identity or current observation.
+            // Cache it for the next refresh when the optional request wins.
+            _weatherFetch(
+                'https://api.open-meteo.com/v1/elevation?latitude=' + requestLat +
+                '&longitude=' + requestLon,
+                requestSignal ? { signal: requestSignal } : undefined, 2500
+            ).then(function(elevRes) {
+                if (!elevRes.ok) return null;
+                return elevRes.json();
+            }).then(function(elevData) {
+                if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+                var elevM = elevData && elevData.elevation && elevData.elevation[0];
+                if (elevM != null) {
+                    window.userLocElevFt = Number(elevM) * 3.28084;
+                    window._userLocElevKey = elevCacheKey;
+                }
+            }).catch(function() {});
+        }
+        var officialTempF = tempF;
+        var userElevFt = window.userLocElevFt != null
+            ? window.userLocElevFt : window.wuElevFt;
+        if (stationElevFt !== null && userElevFt != null) {
+            var lapseDelta = (stationElevFt - userElevFt) * (3.5 / 1000);
+            if (Math.abs(lapseDelta) >= 0.5) officialTempF += lapseDelta;
+        }
+
+        // This is intentionally the same PWS QC pass as the ECCC chain:
+        // validate humidity and a 15°F PirateWeather outlier limit, build a
+        // neighbor median, prefer complete observations, then compare to the
+        // independent official station before selecting a source.
+        var wu = window.wuData;
+        var pwNow = window.pirateCurrently;
+        var pwTemp = pwNow && pwNow.temperature != null ? pwNow.temperature : null;
+        var median = function(values) {
+            var middle = Math.floor(values.length / 2);
+            return values.length % 2 ? values[middle] :
+                (values[middle - 1] + values[middle]) / 2;
+        };
+        if (wu && wu.humidity !== null &&
+            (!isFinite(wu.humidity) || wu.humidity < 0 || wu.humidity > 100)) {
+            wu.humidity = null;
+        }
+        var isValidStation = function(station) {
+            if (!station || station.temp === null || station.humidity === null) return false;
+            if (!isFinite(station.humidity) || station.humidity < 0 || station.humidity > 100) return false;
+            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+            return true;
+        };
+        var neighbors = (window.wuNeighborData || []).filter(isValidStation);
+        var neighborMedianTemp = null;
+        if (neighbors.length) {
+            var neighborTemps = neighbors.map(function(station) { return station.temp; })
+                .sort(function(a, b) { return a - b; });
+            neighborMedianTemp = median(neighborTemps);
+        }
+        var referenceTemp = officialTempF !== null
+            ? officialTempF
+            : (neighborMedianTemp !== null ? neighborMedianTemp : pwTemp);
+        var humidityCandidates = [];
+        if (isValidStation(wu)) humidityCandidates.push(wu);
+        neighbors.forEach(function(station) { humidityCandidates.push(station); });
+        var pool = [];
+        if (isValidStation(wu) &&
+            pwsPassesNeighborHumidityQC(wu, humidityCandidates)) {
+            pool.push({ station: wu, rank: 0 });
+        }
+        neighbors.forEach(function(station, index) {
+            if (pwsPassesNeighborHumidityQC(station, humidityCandidates)) {
+                pool.push({ station: station, rank: index + 1 });
+            }
+        });
+        if (pool.length) {
+            pool.sort(function(a, b) {
+                var aComplete = a.station.windSpeed !== null &&
+                    a.station.windSpeed !== undefined ? 1 : 0;
+                var bComplete = b.station.windSpeed !== null &&
+                    b.station.windSpeed !== undefined ? 1 : 0;
+                if (aComplete !== bComplete) return bComplete - aComplete;
+                var aDelta = referenceTemp !== null
+                    ? Math.abs(a.station.temp - referenceTemp) : 0;
+                var bDelta = referenceTemp !== null
+                    ? Math.abs(b.station.temp - referenceTemp) : 0;
+                return Math.abs(aDelta - bDelta) > 1.5
+                    ? aDelta - bDelta : a.rank - b.rank;
+            });
+            var winner = pool[0].station;
+            if (winner !== wu) {
+                wu = winner;
+                window.wuData = winner;
+            }
+        }
+        var wuAvailable = pool.length > 0 && isValidStation(wu);
+        window.wuDeviates = !wuAvailable;
+        var wuStationEl = document.getElementById('wuStation');
+        var wuLinkEl = document.getElementById('wuLink');
+        if (wuAvailable && wu.stationId && wuStationEl && wuLinkEl) {
+            wuLinkEl.innerText = wu.stationId;
+            wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
+            wuStationEl.style.display = 'block';
+        } else if (wuStationEl) {
+            wuStationEl.style.display = 'none';
+        }
+
+        var officialFallback = !wuAvailable && officialTempF !== null;
+        var source = wuAvailable ? 'pws' : (officialFallback ? 'global' : 'pirate');
+        var pw = window.pirateCurrently || {};
+        var selectedTemp = source === 'pws' ? wu.temp
+            : source === 'global' ? officialTempF : pw.temperature;
+        var selectedHumidity = source === 'pws' ? wu.humidity
+            : source === 'global' ? humidity
+            : (pw.humidity != null ? pw.humidity * 100 : null);
+        var selectedWind = source === 'pws' ? (wu.windSpeed != null ? wu.windSpeed : windMph)
+            : source === 'global' ? (windMph != null ? windMph : pw.windSpeed)
+            : pw.windSpeed;
+        var selectedWindDir = source === 'pws' ? (wu.windSpeed != null ? wu.windDir : windDir)
+            : source === 'global' ? (windMph != null ? windDir : pw.windBearing)
+            : pw.windBearing;
+        if (selectedTemp != null && isFinite(selectedTemp)) {
+            window.liveTemp = Math.round(selectedTemp);
+            var tempEl = document.getElementById('tempVal');
+            tempEl.innerText = _fmtTemp(window.liveTemp);
+            tempEl.style.color = colorFeelsLike(window.liveTemp);
+        }
+        if (selectedHumidity != null && isFinite(selectedHumidity)) {
+            var humidityEl = document.getElementById('humVal');
+            var humidityRounded = Math.round(selectedHumidity);
+            humidityEl.innerText = humidityRounded + '%';
+            humidityEl.style.color = colorHumidity(humidityRounded);
+        }
+        if (selectedWind != null && isFinite(selectedWind)) {
+            liveWindSpd = Math.round(selectedWind);
+            document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
+            setWindCompass(liveWindSpd > 0 && selectedWindDir != null &&
+                isFinite(selectedWindDir) ? selectedWindDir : null);
+        }
+        if (pressure !== null) lastPressureMb = pressure;
+        var condition = _globalAviationCondition(observation, pw.summary);
+        currentCondition = condition;
+        document.getElementById('conditionText').innerText = condition;
+
+        var feelsLike = null;
+        if (source === 'pirate' && pw.apparentTemperature != null) {
+            feelsLike = pw.apparentTemperature;
+        } else if (selectedTemp != null && isFinite(selectedTemp) &&
+            selectedHumidity != null && isFinite(selectedHumidity) &&
+            !(selectedTemp <= 50 && selectedWind == null)) {
+            var rh = Math.min(100, Math.max(0, selectedHumidity));
+            feelsLike = selectedTemp;
+            if (selectedTemp <= 50 && selectedWind >= 3) {
+                feelsLike = 35.74 + 0.6215 * selectedTemp -
+                    35.75 * Math.pow(selectedWind, 0.16) +
+                    0.4275 * selectedTemp * Math.pow(selectedWind, 0.16);
+            } else if (selectedTemp >= 70) {
+                var simpleHeat = 0.5 * (selectedTemp + 61 +
+                    (selectedTemp - 68) * 1.2 + rh * 0.094);
+                if (simpleHeat >= 80) {
+                    var roth = -42.379 + 2.04901523 * selectedTemp +
+                        10.14333127 * rh - 0.22475541 * selectedTemp * rh -
+                        0.00683783 * selectedTemp * selectedTemp -
+                        0.05391317 * rh * rh +
+                        0.00122874 * selectedTemp * selectedTemp * rh +
+                        0.00085282 * selectedTemp * rh * rh -
+                        0.00000199 * selectedTemp * selectedTemp * rh * rh;
+                    feelsLike = (selectedTemp + roth) / 2;
+                } else {
+                    feelsLike = simpleHeat;
+                }
+            }
+        }
+        liveFeelsLike = feelsLike;
+        if (feelsLike !== null && isFinite(feelsLike)) {
+            var feelsEl = document.getElementById('feelsVal');
+            feelsEl.innerText = _fmtTemp(Math.round(feelsLike));
+            feelsEl.style.color = colorFeelsLike(Math.round(feelsLike));
+        }
+        var icon = _pwSummaryIcon(condition, !!(pw.icon && pw.icon.includes('night')));
+        var iconEl = document.getElementById('weatherIcon');
+        if (iconEl && icon) {
+            iconEl.src = icon;
+            iconEl.style.display = 'block';
+        } else if (iconEl) {
+            iconEl.style.display = 'none';
+        }
+        updateSmartComfort(
+            selectedTemp != null ? Math.round(selectedTemp) : 70,
+            liveFeelsLike,
+            selectedHumidity != null ? Math.round(selectedHumidity) : 50,
+            selectedWind != null ? Math.round(selectedWind) : 0,
+            condition,
+            liveUV,
+            (pw.precipProbability || 0) * 100,
+            condition
+        );
+        _renderPWSQCPanel(
+            wuAvailable ? wu : null,
+            tempF,
+            humidity,
+            tempF !== null,
+            'Global ASOS/AWOS'
+        );
+        startWeatherFX(condition);
+        startSkyFX(condition);
+        _wxReveal();
+        if (window.pirateHourlyData) {
+            renderHourlyOutlook(window.pirateHourlyData, window.pirateTimezoneOffset || 0);
+        }
+        if (reportingMap) setTimeout(loadReportingMapData, 0);
+        SkyDB.set(SkyDB.S.weather, 'nws_obs', {
+            ts: Date.now(),
+            stationName: document.getElementById('stationName').innerText,
+            stationId: document.getElementById('meta-id').innerText,
+            stationElev: document.getElementById('meta-elev').innerText,
+            condition: currentCondition,
+            iconSrc: document.getElementById('weatherIcon').src,
+            iconVisible: document.getElementById('weatherIcon').style.display !== 'none',
+            wfo: document.getElementById('wfo-label').innerText,
+            metaName: document.getElementById('meta-name').innerText,
+            liveTemp: window.liveTemp,
+            liveFeelsLike: liveFeelsLike,
+            liveWindSpd: liveWindSpd,
+            liveHumidity: selectedHumidity != null ? Math.round(selectedHumidity) : null
+        });
+        return true;
+    }
+
     async function fetchNWSChain(loadGeneration, requestLat, requestLon) {
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
         requestLat = requestLat == null ? lat : requestLat;
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
+        // Country classification runs beside the weather request. Give its
+        // reverse-geocode step a brief chance to identify an international
+        // location before probing the US-only NWS points endpoint.
+        var initialCountry = String(window.locationCountryCode || '').toUpperCase();
+        if (!initialCountry && window._locationClassificationPromise) {
+            await Promise.race([
+                window._locationClassificationPromise.catch(function() {}),
+                new Promise(function(resolve) { setTimeout(resolve, 1200); })
+            ]);
+        }
         try {
             // Canada has an official airport/ASOS/AWOS observation path.
             // Use it before the generic international PirateWeather branch.
             if (String(window.locationCountryCode || '').toUpperCase() === 'CA') {
                 return await fetchEnvironmentCanadaStationChain(loadGeneration, requestLat, requestLon);
             }
+            var knownCountry = String(window.locationCountryCode || '').toUpperCase();
+            // NWS is authoritative for the U.S. and its supported territories.
+            // Everywhere else gets the global METAR/ASOS/AWOS chain before
+            // PirateWeather, except open water where an airport observation
+            // is not relevant.
+            var nwsCoverageCountry = ['US', 'PR', 'GU', 'AS', 'MP', 'VI']
+                .indexOf(knownCountry) !== -1;
+            if (knownCountry && knownCountry !== 'CA' && !nwsCoverageCountry &&
+                !window.isWaterLocation) {
+                try {
+                    return await fetchGlobalAviationStationChain(
+                        loadGeneration, requestLat, requestLon
+                    );
+                } catch (globalError) {
+                    console.warn('[SkyMonitor] Global aviation observation failed:', globalError);
+                }
+                // Do not fall through to the US-only NWS points request after
+                // an international aviation lookup has already failed. That
+                // second probe is what turns a quick provider failure into a
+                // long blank/loading state.
+                window.isOutsideUS = true;
+                applyInternationalMode();
+                return;
+            }
+            var pointsCountry = String(window.locationCountryCode || '').toUpperCase();
             const pointsRes = await _weatherFetch('https://api.weather.gov/points/' + requestLat + ',' + requestLon,
-                requestSignal ? { signal: requestSignal } : undefined, 15000);
+                requestSignal ? { signal: requestSignal } : undefined,
+                pointsCountry ? 15000 : 5000);
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             if (!pointsRes.ok) {
                 // The country lookup normally finishes in parallel, but the
@@ -8829,6 +9552,15 @@
                         );
                     } catch (canadaError) {
                         console.warn('[SkyMonitor] Environment Canada observation failed:', canadaError);
+                    }
+                }
+                if (detectedCountry !== 'US' && !window.isWaterLocation) {
+                    try {
+                        return await fetchGlobalAviationStationChain(
+                            loadGeneration, requestLat, requestLon
+                        );
+                    } catch (globalError) {
+                        console.warn('[SkyMonitor] Global aviation observation failed:', globalError);
                     }
                 }
                 window.isOutsideUS = true;
@@ -9030,11 +9762,11 @@
             const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
 
             // Station validity: must have temp + humidity, and not a confirmed glitch
-            // (>20°F from PirateWeather baseline). Applied to primary AND neighbors.
+            // (>15°F from PirateWeather baseline). Applied to primary AND neighbors.
             const _isValidStation = function(s) {
                 if (!s || s.temp === null || s.humidity === null) return false;
                 if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > 20) return false;
+                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
                 return true;
             };
             const _neighbors = (window.wuNeighborData || []).filter(_isValidStation);
@@ -9055,11 +9787,26 @@
                 ? nwsObsTempF
                 : (_neighborMedianTemp !== null ? _neighborMedianTemp : _pwTemp);
 
-            // Build pool: primary (if valid) + all valid neighbors, each tagged with a
-            // distance rank (0 = primary = nearest, 1-3 = neighbors in distance order).
+            // Build the candidate set first so humidity can be checked against
+            // the other nearby stations, rather than against itself.
+            const _humidityCandidates = [];
+            if (_isValidStation(_wu)) _humidityCandidates.push(_wu);
+            _neighbors.forEach(function(n) { _humidityCandidates.push(n); });
+
+            // Build pool: primary (if valid) + all valid neighbors, each tagged
+            // with a distance rank (0 = primary = nearest, 1-3 = neighbors).
+            // A station with a 30+ percentage-point humidity disagreement from
+            // its local peers is treated as a sensor/reporting glitch.
             const _pool = [];
-            if (_isValidStation(_wu)) _pool.push({ s: _wu, rank: 0 });
-            _neighbors.forEach(function(n, i) { _pool.push({ s: n, rank: i + 1 }); });
+            if (_isValidStation(_wu) &&
+                pwsPassesNeighborHumidityQC(_wu, _humidityCandidates)) {
+                _pool.push({ s: _wu, rank: 0 });
+            }
+            _neighbors.forEach(function(n, i) {
+                if (pwsPassesNeighborHumidityQC(n, _humidityCandidates)) {
+                    _pool.push({ s: n, rank: i + 1 });
+                }
+            });
 
             // Select winner: prefer a QC-valid station with complete current
             // observations, then lowest |temp − reference|, then distance.
@@ -10660,7 +11407,10 @@
                         : 'Moderate Excessive Rainfall Risk';
                     banner.style.display = 'block';
                     banner.innerText = '\u26A0\uFE0F ' + wpcBannerLabel;
-                    banner.style.background = wpcUpper.includes('HIGH') ? '#7f1d1d' : '#b91c1c';
+                    // Use the same ERO palette as the WPC badge in Active
+                    // Local Risks and the day-level badge in Flood Outlook:
+                    // Moderate = purple, High = red.
+                    banner.style.background = wpcUpper.includes('HIGH') ? '#c62828' : '#8e24aa';
                     banner.style.color = '#fff';
                     banner.onclick = function() {
                         switchTab('severe', document.getElementById('nav-severe'));
@@ -11578,8 +12328,15 @@
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
     let normalReportingPopupWidth = null;
-    let reportLat = null, reportLon = null;
+    // Keep the report pin across a full page reload. The map object is
+    // recreated on refresh, so in-memory coordinates alone are not enough to
+    // restore the marker before the next GPS callback arrives.
+    const _savedReportPinLat = parseFloat(localStorage.getItem('skymonitor_report_pin_lat') || '');
+    const _savedReportPinLon = parseFloat(localStorage.getItem('skymonitor_report_pin_lon') || '');
+    let reportLat = isFinite(_savedReportPinLat) ? _savedReportPinLat : null;
+    let reportLon = isFinite(_savedReportPinLon) ? _savedReportPinLon : null;
     let reportPinMarker = null;
+    let reportPinIcon = null;
     let privacySnapGeneration = 0;
     let selectedReportType = '';
 
@@ -12189,6 +12946,7 @@
         panel.style.display = open ? 'block' : 'none';
         if (btn) btn.style.background = open ? 'rgba(79,195,247,0.35)' : 'rgba(79,195,247,0.15)';
         localStorage.setItem('report_map_settings_open', open ? '1' : '0');
+        ensureReportPinMarker();
     }
 
     function toggleLSR() {
@@ -12198,6 +12956,7 @@
         if (cb) cb.checked = lsrVisible;
         localStorage.setItem('report_lsr_on', lsrVisible ? '1' : '0');
         syncReportingMapLayers();
+        ensureReportPinMarker();
         if (lsrVisible && lsrLayer.getLayers && !lsrLayer.getLayers().length) {
             loadReportingMapData();
         }
@@ -12210,6 +12969,7 @@
         if (cb) cb.checked = alertsVisible;
         localStorage.setItem('report_alerts_on', alertsVisible ? '1' : '0');
         syncReportingMapLayers();
+        ensureReportPinMarker();
         if (alertsVisible && alertPolygonLayer.getLayers && !alertPolygonLayer.getLayers().length) {
             loadReportingMapData();
         }
@@ -12230,6 +12990,7 @@
         localStorage.setItem('report_custom_sky_alerts', customSkyAlertsVisible ? '1' : '0');
         if (customSkyAlertsVisible) {
             syncReportingMapLayers();
+            ensureReportPinMarker();
             loadCustomSkyAlerts();
         } else {
             if (customSkyAlertLayer) {
@@ -12237,6 +12998,7 @@
                 if (reportingMap) reportingMap.removeLayer(customSkyAlertLayer);
             }
             setCustomSkyAlertsStatus('');
+            ensureReportPinMarker();
         }
     }
 
@@ -12874,30 +13636,61 @@
         }
     }
 
-    function setReportPin(la, lo) {
-        reportLat = la; reportLon = lo;
-        updatePinCoordsDisplay();
-        if (!reportingMap || !window.L) return;
-        const L_ref = window.L;
-        if (reportPinMarker) {
-            reportPinMarker.setLatLng([la, lo]);
-        } else {
-            // Marker wasn't created on map init (manual location) — create it on demand now
-            const _dotIcon = L_ref.divIcon({
+    function _getReportPinIcon() {
+        if (!window.L) return null;
+        if (!reportPinIcon) {
+            reportPinIcon = window.L.divIcon({
                 className: '',
                 html: '<div style="width:16px;height:16px;background:#4fc3f7;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #4fc3f7,0 2px 8px rgba(0,0,0,0.7);cursor:grab;"></div>',
-                iconSize: [16, 16], iconAnchor: [8, 8]
-            });
-            reportPinMarker = L_ref.marker([la, lo], { icon: _dotIcon, draggable: true, zIndexOffset: 1000 })
-                .bindTooltip('Report location', { permanent: false })
-                .addTo(reportingMap);
-            reportPinMarker.on('dragend', function(e) {
-                const pos = e.target.getLatLng();
-                reportLat = parseFloat(pos.lat.toFixed(5));
-                reportLon = parseFloat(pos.lng.toFixed(5));
-                updatePinCoordsDisplay();
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
             });
         }
+        return reportPinIcon;
+    }
+
+    // The report pin is independent from the data layers. LSR/custom-alert
+    // refreshes clear and re-add their own layers, so all map transitions must
+    // be safe to repeat and must repair a detached pin.
+    function ensureReportPinMarker() {
+        if (!reportingMap || !window.L || reportLat == null || reportLon == null) return false;
+        if (!isFinite(Number(reportLat)) || !isFinite(Number(reportLon))) return false;
+        if (!reportingMap.getPane('reportPinPane') && reportingMap.createPane) {
+            const pinPane = reportingMap.createPane('reportPinPane');
+            pinPane.style.zIndex = '1000';
+        }
+        if (reportPinMarker) {
+            reportPinMarker.setLatLng([Number(reportLat), Number(reportLon)]);
+            if (!reportingMap.hasLayer(reportPinMarker)) reportPinMarker.addTo(reportingMap);
+            if (reportPinMarker.bringToFront) reportPinMarker.bringToFront();
+            return true;
+        }
+        reportPinMarker = window.L.marker([Number(reportLat), Number(reportLon)], {
+            icon: _getReportPinIcon(),
+            draggable: true,
+            zIndexOffset: 1000,
+            pane: 'reportPinPane'
+        }).bindTooltip('Report location', { permanent: false }).addTo(reportingMap);
+        reportPinMarker.on('dragend', function(e) {
+            const pos = e.target.getLatLng();
+            reportLat = parseFloat(pos.lat.toFixed(5));
+            reportLon = parseFloat(pos.lng.toFixed(5));
+            localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
+            localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
+            updatePinCoordsDisplay();
+        });
+        return true;
+    }
+
+    function setReportPin(la, lo) {
+        la = parseFloat(la);
+        lo = parseFloat(lo);
+        if (!isFinite(la) || !isFinite(lo)) return;
+        reportLat = la; reportLon = lo;
+        localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
+        localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
+        updatePinCoordsDisplay();
+        ensureReportPinMarker();
     }
 
     function _updateReportingMapAttribution() {
@@ -12918,7 +13711,8 @@
                 {
                     opacity: 0.65,
                     attribution: 'Radar: IEM / NEXRAD',
-                    maxZoom: 18
+                    maxZoom: 18,
+                    noWrap: true
                 }
             );
         }
@@ -12935,6 +13729,7 @@
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
         if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
         else { reportingMap.removeLayer(reportingRadarLayer); }
+        ensureReportPinMarker();
     }
 
     function saveReportingMapView() {
@@ -12976,6 +13771,7 @@
                 if (reportingMap) {
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
+                    ensureReportPinMarker();
                 }
             }, 80);
         } else {
@@ -13113,27 +13909,52 @@
         const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
         const firstReportMapInit = !window._reportPinInitialized;
         const privacyEnabledAtInit = localStorage.getItem('report_privacy_mode') === '1';
+        // On a refresh, the live-location watcher may not have delivered its
+        // first callback yet. The weather location is restored from
+        // localStorage immediately, and the last confirmed GPS fix is kept
+        // separately, so treat that restored live location as GPS-sourced for
+        // the initial report pin. The watcher will replace it when a fresh fix
+        // arrives.
+        const hasRememberedGpsLocation =
+            isFinite(window._gpsLat) && isFinite(window._gpsLon);
+        const gpsSourcedAtInit = window._locFromGPS === true ||
+            // Live mode is the source-of-truth for a restored location. The
+            // separate GPS cache was added later, so older installations may
+            // have valid waddle_lat/waddle_lon values without those keys.
+            (localStorage.getItem('input_mode') === 'live' &&
+                (hasRememberedGpsLocation || (isFinite(rawLat) && isFinite(rawLon))));
 
-        // Initialize the report pin once per page load. In-app tab and route
-        // transitions reuse the existing pin; a full reload may create a new
-        // randomized offset.
-        if (firstReportMapInit) {
+        // Only a real GPS fix creates an initial report pin. A searched or
+        // manually entered location should center the map without implying
+        // that the reporter is physically there.
+        if (firstReportMapInit && gpsSourcedAtInit && reportLat == null && reportLon == null) {
             const offset = applyPrivacyOffset(rawLat, rawLon);
             reportLat = offset.la;
             reportLon = offset.lo;
+            localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
+            localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
             updatePinCoordsDisplay();
         }
 
-        // Center the map on the adjusted report pin, never on the user's raw
-        // weather location. This keeps repeated zooming from exposing the
-        // exact location by revealing that the initial viewport was centered
-        // somewhere different from the report marker.
+        // GPS uses the existing privacy-adjusted report pin. Manual locations
+        // center the actual map on the selected coordinates while preserving
+        // the independently stored report pin.
         let initialView = {
-            lat: reportLat != null ? reportLat : rawLat,
-            lon: reportLon != null ? reportLon : rawLon,
+            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
-        reportingMap = L_ref.map('reporting-map', { zoomControl: true })
+        // Keep the reporting surface to one world copy. Without noWrap,
+        // Leaflet repeats the horizontal tile grid indefinitely and every
+        // marker appears again in each wrapped copy.
+        const reportingWorldBounds = [[-85.05112878, -180], [85.05112878, 180]];
+        reportingMap = L_ref.map('reporting-map', {
+            zoomControl: true,
+            minZoom: 2,
+            maxBounds: reportingWorldBounds,
+            maxBoundsViscosity: 1.0,
+            worldCopyJump: false
+        })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
         reportingMap.on('moveend zoomend', saveReportingMapView);
@@ -13141,7 +13962,7 @@
         // Layer 1 — physical geography only (no labels), sits below radar
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
             attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com">CARTO</a>',
-            subdomains: 'abcd', maxZoom: 19
+            subdomains: 'abcd', maxZoom: 19, noWrap: true
         }).addTo(reportingMap);
 
         // Layer 2 — one consistent IEM/NEXRAD radar source.
@@ -13149,7 +13970,7 @@
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
-            subdomains: 'abcd', maxZoom: 19, pane: 'overlayPane'
+            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'overlayPane'
         }).addTo(reportingMap);
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
@@ -13200,31 +14021,17 @@
         });
         reportingMap.addLayer(userReportLayer);
 
-        const dotIcon = L_ref.divIcon({
-            className: '',
-            html: '<div style="width:16px;height:16px;background:#4fc3f7;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #4fc3f7,0 2px 8px rgba(0,0,0,0.7);cursor:grab;"></div>',
-            iconSize: [16, 16],
-            iconAnchor: [8, 8]
-        });
         const isMobile = window.matchMedia('(pointer: coarse)').matches;
         
 
-        // Always create the pin on first load; thereafter only for GPS-sourced locations
-        if (reportLat != null && reportLon != null) {
-            reportPinMarker = L_ref.marker([reportLat, reportLon], { icon: dotIcon, draggable: true, zIndexOffset: 1000 })
-                .bindTooltip('Report location', { permanent: false })
-                .addTo(reportingMap);
-            reportPinMarker.on('dragend', function(e) {
-                const pos = e.target.getLatLng();
-                reportLat = parseFloat(pos.lat.toFixed(5));
-                reportLon = parseFloat(pos.lng.toFixed(5));
-                updatePinCoordsDisplay();
-            });
-        }
+        // Only GPS-sourced locations get an automatic report pin. Manual users
+        // can still place one explicitly with a double-click or by dragging a
+        // pin after one has been created.
+        if (reportLat != null && reportLon != null) ensureReportPinMarker();
         window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
-        if (firstReportMapInit && privacyEnabledAtInit && _privacyCb && _privacyCb.checked) {
+        if (firstReportMapInit && gpsSourcedAtInit && privacyEnabledAtInit && _privacyCb && _privacyCb.checked) {
             moveReportPinToPrivacyCenter(rawLat, rawLon, false);
         }
 
@@ -13241,6 +14048,7 @@
         });
 
         syncReportingMapLayers();
+        ensureReportPinMarker();
         loadReportingMapData();
     }
 
@@ -13266,6 +14074,7 @@
         const L_ref = window.L;
         setReportingRadarLayerForLocation();
         syncReportingMapLayers();
+        ensureReportPinMarker();
 
         // Load both official alert feeds on every refresh. Alert overlays are
         // map data, not location-provider routing: a Canadian location should
@@ -13391,6 +14200,7 @@
 
         await loadMapReports();
         syncReportingMapLayers();
+        ensureReportPinMarker();
     }
 
     async function loadMapReports() {
@@ -14708,6 +15518,8 @@
                     if (activeOutlookCenter === 'nhc') {
                         updateOutlookMap('nhc', null);
                         startNHCCountdown();
+                    } else if (activeOutlookCenter === 'cpc') {
+                        updateOutlookMap('cpc', null);
                     } else {
                         updateOutlookMap(activeOutlookCenter, activeSPCDay);
                         if (activeOutlookCenter === 'spc') startSPCCountdown(activeSPCDay);
@@ -14781,13 +15593,19 @@
     // Prevent a slow refresh from overlapping the next 60-second refresh.
     // A location change gets a new generation and is allowed to supersede
     // the previous request; stale responses are ignored by the existing guards.
+    // The force flag is used only by an explicit location submission.  It must
+    // not be inferred from the coordinate key: live GPS is allowed to drift
+    // without turning every mobile refresh into a first load.
     async function loadAll(force) {
         const key = lat + ',' + lon;
         if (!force && _loadAllPromise && _loadAllKey === key) return _loadAllPromise;
-        // A new location gets the original first-load placeholder behavior.
-        // Refreshes for a location that has already loaded keep its current
-        // values visible while the new response is fetched.
-        const isInitialLoad = weatherLoadedLocationKey !== key;
+        const isExplicitLocationLoad = force === true;
+        // Only the first app load, or an explicit location submission, gets
+        // placeholder behavior.  Auto-refresh, pull-to-refresh, and live GPS
+        // movement preserve the last successful observation until replacement
+        // data is ready.
+        const isInitialLoad = !weatherLoadHasStarted || isExplicitLocationLoad;
+        weatherLoadHasStarted = true;
         weatherLoadedLocationKey = key;
         const promise = _loadAllOnce(isInitialLoad);
         _loadAllPromise = promise;
@@ -14994,11 +15812,6 @@
     // var SKYMONITOR_API = 'https://your-app-domain.example';
     // If your HTML is served from the same server as the API, leave it as '':
     var SKYMONITOR_API = WEATHER_WORKER_URL;
-    // Use the direct Worker hostname for the VAPID-key check. The custom API
-    // hostname is protected by Cloudflare Bot Fight Mode.
-    var SKYMONITOR_VAPID_KEY_URL = 'https://skymonitor-apis.skymonitor-account.workers.dev/api/push/vapid-public-key';
-    var SKYMONITOR_VAPID_KEY_STORAGE = 'skymonitor-vapid-public-key';
-
     // ——— PWA SERVICE WORKER + PUSH NOTIFICATIONS (v1.1.0) ———
     var _swReg = null;
 
@@ -15028,7 +15841,7 @@
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(function() {
-                        _migratePushSubscriptionIfNeeded().then(checkNotifStatus);
+                        checkNotifStatus();
                     }, 1500);
                 }
                 _clearAppBadge();
@@ -15070,134 +15883,6 @@
         var arr = new Uint8Array(raw.length);
         for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
         return arr;
-    }
-
-    function _pushSubscriptionKeyMatches(subscription, publicKey) {
-        try {
-            var storedKey = subscription &&
-                subscription.options &&
-                subscription.options.applicationServerKey;
-            // Some browsers do not expose applicationServerKey. null means
-            // "unknown", not "mismatch", so the one-time storage fallback
-            // below decides whether migration is needed.
-            if (!storedKey) return null;
-
-            var actual = new Uint8Array(storedKey);
-            var expected = _urlB64ToUint8(publicKey);
-            if (actual.length !== expected.length) return false;
-            for (var i = 0; i < expected.length; i++) {
-                if (actual[i] !== expected[i]) return false;
-            }
-            return true;
-        } catch (_) {
-            return null;
-        }
-    }
-
-    var _pushMigrationPromise = null;
-
-    function _migratePushSubscriptionIfNeeded() {
-        if (_pushMigrationPromise) return _pushMigrationPromise;
-        if (!_swReg || !('PushManager' in window) ||
-            !('Notification' in window) ||
-            Notification.permission !== 'granted') {
-            return Promise.resolve(false);
-        }
-
-        _pushMigrationPromise = _swReg.pushManager.getSubscription()
-            .then(function(existing) {
-                // Do not create a subscription for someone who never enabled
-                // notifications. This migration only repairs existing users.
-                if (!existing) return false;
-
-                // The API requires coordinates when saving a subscription.
-                // If location has not loaded yet, the regular sync path will
-                // retry on its next interval.
-                if (!isFinite(Number(lat)) || !isFinite(Number(lon))) return false;
-
-                return fetch(SKYMONITOR_VAPID_KEY_URL, {
-                    cache: 'no-store',
-                    headers: { 'Accept': 'application/json' }
-                }).then(function(response) {
-                    if (!response.ok) throw new Error('VAPID key endpoint returned ' + response.status);
-                    return response.json();
-                }).then(function(data) {
-                    var currentKey = String(data.publicKey || '').trim();
-                    if (!currentKey) throw new Error('VAPID key endpoint returned no publicKey');
-
-                    var keyMatches = _pushSubscriptionKeyMatches(existing, currentKey);
-                    var rememberedKey = '';
-                    try { rememberedKey = localStorage.getItem(SKYMONITOR_VAPID_KEY_STORAGE) || ''; } catch (_) {}
-
-                    // If the browser exposes the subscription key, use the
-                    // exact comparison. Otherwise migrate once when this
-                    // browser has not yet recorded the current key.
-                    if (keyMatches === true ||
-                        (keyMatches === null && rememberedKey === currentKey)) {
-                        try { localStorage.setItem(SKYMONITOR_VAPID_KEY_STORAGE, currentKey); } catch (_) {}
-                        syncPushLocation();
-                        return false;
-                    }
-
-                    var oldEndpoint = existing.endpoint;
-                    console.info('[SkyMonitor] Existing push subscription uses an older/unknown VAPID key; refreshing it silently.');
-
-                    // A browser will generally reject subscribe() while an
-                    // old subscription exists with another applicationServerKey.
-                    // Unsubscribe locally first; do not delete the server row
-                    // until the replacement has been saved successfully.
-                    return existing.unsubscribe().then(function() {
-                        return _swReg.pushManager.subscribe({
-                            userVisibleOnly: true,
-                            applicationServerKey: _urlB64ToUint8(currentKey)
-                        });
-                    }).then(function(freshSubscription) {
-                        return fetch(SKYMONITOR_API + '/api/push/subscribe', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({
-                                subscription: freshSubscription.toJSON(),
-                                lat: lat,
-                                lon: lon,
-                                gpsLat: window._gpsLat,
-                                gpsLon: window._gpsLon,
-                                gpsCountryCode: window._gpsCountryCode || '',
-                                prefs: getNotifPrefs()
-                            })
-                        }).then(function(response) {
-                            if (!response.ok) {
-                                throw new Error('saving replacement subscription returned ' + response.status);
-                            }
-                            try { localStorage.setItem(SKYMONITOR_VAPID_KEY_STORAGE, currentKey); } catch (_) {}
-
-                            // Remove the old server record only after the new
-                            // subscription is confirmed saved.
-                            if (oldEndpoint && oldEndpoint !== freshSubscription.endpoint) {
-                                return fetch(SKYMONITOR_API + '/api/push/unsubscribe', {
-                                    method: 'DELETE',
-                                    headers: {'Content-Type': 'application/json'},
-                                    body: JSON.stringify({ endpoint: oldEndpoint })
-                                }).catch(function() {});
-                            }
-                        }).then(function() {
-                            console.info('[SkyMonitor] Push subscription refreshed for the current VAPID key.');
-                            return true;
-                        });
-                    });
-                });
-            })
-            .catch(function(error) {
-                // Keep this invisible during normal app startup. The existing
-                // notification button remains available as a manual fallback.
-                console.warn('[SkyMonitor] Automatic push subscription refresh skipped:', error.message);
-                return false;
-            })
-            .then(function(result) {
-                _pushMigrationPromise = null;
-                return result;
-            });
-
-        return _pushMigrationPromise;
     }
 
     function checkNotifStatus() {
