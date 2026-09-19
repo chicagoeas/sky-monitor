@@ -1927,6 +1927,9 @@
     // preserve LOCAL OBSERVATION rather than importing conditions from a
     // distant airport in a different weather regime.
     const GLOBAL_AVIATION_MAX_DISTANCE_KM = 100;
+    // A PWS must stay within this temperature delta of PirateWeather's
+    // independent current observation to be eligible for display.
+    const PWS_MAX_PIRATE_TEMP_DEVIATION_F = 15;
     // MeteoAlarm access is server-side. The worker route authenticates with the
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
@@ -5553,10 +5556,14 @@
             if (skipObservation) return;
             const _intlPw = window.pirateCurrently;
             const _intlCandidates = [];
+            const _intlPwTemp = _intlPw.temperature != null &&
+                isFinite(_intlPw.temperature) ? _intlPw.temperature : null;
             const _intlIsValidPws = function(s) {
                 return s && s.temp != null && s.humidity != null &&
                     isFinite(s.temp) && isFinite(s.humidity) &&
-                    s.humidity >= 0 && s.humidity <= 100;
+                    s.humidity >= 0 && s.humidity <= 100 &&
+                    (_intlPwTemp === null ||
+                        Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_PIRATE_TEMP_DEVIATION_F);
             };
             if (_intlIsValidPws(window.wuData)) _intlCandidates.push({ s: window.wuData, rank: 0 });
             (window.wuNeighborData || []).forEach(function(s, i) {
@@ -5569,6 +5576,12 @@
             });
             const _intlPws = _intlCandidates.length ? _intlCandidates[0].s : null;
             const _intlSource = _intlPws || _intlPw;
+            window.wuDeviates = !!window.wuData && !_intlPws;
+            if (!_intlPws) {
+                window.wuData = null;
+                var _rejectedIntlWuStation = document.getElementById('wuStation');
+                if (_rejectedIntlWuStation) _rejectedIntlWuStation.style.display = 'none';
+            }
             const summary = _intlPw.summary || 'Clear';
             const _intlTemp = _intlSource.temperature != null ? _intlSource.temperature : _intlSource.temp;
             const _intlHumidity = _intlSource.humidity != null
@@ -8806,7 +8819,7 @@
         var _eccIsValidStation = function(s) {
             if (!s || s.temp === null || s.humidity === null) return false;
             if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > 20) return false;
+            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var _eccNeighbors = (window.wuNeighborData || []).filter(_eccIsValidStation);
@@ -9180,7 +9193,7 @@
         }
 
         // This is intentionally the same PWS QC pass as the ECCC chain:
-        // validate humidity and a 20°F PirateWeather outlier limit, build a
+        // validate humidity and a 15°F PirateWeather outlier limit, build a
         // neighbor median, prefer complete observations, then compare to the
         // independent official station before selecting a source.
         var wu = window.wuData;
@@ -9198,7 +9211,7 @@
         var isValidStation = function(station) {
             if (!station || station.temp === null || station.humidity === null) return false;
             if (!isFinite(station.humidity) || station.humidity < 0 || station.humidity > 100) return false;
-            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > 20) return false;
+            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var neighbors = (window.wuNeighborData || []).filter(isValidStation);
@@ -9642,11 +9655,11 @@
             const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
 
             // Station validity: must have temp + humidity, and not a confirmed glitch
-            // (>20°F from PirateWeather baseline). Applied to primary AND neighbors.
+            // (>15°F from PirateWeather baseline). Applied to primary AND neighbors.
             const _isValidStation = function(s) {
                 if (!s || s.temp === null || s.humidity === null) return false;
                 if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > 20) return false;
+                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
                 return true;
             };
             const _neighbors = (window.wuNeighborData || []).filter(_isValidStation);
