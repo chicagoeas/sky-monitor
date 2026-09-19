@@ -13705,7 +13705,16 @@
         const rawLat = parseFloat(lat), rawLon = parseFloat(lon);
         const firstReportMapInit = !window._reportPinInitialized;
         const privacyEnabledAtInit = localStorage.getItem('report_privacy_mode') === '1';
-        const gpsSourcedAtInit = window._locFromGPS === true;
+        // On a refresh, the live-location watcher may not have delivered its
+        // first callback yet. The weather location is restored from
+        // localStorage immediately, and the last confirmed GPS fix is kept
+        // separately, so treat that restored live location as GPS-sourced for
+        // the initial report pin. The watcher will replace it when a fresh fix
+        // arrives.
+        const hasRememberedGpsLocation =
+            isFinite(window._gpsLat) && isFinite(window._gpsLon);
+        const gpsSourcedAtInit = window._locFromGPS === true ||
+            (localStorage.getItem('input_mode') === 'live' && hasRememberedGpsLocation);
 
         // Only a real GPS fix creates an initial report pin. A searched or
         // manually entered location should center the map without implying
