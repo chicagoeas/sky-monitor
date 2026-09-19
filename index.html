@@ -1989,6 +1989,10 @@
     let isNightAtStation = false;
     let stationTzOffset = 0; // always in seconds
     let weatherLoadGeneration = 0;
+    // "Initial" is a lifecycle state, not a coordinate comparison.  A live
+    // GPS fix can move by a few decimals between refreshes, especially after
+    // a mobile browser resumes, without making the dashboard a new first load.
+    let weatherLoadHasStarted = false;
     let weatherLoadedLocationKey = '';
     let _loadAllPromise = null;
     let _loadAllKey = '';
@@ -3642,7 +3646,16 @@
         // Keep the current observation visible while the new location loads.
         (function(){['tempVal','feelsVal','windVal','humVal'].forEach(function(id){
             var el=document.getElementById(id);
-            if(el){el.style.transition='none';el.style.opacity='1';el.style.color='';}
+            if(el){
+                el.style.transition='none';
+                el.style.opacity='1';
+                // The old observation remains visible during an explicit
+                // location change.  Do not erase its temperature color while
+                // keeping its value on screen; doing so makes a valid desktop
+                // temperature flash to inherited white text.  Only placeholders
+                // receive the neutral loading color.
+                if (el.innerText === '--') el.style.color = '#94a3b8';
+            }
         });})();
         setWindCompass(null);
         document.getElementById('weatherIcon').style.display = 'none';
@@ -8358,7 +8371,14 @@
         // known values visible while the new source-selection pass runs.
         ['tempVal','feelsVal','windVal','humVal','conditionText'].forEach(function(id) {
             var el = document.getElementById(id);
-            if (el) el.innerText = '--';
+            if (el) {
+                el.innerText = '--';
+                // A placeholder must not inherit the normal white body color
+                // on desktop.  Mobile already showed "--" correctly because
+                // it never had an earlier observation style to preserve.
+                if (id === 'tempVal' || id === 'feelsVal') el.style.color = '#94a3b8';
+                else if (id !== 'conditionText') el.style.color = '';
+            }
         });
         var icon = document.getElementById('weatherIcon');
         if (icon) icon.style.display = 'none';
@@ -15546,13 +15566,19 @@
     // Prevent a slow refresh from overlapping the next 60-second refresh.
     // A location change gets a new generation and is allowed to supersede
     // the previous request; stale responses are ignored by the existing guards.
+    // The force flag is used only by an explicit location submission.  It must
+    // not be inferred from the coordinate key: live GPS is allowed to drift
+    // without turning every mobile refresh into a first load.
     async function loadAll(force) {
         const key = lat + ',' + lon;
         if (!force && _loadAllPromise && _loadAllKey === key) return _loadAllPromise;
-        // A new location gets the original first-load placeholder behavior.
-        // Refreshes for a location that has already loaded keep its current
-        // values visible while the new response is fetched.
-        const isInitialLoad = weatherLoadedLocationKey !== key;
+        const isExplicitLocationLoad = force === true;
+        // Only the first app load, or an explicit location submission, gets
+        // placeholder behavior.  Auto-refresh, pull-to-refresh, and live GPS
+        // movement preserve the last successful observation until replacement
+        // data is ready.
+        const isInitialLoad = !weatherLoadHasStarted || isExplicitLocationLoad;
+        weatherLoadHasStarted = true;
         weatherLoadedLocationKey = key;
         const promise = _loadAllOnce(isInitialLoad);
         _loadAllPromise = promise;
