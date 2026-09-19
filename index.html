@@ -1331,7 +1331,7 @@
             <h2>About SkyMonitor custom alerts</h2>
 
             <h3>What are SkyMonitor custom alerts?</h3>
-            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Flood Watch, Severe Thunderstorm Watch, Tornado Watch, Special Weather Statement, and Mesoscale Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
+            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Flood Watch, Severe Thunderstorm Watch, Tornado Watch, Special Weather Statement, Mesoscale Discussion, and Mesoscale Precipitation Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
 
             <h3>Can I trust SkyMonitor custom alerts?</h3>
             <p>You should NEVER completely trust a SkyMonitor custom alert. They are not issued by meteorologists or experts. However, they are useful for tracking specific storms and what they are capable of producing, even if there is too low a probability for the NWS to rely on. For example, a storm might have a probable chance of producing a tornado; however, the NWS thinks that chance is too low or even misses the chance entirely, which can happen, although rarely, and therefore a SkyMonitor custom alert could let you know of the possible danger. There are also situations where SkyMonitor custom alerts can come a few minutes or even multiple minutes BEFORE the NWS issues one; for example, a SkyMonitor custom Severe Thunderstorm Warning could come slightly before the NWS’s actual Severe Thunderstorm Warning.</p>
@@ -1416,7 +1416,7 @@
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                     <div style="font-size:0.82em; font-weight:700; color:white;">&#9889; SPC Mesoscale Discussions</div>
-                    <div style="font-size:0.62em; color:#556677; margin-top:2px;">Notify when a new SPC MD covers you</div>
+                    <div style="font-size:0.62em; color:#556677; margin-top:2px;">Notify when a new SPC Mesoscale Discussion covers you</div>
                 </div>
                 <label class="ios-toggle">
                     <input type="checkbox" id="pref-spc-md" onchange="saveNotifPrefs()">
@@ -2060,6 +2060,7 @@
     const REPORTS_WORKER_URL = WEATHER_WORKER_URL + '/api/reports';
     // The merged Worker rewrites this route to the custom-alert public feed.
     const CUSTOM_SKY_ALERTS_WORKER_URL = WEATHER_WORKER_URL + '/api/alerts';
+    const CUSTOM_SKY_ALERT_ARCHIVE_URL = CUSTOM_SKY_ALERTS_WORKER_URL + '/archive';
     // Discord custom-alert links use /radar?alert=<revision-id>. Keep the
     // requested ID separate from the alert layer so a refresh can retry the
     // lookup until the reporting map has finished loading.
@@ -11709,7 +11710,7 @@
                 + ' onclick="openCustomSkyMDFromRisk(' + mdIndex + ')"'
                 + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openCustomSkyMDFromRisk(' + mdIndex + ')}"'
                 + ' style="display:inline-flex; align-items:center; box-sizing:border-box; height:31px; white-space:nowrap; line-height:1; background:' + mdColor + '; color:#07131d; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">'
-                + '&#x26C8;&#xFE0F; Custom <a href="/about-custom-alerts" class="custom-alerts-help" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a> MD #' + escapeHtml(discussionNumber)
+                + '&#x26C8;&#xFE0F; Custom <a href="/about-custom-alerts" class="custom-alerts-help" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a> ' + escapeHtml(customSkyDiscussionLabel(feature.properties || {})) + ' #' + escapeHtml(discussionNumber)
                 + '</div>';
         });
         // Set DOM once — prevents interleaving when two loadAll() calls race on first load
@@ -12586,6 +12587,7 @@
         ? true
         : localStorage.getItem('report_custom_sky_alerts') === '1';
     let customSkyDeepLinkHandled = false;
+    let customSkyDeepLinkEntry = null;
     let normalReportingPopupWidth = null;
     // Keep the report pin across a full page reload. The map object is
     // recreated on refresh, so in-memory coordinates alone are not enough to
@@ -13068,6 +13070,31 @@
         });
     }
 
+    function highlightCustomSkyDeepLinkEntry(entry) {
+        if (customSkyDeepLinkEntry && customSkyDeepLinkEntry.layer &&
+            customSkyDeepLinkEntry.layer.setStyle) {
+            customSkyDeepLinkEntry.layer.setStyle({
+                weight: 2.5,
+                opacity: 0.95,
+                fillOpacity: 0.22,
+                dashArray: null
+            });
+        }
+        customSkyDeepLinkEntry = entry || null;
+        if (!entry || !entry.layer) return;
+        if (entry.layer.setStyle) {
+            entry.layer.setStyle({
+                color: '#ffffff',
+                weight: 6,
+                opacity: 1,
+                fillColor: entry.color || '#ffffff',
+                fillOpacity: 0.42,
+                dashArray: '10 5'
+            });
+        }
+        if (entry.layer.bringToFront) entry.layer.bringToFront();
+    }
+
     function openDeepLinkedCustomSkyAlert() {
         if (!CUSTOM_SKY_DEEP_LINK_ID || customSkyDeepLinkHandled ||
             !reportingMap || !window.L) {
@@ -13085,6 +13112,7 @@
         if (!bounds.isValid()) return false;
 
         customSkyDeepLinkHandled = true;
+        highlightCustomSkyDeepLinkEntry(entry);
         localStorage.setItem('report_custom_sky_alerts', '1');
         const customAlertsToggle = document.getElementById('custom-sky-alerts-toggle-cb');
         if (customAlertsToggle) customAlertsToggle.checked = true;
@@ -13356,6 +13384,26 @@
         return fallback || '';
     }
 
+    function isCustomAlertCurrentlyActive(props) {
+        const activeValue = customSkyAlertValue(
+            props,
+            ['active', 'is_active', 'isActive'],
+            ''
+        ).toLowerCase();
+        if (['0', 'false', 'no', 'inactive'].includes(activeValue)) return false;
+        const status = customSkyAlertValue(props, ['status', 'state'], '').toLowerCase();
+        if (['expired', 'inactive', 'closed', 'ended', 'cancelled', 'canceled', 'superseded'].includes(status)) {
+            return false;
+        }
+        const expires = customSkyAlertValue(
+            props,
+            ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'ends', 'endTime'],
+            ''
+        );
+        const expiresDate = parseReportDate(expires);
+        return !expiresDate || expiresDate.getTime() > Date.now();
+    }
+
     function customSkyAlertIdentifiers(feature) {
         const props = feature && feature.properties || {};
         return [
@@ -13483,10 +13531,29 @@
             : String(raw).replace(/\.0+$/, '');
     }
 
+    function customSkyDiscussionLabel(props) {
+        const type = customSkyAlertValue(
+            props,
+            ['severity', 'alertType', 'alert_type', 'event', 'category', 'type'],
+            ''
+        ).toUpperCase();
+        return type === 'MPD' || type.includes('PRECIPITATION DISCUSSION')
+            ? 'Mesoscale Precipitation Discussion'
+            : 'Mesoscale Discussion';
+    }
+
     function customSkyMDKey(feature) {
         const props = feature && feature.properties || {};
         const number = formatCustomSkyDiscussionNumber(props);
-        if (number) return 'md:' + number;
+        const type = customSkyAlertValue(
+            props,
+            ['severity', 'alertType', 'alert_type', 'event', 'category', 'type'],
+            ''
+        ).toUpperCase();
+        const prefix = type === 'MPD' || type.includes('PRECIPITATION DISCUSSION')
+            ? 'mpd'
+            : 'md';
+        if (number) return prefix + ':' + number;
         const fallback = customSkyAlertValue(props, [
             'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
         ], '') || (feature && feature.id != null ? String(feature.id) : '');
@@ -13500,7 +13567,9 @@
             ''
         ).toUpperCase();
         return type === 'MD' ||
+            type === 'MPD' ||
             type.includes('MESOSCALE DISCUSSION') ||
+            type.includes('PRECIPITATION DISCUSSION') ||
             Boolean(customSkyAlertValue(
                 props,
                 ['discussion_number', 'discussionNumber', 'concerning'],
@@ -13608,6 +13677,7 @@
         const value = customSkyAlertValue(props, ['severity', 'level', 'priority', 'alertType', 'event', 'type'], '').toLowerCase();
         if (value.includes('tow') || value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
         if (value.includes('svr') || value.includes('svw') || value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
+        if (value.includes('mpd') || value.includes('precipitation discussion')) return '#4dd0e1';
         if (value.includes('ffw') || value.includes('flw') || value.includes('flood') || value.includes('rain')) return '#00c853';
         if (value.includes('winter') || value.includes('snow') || value.includes('ice')) return '#81d4fa';
         if (value.includes('wind')) return '#ffd54f';
@@ -13892,7 +13962,40 @@
                 throw new Error('Failed to fetch');
             }
             const payload = await res.json();
-            const features = getCustomSkyAlertFeatures(payload);
+            let features = getCustomSkyAlertFeatures(payload);
+            let archivedDeepLink = false;
+            if (CUSTOM_SKY_DEEP_LINK_ID && !features.some(function(item) {
+                return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
+                    CUSTOM_SKY_DEEP_LINK_ID
+                ) !== -1;
+            })) {
+                try {
+                    const archiveResponse = await fetch(
+                        CUSTOM_SKY_ALERT_ARCHIVE_URL + '/' +
+                        encodeURIComponent(CUSTOM_SKY_DEEP_LINK_ID),
+                        { headers: { 'Accept': 'application/json, application/geo+json' } }
+                    );
+                    if (archiveResponse.ok) {
+                        const archivePayload = await archiveResponse.json();
+                        const archivedFeature = archivePayload.feature ||
+                            (Array.isArray(archivePayload.revisions)
+                                ? archivePayload.revisions[archivePayload.revisions.length - 1]
+                                : null);
+                        if (archivedFeature && archivedFeature.geometry) {
+                            features = features.concat([{
+                                ...archivedFeature,
+                                properties: {
+                                    ...(archivedFeature.properties || {}),
+                                    _skymonitorArchived: true
+                                }
+                            }]);
+                            archivedDeepLink = true;
+                        }
+                    }
+                } catch (archiveError) {
+                    console.warn('[SkyMonitor] Archived custom alert lookup failed:', archiveError);
+                }
+            }
             let renderedCount = 0;
 
             features.forEach(function(item) {
@@ -13903,9 +14006,13 @@
                 const discussionNumber = formatCustomSkyDiscussionNumber(props);
                 const rawHeadline = customSkyAlertValue(props, ['headline', 'title', 'name', 'message'], 'SkyMonitor alert');
                 const headline = isMd
-                    ? 'Mesoscale Discussion' + (discussionNumber ? ' #' + discussionNumber : '')
+                    ? customSkyDiscussionLabel(props) + (discussionNumber ? ' #' + discussionNumber : '')
                     : rawHeadline;
-                const alertType = 'Custom alert';
+                const isArchived = props._skymonitorArchived === true ||
+                    !isCustomAlertCurrentlyActive(props);
+                const alertType = isArchived
+                    ? 'Archived ' + (isMd ? customSkyDiscussionLabel(props) : 'custom alert')
+                    : (isMd ? customSkyDiscussionLabel(props) : 'Custom alert');
                 const issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
                 const description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
                 let shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -13920,6 +14027,9 @@
                  const timeInfo = reportingAlertTimeInfo(props);
                 const expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
                 const color = customSkyAlertColor(props);
+                const alertIdentifiers = customSkyAlertIdentifiers(feature);
+                const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
+                    alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
                 shortSummary = shortSummary.replace(/^\s*Full alert\s*:?\s*/i, '').trim();
                  const summaryLine = shortSummary
                      ? '<div style="margin-top:6px;"><b style="font-size:0.9em;">Short Summary</b><br><span>' + escapeHtml(shortSummary) + '</span></div>'
@@ -13929,16 +14039,27 @@
                     : '';
                 const mdContent = isMd ? buildCustomSkyMdPopup(props, description) : '';
                 const polygon = L_ref.geoJSON(feature, {
-                    style: { color: color, weight: 2.5, opacity: 0.95, fillColor: color, fillOpacity: 0.22 }
+                    style: {
+                        color: isDeepLinked ? '#ffffff' : color,
+                        weight: isDeepLinked ? 6 : 2.5,
+                        opacity: 1,
+                        fillColor: color,
+                        fillOpacity: isDeepLinked ? 0.42 : (isArchived ? 0.14 : 0.22),
+                        dashArray: isDeepLinked ? '10 5' : (isArchived ? '5 5' : null)
+                    }
                 });
+                const issuedDate = parseReportDate(timeInfo.value);
+                const archiveAge = isArchived && issuedDate
+                    ? formatSyncAge(Math.max(0, (Date.now() - issuedDate.getTime()) / 1000))
+                    : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                     ['Issued by', issuer]
+                     ['Issued by', issuer],
+                     [isArchived ? 'Archive status' : '', isArchived ? 'Expired alert · issued ' + archiveAge : '']
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
                   ], '') || (feature.id != null ? String(feature.id) : '');
-                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                  const reportUrl = alertId
                      ? CUSTOM_SKY_ALERT_REPORT_FORM_URL + encodeURIComponent(alertId)
                      : '';
@@ -13949,10 +14070,18 @@
                      customAlertIds: alertIdentifiers,
                     color: color,
                     title: escapeHtml(headline),
-                     meta: escapeHtml(alertType) + (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : ''),
+                     meta: escapeHtml(alertType) + (isArchived
+                        ? (archiveAge ? ' · ' + escapeHtml(archiveAge) : '')
+                        : (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
                        detail: customDetail,
-                     reportUrl: reportUrl
+                     reportUrl: reportUrl,
+                     archived: isArchived
                 });
+                if (isDeepLinked) {
+                    highlightCustomSkyDeepLinkEntry(
+                        reportingPopupEntries[reportingPopupEntries.length - 1]
+                    );
+                }
                 polygon.on('dblclick', function(e) {
                     L_ref.DomEvent.stop(e);
                     setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
@@ -13961,7 +14090,7 @@
                 renderedCount++;
             });
             setCustomSkyAlertsStatus(
-                renderedCount ? renderedCount + ' active custom alert' + (renderedCount === 1 ? '' : 's') : 'No active custom alerts',
+                renderedCount ? renderedCount + (archivedDeepLink ? ' active/archived custom alert' : ' active custom alert') + (renderedCount === 1 ? '' : 's') : 'No active custom alerts',
                 renderedCount ? '#00e676' : '#718496'
             );
             if (window._pendingCustomSkyMDKey) {
