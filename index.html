@@ -2060,6 +2060,11 @@
     const REPORTS_WORKER_URL = WEATHER_WORKER_URL + '/api/reports';
     // The merged Worker rewrites this route to the custom-alert public feed.
     const CUSTOM_SKY_ALERTS_WORKER_URL = WEATHER_WORKER_URL + '/api/alerts';
+    // Discord custom-alert links use /radar?alert=<revision-id>. Keep the
+    // requested ID separate from the alert layer so a refresh can retry the
+    // lookup until the reporting map has finished loading.
+    const CUSTOM_SKY_DEEP_LINK_ID =
+        new URLSearchParams(window.location.search).get('alert')?.trim() || '';
     // Google Form prefilled Alert ID field (entry.598068649)
     const CUSTOM_SKY_ALERT_REPORT_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfgRzOSJSsbV6faOodFd7H6ET6-6PysP51yvMNJSxuz96RGBQ/viewform?usp=pp_url&entry.598068649=';
 
@@ -12577,7 +12582,10 @@
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
-    let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
+    let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
+        ? true
+        : localStorage.getItem('report_custom_sky_alerts') === '1';
+    let customSkyDeepLinkHandled = false;
     let normalReportingPopupWidth = null;
     // Keep the report pin across a full page reload. The map object is
     // recreated on refresh, so in-memory coordinates alone are not enough to
@@ -13060,6 +13068,40 @@
         });
     }
 
+    function openDeepLinkedCustomSkyAlert() {
+        if (!CUSTOM_SKY_DEEP_LINK_ID || customSkyDeepLinkHandled ||
+            !reportingMap || !window.L) {
+            return false;
+        }
+
+        const entry = reportingPopupEntries.find(function(item) {
+            return item.source === 'custom-skymonitor' &&
+                Array.isArray(item.customAlertIds) &&
+                item.customAlertIds.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
+        });
+        if (!entry || !entry.layer || !entry.layer.getBounds) return false;
+
+        const bounds = entry.layer.getBounds();
+        if (!bounds.isValid()) return false;
+
+        customSkyDeepLinkHandled = true;
+        localStorage.setItem('report_custom_sky_alerts', '1');
+        const customAlertsToggle = document.getElementById('custom-sky-alerts-toggle-cb');
+        if (customAlertsToggle) customAlertsToggle.checked = true;
+
+        reportingMap.fitBounds(bounds, {
+            padding: [30, 30],
+            maxZoom: 11
+        });
+
+        // The bounds center is a stable popup anchor even when a polygon is
+        // concave. The selected entry is always included by openReportingPopup.
+        setTimeout(function() {
+            openReportingPopup(entry, bounds.getCenter(), entry);
+        }, 120);
+        return true;
+    }
+
     function _tryOpenPendingCustomSkyMD(attempt) {
         var pendingKey = window._pendingCustomSkyMDKey;
         if (!pendingKey) return;
@@ -13312,6 +13354,24 @@
             if (value != null && String(value).trim() !== '') return String(value);
         }
         return fallback || '';
+    }
+
+    function customSkyAlertIdentifiers(feature) {
+        const props = feature && feature.properties || {};
+        return [
+            props.revision_id,
+            props.revisionId,
+            props.alert_id,
+            props.alertId,
+            props.alertID,
+            props.id,
+            props.uuid,
+            props.alertUuid,
+            props.alert_uuid,
+            feature && feature.id
+        ].map(function(value) {
+            return String(value == null ? '' : value).trim();
+        }).filter(Boolean);
     }
 
     function reportingAlertTimeInfo(props) {
@@ -13847,13 +13907,15 @@
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
                   ], '') || (feature.id != null ? String(feature.id) : '');
+                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                  const reportUrl = alertId
                      ? CUSTOM_SKY_ALERT_REPORT_FORM_URL + encodeURIComponent(alertId)
                      : '';
                 registerReportingPopup(polygon, {
                     source: 'custom-skymonitor',
                     isPolygon: true,
-                     customAlertKey: isMd ? customSkyMDKey(feature) : '',
+                     customAlertKey: isMd ? customSkyMDKey(feature) : alertId,
+                     customAlertIds: alertIdentifiers,
                     color: color,
                     title: escapeHtml(headline),
                      meta: escapeHtml(alertType) + (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : ''),
@@ -13873,6 +13935,9 @@
             );
             if (window._pendingCustomSkyMDKey) {
                 setTimeout(function() { _tryOpenPendingCustomSkyMD(0); }, 0);
+            }
+            if (CUSTOM_SKY_DEEP_LINK_ID) {
+                setTimeout(openDeepLinkedCustomSkyAlert, 0);
             }
         } catch (e) {
             setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
