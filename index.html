@@ -3618,10 +3618,13 @@
                 localStorage.setItem('waddle_city', '');
             }
         }
-        // A searched or manually entered location is a map view, not proof of
-        // the reporter's physical location. Do not carry a previous GPS report
-        // pin into the manually selected location.
-        if (!window._locFromGPS) clearReportPinForManualLocation();
+        // The weather location and the report location are independent. A
+        // user can inspect weather in another city while their report pin
+        // remains at their actual location.
+        if (!window._locFromGPS && reportingMap &&
+            isFinite(Number(lat)) && isFinite(Number(lon))) {
+            reportingMap.setView([Number(lat), Number(lon)], reportingMap.getZoom(), { animate: false });
+        }
         saveLoc();
         document.getElementById('stationName').innerText = 'LOADING LOCATION...';
         var _outlookEl = document.getElementById('hourly-outlook');
@@ -13667,22 +13670,6 @@
         ensureReportPinMarker();
     }
 
-    function clearReportPinForManualLocation() {
-        ++privacySnapGeneration;
-        reportLat = null;
-        reportLon = null;
-        localStorage.removeItem('skymonitor_report_pin_lat');
-        localStorage.removeItem('skymonitor_report_pin_lon');
-        if (reportPinMarker && reportingMap) {
-            reportingMap.removeLayer(reportPinMarker);
-        }
-        reportPinMarker = null;
-        updatePinCoordsDisplay();
-        if (reportingMap && isFinite(Number(lat)) && isFinite(Number(lon))) {
-            reportingMap.setView([Number(lat), Number(lon)], reportingMap.getZoom(), { animate: false });
-        }
-    }
-
     function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
         if (!el) return;
@@ -13927,11 +13914,11 @@
         }
 
         // GPS uses the existing privacy-adjusted report pin. Manual locations
-        // center the actual map on the selected coordinates and do not create
-        // an automatic report pin.
+        // center the actual map on the selected coordinates while preserving
+        // the independently stored report pin.
         let initialView = {
-            lat: reportLat != null ? reportLat : rawLat,
-            lon: reportLon != null ? reportLon : rawLon,
+            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
         // Keep the reporting surface to one world copy. Without noWrap,
