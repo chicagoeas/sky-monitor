@@ -1930,6 +1930,31 @@
     // A PWS must stay within this temperature delta of PirateWeather's
     // independent current observation to be eligible for display.
     const PWS_MAX_PIRATE_TEMP_DEVIATION_F = 15;
+    // Humidity is checked separately against nearby PWS peers. This is a
+    // percentage-point difference, not a relative percentage.
+    const PWS_MAX_NEIGHBOR_HUMIDITY_DEVIATION_PCT = 30;
+    const PWS_MIN_HUMIDITY_PEERS = 2;
+
+    function pwsPassesNeighborHumidityQC(station, peerStations) {
+        if (!station || station.humidity == null || !isFinite(station.humidity)) return false;
+        const peerValues = (peerStations || [])
+            .filter(function(peer) {
+                return peer && peer !== station &&
+                    peer.humidity != null && isFinite(peer.humidity);
+            })
+            .map(function(peer) { return peer.humidity; })
+            .sort(function(a, b) { return a - b; });
+        // Do not reject based on a single comparison station. Two peers are
+        // the minimum needed to establish a meaningful local humidity signal.
+        if (peerValues.length < PWS_MIN_HUMIDITY_PEERS) return true;
+        const middle = Math.floor(peerValues.length / 2);
+        const peerMedian = peerValues.length % 2
+            ? peerValues[middle]
+            : (peerValues[middle - 1] + peerValues[middle]) / 2;
+        return Math.abs(station.humidity - peerMedian) <=
+            PWS_MAX_NEIGHBOR_HUMIDITY_DEVIATION_PCT;
+    }
+
     // MeteoAlarm access is server-side. The worker route authenticates with the
     // METEOALARM_API_TOKEN secret and returns location-filtered, normalized
     // alerts; never put the portal token in this HTML file or localStorage.
@@ -5555,7 +5580,7 @@
         if (window.pirateCurrently) {
             if (skipObservation) return;
             const _intlPw = window.pirateCurrently;
-            const _intlCandidates = [];
+            const _intlRawCandidates = [];
             const _intlPwTemp = _intlPw.temperature != null &&
                 isFinite(_intlPw.temperature) ? _intlPw.temperature : null;
             const _intlIsValidPws = function(s) {
@@ -5565,9 +5590,15 @@
                     (_intlPwTemp === null ||
                         Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_PIRATE_TEMP_DEVIATION_F);
             };
-            if (_intlIsValidPws(window.wuData)) _intlCandidates.push({ s: window.wuData, rank: 0 });
+            if (_intlIsValidPws(window.wuData)) _intlRawCandidates.push({ s: window.wuData, rank: 0 });
             (window.wuNeighborData || []).forEach(function(s, i) {
-                if (_intlIsValidPws(s)) _intlCandidates.push({ s: s, rank: i + 1 });
+                if (_intlIsValidPws(s)) _intlRawCandidates.push({ s: s, rank: i + 1 });
+            });
+            const _intlHumidityCandidates = _intlRawCandidates.map(function(candidate) {
+                return candidate.s;
+            });
+            const _intlCandidates = _intlRawCandidates.filter(function(candidate) {
+                return pwsPassesNeighborHumidityQC(candidate.s, _intlHumidityCandidates);
             });
             _intlCandidates.sort(function(a, b) {
                 var aComplete = a.s.windSpeed != null ? 1 : 0;
@@ -8834,9 +8865,19 @@
         var _eccReferenceTemp = tempF !== null
             ? tempF
             : (_eccNeighborMedianTemp !== null ? _eccNeighborMedianTemp : _eccPwTemp);
+        var _eccHumidityCandidates = [];
+        if (_eccIsValidStation(_eccWu)) _eccHumidityCandidates.push(_eccWu);
+        _eccNeighbors.forEach(function(n) { _eccHumidityCandidates.push(n); });
         var _eccPool = [];
-        if (_eccIsValidStation(_eccWu)) _eccPool.push({ s: _eccWu, rank: 0 });
-        _eccNeighbors.forEach(function(n, i) { _eccPool.push({ s: n, rank: i + 1 }); });
+        if (_eccIsValidStation(_eccWu) &&
+            pwsPassesNeighborHumidityQC(_eccWu, _eccHumidityCandidates)) {
+            _eccPool.push({ s: _eccWu, rank: 0 });
+        }
+        _eccNeighbors.forEach(function(n, i) {
+            if (pwsPassesNeighborHumidityQC(n, _eccHumidityCandidates)) {
+                _eccPool.push({ s: n, rank: i + 1 });
+            }
+        });
         if (_eccPool.length > 0) {
             _eccPool.sort(function(a, b) {
                 var aComplete = a.s.windSpeed !== null && a.s.windSpeed !== undefined ? 1 : 0;
@@ -9224,10 +9265,18 @@
         var referenceTemp = officialTempF !== null
             ? officialTempF
             : (neighborMedianTemp !== null ? neighborMedianTemp : pwTemp);
+        var humidityCandidates = [];
+        if (isValidStation(wu)) humidityCandidates.push(wu);
+        neighbors.forEach(function(station) { humidityCandidates.push(station); });
         var pool = [];
-        if (isValidStation(wu)) pool.push({ station: wu, rank: 0 });
+        if (isValidStation(wu) &&
+            pwsPassesNeighborHumidityQC(wu, humidityCandidates)) {
+            pool.push({ station: wu, rank: 0 });
+        }
         neighbors.forEach(function(station, index) {
-            pool.push({ station: station, rank: index + 1 });
+            if (pwsPassesNeighborHumidityQC(station, humidityCandidates)) {
+                pool.push({ station: station, rank: index + 1 });
+            }
         });
         if (pool.length) {
             pool.sort(function(a, b) {
@@ -9680,11 +9729,26 @@
                 ? nwsObsTempF
                 : (_neighborMedianTemp !== null ? _neighborMedianTemp : _pwTemp);
 
-            // Build pool: primary (if valid) + all valid neighbors, each tagged with a
-            // distance rank (0 = primary = nearest, 1-3 = neighbors in distance order).
+            // Build the candidate set first so humidity can be checked against
+            // the other nearby stations, rather than against itself.
+            const _humidityCandidates = [];
+            if (_isValidStation(_wu)) _humidityCandidates.push(_wu);
+            _neighbors.forEach(function(n) { _humidityCandidates.push(n); });
+
+            // Build pool: primary (if valid) + all valid neighbors, each tagged
+            // with a distance rank (0 = primary = nearest, 1-3 = neighbors).
+            // A station with a 30+ percentage-point humidity disagreement from
+            // its local peers is treated as a sensor/reporting glitch.
             const _pool = [];
-            if (_isValidStation(_wu)) _pool.push({ s: _wu, rank: 0 });
-            _neighbors.forEach(function(n, i) { _pool.push({ s: n, rank: i + 1 }); });
+            if (_isValidStation(_wu) &&
+                pwsPassesNeighborHumidityQC(_wu, _humidityCandidates)) {
+                _pool.push({ s: _wu, rank: 0 });
+            }
+            _neighbors.forEach(function(n, i) {
+                if (pwsPassesNeighborHumidityQC(n, _humidityCandidates)) {
+                    _pool.push({ s: n, rank: i + 1 });
+                }
+            });
 
             // Select winner: prefer a QC-valid station with complete current
             // observations, then lowest |temp − reference|, then distance.
