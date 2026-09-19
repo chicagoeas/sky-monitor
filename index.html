@@ -3522,15 +3522,45 @@
         }
     }
 
+    function parseCoordinateInput(value) {
+        const parts = String(value || '').split(',').map(function(part) {
+            return part.trim();
+        });
+        if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+
+        const parsedLat = Number(parts[0]);
+        const parsedLon = Number(parts[1]);
+        if (!isFinite(parsedLat) || !isFinite(parsedLon) ||
+            parsedLat < -90 || parsedLat > 90 ||
+            parsedLon < -180 || parsedLon > 180) {
+            return null;
+        }
+        return { lat: parsedLat, lon: parsedLon };
+    }
+
+    function showInvalidCoordinateAlert() {
+        alert("That's not a valid coordinate. Try again.");
+    }
+
     function manualUpdateLocation() {
         if (window.SKYMONITOR_INFO_PAGE) {
             var coordInput = document.getElementById('coordInput');
             var coords = coordInput ? coordInput.value.trim() : '';
             if (coords) {
+                if (!parseCoordinateInput(coords)) {
+                    showInvalidCoordinateAlert();
+                    return;
+                }
                 navigateFromInfoPage('coord', coords);
             } else if (isFinite(lat) && isFinite(lon)) {
                 navigateFromInfoPage('coord', lat + ', ' + lon);
             }
+            return;
+        }
+        var mainCoordInput = document.getElementById('coordInput');
+        var mainCoords = mainCoordInput ? mainCoordInput.value.trim() : '';
+        if (mainCoords && !parseCoordinateInput(mainCoords)) {
+            showInvalidCoordinateAlert();
             return;
         }
         window._locFromGPS = false;
@@ -3539,15 +3569,19 @@
 
     function updateLocation() {
         const coordBox = document.getElementById('coordInput');
-        if (coordBox && coordBox.value) {
-            const _parts = coordBox.value.split(',').map(function(s) { return parseFloat(s.trim()); });
-            if (_parts.length >= 2 && !isNaN(_parts[0]) && !isNaN(_parts[1])) {
-                lat = _parts[0]; lon = _parts[1];
-                // When navigating by raw coordinates, wipe any saved city/beach name so
-                // a previously-searched "Montrose Beach" can't bleed into the new location.
-                if (localStorage.getItem('input_mode') === 'coord') {
-                    localStorage.setItem('waddle_city', '');
-                }
+        const coordinateText = coordBox ? coordBox.value.trim() : '';
+        if (coordinateText) {
+            const parsedCoordinates = parseCoordinateInput(coordinateText);
+            if (!parsedCoordinates) {
+                showInvalidCoordinateAlert();
+                return;
+            }
+            lat = parsedCoordinates.lat;
+            lon = parsedCoordinates.lon;
+            // When navigating by raw coordinates, wipe any saved city/beach name so
+            // a previously-searched "Montrose Beach" can't bleed into the new location.
+            if (localStorage.getItem('input_mode') === 'coord') {
+                localStorage.setItem('waddle_city', '');
             }
         }
         // A searched or manually entered location is a map view, not proof of
@@ -13510,7 +13544,8 @@
                 {
                     opacity: 0.65,
                     attribution: 'Radar: IEM / NEXRAD',
-                    maxZoom: 18
+                    maxZoom: 18,
+                    noWrap: true
                 }
             );
         }
@@ -13734,7 +13769,17 @@
             lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
             zoom: 8
         };
-        reportingMap = L_ref.map('reporting-map', { zoomControl: true })
+        // Keep the reporting surface to one world copy. Without noWrap,
+        // Leaflet repeats the horizontal tile grid indefinitely and every
+        // marker appears again in each wrapped copy.
+        const reportingWorldBounds = [[-85.05112878, -180], [85.05112878, 180]];
+        reportingMap = L_ref.map('reporting-map', {
+            zoomControl: true,
+            minZoom: 2,
+            maxBounds: reportingWorldBounds,
+            maxBoundsViscosity: 1.0,
+            worldCopyJump: false
+        })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
         reportingMap.on('moveend zoomend', saveReportingMapView);
@@ -13742,7 +13787,7 @@
         // Layer 1 — physical geography only (no labels), sits below radar
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
             attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com">CARTO</a>',
-            subdomains: 'abcd', maxZoom: 19
+            subdomains: 'abcd', maxZoom: 19, noWrap: true
         }).addTo(reportingMap);
 
         // Layer 2 — one consistent IEM/NEXRAD radar source.
@@ -13750,7 +13795,7 @@
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
-            subdomains: 'abcd', maxZoom: 19, pane: 'overlayPane'
+            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'overlayPane'
         }).addTo(reportingMap);
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
