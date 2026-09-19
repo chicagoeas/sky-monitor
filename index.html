@@ -2098,10 +2098,27 @@
     }
 
     const SKYMONITOR_GITHUB_RELEASE_URL = 'https://api.github.com/repos/chicagoeas/sky-monitor/releases/latest';
-    // v1.1.7: version the storage key so devices that silently treated the
-    // first fetched release as a baseline get one clean announcement.
+    // Version the storage key so release acknowledgements remain isolated
+    // from older popup logic.
     const SKYMONITOR_LAST_SEEN_RELEASE_KEY = 'skymonitor_last_seen_github_release_v2';
     const SKYMONITOR_LAST_SEEN_RELEASE_COOKIE = 'skymonitor_last_seen_github_release_v2';
+    // Snapshot this before startup writes defaults such as input_mode. This
+    // lets a truly new browser profile establish a quiet baseline, while an
+    // existing SkyMonitor user still receives the current update notice.
+    const SKYMONITOR_PRIOR_INSTALL_KEYS = [
+        'sm_last_sync',
+        'waddle_lat',
+        'waddle_lon',
+        'waddle_city',
+        'input_mode',
+        'skymonitor_gps_lat',
+        'skymonitor_gps_lon',
+        'skymonitor_report_pin_lat',
+        'skymonitor_report_pin_lon'
+    ];
+    const SKYMONITOR_HAD_PRIOR_INSTALL = SKYMONITOR_PRIOR_INSTALL_KEYS.some(function(key) {
+        try { return !!localStorage.getItem(key); } catch (error) { return false; }
+    });
 
     function getLastSeenGitHubRelease() {
         let localTag = '';
@@ -2260,6 +2277,12 @@
             const tag = String(release.tag_name || '').trim();
             if (!tag) return;
             const lastSeenTag = getLastSeenGitHubRelease();
+            if (!lastSeenTag && !SKYMONITOR_HAD_PRIOR_INSTALL) {
+                // First visit: silently establish the release baseline. The
+                // Welcome experience will own this first-run moment later.
+                rememberGitHubRelease(tag);
+                return;
+            }
             if (lastSeenTag === tag) return;
             openGitHubReleaseModal(release);
         } catch (error) {
