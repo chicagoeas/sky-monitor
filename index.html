@@ -3521,6 +3521,7 @@
                 if (!reportingMap) return;
                 reportingMap.invalidateSize({ pan: true, animate: false });
                 syncReportingMapLayers();
+                ensureReportPinMarker();
                 // Mobile Safari can finish revealing the tab after the first
                 // Leaflet/layout pass. Retry once after it is fully visible.
                 if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
@@ -3528,6 +3529,7 @@
                         if (!document.getElementById('reporting-tab')?.classList.contains('active') || !reportingMap) return;
                         reportingMap.invalidateSize({ pan: true, animate: false });
                         syncReportingMapLayers();
+                        ensureReportPinMarker();
                     }, 450);
                 }
             }, 150);
@@ -12279,6 +12281,7 @@
     let normalReportingPopupWidth = null;
     let reportLat = null, reportLon = null;
     let reportPinMarker = null;
+    let reportPinIcon = null;
     let privacySnapGeneration = 0;
     let selectedReportType = '';
 
@@ -12888,6 +12891,7 @@
         panel.style.display = open ? 'block' : 'none';
         if (btn) btn.style.background = open ? 'rgba(79,195,247,0.35)' : 'rgba(79,195,247,0.15)';
         localStorage.setItem('report_map_settings_open', open ? '1' : '0');
+        ensureReportPinMarker();
     }
 
     function toggleLSR() {
@@ -12897,6 +12901,7 @@
         if (cb) cb.checked = lsrVisible;
         localStorage.setItem('report_lsr_on', lsrVisible ? '1' : '0');
         syncReportingMapLayers();
+        ensureReportPinMarker();
         if (lsrVisible && lsrLayer.getLayers && !lsrLayer.getLayers().length) {
             loadReportingMapData();
         }
@@ -12909,6 +12914,7 @@
         if (cb) cb.checked = alertsVisible;
         localStorage.setItem('report_alerts_on', alertsVisible ? '1' : '0');
         syncReportingMapLayers();
+        ensureReportPinMarker();
         if (alertsVisible && alertPolygonLayer.getLayers && !alertPolygonLayer.getLayers().length) {
             loadReportingMapData();
         }
@@ -12929,6 +12935,7 @@
         localStorage.setItem('report_custom_sky_alerts', customSkyAlertsVisible ? '1' : '0');
         if (customSkyAlertsVisible) {
             syncReportingMapLayers();
+            ensureReportPinMarker();
             loadCustomSkyAlerts();
         } else {
             if (customSkyAlertLayer) {
@@ -12936,6 +12943,7 @@
                 if (reportingMap) reportingMap.removeLayer(customSkyAlertLayer);
             }
             setCustomSkyAlertsStatus('');
+            ensureReportPinMarker();
         }
     }
 
@@ -13573,30 +13581,57 @@
         }
     }
 
-    function setReportPin(la, lo) {
-        reportLat = la; reportLon = lo;
-        updatePinCoordsDisplay();
-        if (!reportingMap || !window.L) return;
-        const L_ref = window.L;
-        if (reportPinMarker) {
-            reportPinMarker.setLatLng([la, lo]);
-        } else {
-            // Marker wasn't created on map init (manual location) — create it on demand now
-            const _dotIcon = L_ref.divIcon({
+    function _getReportPinIcon() {
+        if (!window.L) return null;
+        if (!reportPinIcon) {
+            reportPinIcon = window.L.divIcon({
                 className: '',
                 html: '<div style="width:16px;height:16px;background:#4fc3f7;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #4fc3f7,0 2px 8px rgba(0,0,0,0.7);cursor:grab;"></div>',
-                iconSize: [16, 16], iconAnchor: [8, 8]
-            });
-            reportPinMarker = L_ref.marker([la, lo], { icon: _dotIcon, draggable: true, zIndexOffset: 1000 })
-                .bindTooltip('Report location', { permanent: false })
-                .addTo(reportingMap);
-            reportPinMarker.on('dragend', function(e) {
-                const pos = e.target.getLatLng();
-                reportLat = parseFloat(pos.lat.toFixed(5));
-                reportLon = parseFloat(pos.lng.toFixed(5));
-                updatePinCoordsDisplay();
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
             });
         }
+        return reportPinIcon;
+    }
+
+    // The report pin is independent from the data layers. LSR/custom-alert
+    // refreshes clear and re-add their own layers, so all map transitions must
+    // be safe to repeat and must repair a detached pin.
+    function ensureReportPinMarker() {
+        if (!reportingMap || !window.L || reportLat == null || reportLon == null) return false;
+        if (!isFinite(Number(reportLat)) || !isFinite(Number(reportLon))) return false;
+        if (!reportingMap.getPane('reportPinPane') && reportingMap.createPane) {
+            const pinPane = reportingMap.createPane('reportPinPane');
+            pinPane.style.zIndex = '1000';
+        }
+        if (reportPinMarker) {
+            reportPinMarker.setLatLng([Number(reportLat), Number(reportLon)]);
+            if (!reportingMap.hasLayer(reportPinMarker)) reportPinMarker.addTo(reportingMap);
+            if (reportPinMarker.bringToFront) reportPinMarker.bringToFront();
+            return true;
+        }
+        reportPinMarker = window.L.marker([Number(reportLat), Number(reportLon)], {
+            icon: _getReportPinIcon(),
+            draggable: true,
+            zIndexOffset: 1000,
+            pane: 'reportPinPane'
+        }).bindTooltip('Report location', { permanent: false }).addTo(reportingMap);
+        reportPinMarker.on('dragend', function(e) {
+            const pos = e.target.getLatLng();
+            reportLat = parseFloat(pos.lat.toFixed(5));
+            reportLon = parseFloat(pos.lng.toFixed(5));
+            updatePinCoordsDisplay();
+        });
+        return true;
+    }
+
+    function setReportPin(la, lo) {
+        la = parseFloat(la);
+        lo = parseFloat(lo);
+        if (!isFinite(la) || !isFinite(lo)) return;
+        reportLat = la; reportLon = lo;
+        updatePinCoordsDisplay();
+        ensureReportPinMarker();
     }
 
     function clearReportPinForManualLocation() {
@@ -13649,6 +13684,7 @@
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
         if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
         else { reportingMap.removeLayer(reportingRadarLayer); }
+        ensureReportPinMarker();
     }
 
     function saveReportingMapView() {
@@ -13690,6 +13726,7 @@
                 if (reportingMap) {
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
+                    ensureReportPinMarker();
                 }
             }, 80);
         } else {
@@ -13836,7 +13873,11 @@
         const hasRememberedGpsLocation =
             isFinite(window._gpsLat) && isFinite(window._gpsLon);
         const gpsSourcedAtInit = window._locFromGPS === true ||
-            (localStorage.getItem('input_mode') === 'live' && hasRememberedGpsLocation);
+            // Live mode is the source-of-truth for a restored location. The
+            // separate GPS cache was added later, so older installations may
+            // have valid waddle_lat/waddle_lon values without those keys.
+            (localStorage.getItem('input_mode') === 'live' &&
+                (hasRememberedGpsLocation || (isFinite(rawLat) && isFinite(rawLon))));
 
         // Only a real GPS fix creates an initial report pin. A searched or
         // manually entered location should center the map without implying
@@ -13933,29 +13974,13 @@
         });
         reportingMap.addLayer(userReportLayer);
 
-        const dotIcon = L_ref.divIcon({
-            className: '',
-            html: '<div style="width:16px;height:16px;background:#4fc3f7;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #4fc3f7,0 2px 8px rgba(0,0,0,0.7);cursor:grab;"></div>',
-            iconSize: [16, 16],
-            iconAnchor: [8, 8]
-        });
         const isMobile = window.matchMedia('(pointer: coarse)').matches;
         
 
         // Only GPS-sourced locations get an automatic report pin. Manual users
         // can still place one explicitly with a double-click or by dragging a
         // pin after one has been created.
-        if (gpsSourcedAtInit && reportLat != null && reportLon != null) {
-            reportPinMarker = L_ref.marker([reportLat, reportLon], { icon: dotIcon, draggable: true, zIndexOffset: 1000 })
-                .bindTooltip('Report location', { permanent: false })
-                .addTo(reportingMap);
-            reportPinMarker.on('dragend', function(e) {
-                const pos = e.target.getLatLng();
-                reportLat = parseFloat(pos.lat.toFixed(5));
-                reportLon = parseFloat(pos.lng.toFixed(5));
-                updatePinCoordsDisplay();
-            });
-        }
+        if (gpsSourcedAtInit && reportLat != null && reportLon != null) ensureReportPinMarker();
         window._reportPinInitialized = true;
 
         updatePinCoordsDisplay();
@@ -13976,6 +14001,7 @@
         });
 
         syncReportingMapLayers();
+        ensureReportPinMarker();
         loadReportingMapData();
     }
 
@@ -14001,6 +14027,7 @@
         const L_ref = window.L;
         setReportingRadarLayerForLocation();
         syncReportingMapLayers();
+        ensureReportPinMarker();
 
         // Load both official alert feeds on every refresh. Alert overlays are
         // map data, not location-provider routing: a Canadian location should
@@ -14126,6 +14153,7 @@
 
         await loadMapReports();
         syncReportingMapLayers();
+        ensureReportPinMarker();
     }
 
     async function loadMapReports() {
