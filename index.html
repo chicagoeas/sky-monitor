@@ -1331,7 +1331,7 @@
             <h2>About SkyMonitor custom alerts</h2>
 
             <h3>What are SkyMonitor custom alerts?</h3>
-            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Special Weather Statement, and Mesoscale Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
+            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Flood Watch, Severe Thunderstorm Watch, Tornado Watch, Special Weather Statement, and Mesoscale Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
 
             <h3>Can I trust SkyMonitor custom alerts?</h3>
             <p>You should NEVER completely trust a SkyMonitor custom alert. They are not issued by meteorologists or experts. However, they are useful for tracking specific storms and what they are capable of producing, even if there is too low a probability for the NWS to rely on. For example, a storm might have a probable chance of producing a tornado; however, the NWS thinks that chance is too low or even misses the chance entirely, which can happen, although rarely, and therefore a SkyMonitor custom alert could let you know of the possible danger. There are also situations where SkyMonitor custom alerts can come a few minutes or even multiple minutes BEFORE the NWS issues one; for example, a SkyMonitor custom Severe Thunderstorm Warning could come slightly before the NWS’s actual Severe Thunderstorm Warning.</p>
@@ -13606,9 +13606,9 @@
 
     function customSkyAlertColor(props) {
         const value = customSkyAlertValue(props, ['severity', 'level', 'priority', 'alertType', 'event', 'type'], '').toLowerCase();
-        if (value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
-        if (value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
-        if (value.includes('flood') || value.includes('rain')) return '#00c853';
+        if (value.includes('tow') || value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
+        if (value.includes('svr') || value.includes('svw') || value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
+        if (value.includes('ffw') || value.includes('flw') || value.includes('flood') || value.includes('rain')) return '#00c853';
         if (value.includes('winter') || value.includes('snow') || value.includes('ice')) return '#81d4fa';
         if (value.includes('wind')) return '#ffd54f';
         return '#ce93d8';
@@ -13661,7 +13661,13 @@
         var family = '', score = 0, label = '', color = '#ff9100';
         // SkyMonitor MDs intentionally never enter threat-level scoring.
         if (isCustomSkyMesoscaleDiscussion(props) || /\bMD\b|MESOSCALE DISCUSSION/.test(classText)) return null;
-        if (/\bTOR\b|TORNADO/.test(classSignals)) {
+        if (/\bTOW\b|TORNADO WATCH/.test(classSignals)) {
+            family = 'tornadoWatch'; score = 4; label = 'SkyMonitor Tornado Watch'; color = '#e53935';
+        } else if (/\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
+            family = 'svrWatch'; score = 3; label = 'SkyMonitor Severe Thunderstorm Watch'; color = '#ffb300';
+        } else if (/\bFLW\b|FLOOD WATCH/.test(classSignals)) {
+            family = 'floodWatch'; score = 2; label = 'SkyMonitor Flood Watch'; color = '#00c853';
+        } else if (/\bTOR\b|TORNADO/.test(classSignals)) {
             family = 'tornado'; score = 8; label = 'SkyMonitor Tornado Warning'; color = '#ff1744';
             if (/TORNADO EMERGENCY/.test(qualifiers)) {
                 score = 20; label = 'SkyMonitor Tornado Emergency'; color = '#e040fb';
@@ -13737,8 +13743,11 @@
             if (threatInfo.score >= 11) return 12000;
             return 11000;
         }
+        if (threatInfo.family === 'tornadoWatch') return 7000;
         if (threatInfo.family === 'svr') return threatInfo.score >= 7 ? 10000 : 8500;
+        if (threatInfo.family === 'svrWatch') return 6000;
         if (threatInfo.family === 'flashFlood') return threatInfo.score >= 16 ? 14000 : 8000;
+        if (threatInfo.family === 'floodWatch') return 5000;
         if (threatInfo.family === 'sps') return 2000;
         return 0;
     }
@@ -13775,9 +13784,20 @@
                     'SkyMonitor Alert'
                 );
                 var bannerThreat = bannerChoice.threat;
-                var bannerColor = bannerThreat.family === 'tornado'
-                    ? (bannerThreat.score >= 20 ? '#4a148c' : (bannerThreat.score >= 15 ? '#880e4f' : '#7f0000'))
-                    : (bannerThreat.family === 'flashFlood' ? '#00838f' : '#ff9100');
+                var bannerColor = '#ff9100';
+                if (bannerThreat.family === 'tornado') {
+                    bannerColor = bannerThreat.score >= 20
+                        ? '#4a148c'
+                        : (bannerThreat.score >= 15 ? '#880e4f' : '#7f0000');
+                } else if (bannerThreat.family === 'tornadoWatch') {
+                    bannerColor = '#c62828';
+                } else if (bannerThreat.family === 'flashFlood') {
+                    bannerColor = '#00838f';
+                } else if (bannerThreat.family === 'floodWatch') {
+                    bannerColor = '#2e7d32';
+                } else if (bannerThreat.family === 'svrWatch') {
+                    bannerColor = '#f9a825';
+                }
                 banner.style.display = 'block';
                 banner.style.background = bannerColor;
                 banner.classList.remove('emergency-banner');
@@ -13817,9 +13837,20 @@
             var reportHtml = reportUrl
                 ? '<a class="reporting-popup-report-link" href="' + escapeHtml(reportUrl) + '" target="_blank" rel="noopener noreferrer" title="Report alert" aria-label="Report alert" onclick="event.stopPropagation();">&#128227;</a>'
                 : '';
-            var customCardColor = threatInfo && threatInfo.family === 'tornado'
-                ? (threatInfo.score >= 20 ? '#4a148c' : (threatInfo.score >= 15 ? '#880e4f' : '#7f0000'))
-                : (threatInfo && threatInfo.family === 'flashFlood' ? '#00838f' : '#e65100');
+             var customCardColor = '#e65100';
+             if (threatInfo && threatInfo.family === 'tornado') {
+                 customCardColor = threatInfo.score >= 20
+                     ? '#4a148c'
+                     : (threatInfo.score >= 15 ? '#880e4f' : '#7f0000');
+             } else if (threatInfo && threatInfo.family === 'tornadoWatch') {
+                 customCardColor = '#c62828';
+             } else if (threatInfo && threatInfo.family === 'flashFlood') {
+                 customCardColor = '#00838f';
+             } else if (threatInfo && threatInfo.family === 'floodWatch') {
+                 customCardColor = '#2e7d32';
+             } else if (threatInfo && threatInfo.family === 'svrWatch') {
+                 customCardColor = '#f9a825';
+             }
             var customHazardId = 'custom-hazard-' + index + '-' + Date.now();
              var customTiming = expires
                  ? '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + escapeHtml(_fmtAlertTime(expires)) + '</div>'
