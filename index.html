@@ -1095,28 +1095,6 @@
     <!-- Leaflet JS (v1.0.4 NEW) -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-    <!-- OPERA GeoTIFF support: the Worker exposes the COG with HTTP Range
-         support; GeoRasterLayer reads only the visible raster windows. -->
-    <script src="https://unpkg.com/proj4@2.22.0/dist/proj4.js"></script>
-    <script>
-        // OPERA CIRRUS GeoTIFFs use a custom GeoTIFF projection (code 32767)
-        // with these LAEA parameters rather than publishing a standard EPSG
-        // code. GeoRasterLayer may prefix a bare string projection with
-        // "EPSG:", so keep the raster's value bare and register every spelling
-        // it can try in both the public and per-layer proj4 registries.
-        const OPERA_CIRRUS_PROJECTION = 'OPERA_CIRRUS_LAEA';
-        const OPERA_CIRRUS_PROJECTION_DEF =
-            '+proj=laea +lat_0=55 +lon_0=10 +x_0=1950000 +y_0=-2100000 +ellps=WGS84 +units=m +no_defs';
-        function _registerOperaProjection(proj4Instance) {
-            if (!proj4Instance || typeof proj4Instance.defs !== 'function') return;
-            proj4Instance.defs('OPERA_CIRRUS_LAEA', OPERA_CIRRUS_PROJECTION_DEF);
-            proj4Instance.defs('EPSG:OPERA_CIRRUS_LAEA', OPERA_CIRRUS_PROJECTION_DEF);
-            proj4Instance.defs('EPSG:32767', OPERA_CIRRUS_PROJECTION_DEF);
-        }
-        _registerOperaProjection(window.proj4);
-    </script>
-    <script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
-    <script src="https://unpkg.com/georaster-layer-for-leaflet@4.1.2/dist/v3/webpack/bundle/georaster-layer-for-leaflet.min.js"></script>
     <!-- Cloudflare Turnstile -->
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
     <!-- Cloudflare Web Analytics -->
@@ -1861,7 +1839,7 @@
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span>LIVE REPORTING MAP</span>
                 <div style="display:flex; gap:6px;">
-                    <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
+                    <button onclick="refreshReportingMap()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
                     <button id="open-radar-btn" onclick="openRadarRoute()" style="background:rgba(0,230,118,0.14); border:1px solid #00e676; color:#00e676; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Open fullscreen live reporting map">&#x26F6;</button>
                     <button id="close-radar-btn" onclick="closeRadarRoute()" style="display:none; background:rgba(244,67,54,0.16); border:1px solid #ef5350; color:#ff6b61; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Return to SkyMonitor" aria-label="Return to SkyMonitor">&#x26F6;</button>
@@ -1904,7 +1882,7 @@
                 <div id="reporting-map-info">
                     <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; min-height:1em;"></div>
                     <div id="reporting-map-attribution" aria-label="Map attribution">
-                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM / NEXRAD (U.S.)</a>, <a href="https://www.eumetnet.eu/" target="_blank" rel="noopener noreferrer">EUMETNET OPERA (Europe)</a> <span title="Creative Commons Attribution 4.0 International">&copy; CC BY 4.0</span>
+                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM</a>
                     </div>
                 </div>
                 <button onclick="findMeReporting()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.72em; cursor:pointer;">&#128205; Find Me</button>
@@ -2080,10 +2058,6 @@
     const TWC_API_KEY = null;     // legacy compatibility; do not put a key here
     // Consolidated API routes on api.skymonitor.app
     const REPORTS_WORKER_URL = WEATHER_WORKER_URL + '/api/reports';
-    // The Worker caches one official EUMETNET OPERA CIRRUS reflectivity
-    // GeoTIFF per five-minute frame. The browser renders that raster directly
-    // so the Worker is not involved in per-tile Leaflet requests.
-    const OPERA_RADAR_PROXY_URL = WEATHER_WORKER_URL + '/api/radar/opera';
     // The merged Worker rewrites this route to the custom-alert public feed.
     const CUSTOM_SKY_ALERTS_WORKER_URL = WEATHER_WORKER_URL + '/api/alerts';
     const CUSTOM_SKY_ALERT_ARCHIVE_URL = CUSTOM_SKY_ALERTS_WORKER_URL + '/archive';
@@ -5905,8 +5879,8 @@
         var alertsLabel = document.getElementById('alerts-us-only');
         var lsrLabel = document.getElementById('lsr-us-only');
         if (radarLabel) {
-            radarLabel.innerText = '(IEM U.S. + OPERA Europe)';
-            radarLabel.style.display = 'inline';
+            radarLabel.innerText = '(US only)';
+            radarLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
         }
         if (alertsLabel) {
             // NWS and Environment Canada polygons are both loaded
@@ -12664,12 +12638,12 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-    let reportingIemRadarLayer = null;
-    let reportingOperaRadarLayer = null;
-    let reportingOperaLoadPromise = null;
-    let reportingOperaLoadedAt = 0;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
+    // A manual map refresh is authoritative for the current map view. Once it
+    // happens, do not re-add an expired deep-link archive record on subsequent
+    // refreshes or timer-driven loads.
+    let reportingMapManualRefresh = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
@@ -13789,6 +13763,10 @@
         return '#ce93d8';
     }
 
+    // Custom alert polygons use one consistent map-specific color regardless
+    // of alert type. Home/severe cards intentionally keep their own colors.
+    const CUSTOM_SKY_MAP_ALERT_COLOR = '#ce93d8';
+
     function customSkyPointInRing(point, ring) {
         var inside = false;
         for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -14076,7 +14054,7 @@
             const payload = await res.json();
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
-            if (CUSTOM_SKY_DEEP_LINK_ID && !features.some(function(item) {
+            if (CUSTOM_SKY_DEEP_LINK_ID && !reportingMapManualRefresh && !features.some(function(item) {
                 return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
                     CUSTOM_SKY_DEEP_LINK_ID
                 ) !== -1;
@@ -14122,9 +14100,7 @@
                     : rawHeadline;
                 const isArchived = props._skymonitorArchived === true ||
                     !isCustomAlertCurrentlyActive(props);
-                const alertType = isArchived
-                    ? 'Archived ' + (isMd ? customSkyDiscussionLabel(props) : 'custom alert')
-                    : (isMd ? customSkyDiscussionLabel(props) : 'Custom alert');
+                const alertType = isMd ? customSkyDiscussionLabel(props) : 'Custom alert';
                 const issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
                 const description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
                 let shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -14136,12 +14112,19 @@
                         shortSummary = (actionMatch ? description.slice(0, actionMatch.index) : description).trim();
                     }
                 }
-                 const timeInfo = reportingAlertTimeInfo(props);
+                const timeInfo = reportingAlertTimeInfo(props);
                 const expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
-                const color = customSkyAlertColor(props);
+                // The map has one consistent purple custom-alert treatment.
+                // customSkyAlertColor remains available to home/severe cards.
+                const color = CUSTOM_SKY_MAP_ALERT_COLOR;
                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                 const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
                     alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
+                // The public feed should be active-only. The sole exception is
+                // the explicitly requested deep-link archive on first load.
+                // A manual refresh deliberately removes that exception so an
+                // old alert cannot come back onto the live map.
+                if (isArchived && !(isDeepLinked && !reportingMapManualRefresh)) return;
                 shortSummary = shortSummary.replace(/^\s*Full alert\s*:?\s*/i, '').trim();
                  const summaryLine = shortSummary
                      ? '<div style="margin-top:6px;"><b style="font-size:0.9em;">Short Summary</b><br><span>' + escapeHtml(shortSummary) + '</span></div>'
@@ -14168,12 +14151,12 @@
                 const expiredAge = isArchived && expiredAt
                     ? formatExpiredAgo(Math.max(0, (Date.now() - expiredAt.getTime()) / 1000))
                     : '';
+                const issuedAge = isArchived && issuedDate && issuedDate.getTime() <= Date.now()
+                    ? formatExpiredAgo(Math.max(0, (Date.now() - issuedDate.getTime()) / 1000))
+                    : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                     [timeInfo.actorLabel, issuer],
-                     [expiredAge ? 'Expired' : (isArchived ? 'Archive status' : ''),
-                         expiredAge || (isArchived ? 'Archived alert' : ''),
-                         expiredAge ? '#ff5252' : '']
+                     [timeInfo.actorLabel, issuer]
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
@@ -14188,11 +14171,12 @@
                      customAlertIds: alertIdentifiers,
                     color: color,
                     title: escapeHtml(headline),
-                      meta: expiredAge
-                         ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
-                         : escapeHtml(alertType) + (isArchived
-                         ? ''
-                        : (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
+                       meta: expiredAge
+                          ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
+                          : (isArchived && issuedAge
+                              ? '<span style="color:#ff5252;font-weight:800;">Issued ' + escapeHtml(issuedAge) + '</span>'
+                              : escapeHtml(alertType) +
+                                (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
                        detail: customDetail,
                      reportUrl: reportUrl,
                      archived: isArchived
@@ -14222,6 +14206,35 @@
         } catch (e) {
             setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
         }
+    }
+
+    function clearReportingMapDataLayers() {
+        if (reportingMap && reportingMap.closePopup) reportingMap.closePopup();
+        [alertPolygonLayer, customSkyAlertLayer, lsrLayer].forEach(function(layer) {
+            if (layer && layer.clearLayers) layer.clearLayers();
+        });
+        if (userReportLayer && userReportLayer.clearLayers) userReportLayer.clearLayers();
+        ['nws', 'environment-canada', 'custom-skymonitor', 'iem-lsr', 'skymonitor-reports']
+            .forEach(removeReportingPopupEntries);
+        customSkyDeepLinkEntry = null;
+    }
+
+    function refreshReportingMap() {
+        // Do not let the deep-link archive fallback resurrect an old polygon.
+        reportingMapManualRefresh = true;
+        customSkyDeepLinkHandled = true;
+        window._pendingCustomSkyMDKey = '';
+        clearReportingMapDataLayers();
+        try {
+            const refreshedUrl = new URL(window.location.href);
+            if (refreshedUrl.searchParams.has('alert')) {
+                refreshedUrl.searchParams.delete('alert');
+                window.history.replaceState(window.history.state, '', refreshedUrl.pathname +
+                    (refreshedUrl.search ? refreshedUrl.search : '') +
+                    (refreshedUrl.hash || ''));
+            }
+        } catch (e) {}
+        loadReportingMapData();
     }
 
     function updatePinCoordsDisplay() {
@@ -14296,147 +14309,27 @@
     function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
         if (!el) return;
-        var radarAttribution =
-            'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD (U.S.)</a>, ' +
-            '<a href="https://www.eumetnet.eu/" target="_blank" rel="noopener noreferrer">EUMETNET OPERA (Europe)</a> ' +
-            '<span title="Creative Commons Attribution 4.0 International">&copy; CC BY 4.0</span>';
+        var radarAttribution = 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
         el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
-    }
-
-    function _operaReflectivityColor(values) {
-        var value = Number(values && values[0]);
-        if (!isFinite(value) || value < 0) return undefined;
-
-        // Keep the European raster visually compatible with IEM's N0Q/N0B
-        // reflectivity display while leaving OPERA nodata and weak returns
-        // transparent so they do not obscure the basemap.
-        if (value < 5) return '#00e5e5';
-        if (value < 10) return '#1594e8';
-        if (value < 15) return '#3030e8';
-        if (value < 20) return '#20dd20';
-        if (value < 25) return '#10b810';
-        if (value < 30) return '#087508';
-        if (value < 35) return '#f2e51a';
-        if (value < 40) return '#dfb700';
-        if (value < 45) return '#f68b05';
-        if (value < 50) return '#f5321e';
-        if (value < 55) return '#cc1616';
-        if (value < 60) return '#a50b0b';
-        if (value < 65) return '#ef22e8';
-        if (value < 70) return '#a467c2';
-        return '#f4f4f4';
-    }
-
-    function _getOperaGeoRasterParser() {
-        var parser = window.parseGeoraster || window.GeoRaster;
-        if (parser && typeof parser.default === 'function') parser = parser.default;
-        return typeof parser === 'function' ? parser : null;
-    }
-
-    function _reportingMapIntersectsOperaCoverage() {
-        if (!reportingMap || !window.L || !reportingMap.getBounds) return false;
-        var operaBounds = window.L.latLngBounds(
-            [[31.7, -39.6], [70.1, 57.9]]
-        );
-        return reportingMap.getBounds().intersects(operaBounds);
-    }
-
-    function _refreshOperaRadarLayer() {
-        if (!reportingMap || !window.L || !radarVisible) return Promise.resolve();
-        // Do not download the full European raster while the map is viewing
-        // the United States. Re-evaluate on map movement below.
-        if (!_reportingMapIntersectsOperaCoverage()) return Promise.resolve();
-        if (reportingOperaLoadPromise) return reportingOperaLoadPromise;
-        if (reportingOperaRadarLayer &&
-            Date.now() - reportingOperaLoadedAt < 4 * 60 * 1000) {
-            return Promise.resolve();
-        }
-
-        var parser = _getOperaGeoRasterParser();
-        if (!parser || typeof window.GeoRasterLayer !== 'function') {
-            console.warn('[SkyMonitor radar] OPERA GeoTIFF libraries are unavailable.');
-            return Promise.resolve();
-        }
-
-        // Passing the URL lets geotiff.js use HTTP Range requests against the
-        // Cloud Optimized GeoTIFF instead of downloading the entire
-        // multi-megabyte frame before drawing anything.
-        reportingOperaLoadPromise = Promise.resolve()
-            .then(function() {
-                return Promise.resolve(parser(OPERA_RADAR_PROXY_URL));
-            })
-            .then(function(georaster) {
-                // The OPERA file uses a custom GeoTIFF CRS. georaster exposes
-                // that as numeric code 32767, which is intentionally not
-                // resolvable by GeoRasterLayer until it is named here.
-                if (georaster) {
-                    var operaProjection = String(georaster.projection || '').toUpperCase();
-                    if (operaProjection === '32767' ||
-                        operaProjection === 'EPSG:32767' ||
-                        operaProjection === 'OPERA_CIRRUS_LAEA' ||
-                        operaProjection === 'EPSG:OPERA_CIRRUS_LAEA') {
-                        georaster.projection = OPERA_CIRRUS_PROJECTION;
-                    }
-                }
-                var nextLayer = new window.GeoRasterLayer({
-                    georaster: georaster,
-                    opacity: 0.65,
-                    resolution: 64,
-                    resampleMethod: 'nearest',
-                    noWrap: true,
-                    pixelValuesToColorFn: _operaReflectivityColor
-                });
-                // GeoRasterLayer creates its own merged proj4 instance. Add
-                // the custom CRS to that exact instance before Leaflet asks it
-                // to compute the raster bounds or draw its first tile.
-                _registerOperaProjection(nextLayer.proj4);
-
-                if (reportingOperaRadarLayer && reportingRadarLayer) {
-                    reportingRadarLayer.removeLayer(reportingOperaRadarLayer);
-                }
-                reportingOperaRadarLayer = nextLayer;
-                reportingOperaLoadedAt = Date.now();
-                if (reportingRadarLayer && radarVisible) {
-                    reportingRadarLayer.addLayer(reportingOperaRadarLayer);
-                }
-                _updateReportingMapAttribution();
-            })
-            .catch(function(error) {
-                console.warn('[SkyMonitor radar] OPERA reflectivity unavailable:', error);
-            })
-            .finally(function() {
-                reportingOperaLoadPromise = null;
-            });
-
-        return reportingOperaLoadPromise;
     }
 
     function setReportingRadarLayerForLocation() {
         if (!reportingMap || !window.L) return;
         var L_ref = window.L;
-
-        // Keep both official mosaics in one toggleable group. Their native
-        // footprints do not overlap in normal use: IEM covers the U.S., while
-        // OPERA supplies the European reflectivity mosaic.
+        // IEM/NEXRAD is the single reporting-map radar source. It remains
+        // consistent when the weather location changes between countries.
         if (!reportingRadarLayer) {
-            reportingRadarLayer = L_ref.layerGroup();
-            reportingIemRadarLayer = L_ref.tileLayer(
+            reportingRadarLayer = L_ref.tileLayer(
                 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
                 {
                     opacity: 0.65,
-                    attribution: 'Radar: IEM / NEXRAD (U.S.)',
+                    attribution: 'Radar: IEM / NEXRAD',
                     maxZoom: 18,
-                    noWrap: true,
-                    // Avoid requesting the CONUS mosaic while the user is
-                    // viewing Europe or another part of the world.
-                    bounds: L_ref.latLngBounds([[20, -130], [55, -60]])
+                    noWrap: true
                 }
             );
-            reportingRadarLayer.addLayer(reportingIemRadarLayer);
-            if (radarVisible) reportingRadarLayer.addTo(reportingMap);
         }
-
-        _refreshOperaRadarLayer();
+        if (reportingRadarLayer && radarVisible) reportingRadarLayer.addTo(reportingMap);
         _updateReportingMapAttribution();
         updateUSOnlyLayerLabels();
     }
@@ -14449,7 +14342,6 @@
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
         if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
         else { reportingMap.removeLayer(reportingRadarLayer); }
-        if (radarVisible) _refreshOperaRadarLayer();
         ensureReportPinMarker();
     }
 
@@ -14678,10 +14570,7 @@
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
-        reportingMap.on('moveend zoomend', function() {
-            saveReportingMapView();
-            if (radarVisible) _refreshOperaRadarLayer();
-        });
+        reportingMap.on('moveend zoomend', saveReportingMapView);
 
         // Layer 1 — physical geography only (no labels), sits below radar
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
