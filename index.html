@@ -1331,7 +1331,7 @@
             <h2>About SkyMonitor custom alerts</h2>
 
             <h3>What are SkyMonitor custom alerts?</h3>
-            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Special Weather Statement, and Mesoscale Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
+            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Flood Watch, Severe Thunderstorm Watch, Tornado Watch, Special Weather Statement, Mesoscale Discussion, and Mesoscale Precipitation Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
 
             <h3>Can I trust SkyMonitor custom alerts?</h3>
             <p>You should NEVER completely trust a SkyMonitor custom alert. They are not issued by meteorologists or experts. However, they are useful for tracking specific storms and what they are capable of producing, even if there is too low a probability for the NWS to rely on. For example, a storm might have a probable chance of producing a tornado; however, the NWS thinks that chance is too low or even misses the chance entirely, which can happen, although rarely, and therefore a SkyMonitor custom alert could let you know of the possible danger. There are also situations where SkyMonitor custom alerts can come a few minutes or even multiple minutes BEFORE the NWS issues one; for example, a SkyMonitor custom Severe Thunderstorm Warning could come slightly before the NWS’s actual Severe Thunderstorm Warning.</p>
@@ -1416,7 +1416,7 @@
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
                     <div style="font-size:0.82em; font-weight:700; color:white;">&#9889; SPC Mesoscale Discussions</div>
-                    <div style="font-size:0.62em; color:#556677; margin-top:2px;">Notify when a new SPC MD covers you</div>
+                    <div style="font-size:0.62em; color:#556677; margin-top:2px;">Notify when a new SPC Mesoscale Discussion covers you</div>
                 </div>
                 <label class="ios-toggle">
                     <input type="checkbox" id="pref-spc-md" onchange="saveNotifPrefs()">
@@ -2060,6 +2060,12 @@
     const REPORTS_WORKER_URL = WEATHER_WORKER_URL + '/api/reports';
     // The merged Worker rewrites this route to the custom-alert public feed.
     const CUSTOM_SKY_ALERTS_WORKER_URL = WEATHER_WORKER_URL + '/api/alerts';
+    const CUSTOM_SKY_ALERT_ARCHIVE_URL = CUSTOM_SKY_ALERTS_WORKER_URL + '/archive';
+    // Discord custom-alert links use /radar?alert=<revision-id>. Keep the
+    // requested ID separate from the alert layer so a refresh can retry the
+    // lookup until the reporting map has finished loading.
+    const CUSTOM_SKY_DEEP_LINK_ID =
+        new URLSearchParams(window.location.search).get('alert')?.trim() || '';
     // Google Form prefilled Alert ID field (entry.598068649)
     const CUSTOM_SKY_ALERT_REPORT_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfgRzOSJSsbV6faOodFd7H6ET6-6PysP51yvMNJSxuz96RGBQ/viewform?usp=pp_url&entry.598068649=';
 
@@ -2515,6 +2521,61 @@
         var weeks = Math.floor(days / 7);
         var remainingDays = days % 7;
         return weeks + 'w' + (remainingDays ? ' ' + remainingDays + 'd' : '') + ' ago';
+    }
+
+    function formatExpiredAgo(totalSeconds) {
+        var seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        var totalMinutes = Math.floor(seconds / 60);
+        if (totalMinutes < 60) {
+            return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes') + ' ago';
+        }
+
+        var totalHours = Math.floor(totalMinutes / 60);
+        var minutes = totalMinutes % 60;
+        if (totalHours < 24) {
+            return totalHours + (totalHours === 1 ? ' hour' : ' hours') +
+                (minutes ? ' ' + minutes + (minutes === 1 ? ' minute' : ' minutes') : '') +
+                ' ago';
+        }
+
+        var totalDays = Math.floor(totalHours / 24);
+        var hours = totalHours % 24;
+        if (totalDays < 7) {
+            return totalDays + (totalDays === 1 ? ' day' : ' days') +
+                (hours ? ' ' + hours + (hours === 1 ? ' hour' : ' hours') : '') +
+                ' ago';
+        }
+
+        if (totalDays < 30) {
+            var weeks = Math.floor(totalDays / 7);
+            var weekDays = totalDays % 7;
+            return weeks + (weeks === 1 ? ' week' : ' weeks') +
+                (weekDays ? ' ' + weekDays + (weekDays === 1 ? ' day' : ' days') : '') +
+                ' ago';
+        }
+
+        if (totalDays < 365) {
+            var months = Math.floor(totalDays / 30);
+            var monthDays = totalDays % 30;
+            var monthWeeks = Math.floor(monthDays / 7);
+            var leftoverDays = monthDays % 7;
+            return months + (months === 1 ? ' month' : ' months') +
+                (monthWeeks ? ' ' + monthWeeks + (monthWeeks === 1 ? ' week' : ' weeks') : '') +
+                (leftoverDays ? ' ' + leftoverDays + (leftoverDays === 1 ? ' day' : ' days') : '') +
+                ' ago';
+        }
+
+        var years = Math.floor(totalDays / 365);
+        var yearDays = totalDays % 365;
+        var yearMonths = Math.floor(yearDays / 30);
+        var remainingYearDays = yearDays % 30;
+        var yearWeeks = Math.floor(remainingYearDays / 7);
+        var finalDays = remainingYearDays % 7;
+        return years + (years === 1 ? ' year' : ' years') +
+            (yearMonths ? ' ' + yearMonths + (yearMonths === 1 ? ' month' : ' months') : '') +
+            (yearWeeks ? ' ' + yearWeeks + (yearWeeks === 1 ? ' week' : ' weeks') : '') +
+            (finalDays ? ' ' + finalDays + (finalDays === 1 ? ' day' : ' days') : '') +
+            ' ago';
     }
 
     function updateTimestamp() {
@@ -4637,14 +4698,36 @@
     // Neighbors are filtered to ≤5 miles so isolated primaries get no neighbors and fall back
     // to the PirateWeather backstop rather than comparing against climatologically unrelated stations.
     function _weatherFetch(url, options, timeoutMs) {
-        var request = fetch(url, options);
-        if (!timeoutMs) return request;
+        options = options || {};
+        if (!timeoutMs || typeof AbortController !== 'function') {
+            return fetch(url, options);
+        }
+        // Promise.race alone only rejects the caller; the original fetch keeps
+        // running in the background. On mobile Safari that leaves sockets and
+        // callbacks alive long after the UI has declared the load complete.
+        // Use a per-request controller so every deadline really stops work.
+        var controller = new AbortController();
+        var parentSignal = options.signal;
+        var forwardAbort = function() {
+            if (!controller.signal.aborted) controller.abort();
+        };
+        if (parentSignal) {
+            if (parentSignal.aborted) controller.abort();
+            else parentSignal.addEventListener('abort', forwardAbort, { once: true });
+        }
+        var requestOptions = Object.assign({}, options, { signal: controller.signal });
+        var timer;
+        var request = fetch(url, requestOptions);
         var timeout = new Promise(function(_, reject) {
-            setTimeout(function() {
+            timer = setTimeout(function() {
+                controller.abort();
                 reject(new Error('Weather request timed out after ' + timeoutMs + 'ms'));
             }, timeoutMs);
         });
-        return Promise.race([request, timeout]);
+        return Promise.race([request, timeout]).finally(function() {
+            clearTimeout(timer);
+            if (parentSignal) parentSignal.removeEventListener('abort', forwardAbort);
+        });
     }
 
     async function fetchWUMulti(latP, lonP, signal) {
@@ -6819,10 +6902,10 @@
                     // cache:no-store below already prevents a stale browser or
                     // service-worker response, so no custom cache-busting
                     // parameter is needed here.
-                    const res = await fetch(alertUrl, {
+                    const res = await _weatherFetch(alertUrl, {
                         cache: 'no-store',
                         signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
-                    });
+                    }, 12000);
                     if (!res.ok) throw new Error('NWS alerts ' + res.status);
                     const candidate = await res.json();
                     if (!candidate || !Array.isArray(candidate.features)) {
@@ -7442,7 +7525,14 @@
                     new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 2500); })
                 ]);
             } else {
-                wuStations = await wuPromise;
+                // A PWS is valuable enrichment, but it must not block the
+                // official observation chain on a phone. The late-result
+                // handler below still applies a station that arrives after
+                // this bounded window.
+                wuStations = await Promise.race([
+                    wuPromise,
+                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 4000); })
+                ]);
             }
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Mark the throttle only after the PirateWeather response has been
@@ -7879,12 +7969,13 @@
             if (_patchController) _patchController.abort();
         }, 15000);
         try {
-            const res = await fetch(
+            const res = await _weatherFetch(
                 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
                 '&current=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m' +
                 '&hourly=uv_index,temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation,cloud_cover,dew_point_2m,precipitation_probability,visibility' +
                 '&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&forecast_days=3',
-                _patchController ? { signal: _patchController.signal } : undefined
+                _patchController ? { signal: _patchController.signal } : undefined,
+                15000
             );
             if (!res.ok) return;
             const d = await res.json();
@@ -8520,10 +8611,10 @@
     async function getWeatherEnrichment() {
         if (_enrichmentPromise) return _enrichmentPromise;
         const key = lat + ',' + lon;
-        _enrichmentPromise = fetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
+            _enrichmentPromise = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
             encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon), {
                 signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
-            }).then(function(res) {
+            }, 12000).then(function(res) {
                 if (!res.ok) throw new Error('Weather enrichment ' + res.status);
                 return res.json();
             }).then(function(data) {
@@ -11537,14 +11628,25 @@
         let riskHtml = ''; let hasRisk = false;
         async function checkArcGIS(url) {
             try {
-                const res = await fetch(url); if (!res.ok) return null;
+                const res = await _weatherFetch(url, undefined, 9000); if (!res.ok) return null;
                 const data = await res.json();
                 if (data && data.features && data.features.length > 0) return data.features[0].attributes;
             } catch(e) {}
             return null;
         }
         const spcUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/SPC_wx_outlks/MapServer/1/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
-        const spcData = await checkArcGIS(spcUrl);
+        const mdUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/spc_mesoscale_discussion/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
+        const eroUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
+        // These three lookups are independent. Serial requests made the
+        // severe-weather section add 20–30 seconds on a degraded mobile link.
+        const riskResults = await Promise.all([
+            checkArcGIS(spcUrl),
+            checkArcGIS(mdUrl),
+            checkArcGIS(eroUrl)
+        ]);
+        const spcData = riskResults[0];
+        const mdData = riskResults[1];
+        const eroData = riskResults[2];
         const SPC_DN_MAP = { 2: 'TSTM', 3: 'MRGL', 4: 'SLGT', 5: 'ENH', 6: 'MDT', 8: 'HIGH' };
         const _spcRaw = spcData ? (spcData.LABEL || spcData.label) : null;
         const _spcDn = spcData ? spcData.dn : null;
@@ -11566,6 +11668,9 @@
                 banner.style.color = '#fff';
                 banner.onclick = function() {
                     switchTab('severe', document.getElementById('nav-severe'));
+                    // A home SPC banner must always land on the SPC outlook,
+                    // even if the user previously viewed WPC/NHC/CPC.
+                    switchOutlookCenter('spc');
                     setTimeout(function() {
                         var el = document.getElementById('active-risks-box');
                         if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -11574,8 +11679,6 @@
             }
         } else { window.spcRisk = spcLabelRaw; }
 
-        const mdUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/spc_mesoscale_discussion/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
-        const mdData = await checkArcGIS(mdUrl);
         const mdName = mdData ? (mdData.Name || mdData.name || mdData.MD_NUM) : null;
         if (mdName) {
             hasRisk = true;
@@ -11585,8 +11688,6 @@
             riskHtml += '<a href="' + url + '" target="_blank" style="text-decoration:none;"><div style="background:#9c27b0; color:#fff; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">\u26C8\uFE0F SPC: MD #' + cleanMD + '</div></a>';
         }
 
-        const eroUrl = 'https://mapservices.weather.noaa.gov/vector/rest/services/hazards/wpc_precip_hazards/MapServer/0/query?geometry=' + lon + ',' + lat + '&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
-        const eroData = await checkArcGIS(eroUrl);
         // Store Day 1 ERO for the flood outlook card
         window.wpcERODay1 = eroData ? (eroData.outlook || eroData.label || eroData.LABEL || eroData.risk || eroData.RISK || null) : null;
         if (eroData) {
@@ -11621,6 +11722,10 @@
                     banner.style.color = '#fff';
                     banner.onclick = function() {
                         switchTab('severe', document.getElementById('nav-severe'));
+                        // An Excessive Rainfall banner is a WPC signal, so
+                        // take the user directly to the WPC outlook instead
+                        // of leaving the default SPC map selected.
+                        switchOutlookCenter('wpc');
                         setTimeout(function() {
                             var el = document.getElementById('active-risks-box');
                             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -11656,11 +11761,15 @@
             if (!discussionNumber) return;
             hasRisk = true;
             const mdColor = customSkyAlertColor(props) || '#ce93d8';
-            riskHtml += '<div role="button" tabindex="0" aria-label="Open SkyMonitor custom Mesoscale Discussion ' + escapeHtml(discussionNumber) + '"'
+            const isPrecipitationDiscussion = customSkyDiscussionLabel(props) === 'Mesoscale Precipitation Discussion';
+            const discussionIcon = isPrecipitationDiscussion ? '&#128167;' : '&#x26C8;&#xFE0F;';
+            const discussionKind = isPrecipitationDiscussion ? 'Mesoscale Precipitation Discussion' : 'Mesoscale Discussion';
+            const discussionDisplayName = isPrecipitationDiscussion ? 'MPD' : discussionKind;
+            riskHtml += '<div role="button" tabindex="0" aria-label="Open SkyMonitor custom ' + escapeHtml(discussionKind) + ' ' + escapeHtml(discussionNumber) + '"'
                 + ' onclick="openCustomSkyMDFromRisk(' + mdIndex + ')"'
                 + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openCustomSkyMDFromRisk(' + mdIndex + ')}"'
                 + ' style="display:inline-flex; align-items:center; box-sizing:border-box; height:31px; white-space:nowrap; line-height:1; background:' + mdColor + '; color:#07131d; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">'
-                + '&#x26C8;&#xFE0F; Custom <a href="/about-custom-alerts" class="custom-alerts-help" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a> MD #' + escapeHtml(discussionNumber)
+                 + discussionIcon + ' Custom <a href="/about-custom-alerts" class="custom-alerts-help" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a> ' + escapeHtml(discussionDisplayName) + ' #' + escapeHtml(discussionNumber)
                 + '</div>';
         });
         // Set DOM once — prevents interleaving when two loadAll() calls race on first load
@@ -12533,7 +12642,11 @@
     let reportingDataRefreshQueued = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
-    let customSkyAlertsVisible = localStorage.getItem('report_custom_sky_alerts') === '1';
+    let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
+        ? true
+        : localStorage.getItem('report_custom_sky_alerts') === '1';
+    let customSkyDeepLinkHandled = false;
+    let customSkyDeepLinkEntry = null;
     let normalReportingPopupWidth = null;
     // Keep the report pin across a full page reload. The map object is
     // recreated on refresh, so in-memory coordinates alone are not enough to
@@ -13016,6 +13129,66 @@
         });
     }
 
+    function highlightCustomSkyDeepLinkEntry(entry) {
+        if (customSkyDeepLinkEntry && customSkyDeepLinkEntry.layer &&
+            customSkyDeepLinkEntry.layer.setStyle) {
+            customSkyDeepLinkEntry.layer.setStyle({
+                weight: 2.5,
+                opacity: 0.95,
+                fillOpacity: 0.22,
+                dashArray: null
+            });
+        }
+        customSkyDeepLinkEntry = entry || null;
+        if (!entry || !entry.layer) return;
+        if (entry.layer.setStyle) {
+            entry.layer.setStyle({
+                color: '#ffffff',
+                weight: 6,
+                opacity: 1,
+                fillColor: entry.color || '#ffffff',
+                fillOpacity: 0.42,
+                dashArray: '10 5'
+            });
+        }
+        if (entry.layer.bringToFront) entry.layer.bringToFront();
+    }
+
+    function openDeepLinkedCustomSkyAlert() {
+        if (!CUSTOM_SKY_DEEP_LINK_ID || customSkyDeepLinkHandled ||
+            !reportingMap || !window.L) {
+            return false;
+        }
+
+        const entry = reportingPopupEntries.find(function(item) {
+            return item.source === 'custom-skymonitor' &&
+                Array.isArray(item.customAlertIds) &&
+                item.customAlertIds.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
+        });
+        if (!entry || !entry.layer || !entry.layer.getBounds) return false;
+
+        const bounds = entry.layer.getBounds();
+        if (!bounds.isValid()) return false;
+
+        customSkyDeepLinkHandled = true;
+        highlightCustomSkyDeepLinkEntry(entry);
+        localStorage.setItem('report_custom_sky_alerts', '1');
+        const customAlertsToggle = document.getElementById('custom-sky-alerts-toggle-cb');
+        if (customAlertsToggle) customAlertsToggle.checked = true;
+
+        reportingMap.fitBounds(bounds, {
+            padding: [30, 30],
+            maxZoom: 11
+        });
+
+        // The bounds center is a stable popup anchor even when a polygon is
+        // concave. The selected entry is always included by openReportingPopup.
+        setTimeout(function() {
+            openReportingPopup(entry, bounds.getCenter(), entry);
+        }, 120);
+        return true;
+    }
+
     function _tryOpenPendingCustomSkyMD(attempt) {
         var pendingKey = window._pendingCustomSkyMDKey;
         if (!pendingKey) return;
@@ -13072,7 +13245,8 @@
 
     function reportingPopupDetailRows(rows) {
         return rows.filter(function(row) { return row && row[1]; }).map(function(row) {
-            return '<p><b>' + escapeHtml(row[0]) + '</b><span class="reporting-popup-pre">'
+            var labelStyle = row[2] ? ' style="color:' + escapeHtml(row[2]) + ';"' : '';
+            return '<p><b' + labelStyle + '>' + escapeHtml(row[0]) + '</b><span class="reporting-popup-pre">'
                 + escapeHtml(row[1]) + '</span></p>';
         }).join('');
     }
@@ -13270,6 +13444,44 @@
         return fallback || '';
     }
 
+    function isCustomAlertCurrentlyActive(props) {
+        const activeValue = customSkyAlertValue(
+            props,
+            ['active', 'is_active', 'isActive'],
+            ''
+        ).toLowerCase();
+        if (['0', 'false', 'no', 'inactive'].includes(activeValue)) return false;
+        const status = customSkyAlertValue(props, ['status', 'state'], '').toLowerCase();
+        if (['expired', 'inactive', 'closed', 'ended', 'cancelled', 'canceled', 'superseded'].includes(status)) {
+            return false;
+        }
+        const expires = customSkyAlertValue(
+            props,
+            ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'ends', 'endTime'],
+            ''
+        );
+        const expiresDate = parseReportDate(expires);
+        return !expiresDate || expiresDate.getTime() > Date.now();
+    }
+
+    function customSkyAlertIdentifiers(feature) {
+        const props = feature && feature.properties || {};
+        return [
+            props.revision_id,
+            props.revisionId,
+            props.alert_id,
+            props.alertId,
+            props.alertID,
+            props.id,
+            props.uuid,
+            props.alertUuid,
+            props.alert_uuid,
+            feature && feature.id
+        ].map(function(value) {
+            return String(value == null ? '' : value).trim();
+        }).filter(Boolean);
+    }
+
     function reportingAlertTimeInfo(props) {
         const issued = customSkyAlertValue(props, [
             'issued',
@@ -13346,6 +13558,11 @@
             props.senderName || props.messageType || props.category
             || props.phenomena || props.significance || props.wfo
         ));
+        const customRevisionNumber = Number(customSkyAlertValue(props, [
+            'revision_number', 'revisionNumber', 'revision'
+        ], ''));
+        const hasCustomRevision = !isNwsAlert &&
+            Number.isFinite(customRevisionNumber) && customRevisionNumber >= 1;
         // Custom alerts have issued_at with milliseconds but created_at and
         // updated_at rounded to whole seconds. Treat that initial sub-second
         // difference as the same timestamp; a real edit is later than that.
@@ -13355,21 +13572,24 @@
         // time or a VTEC continuation/extension/correction status.
         const nwsWasUpdated = isNwsAlert && sentDate && effectiveDate
             && sentDate.getTime() - effectiveDate.getTime() > 60000;
-        const hasBeenUpdated = explicitlyUpdated
-            || statusIndicatesUpdate
-            || customWasEdited
-            || nwsWasUpdated;
+        const hasBeenUpdated = hasCustomRevision
+            ? customRevisionNumber > 1
+            : explicitlyUpdated
+                || statusIndicatesUpdate
+                || customWasEdited
+                || nwsWasUpdated;
         const updateValue = updated || (isNwsAlert && sent) || issued;
         return {
             label: hasBeenUpdated ? 'Updated' : 'Issued',
-            value: hasBeenUpdated ? updateValue : (issued || updated)
+            value: hasBeenUpdated ? updateValue : (issued || updated),
+            actorLabel: hasBeenUpdated ? 'Updated by' : 'Issued by'
         };
     }
 
     function formatCustomSkyDiscussionNumber(props) {
         const raw = customSkyAlertValue(
             props,
-            ['discussion_number', 'discussionNumber', 'md_number', 'mdNumber'],
+            ['discussion_number', 'discussionNumber', 'md_number', 'mdNumber', 'mpd_number', 'mpdNumber'],
             ''
         );
         if (!raw) return '';
@@ -13379,10 +13599,29 @@
             : String(raw).replace(/\.0+$/, '');
     }
 
+    function customSkyDiscussionLabel(props) {
+        const type = customSkyAlertValue(
+            props,
+            ['severity', 'alertType', 'alert_type', 'event', 'category', 'type'],
+            ''
+        ).toUpperCase();
+        return type === 'MPD' || type.includes('PRECIPITATION DISCUSSION')
+            ? 'Mesoscale Precipitation Discussion'
+            : 'Mesoscale Discussion';
+    }
+
     function customSkyMDKey(feature) {
         const props = feature && feature.properties || {};
         const number = formatCustomSkyDiscussionNumber(props);
-        if (number) return 'md:' + number;
+        const type = customSkyAlertValue(
+            props,
+            ['severity', 'alertType', 'alert_type', 'event', 'category', 'type'],
+            ''
+        ).toUpperCase();
+        const prefix = type === 'MPD' || type.includes('PRECIPITATION DISCUSSION')
+            ? 'mpd'
+            : 'md';
+        if (number) return prefix + ':' + number;
         const fallback = customSkyAlertValue(props, [
             'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
         ], '') || (feature && feature.id != null ? String(feature.id) : '');
@@ -13396,7 +13635,9 @@
             ''
         ).toUpperCase();
         return type === 'MD' ||
+            type === 'MPD' ||
             type.includes('MESOSCALE DISCUSSION') ||
+            type.includes('PRECIPITATION DISCUSSION') ||
             Boolean(customSkyAlertValue(
                 props,
                 ['discussion_number', 'discussionNumber', 'concerning'],
@@ -13488,12 +13729,19 @@
         if (!value) return '';
         const parsed = parseReportDate(value);
         if (!parsed) return '';
-        const totalMinutes = Math.max(0, Math.ceil((parsed.getTime() - Date.now()) / 60000));
+        // Show only fully elapsed minutes remaining; never round up into the
+        // next hour or day (for example, 23:59:30 stays 23 hours 59 minutes).
+        const totalMinutes = Math.max(0, Math.floor((parsed.getTime() - Date.now()) / 60000));
         if (totalMinutes < 60) return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes');
-        const hours = Math.floor(totalMinutes / 60);
+        const totalHours = Math.floor(totalMinutes / 60);
+        const days = Math.floor(totalHours / 24);
+        const hours = totalHours % 24;
         const minutes = totalMinutes % 60;
-        return hours + (hours === 1 ? ' hour' : ' hours') +
-            (minutes ? ' ' + minutes + (minutes === 1 ? ' minute' : ' minutes') : '');
+        const parts = [];
+        if (days) parts.push(days + (days === 1 ? ' day' : ' days'));
+        if (hours) parts.push(hours + (hours === 1 ? ' hour' : ' hours'));
+        if (minutes) parts.push(minutes + (minutes === 1 ? ' minute' : ' minutes'));
+        return parts.join(' ');
     }
 
     function formatReportingDateTimeNoSeconds(value) {
@@ -13502,9 +13750,10 @@
 
     function customSkyAlertColor(props) {
         const value = customSkyAlertValue(props, ['severity', 'level', 'priority', 'alertType', 'event', 'type'], '').toLowerCase();
-        if (value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
-        if (value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
-        if (value.includes('flood') || value.includes('rain')) return '#00c853';
+        if (value.includes('tow') || value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
+        if (value.includes('svr') || value.includes('svw') || value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
+        if (value.includes('mpd') || value.includes('precipitation discussion')) return '#4dd0e1';
+        if (value.includes('ffw') || value.includes('flw') || value.includes('flood') || value.includes('rain')) return '#00c853';
         if (value.includes('winter') || value.includes('snow') || value.includes('ice')) return '#81d4fa';
         if (value.includes('wind')) return '#ffd54f';
         return '#ce93d8';
@@ -13557,7 +13806,13 @@
         var family = '', score = 0, label = '', color = '#ff9100';
         // SkyMonitor MDs intentionally never enter threat-level scoring.
         if (isCustomSkyMesoscaleDiscussion(props) || /\bMD\b|MESOSCALE DISCUSSION/.test(classText)) return null;
-        if (/\bTOR\b|TORNADO/.test(classSignals)) {
+        if (/\bTOW\b|TORNADO WATCH/.test(classSignals)) {
+            family = 'tornadoWatch'; score = 4; label = 'SkyMonitor Tornado Watch'; color = '#e53935';
+        } else if (/\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
+            family = 'svrWatch'; score = 3; label = 'SkyMonitor Severe Thunderstorm Watch'; color = '#ffb300';
+        } else if (/\bFLW\b|FLOOD WATCH/.test(classSignals)) {
+            family = 'floodWatch'; score = 2; label = 'SkyMonitor Flood Watch'; color = '#00c853';
+        } else if (/\bTOR\b|TORNADO/.test(classSignals)) {
             family = 'tornado'; score = 8; label = 'SkyMonitor Tornado Warning'; color = '#ff1744';
             if (/TORNADO EMERGENCY/.test(qualifiers)) {
                 score = 20; label = 'SkyMonitor Tornado Emergency'; color = '#e040fb';
@@ -13596,7 +13851,9 @@
             return;
         }
         try {
-            var res = await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, { headers: { 'Accept': 'application/geo+json, application/json' } });
+            var res = await _weatherFetch(CUSTOM_SKY_ALERTS_WORKER_URL, {
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            }, 10000);
             if (!res.ok) throw new Error('Failed to fetch custom alerts');
             var features = getCustomSkyAlertFeatures(await res.json());
             var activeFeatures = [];
@@ -13631,8 +13888,11 @@
             if (threatInfo.score >= 11) return 12000;
             return 11000;
         }
+        if (threatInfo.family === 'tornadoWatch') return 7000;
         if (threatInfo.family === 'svr') return threatInfo.score >= 7 ? 10000 : 8500;
+        if (threatInfo.family === 'svrWatch') return 6000;
         if (threatInfo.family === 'flashFlood') return threatInfo.score >= 16 ? 14000 : 8000;
+        if (threatInfo.family === 'floodWatch') return 5000;
         if (threatInfo.family === 'sps') return 2000;
         return 0;
     }
@@ -13640,6 +13900,7 @@
     function renderCustomSkyHazards() {
         var stack = document.getElementById('alert-stack');
         if (!stack) return;
+        var alertViewState = captureAlertViewState();
         stack.querySelectorAll('.custom-skymonitor-hazard').forEach(function(el) { el.remove(); });
         var features = window.customSkyActiveFeatures || [];
         var banner = document.getElementById('alert-banner');
@@ -13669,9 +13930,20 @@
                     'SkyMonitor Alert'
                 );
                 var bannerThreat = bannerChoice.threat;
-                var bannerColor = bannerThreat.family === 'tornado'
-                    ? (bannerThreat.score >= 20 ? '#4a148c' : (bannerThreat.score >= 15 ? '#880e4f' : '#7f0000'))
-                    : (bannerThreat.family === 'flashFlood' ? '#00838f' : '#ff9100');
+                var bannerColor = '#ff9100';
+                if (bannerThreat.family === 'tornado') {
+                    bannerColor = bannerThreat.score >= 20
+                        ? '#4a148c'
+                        : (bannerThreat.score >= 15 ? '#880e4f' : '#7f0000');
+                } else if (bannerThreat.family === 'tornadoWatch') {
+                    bannerColor = '#c62828';
+                } else if (bannerThreat.family === 'flashFlood') {
+                    bannerColor = '#00838f';
+                } else if (bannerThreat.family === 'floodWatch') {
+                    bannerColor = '#2e7d32';
+                } else if (bannerThreat.family === 'svrWatch') {
+                    bannerColor = '#f9a825';
+                }
                 banner.style.display = 'block';
                 banner.style.background = bannerColor;
                 banner.classList.remove('emergency-banner');
@@ -13686,7 +13958,7 @@
             var headline = customSkyAlertValue(props, ['headline', 'title', 'name', 'message'], alertClass);
             var issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
             var qualifiers = customSkyAlertQualifiers(props).toUpperCase().replace(/\s*,\s*/g, ', ');
-            var issued = customSkyAlertValue(props, ['issued', 'issuedAt', 'issued_at', 'issue', 'issueTime', 'issue_time', 'effective', 'effectiveAt', 'effective_at', 'createdAt', 'created_at', 'created', 'time', 'timestamp'], '');
+            var timeInfo = reportingAlertTimeInfo(props);
             var expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
             var description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
             var shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -13700,26 +13972,42 @@
             var alertId = customSkyAlertValue(props, ['revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'], '') ||
                 (feature.id != null ? String(feature.id) : '');
             var reportUrl = alertId ? CUSTOM_SKY_ALERT_REPORT_FORM_URL + encodeURIComponent(alertId) : '';
-            var detailRows = [
-                ['Issued', issued ? formatCustomSkyAlertTime(issued) : ''],
-                ['Issued by', issuer]
-            ].filter(function(row) { return row[1]; }).map(function(row) {
-                return '<div style="margin-top:4px;"><b>' + escapeHtml(row[0]) + ':</b> ' + escapeHtml(row[1]) + '</div>';
-            }).join('');
             var summaryHtml = shortSummary ? '<div style="margin-top:8px;"><b>Short Summary</b><br>' + escapeHtml(shortSummary) + '</div>' : '';
             var actionHtml = recommendedAction ? '<div style="margin-top:8px;"><b>Recommended Action</b><br>' + escapeHtml(recommendedAction) + '</div>' : '';
             var reportHtml = reportUrl
                 ? '<a class="reporting-popup-report-link" href="' + escapeHtml(reportUrl) + '" target="_blank" rel="noopener noreferrer" title="Report alert" aria-label="Report alert" onclick="event.stopPropagation();">&#128227;</a>'
                 : '';
-            var customCardColor = threatInfo && threatInfo.family === 'tornado'
-                ? (threatInfo.score >= 20 ? '#4a148c' : (threatInfo.score >= 15 ? '#880e4f' : '#7f0000'))
-                : (threatInfo && threatInfo.family === 'flashFlood' ? '#00838f' : '#e65100');
-            var customHazardId = 'custom-hazard-' + index + '-' + Date.now();
+             var customCardColor = '#e65100';
+             if (threatInfo && threatInfo.family === 'tornado') {
+                 customCardColor = threatInfo.score >= 20
+                     ? '#4a148c'
+                     : (threatInfo.score >= 15 ? '#880e4f' : '#7f0000');
+             } else if (threatInfo && threatInfo.family === 'tornadoWatch') {
+                 customCardColor = '#c62828';
+             } else if (threatInfo && threatInfo.family === 'flashFlood') {
+                 customCardColor = '#00838f';
+             } else if (threatInfo && threatInfo.family === 'floodWatch') {
+                 customCardColor = '#2e7d32';
+             } else if (threatInfo && threatInfo.family === 'svrWatch') {
+                 customCardColor = '#f9a825';
+             }
+            // Keep the DOM id stable across refreshes and alert revisions so an
+            // expanded card and its internal scroll position can be restored.
+            var stableAlertId = customSkyAlertValue(props, [
+                'alert_id', 'alertId', 'alertID', 'uuid', 'alertUuid', 'alert_uuid'
+            ], '') || alertId || (feature.id != null ? String(feature.id) : '') || String(index);
+            var customHazardId = 'custom-hazard-' +
+                String(stableAlertId).replace(/[^a-zA-Z0-9_-]/g, '_');
              var customTiming = expires
                  ? '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + escapeHtml(_fmtAlertTime(expires)) + '</div>'
                 : '';
             var sourceLine = '<div style="font-size:0.72em;line-height:1.45;margin-top:3px;color:rgba(255,255,255,0.88);">SkyMonitor Custom Alert <a class="custom-alerts-help" href="/about-custom-alerts" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts">?</a></div>';
-            var fullDetails = '<div id="full-' + customHazardId + '" class="alert-full-text">' + detailRows + summaryHtml + actionHtml + '</div>';
+             var fullDetails = '<div id="full-' + customHazardId + '" class="alert-full-text">' +
+                 '<div style="margin-top:4px;"><b>' + escapeHtml(timeInfo.label) + ':</b> ' +
+                 escapeHtml(timeInfo.value ? formatCustomSkyAlertTime(timeInfo.value) : '') + '</div>' +
+                 '<div style="margin-top:4px;"><b>' + escapeHtml(timeInfo.actorLabel) + ':</b> ' +
+                 escapeHtml(issuer) + '</div>' +
+                 summaryHtml + actionHtml + '</div>';
             var card = document.createElement('div');
             card.className = 'alert-card custom-skymonitor-hazard';
             card.style.cssText = 'background:' + customCardColor + '; align-items:flex-start; cursor:default;';
@@ -13730,6 +14018,7 @@
                 sourceLine + fullDetails + '</div>';
             stack.appendChild(card);
         });
+        restoreAlertViewState(alertViewState);
     }
 
     async function loadCustomSkyAlerts() {
@@ -13755,7 +14044,40 @@
                 throw new Error('Failed to fetch');
             }
             const payload = await res.json();
-            const features = getCustomSkyAlertFeatures(payload);
+            let features = getCustomSkyAlertFeatures(payload);
+            let archivedDeepLink = false;
+            if (CUSTOM_SKY_DEEP_LINK_ID && !features.some(function(item) {
+                return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
+                    CUSTOM_SKY_DEEP_LINK_ID
+                ) !== -1;
+            })) {
+                try {
+                    const archiveResponse = await fetch(
+                        CUSTOM_SKY_ALERT_ARCHIVE_URL + '/' +
+                        encodeURIComponent(CUSTOM_SKY_DEEP_LINK_ID),
+                        { headers: { 'Accept': 'application/json, application/geo+json' } }
+                    );
+                    if (archiveResponse.ok) {
+                        const archivePayload = await archiveResponse.json();
+                        const archivedFeature = archivePayload.feature ||
+                            (Array.isArray(archivePayload.revisions)
+                                ? archivePayload.revisions[archivePayload.revisions.length - 1]
+                                : null);
+                        if (archivedFeature && archivedFeature.geometry) {
+                            features = features.concat([{
+                                ...archivedFeature,
+                                properties: {
+                                    ...(archivedFeature.properties || {}),
+                                    _skymonitorArchived: true
+                                }
+                            }]);
+                            archivedDeepLink = true;
+                        }
+                    }
+                } catch (archiveError) {
+                    console.warn('[SkyMonitor] Archived custom alert lookup failed:', archiveError);
+                }
+            }
             let renderedCount = 0;
 
             features.forEach(function(item) {
@@ -13766,9 +14088,13 @@
                 const discussionNumber = formatCustomSkyDiscussionNumber(props);
                 const rawHeadline = customSkyAlertValue(props, ['headline', 'title', 'name', 'message'], 'SkyMonitor alert');
                 const headline = isMd
-                    ? 'Mesoscale Discussion' + (discussionNumber ? ' #' + discussionNumber : '')
+                    ? customSkyDiscussionLabel(props) + (discussionNumber ? ' #' + discussionNumber : '')
                     : rawHeadline;
-                const alertType = 'Custom alert';
+                const isArchived = props._skymonitorArchived === true ||
+                    !isCustomAlertCurrentlyActive(props);
+                const alertType = isArchived
+                    ? 'Archived ' + (isMd ? customSkyDiscussionLabel(props) : 'custom alert')
+                    : (isMd ? customSkyDiscussionLabel(props) : 'Custom alert');
                 const issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
                 const description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
                 let shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -13783,6 +14109,9 @@
                  const timeInfo = reportingAlertTimeInfo(props);
                 const expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
                 const color = customSkyAlertColor(props);
+                const alertIdentifiers = customSkyAlertIdentifiers(feature);
+                const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
+                    alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
                 shortSummary = shortSummary.replace(/^\s*Full alert\s*:?\s*/i, '').trim();
                  const summaryLine = shortSummary
                      ? '<div style="margin-top:6px;"><b style="font-size:0.9em;">Short Summary</b><br><span>' + escapeHtml(shortSummary) + '</span></div>'
@@ -13792,11 +14121,29 @@
                     : '';
                 const mdContent = isMd ? buildCustomSkyMdPopup(props, description) : '';
                 const polygon = L_ref.geoJSON(feature, {
-                    style: { color: color, weight: 2.5, opacity: 0.95, fillColor: color, fillOpacity: 0.22 }
+                    style: {
+                        color: isDeepLinked ? '#ffffff' : color,
+                        weight: isDeepLinked ? 6 : 2.5,
+                        opacity: 1,
+                        fillColor: color,
+                        fillOpacity: isDeepLinked ? 0.42 : (isArchived ? 0.14 : 0.22),
+                        dashArray: isDeepLinked ? '10 5' : (isArchived ? '5 5' : null)
+                    }
                 });
+                const issuedDate = parseReportDate(timeInfo.value);
+                const expiresDate = parseReportDate(expires);
+                const expiredAt = expiresDate && expiresDate.getTime() <= Date.now()
+                    ? expiresDate
+                    : null;
+                const expiredAge = isArchived && expiredAt
+                    ? formatExpiredAgo(Math.max(0, (Date.now() - expiredAt.getTime()) / 1000))
+                    : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                     ['Issued by', issuer]
+                     [timeInfo.actorLabel, issuer],
+                     [expiredAge ? 'Expired' : (isArchived ? 'Archive status' : ''),
+                         expiredAge || (isArchived ? 'Archived alert' : ''),
+                         expiredAge ? '#ff5252' : '']
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
@@ -13807,13 +14154,24 @@
                 registerReportingPopup(polygon, {
                     source: 'custom-skymonitor',
                     isPolygon: true,
-                     customAlertKey: isMd ? customSkyMDKey(feature) : '',
+                     customAlertKey: isMd ? customSkyMDKey(feature) : alertId,
+                     customAlertIds: alertIdentifiers,
                     color: color,
                     title: escapeHtml(headline),
-                     meta: escapeHtml(alertType) + (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : ''),
+                      meta: expiredAge
+                         ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
+                         : escapeHtml(alertType) + (isArchived
+                         ? ''
+                        : (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
                        detail: customDetail,
-                     reportUrl: reportUrl
+                     reportUrl: reportUrl,
+                     archived: isArchived
                 });
+                if (isDeepLinked) {
+                    highlightCustomSkyDeepLinkEntry(
+                        reportingPopupEntries[reportingPopupEntries.length - 1]
+                    );
+                }
                 polygon.on('dblclick', function(e) {
                     L_ref.DomEvent.stop(e);
                     setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
@@ -13822,11 +14180,14 @@
                 renderedCount++;
             });
             setCustomSkyAlertsStatus(
-                renderedCount ? renderedCount + ' active custom alert' + (renderedCount === 1 ? '' : 's') : 'No active custom alerts',
+                renderedCount ? renderedCount + (archivedDeepLink ? ' active/archived custom alert' : ' active custom alert') + (renderedCount === 1 ? '' : 's') : 'No active custom alerts',
                 renderedCount ? '#00e676' : '#718496'
             );
             if (window._pendingCustomSkyMDKey) {
                 setTimeout(function() { _tryOpenPendingCustomSkyMD(0); }, 0);
+            }
+            if (CUSTOM_SKY_DEEP_LINK_ID) {
+                setTimeout(openDeepLinkedCustomSkyAlert, 0);
             }
         } catch (e) {
             setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
@@ -13864,7 +14225,9 @@
         if (!isFinite(Number(reportLat)) || !isFinite(Number(reportLon))) return false;
         if (!reportingMap.getPane('reportPinPane') && reportingMap.createPane) {
             const pinPane = reportingMap.createPane('reportPinPane');
-            pinPane.style.zIndex = '1000';
+            // Keep the report-location pin above map overlays, but below
+            // Leaflet's popup pane so it cannot cut through an open alert box.
+            pinPane.style.zIndex = '620';
         }
         if (reportPinMarker) {
             reportPinMarker.setLatLng([Number(reportLat), Number(reportLon)]);
@@ -14599,7 +14962,7 @@
         const list   = document.getElementById('nearby-reports-list');
         if (!widget || !list) return;
         try {
-            const res = await fetch(REPORTS_WORKER_URL);
+            const res = await _weatherFetch(REPORTS_WORKER_URL, undefined, 10000);
             if (!res.ok) throw new Error();
             const payload = await res.json();
             const reports = Array.isArray(payload) ? payload : (payload.reports || []);
@@ -14757,7 +15120,7 @@
 
         // ——— Cloudflare Worker → NHC CurrentStorms.json (CORS-safe, 5-min edge cache) ———
         try {
-            const res = await fetch(WEATHER_WORKER_URL + '/api/weather/nhc');
+            const res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000);
             if (!res.ok) { widget.style.display='none'; return; }
             const nhcData = await res.json();
             const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
@@ -15039,10 +15402,10 @@
         if (!isFinite(curLat) || !isFinite(curLon)) return;
         var seq = ++_aqiRequestSeq;
         try {
-            var res = await fetch(WEATHER_WORKER_URL + '/api/weather/air-quality?lat=' +
+            var res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/air-quality?lat=' +
                 encodeURIComponent(curLat) + '&lon=' + encodeURIComponent(curLon), {
                     signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
-                });
+                }, 12000);
             var data = await res.json();
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
             if (!res.ok || !data || data.source === 'unavailable') {
@@ -15085,7 +15448,7 @@
             var url = 'https://air-quality-api.open-meteo.com/v1/air-quality' +
                       '?latitude=' + curLat + '&longitude=' + curLon +
                       '&current=us_aqi,pm10,pm2_5,nitrogen_dioxide,ozone';
-            var res = await fetch(url);
+            var res = await _weatherFetch(url, undefined, 12000);
             if (!res.ok) throw new Error('Open-Meteo AQ ' + res.status);
             var data = await res.json();
             var curAQI = (data.current && data.current.us_aqi != null) ? data.current.us_aqi : null;
@@ -15308,7 +15671,7 @@
 
         async function _fetchNDBC(stationId) {
             var url = _NDBC_PROXY + '?station=' + encodeURIComponent(stationId);
-            var res = await fetch(url);
+            var res = await _weatherFetch(url, undefined, 12000);
             if (!res.ok) return null;
             var text = await res.text();
             // Skip header lines (start with #), take first data line
@@ -15499,11 +15862,11 @@
                     // If only one field is missing, patch it from Open-Meteo Marine API
                     if (obs.wvht == null || obs.wtmp == null) {
                         try {
-                            var _pRes = await fetch(
+                             var _pRes = await _weatherFetch(
                                 'https://marine-api.open-meteo.com/v1/marine?latitude=' + la +
                                 '&longitude=' + lo +
                                 '&current=wave_height,sea_surface_temperature'
-                            );
+                             , undefined, 12000);
                             if (_pRes.ok) {
                                 var _pData = await _pRes.json();
                                 var _pCur = (_pData && _pData.current) || {};
@@ -15521,11 +15884,11 @@
                     _renderBeach(obs, glfText);
                 } else {
                     // No buoy within 25 miles — fall back to Open-Meteo Marine API
-                    var mRes = await fetch(
+                    var mRes = await _weatherFetch(
                         'https://marine-api.open-meteo.com/v1/marine?latitude=' + la +
                         '&longitude=' + lo +
                         '&current=wave_height,wave_direction,wave_period,sea_surface_temperature'
-                    );
+                        , undefined, 12000);
                     if (!mRes.ok) return;
                     var mData = await mRes.json();
                     var cur = (mData && mData.current) || {};
@@ -15758,14 +16121,32 @@
             // source has finished selecting and rendering its fields.
             await _homeDataReady;
             if (loadGeneration !== weatherLoadGeneration) return;
+            // If every primary source returned without painting the home card,
+            // perform the same live fallback that previously required a manual
+            // pull-to-refresh. This is deliberately automatic on the first
+            // load so a transient mobile request failure never leaves "--"
+            // values behind until the user discovers pull-to-refresh.
+            var _homeTempEl = document.getElementById('tempVal');
+            if (_homeTempEl && _homeTempEl.innerText === '--') {
+                try {
+                    await fetchOpenMeteoFallback(
+                        loadGeneration,
+                        loadLat,
+                        loadLon,
+                        window._weatherRequestController ? window._weatherRequestController.signal : undefined
+                    );
+                } catch (fallbackError) {
+                    loadFailed = true;
+                }
+                if (loadGeneration !== weatherLoadGeneration) return;
+                if (_homeTempEl.innerText === '--') loadFailed = true;
+            }
             // The home observation is the authoritative refresh. Optional
-            // enrichment must not be allowed to strand the activity indicator
-            // when a mobile browser leaves one secondary request pending.
-            // The enrichment continues in the background after this timeout.
-            await Promise.race([
-                _fullDataReady,
-                new Promise(function(resolve) { setTimeout(resolve, 15000); })
-            ]);
+            // enrichment must finish (or hit its own request deadline) before
+            // the refresh is reported as complete. Previously this was capped
+            // at 15 seconds, which hid UPDATING while half the page was still
+            // waiting on mobile requests.
+            await _fullDataReady;
             if (loadGeneration !== weatherLoadGeneration) return;
             if (!_isOffline) {
                 lastSyncTime = new Date();
@@ -16379,7 +16760,9 @@
         loadLoc();
         _updateNotificationProviderVisibility();
         SkyDB.migrate();
-        // Dismiss launch screen once data loads, or after 4s max
+        // Dismiss the launch screen only after the first complete load.
+        // A fixed four-second ceiling made phones reveal a half-painted
+        // dashboard while the weather requests were still in flight.
         window._dismissLaunch = function() {
             var ls = document.getElementById('launch-screen');
             if (!ls || ls.classList.contains('hidden')) return;
@@ -16408,7 +16791,6 @@
             window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
             return;
         }
-        setTimeout(window._dismissLaunch, 4000);
         var handoffHandled = consumeInfoLocationHandoff();
         if (!handoffHandled) loadAll().then(function() {
             syncPushLocation();
