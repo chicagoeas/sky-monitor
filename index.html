@@ -13669,12 +13669,19 @@
         if (!value) return '';
         const parsed = parseReportDate(value);
         if (!parsed) return '';
-        const totalMinutes = Math.max(0, Math.ceil((parsed.getTime() - Date.now()) / 60000));
+        // Show only fully elapsed minutes remaining; never round up into the
+        // next hour or day (for example, 23:59:30 stays 23 hours 59 minutes).
+        const totalMinutes = Math.max(0, Math.floor((parsed.getTime() - Date.now()) / 60000));
         if (totalMinutes < 60) return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes');
-        const hours = Math.floor(totalMinutes / 60);
+        const totalHours = Math.floor(totalMinutes / 60);
+        const days = Math.floor(totalHours / 24);
+        const hours = totalHours % 24;
         const minutes = totalMinutes % 60;
-        return hours + (hours === 1 ? ' hour' : ' hours') +
-            (minutes ? ' ' + minutes + (minutes === 1 ? ' minute' : ' minutes') : '');
+        const parts = [];
+        if (days) parts.push(days + (days === 1 ? ' day' : ' days'));
+        if (hours) parts.push(hours + (hours === 1 ? ' hour' : ' hours'));
+        if (minutes) parts.push(minutes + (minutes === 1 ? ' minute' : ' minutes'));
+        return parts.join(' ');
     }
 
     function formatReportingDateTimeNoSeconds(value) {
