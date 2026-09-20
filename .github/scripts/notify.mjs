@@ -32,6 +32,13 @@ const D1_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d
 // GitHub Actions must use the direct Worker hostname. The custom API domain
 // is protected by Cloudflare Bot Fight Mode and can challenge server requests.
 const SKYMONITOR_WORKER_URL = "https://skymonitor-apis.skymonitor-account.workers.dev";
+const WPC_MPD_INDEX_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php";
+const WPC_MPD_BASE_URL  = "https://www.wpc.ncep.noaa.gov/metwatch";
+const WPC_USER_AGENT    = "SkyMonitor-GitHubActions/1.1 (+https://skymonitor.app)";
+
+// The MPD catalog is shared by all subscribers during this Actions run.
+// This avoids repeating the same WPC index/page requests once per subscriber.
+let wpcMpdCatalogPromise = null;
 
 async function d1Query(sql, params = []) {
   const res = await fetch(D1_URL, {
@@ -571,6 +578,112 @@ async function fetchArcGIS(url) {
   return undefined;
 }
 
+// ── Direct WPC MPD lookup ──────────────────────────────────────
+// This intentionally bypasses the Cloudflare Worker. GitHub Actions runs
+// server-side, so browser CORS rules do not apply here.
+
+async function fetchWpcText(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: "text/html, text/plain;q=0.9, */*;q=0.8",
+        "User-Agent": WPC_USER_AGENT,
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) {
+      console.warn(`[SkyMonitor] WPC fetch → HTTP ${res.status} for ${url}`);
+      return null;
+    }
+    const text = await res.text();
+    return text || null;
+  } catch (e) {
+    console.warn(`[SkyMonitor] WPC fetch error for ${url}: ${e.message}`);
+    return null;
+  }
+}
+
+function parseWpcMpdPolygon(html) {
+  const match = html.match(/LAT\.\.\.LON\s+([\d\s\n]+)/);
+  if (!match) return null;
+
+  const raw = match[1]
+    .replace(/\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(value => /^\d{8}$/.test(value));
+
+  const polygon = [];
+  for (const point of raw) {
+    const pointLat = parseInt(point.substring(0, 4), 10) / 100;
+    const rawLon   = parseInt(point.substring(4, 8), 10) / 100;
+    // WPC drops the leading "1" from longitudes >= 100W.
+    const pointLon = -(rawLon < 60 ? rawLon + 100 : rawLon);
+    polygon.push([pointLon, pointLat]);
+  }
+  return polygon.length >= 3 ? polygon : null;
+}
+
+function pointInWpcPolygon(point, vertices) {
+  const [x, y] = point;
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const [xi, yi] = vertices[i];
+    const [xj, yj] = vertices[j];
+    const intersects =
+      ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi + 0.0000001) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+async function loadWpcMpdCatalog() {
+  const indexText = await fetchWpcText(WPC_MPD_INDEX_URL);
+  if (!indexText) return null;
+
+  const mpdIds = [...new Set(
+    [...indexText.matchAll(/MPD\s+#(\d{4})/g)].map(match => match[1]),
+  )];
+  const catalog = [];
+
+  for (const id of mpdIds) {
+    const url = `${WPC_MPD_BASE_URL}/mcd${id}.html`;
+    const html = await fetchWpcText(url);
+    if (!html) continue;
+    const polygon = parseWpcMpdPolygon(html);
+    if (polygon) catalog.push({ id, url, polygon });
+  }
+
+  return catalog;
+}
+
+async function fetchDirectWpcMpds(lat, lon) {
+  if (!wpcMpdCatalogPromise) {
+    wpcMpdCatalogPromise = loadWpcMpdCatalog();
+  }
+
+  try {
+    const catalog = await wpcMpdCatalogPromise;
+    if (!catalog) return { ok: false, mpds: [] };
+
+    return {
+      ok: true,
+      mpds: catalog
+        .filter(item => pointInWpcPolygon([lon, lat], item.polygon))
+        .map(item => ({
+          id: item.id,
+          url: item.url,
+          polygon: [...item.polygon, item.polygon[0]],
+        })),
+    };
+  } catch (e) {
+    console.warn(`[SkyMonitor] Direct WPC MPD lookup failed: ${e.message}`);
+    return { ok: false, mpds: [] };
+  }
+}
+
 // ── SPC/WPC check ─────────────────────────────────────────────
 
 async function checkSPCAndWPC(row, vapid, checkMpd = true) {
@@ -658,31 +771,13 @@ async function checkSPCAndWPC(row, vapid, checkMpd = true) {
   if (checkMpd && prefs.wpcMpdEnabled) {
     let currentMpdNums = [];
     let mpdFetchOk = false;
-    try {
-      const mpdRes = await fetch(
-        `${SKYMONITOR_WORKER_URL}/api/weather/mpd?lat=${productCoords.lat}&lon=${productCoords.lon}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "SkyMonitor-GitHubActions/1.1",
-          },
-          signal: AbortSignal.timeout(6000),
-        }
-      );
-      if (mpdRes.ok) {
-        const mpdData = await mpdRes.json();
-        currentMpdNums = (mpdData.mpds || []).map(m => String(m.id).replace(/[^0-9]/g, "")).filter(Boolean);
-        mpdFetchOk = true;
-      } else {
-        const responseBody = await mpdRes.text().catch(() => "");
-        const rayId = mpdRes.headers.get("cf-ray") || "not provided";
-        console.warn(
-          `[SkyMonitor] WPC MPD endpoint → HTTP ${mpdRes.status} ` +
-          `(Cloudflare Ray ID: ${rayId})` +
-          (responseBody ? ` — ${responseBody.slice(0, 300)}` : "")
-        );
-      }
-    } catch (e) { console.warn(`[SkyMonitor] WPC MPD fetch error: ${e.message}`); }
+    const mpdResult = await fetchDirectWpcMpds(productCoords.lat, productCoords.lon);
+    if (mpdResult.ok) {
+      currentMpdNums = mpdResult.mpds
+        .map(m => String(m.id).replace(/[^0-9]/g, ""))
+        .filter(Boolean);
+      mpdFetchOk = true;
+    }
 
     const lastKnown = row.last_wpc_mpd ? String(row.last_wpc_mpd).split(",").filter(Boolean) : [];
     console.log(`[SkyMonitor] WPC MPD: current=[${currentMpdNums.join(",")}], last=[${lastKnown.join(",")}], fetchOk=${mpdFetchOk}`);
