@@ -1,7 +1,7 @@
 // SkyMonitor — GitHub Actions notification runner
 // Reads subscribers from Cloudflare D1 via REST API, sends Web Push notifications
 // for NWS, Environment Canada, MeteoAlarm, and a broad international fallback.
-// Runs every minute via cron-job.org; WPC MPD checks are gated to every fifth minute.
+// Runs every minute via cron-job.org; WPC MPDs are checked on every Actions run.
 //
 // Required GitHub Actions secrets:
 //   CF_API_TOKEN       — Cloudflare API token with D1:Edit permission
@@ -686,7 +686,7 @@ async function fetchDirectWpcMpds(lat, lon) {
 
 // ── SPC/WPC check ─────────────────────────────────────────────
 
-async function checkSPCAndWPC(row, vapid, checkMpd = true) {
+async function checkSPCAndWPC(row, vapid) {
   const prefs = parsePushPreferences(row.prefs);
   if (gpsIsOutsideUS(prefs)) {
     console.log("[SkyMonitor] SPC/WPC: skipped (GPS outside the U.S.)");
@@ -768,7 +768,7 @@ async function checkSPCAndWPC(row, vapid, checkMpd = true) {
     }
   }
 
-  if (checkMpd && prefs.wpcMpdEnabled) {
+  if (prefs.wpcMpdEnabled) {
     let currentMpdNums = [];
     let mpdFetchOk = false;
     const mpdResult = await fetchDirectWpcMpds(productCoords.lat, productCoords.lon);
@@ -898,9 +898,6 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
     process.exit(1);
   }
 }
-
-const CHECK_WPC_MPD_THIS_RUN = Math.floor(Date.now() / 60000) % 5 === 0;
-console.log(`[SkyMonitor] WPC MPD check this run: ${CHECK_WPC_MPD_THIS_RUN ? "yes" : "no"}`);
 
 const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 
@@ -1119,7 +1116,7 @@ for (const row of rows) {
   if (subDeleted) continue;
 
   // ── SPC/WPC nerd-mode ─────────────────────────────────────
-  try { await checkSPCAndWPC(row, vapid, CHECK_WPC_MPD_THIS_RUN); }
+  try { await checkSPCAndWPC(row, vapid); }
   catch (e) { console.warn(`[SkyMonitor] SPC/WPC check error: ${e.message}`); }
 }
 
