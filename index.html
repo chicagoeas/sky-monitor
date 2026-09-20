@@ -1443,6 +1443,16 @@
                     <span class="ios-toggle-track"></span>
                 </label>
             </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+                <div>
+                    <div style="font-size:0.82em; font-weight:700; color:white;">&#9888;&#65039; SkyMonitor Custom Alerts</div>
+                    <div style="font-size:0.62em; color:#556677; margin-top:2px;">Notify when a custom alert covers you</div>
+                </div>
+                <label class="ios-toggle">
+                    <input type="checkbox" id="pref-custom-alerts" onchange="onCustomAlertsChange()">
+                    <span class="ios-toggle-track"></span>
+                </label>
+            </div>
         </div>
         <div id="us-advanced-notifications-note" style="display:none; border-top:1px solid rgba(255,255,255,0.07); padding-top:14px; margin-top:4px; font-size:0.68em; line-height:1.45; color:#778899;">
             SPC/WPC outlooks and mesoscale discussions are only available for U.S. GPS locations.
@@ -1839,7 +1849,7 @@
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span>LIVE REPORTING MAP</span>
                 <div style="display:flex; gap:6px;">
-                    <button onclick="loadReportingMapData()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
+                    <button onclick="refreshReportingMap()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
                     <button id="open-radar-btn" onclick="openRadarRoute()" style="background:rgba(0,230,118,0.14); border:1px solid #00e676; color:#00e676; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Open fullscreen live reporting map">&#x26F6;</button>
                     <button id="close-radar-btn" onclick="closeRadarRoute()" style="display:none; background:rgba(244,67,54,0.16); border:1px solid #ef5350; color:#ff6b61; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Return to SkyMonitor" aria-label="Return to SkyMonitor">&#x26F6;</button>
@@ -1976,7 +1986,7 @@
         function migrate() {
             var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
                         'skymonitor_swipe','pref_alert_enabled','pref_alert_type',
-                        'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd',
+                        'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd','pref_custom_alerts',
                         'report_radar_on','report_alerts_on','report_lsr_on',
                         'report_show_older','report_privacy_mode','report_custom_sky_alerts'];
             get(S.settings, '__migrated_v1').then(function(done) {
@@ -12640,6 +12650,10 @@
     let reportingRadarLayer = null;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
+    // A manual map refresh is authoritative for the current map view. Once it
+    // happens, do not re-add an expired deep-link archive record on subsequent
+    // refreshes or timer-driven loads.
+    let reportingMapManualRefresh = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
@@ -13759,6 +13773,10 @@
         return '#ce93d8';
     }
 
+    // Custom alert polygons use one consistent map-specific color regardless
+    // of alert type. Home/severe cards intentionally keep their own colors.
+    const CUSTOM_SKY_MAP_ALERT_COLOR = '#ce93d8';
+
     function customSkyPointInRing(point, ring) {
         var inside = false;
         for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -14046,7 +14064,7 @@
             const payload = await res.json();
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
-            if (CUSTOM_SKY_DEEP_LINK_ID && !features.some(function(item) {
+            if (CUSTOM_SKY_DEEP_LINK_ID && !reportingMapManualRefresh && !features.some(function(item) {
                 return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
                     CUSTOM_SKY_DEEP_LINK_ID
                 ) !== -1;
@@ -14092,9 +14110,7 @@
                     : rawHeadline;
                 const isArchived = props._skymonitorArchived === true ||
                     !isCustomAlertCurrentlyActive(props);
-                const alertType = isArchived
-                    ? 'Archived ' + (isMd ? customSkyDiscussionLabel(props) : 'custom alert')
-                    : (isMd ? customSkyDiscussionLabel(props) : 'Custom alert');
+                const alertType = isMd ? customSkyDiscussionLabel(props) : 'Custom alert';
                 const issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
                 const description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
                 let shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -14106,12 +14122,19 @@
                         shortSummary = (actionMatch ? description.slice(0, actionMatch.index) : description).trim();
                     }
                 }
-                 const timeInfo = reportingAlertTimeInfo(props);
+                const timeInfo = reportingAlertTimeInfo(props);
                 const expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
-                const color = customSkyAlertColor(props);
+                // The map has one consistent purple custom-alert treatment.
+                // customSkyAlertColor remains available to home/severe cards.
+                const color = CUSTOM_SKY_MAP_ALERT_COLOR;
                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                 const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
                     alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
+                // The public feed should be active-only. The sole exception is
+                // the explicitly requested deep-link archive on first load.
+                // A manual refresh deliberately removes that exception so an
+                // old alert cannot come back onto the live map.
+                if (isArchived && !(isDeepLinked && !reportingMapManualRefresh)) return;
                 shortSummary = shortSummary.replace(/^\s*Full alert\s*:?\s*/i, '').trim();
                  const summaryLine = shortSummary
                      ? '<div style="margin-top:6px;"><b style="font-size:0.9em;">Short Summary</b><br><span>' + escapeHtml(shortSummary) + '</span></div>'
@@ -14138,12 +14161,12 @@
                 const expiredAge = isArchived && expiredAt
                     ? formatExpiredAgo(Math.max(0, (Date.now() - expiredAt.getTime()) / 1000))
                     : '';
+                const issuedAge = isArchived && issuedDate && issuedDate.getTime() <= Date.now()
+                    ? formatExpiredAgo(Math.max(0, (Date.now() - issuedDate.getTime()) / 1000))
+                    : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                     [timeInfo.actorLabel, issuer],
-                     [expiredAge ? 'Expired' : (isArchived ? 'Archive status' : ''),
-                         expiredAge || (isArchived ? 'Archived alert' : ''),
-                         expiredAge ? '#ff5252' : '']
+                     [timeInfo.actorLabel, issuer]
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
@@ -14158,11 +14181,12 @@
                      customAlertIds: alertIdentifiers,
                     color: color,
                     title: escapeHtml(headline),
-                      meta: expiredAge
-                         ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
-                         : escapeHtml(alertType) + (isArchived
-                         ? ''
-                        : (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
+                       meta: expiredAge
+                          ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
+                          : (isArchived && issuedAge
+                              ? '<span style="color:#ff5252;font-weight:800;">Issued ' + escapeHtml(issuedAge) + '</span>'
+                              : escapeHtml(alertType) +
+                                (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
                        detail: customDetail,
                      reportUrl: reportUrl,
                      archived: isArchived
@@ -14192,6 +14216,35 @@
         } catch (e) {
             setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
         }
+    }
+
+    function clearReportingMapDataLayers() {
+        if (reportingMap && reportingMap.closePopup) reportingMap.closePopup();
+        [alertPolygonLayer, customSkyAlertLayer, lsrLayer].forEach(function(layer) {
+            if (layer && layer.clearLayers) layer.clearLayers();
+        });
+        if (userReportLayer && userReportLayer.clearLayers) userReportLayer.clearLayers();
+        ['nws', 'environment-canada', 'custom-skymonitor', 'iem-lsr', 'skymonitor-reports']
+            .forEach(removeReportingPopupEntries);
+        customSkyDeepLinkEntry = null;
+    }
+
+    function refreshReportingMap() {
+        // Do not let the deep-link archive fallback resurrect an old polygon.
+        reportingMapManualRefresh = true;
+        customSkyDeepLinkHandled = true;
+        window._pendingCustomSkyMDKey = '';
+        clearReportingMapDataLayers();
+        try {
+            const refreshedUrl = new URL(window.location.href);
+            if (refreshedUrl.searchParams.has('alert')) {
+                refreshedUrl.searchParams.delete('alert');
+                window.history.replaceState(window.history.state, '', refreshedUrl.pathname +
+                    (refreshedUrl.search ? refreshedUrl.search : '') +
+                    (refreshedUrl.hash || ''));
+            }
+        } catch (e) {}
+        loadReportingMapData();
     }
 
     function updatePinCoordsDisplay() {
@@ -16559,6 +16612,7 @@
             spcMdEnabled:      localStorage.getItem('pref_spc_md') === 'true',
             wpcOutlookEnabled: localStorage.getItem('pref_wpc_outlook') === 'true',
             wpcMpdEnabled:     localStorage.getItem('pref_wpc_mpd') === 'true',
+            customAlertsEnabled: localStorage.getItem('pref_custom_alerts') === 'true',
         };
     }
 
@@ -16610,7 +16664,8 @@
             pref_spc_outlook:   String(document.getElementById('pref-spc-outlook').checked),
             pref_spc_md:        String(document.getElementById('pref-spc-md').checked),
             pref_wpc_outlook:   String(document.getElementById('pref-wpc-outlook').checked),
-            pref_wpc_mpd:       String(document.getElementById('pref-wpc-mpd').checked)
+            pref_wpc_mpd:       String(document.getElementById('pref-wpc-mpd').checked),
+            pref_custom_alerts: String(document.getElementById('pref-custom-alerts').checked)
         };
         Object.keys(prefs).forEach(function(k) {
             localStorage.setItem(k, prefs[k]);
@@ -16628,7 +16683,17 @@
     }
 
     function onAlertEnabledChange() {
-        var enabled = document.getElementById('pref-alert-enabled').checked;
+        var enabled = document.getElementById('pref-alert-enabled').checked ||
+            document.getElementById('pref-custom-alerts').checked;
+        var row = document.getElementById('alert-type-row');
+        row.style.opacity = enabled ? '1' : '0.35';
+        row.style.pointerEvents = enabled ? '' : 'none';
+        saveNotifPrefs();
+    }
+
+    function onCustomAlertsChange() {
+        var enabled = document.getElementById('pref-alert-enabled').checked ||
+            document.getElementById('pref-custom-alerts').checked;
         var row = document.getElementById('alert-type-row');
         row.style.opacity = enabled ? '1' : '0.35';
         row.style.pointerEvents = enabled ? '' : 'none';
@@ -16643,11 +16708,13 @@
         document.getElementById('pref-spc-md').checked        = prefs.spcMdEnabled;
         document.getElementById('pref-wpc-outlook').checked   = prefs.wpcOutlookEnabled;
         document.getElementById('pref-wpc-mpd').checked       = prefs.wpcMpdEnabled;
+        document.getElementById('pref-custom-alerts').checked = prefs.customAlertsEnabled;
         document.getElementById('pref-alert-all').classList.toggle('active', prefs.alertType === 'all');
         document.getElementById('pref-alert-important').classList.toggle('active', prefs.alertType === 'important');
         var row = document.getElementById('alert-type-row');
-        row.style.opacity = prefs.alertEnabled ? '1' : '0.35';
-        row.style.pointerEvents = prefs.alertEnabled ? '' : 'none';
+        var alertTypesEnabled = prefs.alertEnabled || prefs.customAlertsEnabled;
+        row.style.opacity = alertTypesEnabled ? '1' : '0.35';
+        row.style.pointerEvents = alertTypesEnabled ? '' : 'none';
         document.getElementById('notif-prefs-modal').style.display = 'flex';
     }
 

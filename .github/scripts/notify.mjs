@@ -1,7 +1,8 @@
 // SkyMonitor — GitHub Actions notification runner
 // Reads subscribers from Cloudflare D1 via REST API, sends Web Push notifications
 // for NWS, Environment Canada, MeteoAlarm, and a broad international fallback.
-// Runs every minute via cron-job.org; WPC MPD checks are gated to every fifth minute.
+// Runs every minute via cron-job.org; WPC MPDs are checked on every Actions run
+// and SkyMonitor Custom Alerts are checked once every five Actions runs.
 //
 // Required GitHub Actions secrets:
 //   CF_API_TOKEN       — Cloudflare API token with D1:Edit permission
@@ -32,6 +33,18 @@ const D1_URL = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/d
 // GitHub Actions must use the direct Worker hostname. The custom API domain
 // is protected by Cloudflare Bot Fight Mode and can challenge server requests.
 const SKYMONITOR_WORKER_URL = "https://skymonitor-apis.skymonitor-account.workers.dev";
+const WPC_MPD_INDEX_URL = "https://www.wpc.ncep.noaa.gov/metwatch/metwatch_mpd.php";
+const WPC_MPD_BASE_URL  = "https://www.wpc.ncep.noaa.gov/metwatch";
+const WPC_USER_AGENT    = "SkyMonitor-GitHubActions/1.1 (+https://skymonitor.app)";
+const RUN_CUSTOM_ALERTS = new Date().getUTCMinutes() % 5 === 0;
+
+// The MPD catalog is shared by all subscribers during this Actions run.
+// This avoids repeating the same WPC index/page requests once per subscriber.
+let wpcMpdCatalogPromise = null;
+// The active custom-alert feed is shared by all subscribers during the
+// five-minute Actions run. Use the workers.dev hostname because GitHub
+// Actions can be challenged on the api.skymonitor.app custom domain.
+let customAlertsPromise = null;
 
 async function d1Query(sql, params = []) {
   const res = await fetch(D1_URL, {
@@ -389,6 +402,146 @@ async function fetchPiratePushAlerts(lat, lon) {
   }
 }
 
+function customAlertValue(properties, keys, fallback = "") {
+  for (const key of keys) {
+    const value = properties?.[key];
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+  return fallback;
+}
+
+function customAlertId(feature) {
+  const properties = feature?.properties || {};
+  const raw = customAlertValue(properties, [
+    "revision_id", "revisionId", "alert_id", "alertId", "alertID",
+    "id", "uuid", "alertUuid", "alert_uuid",
+  ]) || feature?.id;
+  return raw ? `ca:${String(raw).replace(/[^a-zA-Z0-9_-]/g, "_")}` : null;
+}
+
+function customAlertIsActive(feature, now = Date.now()) {
+  const properties = feature?.properties || {};
+  const active = customAlertValue(properties, ["active", "is_active", "isActive"]).toLowerCase();
+  if (["0", "false", "no", "inactive"].includes(active)) return false;
+
+  const status = customAlertValue(properties, ["status", "state"]).toLowerCase();
+  if (["expired", "inactive", "closed", "ended", "cancelled", "canceled", "superseded"].includes(status)) {
+    return false;
+  }
+
+  const expires = customAlertValue(properties, [
+    "expires", "expiresAt", "expires_at", "expiration", "expirationTime",
+    "ends", "end_time", "endTime",
+  ]);
+  if (expires) {
+    const expiresAt = new Date(expires).getTime();
+    if (Number.isFinite(expiresAt) && expiresAt <= now) return false;
+  }
+  return true;
+}
+
+async function fetchCustomPushAlerts() {
+  if (!customAlertsPromise) {
+    customAlertsPromise = (async () => {
+      try {
+        const res = await fetch(`${SKYMONITOR_WORKER_URL}/api/active-alerts`, {
+          headers: {
+            Accept: "application/geo+json, application/json",
+            "User-Agent": "SkyMonitor-GitHubActions/1.1",
+          },
+          signal: AbortSignal.timeout(20000),
+        });
+        if (!res.ok) {
+          console.warn(`[SkyMonitor] Custom alert API → HTTP ${res.status}`);
+          return { ok: false, alerts: [] };
+        }
+        const payload = await res.json();
+        const alerts = (payload.features || [])
+          .filter(feature => feature?.geometry && customAlertIsActive(feature))
+          .map(feature => {
+            const properties = feature.properties || {};
+            const headline = customAlertValue(
+              properties,
+              ["headline", "title", "name", "message"],
+              "SkyMonitor Custom Alert",
+            );
+            return {
+              provider: "custom-skymonitor",
+              id: customAlertId(feature),
+              geometry: feature.geometry,
+              properties: {
+                ...properties,
+                event: customAlertValue(
+                  properties,
+                  ["alertClass", "alert_class", "severity", "alertType", "alert_type", "type"],
+                  headline,
+                ),
+                headline,
+                description: customAlertValue(properties, ["description", "details", "body"]),
+                summary: customAlertValue(
+                  properties,
+                  ["summary", "shortSummary", "short_summary", "shortDescription", "short_description"],
+                ),
+                instructions: customAlertValue(
+                  properties,
+                  ["instructions", "recommendedAction", "recommended_action", "monitoring_guidance"],
+                ),
+                expires: customAlertValue(
+                  properties,
+                  ["expires", "expiresAt", "expires_at", "expiration", "expirationTime", "ends", "endTime"],
+                ),
+              },
+            };
+          })
+          .filter(alert => alert.id);
+        console.log(`[SkyMonitor] Custom alert API → ${alerts.length} active alert(s)`);
+        return { ok: true, alerts };
+      } catch (err) {
+        console.warn(`[SkyMonitor] Custom alert API failed: ${err.message}`);
+        return { ok: false, alerts: [] };
+      }
+    })();
+  }
+  return customAlertsPromise;
+}
+
+function customAlertIsImportant(alert) {
+  const properties = alert.properties || {};
+  const classText = [
+    customAlertValue(properties, [
+      "alertClass", "alert_class", "alertClassCode", "alert_class_code",
+      "class", "severity", "alertType", "alert_type", "event", "type",
+    ]),
+    customAlertValue(properties, ["qualifiers", "qualifier", "alertQualifiers", "alert_qualifiers", "tags"]),
+  ].join(" ").toUpperCase().replace(/[\/_-]+/g, " ");
+
+  return /\b(?:TOR|TORNADO|TOW|TORNADO WATCH|SVR|SVW|SEVERE THUNDERSTORM|FFW|FLASH FLOOD|FLW|FLOOD WATCH)\b/.test(classText);
+}
+
+function buildCustomAlertNotification(properties) {
+  const headline = customAlertValue(
+    properties,
+    ["headline", "title", "name", "message"],
+    "SkyMonitor Custom Alert",
+  );
+  const detail = customAlertValue(
+    properties,
+    ["summary", "shortSummary", "short_summary", "description", "details", "body"],
+    "Review the alert in SkyMonitor.",
+  );
+  const instructions = customAlertValue(
+    properties,
+    ["instructions", "recommendedAction", "recommended_action", "monitoring_guidance"],
+  );
+  const body = [detail, instructions].filter(Boolean).join(" ").slice(0, 500);
+  return {
+    title: `⚠️ Custom Alert: ${headline}`,
+    body: body || "A SkyMonitor custom alert has been issued for your area.",
+  };
+}
+
 function pushMeteoAlarmSeverity(value) {
   const raw = String(value || "").toLowerCase();
   if (raw.includes("red") || raw.includes("extreme") || raw === "4") return "extreme";
@@ -571,9 +724,115 @@ async function fetchArcGIS(url) {
   return undefined;
 }
 
+// ── Direct WPC MPD lookup ──────────────────────────────────────
+// This intentionally bypasses the Cloudflare Worker. GitHub Actions runs
+// server-side, so browser CORS rules do not apply here.
+
+async function fetchWpcText(url) {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        Accept: "text/html, text/plain;q=0.9, */*;q=0.8",
+        "User-Agent": WPC_USER_AGENT,
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) {
+      console.warn(`[SkyMonitor] WPC fetch → HTTP ${res.status} for ${url}`);
+      return null;
+    }
+    const text = await res.text();
+    return text || null;
+  } catch (e) {
+    console.warn(`[SkyMonitor] WPC fetch error for ${url}: ${e.message}`);
+    return null;
+  }
+}
+
+function parseWpcMpdPolygon(html) {
+  const match = html.match(/LAT\.\.\.LON\s+([\d\s\n]+)/);
+  if (!match) return null;
+
+  const raw = match[1]
+    .replace(/\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(value => /^\d{8}$/.test(value));
+
+  const polygon = [];
+  for (const point of raw) {
+    const pointLat = parseInt(point.substring(0, 4), 10) / 100;
+    const rawLon   = parseInt(point.substring(4, 8), 10) / 100;
+    // WPC drops the leading "1" from longitudes >= 100W.
+    const pointLon = -(rawLon < 60 ? rawLon + 100 : rawLon);
+    polygon.push([pointLon, pointLat]);
+  }
+  return polygon.length >= 3 ? polygon : null;
+}
+
+function pointInWpcPolygon(point, vertices) {
+  const [x, y] = point;
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const [xi, yi] = vertices[i];
+    const [xj, yj] = vertices[j];
+    const intersects =
+      ((yi > y) !== (yj > y)) &&
+      (x < (xj - xi) * (y - yi) / (yj - yi + 0.0000001) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+async function loadWpcMpdCatalog() {
+  const indexText = await fetchWpcText(WPC_MPD_INDEX_URL);
+  if (!indexText) return null;
+
+  const mpdIds = [...new Set(
+    [...indexText.matchAll(/MPD\s+#(\d{4})/g)].map(match => match[1]),
+  )];
+  const catalog = [];
+
+  for (const id of mpdIds) {
+    const url = `${WPC_MPD_BASE_URL}/mcd${id}.html`;
+    const html = await fetchWpcText(url);
+    if (!html) continue;
+    const polygon = parseWpcMpdPolygon(html);
+    if (polygon) catalog.push({ id, url, polygon });
+  }
+
+  return catalog;
+}
+
+async function fetchDirectWpcMpds(lat, lon) {
+  if (!wpcMpdCatalogPromise) {
+    wpcMpdCatalogPromise = loadWpcMpdCatalog();
+  }
+
+  try {
+    const catalog = await wpcMpdCatalogPromise;
+    if (!catalog) return { ok: false, mpds: [] };
+
+    return {
+      ok: true,
+      mpds: catalog
+        .filter(item => pointInWpcPolygon([lon, lat], item.polygon))
+        .map(item => ({
+          id: item.id,
+          url: item.url,
+          polygon: [...item.polygon, item.polygon[0]],
+        })),
+    };
+  } catch (e) {
+    console.warn(`[SkyMonitor] Direct WPC MPD lookup failed: ${e.message}`);
+    return { ok: false, mpds: [] };
+  }
+}
+
 // ── SPC/WPC check ─────────────────────────────────────────────
 
-async function checkSPCAndWPC(row, vapid, checkMpd = true) {
+async function checkSPCAndWPC(row, vapid) {
   const prefs = parsePushPreferences(row.prefs);
   if (gpsIsOutsideUS(prefs)) {
     console.log("[SkyMonitor] SPC/WPC: skipped (GPS outside the U.S.)");
@@ -655,34 +914,16 @@ async function checkSPCAndWPC(row, vapid, checkMpd = true) {
     }
   }
 
-  if (checkMpd && prefs.wpcMpdEnabled) {
+  if (prefs.wpcMpdEnabled) {
     let currentMpdNums = [];
     let mpdFetchOk = false;
-    try {
-      const mpdRes = await fetch(
-        `${SKYMONITOR_WORKER_URL}/api/weather/mpd?lat=${productCoords.lat}&lon=${productCoords.lon}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "SkyMonitor-GitHubActions/1.1",
-          },
-          signal: AbortSignal.timeout(6000),
-        }
-      );
-      if (mpdRes.ok) {
-        const mpdData = await mpdRes.json();
-        currentMpdNums = (mpdData.mpds || []).map(m => String(m.id).replace(/[^0-9]/g, "")).filter(Boolean);
-        mpdFetchOk = true;
-      } else {
-        const responseBody = await mpdRes.text().catch(() => "");
-        const rayId = mpdRes.headers.get("cf-ray") || "not provided";
-        console.warn(
-          `[SkyMonitor] WPC MPD endpoint → HTTP ${mpdRes.status} ` +
-          `(Cloudflare Ray ID: ${rayId})` +
-          (responseBody ? ` — ${responseBody.slice(0, 300)}` : "")
-        );
-      }
-    } catch (e) { console.warn(`[SkyMonitor] WPC MPD fetch error: ${e.message}`); }
+    const mpdResult = await fetchDirectWpcMpds(productCoords.lat, productCoords.lon);
+    if (mpdResult.ok) {
+      currentMpdNums = mpdResult.mpds
+        .map(m => String(m.id).replace(/[^0-9]/g, ""))
+        .filter(Boolean);
+      mpdFetchOk = true;
+    }
 
     const lastKnown = row.last_wpc_mpd ? String(row.last_wpc_mpd).split(",").filter(Boolean) : [];
     console.log(`[SkyMonitor] WPC MPD: current=[${currentMpdNums.join(",")}], last=[${lastKnown.join(",")}], fetchOk=${mpdFetchOk}`);
@@ -754,6 +995,7 @@ async function checkSPCAndWPC(row, vapid, checkMpd = true) {
 // ── Main ──────────────────────────────────────────────────────
 
 console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
+console.log(`[SkyMonitor] Custom alerts: ${RUN_CUSTOM_ALERTS ? "enabled for this run" : "skipped (runs every 5 minutes)"}`);
 
 // ── Cross-check: Worker-served key vs GitHub secret ───────────
 // The subscription is registered with whatever key the Worker serves at
@@ -803,9 +1045,6 @@ console.log(`[SkyMonitor] Starting — ${new Date().toISOString()}`);
     process.exit(1);
   }
 }
-
-const CHECK_WPC_MPD_THIS_RUN = Math.floor(Date.now() / 60000) % 5 === 0;
-console.log(`[SkyMonitor] WPC MPD check this run: ${CHECK_WPC_MPD_THIS_RUN ? "yes" : "no"}`);
 
 const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 
@@ -1019,12 +1258,105 @@ for (const row of rows) {
     }
   }
 
+  // ── SkyMonitor Custom Alerts ────────────────────────────────
+  // Custom alerts are intentionally checked only once every five Actions
+  // runs. This keeps the custom-alert API within the Cloudflare free request
+  // budget while preserving the same Important Only / All preference used by
+  // regular weather alerts.
+  if (!subDeleted && RUN_CUSTOM_ALERTS && prefs.customAlertsEnabled === true) {
+    const customResult = await fetchCustomPushAlerts();
+    if (customResult.ok) {
+      let rawCustomKnown = [];
+      try {
+        const latest = await d1Query(
+          "SELECT known_alert_ids FROM push_subscriptions WHERE endpoint = ?",
+          [row.endpoint],
+        );
+        rawCustomKnown = JSON.parse(latest?.results?.[0]?.known_alert_ids || "[]");
+      } catch (err) {
+        console.warn(`[SkyMonitor] Could not refresh custom alert IDs: ${err.message}`);
+      }
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const knownParsed = rawCustomKnown.map(raw => {
+        const text = String(raw);
+        const pipe = text.lastIndexOf("|");
+        if (pipe < 0) return { raw: text, id: text, exp: Infinity };
+        return {
+          raw: text,
+          id: text.slice(0, pipe),
+          exp: parseInt(text.slice(pipe + 1), 10) || Infinity,
+        };
+      }).filter(entry => entry.exp > nowSec);
+      const knownSet = new Set(knownParsed.map(entry => entry.id));
+      const coveredAlerts = customResult.alerts.filter(alert =>
+        pushPointInGeoJson(row.lon, row.lat, alert.geometry)
+      );
+      const newAlerts = coveredAlerts.filter(alert => !knownSet.has(alert.id));
+      const filteredAlerts = prefs.alertType === "important"
+        ? newAlerts.filter(customAlertIsImportant)
+        : newAlerts;
+      const sentCustomIds = new Map();
+      const subscription = JSON.parse(row.subscription);
+
+      console.log(
+        `[SkyMonitor] Custom alerts: covered=${coveredAlerts.length}, ` +
+        `new=${newAlerts.length}, after filter=${filteredAlerts.length}`,
+      );
+
+      for (const alert of filteredAlerts) {
+        const { title, body } = buildCustomAlertNotification(alert.properties);
+        const payload = JSON.stringify({
+          title,
+          body,
+          icon: "https://cdn-icons-png.flaticon.com/512/1779/1779927.png",
+          badge: "https://cdn-icons-png.flaticon.com/512/1779/1779927.png",
+          tag: alert.id,
+          url: "/sky-monitor/#reporting",
+        });
+        try {
+          const req = await buildPushRequest(subscription, payload, vapid, VAPID_EMAIL);
+          const res = await fetch(req.url, req.init);
+          const rawBody = res.ok ? "" : await res.text().catch(() => "");
+          if (isDeadSubscription(res.status, rawBody)) {
+            await d1Query("DELETE FROM push_subscriptions WHERE endpoint = ?", [row.endpoint]);
+            subDeleted = true;
+            break;
+          }
+          if (res.ok || res.status === 201) {
+            const expiry = alert.properties?.expires;
+            const parsedExpiry = expiry ? Math.floor(new Date(expiry).getTime() / 1000) : 0;
+            const expiryTs = parsedExpiry > nowSec ? parsedExpiry : nowSec + 86400 * 7;
+            sentCustomIds.set(alert.id, `${alert.id}|${expiryTs}`);
+          }
+        } catch (err) {
+          console.warn(`[SkyMonitor] custom alert push error: ${err.message}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      if (!subDeleted && sentCustomIds.size > 0) {
+        const merged = [
+          ...knownParsed.map(entry => entry.raw),
+          ...sentCustomIds.values(),
+        ];
+        const newKnown = [...new Set(merged)].slice(-500);
+        if (JSON.stringify(newKnown) !== JSON.stringify(rawCustomKnown)) {
+          await d1Query(
+            "UPDATE push_subscriptions SET known_alert_ids = ?, updated_at = datetime('now') WHERE endpoint = ?",
+            [JSON.stringify(newKnown), row.endpoint],
+          );
+        }
+      }
+    }
+  }
+
   // Skip remaining checks for this subscriber if their subscription was just deleted
   // (stale key — no point attempting more pushes that will also 403).
   if (subDeleted) continue;
 
   // ── SPC/WPC nerd-mode ─────────────────────────────────────
-  try { await checkSPCAndWPC(row, vapid, CHECK_WPC_MPD_THIS_RUN); }
+  try { await checkSPCAndWPC(row, vapid); }
   catch (e) { console.warn(`[SkyMonitor] SPC/WPC check error: ${e.message}`); }
 }
 
