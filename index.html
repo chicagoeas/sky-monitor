@@ -1095,8 +1095,8 @@
     <!-- Leaflet JS (v1.0.4 NEW) -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-    <!-- OPERA GeoTIFF support: the Worker supplies one cached raster frame;
-         GeoRasterLayer reprojects it into the Leaflet map in the browser. -->
+    <!-- OPERA GeoTIFF support: the Worker exposes the COG with HTTP Range
+         support; GeoRasterLayer reads only the visible raster windows. -->
     <script src="https://unpkg.com/proj4@2.22.0/dist/proj4.js"></script>
     <script>
         // OPERA CIRRUS GeoTIFFs use a custom GeoTIFF projection (code 32767)
@@ -14358,17 +14358,12 @@
             return Promise.resolve();
         }
 
-        reportingOperaLoadPromise = fetch(OPERA_RADAR_PROXY_URL, {
-            method: 'GET',
-            cache: 'default',
-            headers: { 'Accept': 'image/tiff, application/octet-stream' }
-        })
-            .then(function(response) {
-                if (!response.ok) throw new Error('OPERA Worker returned ' + response.status);
-                return response.arrayBuffer();
-            })
-            .then(function(arrayBuffer) {
-                return Promise.resolve(parser(arrayBuffer));
+        // Passing the URL lets geotiff.js use HTTP Range requests against the
+        // Cloud Optimized GeoTIFF instead of downloading the entire
+        // multi-megabyte frame before drawing anything.
+        reportingOperaLoadPromise = Promise.resolve()
+            .then(function() {
+                return Promise.resolve(parser(OPERA_RADAR_PROXY_URL));
             })
             .then(function(georaster) {
                 // The OPERA file uses a custom GeoTIFF CRS. georaster exposes
@@ -14386,7 +14381,8 @@
                 var nextLayer = new window.GeoRasterLayer({
                     georaster: georaster,
                     opacity: 0.65,
-                    resolution: 128,
+                    resolution: 64,
+                    resampleMethod: 'nearest',
                     noWrap: true,
                     pixelValuesToColorFn: _operaReflectivityColor
                 });
