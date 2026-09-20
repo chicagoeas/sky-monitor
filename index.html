@@ -1101,17 +1101,19 @@
     <script>
         // OPERA CIRRUS GeoTIFFs use a custom GeoTIFF projection (code 32767)
         // with these LAEA parameters rather than publishing a standard EPSG
-        // code. GeoRasterLayer prefixes string projections with "EPSG:" when
-        // it resolves them, so register both spellings and normalize incoming
-        // rasters to the canonical prefixed spelling.
-        const OPERA_CIRRUS_PROJECTION = 'EPSG:OPERA_CIRRUS_LAEA';
+        // code. GeoRasterLayer may prefix a bare string projection with
+        // "EPSG:", so keep the raster's value bare and register every spelling
+        // it can try in both the public and per-layer proj4 registries.
+        const OPERA_CIRRUS_PROJECTION = 'OPERA_CIRRUS_LAEA';
         const OPERA_CIRRUS_PROJECTION_DEF =
             '+proj=laea +lat_0=55 +lon_0=10 +x_0=1950000 +y_0=-2100000 +ellps=WGS84 +units=m +no_defs';
-        if (window.proj4 && typeof window.proj4.defs === 'function') {
-            window.proj4.defs('OPERA_CIRRUS_LAEA', OPERA_CIRRUS_PROJECTION_DEF);
-            window.proj4.defs(OPERA_CIRRUS_PROJECTION, OPERA_CIRRUS_PROJECTION_DEF);
-            window.proj4.defs('EPSG:32767', OPERA_CIRRUS_PROJECTION_DEF);
+        function _registerOperaProjection(proj4Instance) {
+            if (!proj4Instance || typeof proj4Instance.defs !== 'function') return;
+            proj4Instance.defs('OPERA_CIRRUS_LAEA', OPERA_CIRRUS_PROJECTION_DEF);
+            proj4Instance.defs('EPSG:OPERA_CIRRUS_LAEA', OPERA_CIRRUS_PROJECTION_DEF);
+            proj4Instance.defs('EPSG:32767', OPERA_CIRRUS_PROJECTION_DEF);
         }
+        _registerOperaProjection(window.proj4);
     </script>
     <script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
     <script src="https://unpkg.com/georaster-layer-for-leaflet@4.1.2/dist/v3/webpack/bundle/georaster-layer-for-leaflet.min.js"></script>
@@ -14388,6 +14390,10 @@
                     noWrap: true,
                     pixelValuesToColorFn: _operaReflectivityColor
                 });
+                // GeoRasterLayer creates its own merged proj4 instance. Add
+                // the custom CRS to that exact instance before Leaflet asks it
+                // to compute the raster bounds or draw its first tile.
+                _registerOperaProjection(nextLayer.proj4);
 
                 if (reportingOperaRadarLayer && reportingRadarLayer) {
                     reportingRadarLayer.removeLayer(reportingOperaRadarLayer);
