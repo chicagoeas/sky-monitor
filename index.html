@@ -2523,6 +2523,61 @@
         return weeks + 'w' + (remainingDays ? ' ' + remainingDays + 'd' : '') + ' ago';
     }
 
+    function formatExpiredAgo(totalSeconds) {
+        var seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        var totalMinutes = Math.floor(seconds / 60);
+        if (totalMinutes < 60) {
+            return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes') + ' ago';
+        }
+
+        var totalHours = Math.floor(totalMinutes / 60);
+        var minutes = totalMinutes % 60;
+        if (totalHours < 24) {
+            return totalHours + (totalHours === 1 ? ' hour' : ' hours') +
+                (minutes ? ' ' + minutes + (minutes === 1 ? ' minute' : ' minutes') : '') +
+                ' ago';
+        }
+
+        var totalDays = Math.floor(totalHours / 24);
+        var hours = totalHours % 24;
+        if (totalDays < 7) {
+            return totalDays + (totalDays === 1 ? ' day' : ' days') +
+                (hours ? ' ' + hours + (hours === 1 ? ' hour' : ' hours') : '') +
+                ' ago';
+        }
+
+        if (totalDays < 30) {
+            var weeks = Math.floor(totalDays / 7);
+            var weekDays = totalDays % 7;
+            return weeks + (weeks === 1 ? ' week' : ' weeks') +
+                (weekDays ? ' ' + weekDays + (weekDays === 1 ? ' day' : ' days') : '') +
+                ' ago';
+        }
+
+        if (totalDays < 365) {
+            var months = Math.floor(totalDays / 30);
+            var monthDays = totalDays % 30;
+            var monthWeeks = Math.floor(monthDays / 7);
+            var leftoverDays = monthDays % 7;
+            return months + (months === 1 ? ' month' : ' months') +
+                (monthWeeks ? ' ' + monthWeeks + (monthWeeks === 1 ? ' week' : ' weeks') : '') +
+                (leftoverDays ? ' ' + leftoverDays + (leftoverDays === 1 ? ' day' : ' days') : '') +
+                ' ago';
+        }
+
+        var years = Math.floor(totalDays / 365);
+        var yearDays = totalDays % 365;
+        var yearMonths = Math.floor(yearDays / 30);
+        var remainingYearDays = yearDays % 30;
+        var yearWeeks = Math.floor(remainingYearDays / 7);
+        var finalDays = remainingYearDays % 7;
+        return years + (years === 1 ? ' year' : ' years') +
+            (yearMonths ? ' ' + yearMonths + (yearMonths === 1 ? ' month' : ' months') : '') +
+            (yearWeeks ? ' ' + yearWeeks + (yearWeeks === 1 ? ' week' : ' weeks') : '') +
+            (finalDays ? ' ' + finalDays + (finalDays === 1 ? ' day' : ' days') : '') +
+            ' ago';
+    }
+
     function updateTimestamp() {
         if (!lastSyncTime) return;
         const diff = Math.max(0, Math.floor((new Date() - lastSyncTime) / 1000));
@@ -13186,7 +13241,8 @@
 
     function reportingPopupDetailRows(rows) {
         return rows.filter(function(row) { return row && row[1]; }).map(function(row) {
-            return '<p><b>' + escapeHtml(row[0]) + '</b><span class="reporting-popup-pre">'
+            var labelStyle = row[2] ? ' style="color:' + escapeHtml(row[2]) + ';"' : '';
+            return '<p><b' + labelStyle + '>' + escapeHtml(row[0]) + '</b><span class="reporting-popup-pre">'
                 + escapeHtml(row[1]) + '</span></p>';
         }).join('');
     }
@@ -14071,13 +14127,19 @@
                     }
                 });
                 const issuedDate = parseReportDate(timeInfo.value);
-                const archiveAge = isArchived && issuedDate
-                    ? formatSyncAge(Math.max(0, (Date.now() - issuedDate.getTime()) / 1000))
+                const expiresDate = parseReportDate(expires);
+                const expiredAt = expiresDate && expiresDate.getTime() <= Date.now()
+                    ? expiresDate
+                    : null;
+                const expiredAge = isArchived && expiredAt
+                    ? formatExpiredAgo(Math.max(0, (Date.now() - expiredAt.getTime()) / 1000))
                     : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
                      [timeInfo.actorLabel, issuer],
-                     [isArchived ? 'Archive status' : '', isArchived ? 'Expired alert · issued ' + archiveAge : '']
+                     [expiredAge ? 'Expired' : (isArchived ? 'Archive status' : ''),
+                         expiredAge || (isArchived ? 'Archived alert' : ''),
+                         expiredAge ? '#ff5252' : '']
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
@@ -14092,8 +14154,10 @@
                      customAlertIds: alertIdentifiers,
                     color: color,
                     title: escapeHtml(headline),
-                     meta: escapeHtml(alertType) + (isArchived
-                        ? (archiveAge ? ' · ' + escapeHtml(archiveAge) : '')
+                      meta: expiredAge
+                         ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
+                         : escapeHtml(alertType) + (isArchived
+                         ? ''
                         : (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
                        detail: customDetail,
                      reportUrl: reportUrl,
