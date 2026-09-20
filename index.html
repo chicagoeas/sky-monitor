@@ -4699,8 +4699,20 @@
     // to the PirateWeather backstop rather than comparing against climatologically unrelated stations.
     function _weatherFetch(url, options, timeoutMs) {
         options = options || {};
+        // Weather responses must never come from a browser, service-worker, or
+        // intermediary cache. This matters most on the first page load, where
+        // an older cached response can otherwise win the race before the app's
+        // normal refresh cycle gets a chance to run.
+        var requestOptions = Object.assign({}, options);
+        requestOptions.cache = 'no-store';
+        var requestMethod = String(requestOptions.method || 'GET').toUpperCase();
+        var requestUrl = url;
+        if (requestMethod === 'GET' || requestMethod === 'HEAD') {
+            requestUrl += (requestUrl.indexOf('?') === -1 ? '?' : '&') +
+                '_sm_fresh=' + Date.now();
+        }
         if (!timeoutMs || typeof AbortController !== 'function') {
-            return fetch(url, options);
+            return fetch(requestUrl, requestOptions);
         }
         // Promise.race alone only rejects the caller; the original fetch keeps
         // running in the background. On mobile Safari that leaves sockets and
@@ -4715,9 +4727,9 @@
             if (parentSignal.aborted) controller.abort();
             else parentSignal.addEventListener('abort', forwardAbort, { once: true });
         }
-        var requestOptions = Object.assign({}, options, { signal: controller.signal });
+        requestOptions.signal = controller.signal;
         var timer;
-        var request = fetch(url, requestOptions);
+        var request = fetch(requestUrl, requestOptions);
         var timeout = new Promise(function(_, reject) {
             timer = setTimeout(function() {
                 controller.abort();
@@ -16185,6 +16197,12 @@
     // not be inferred from the coordinate key: live GPS is allowed to drift
     // without turning every mobile refresh into a first load.
     async function loadAll(force) {
+        // The service worker cleanup below runs asynchronously during window
+        // load. Wait for it before the very first weather request so an old
+        // cached API response cannot win the initial-load race.
+        if (!weatherLoadHasStarted && window._weatherCacheCleanupPromise) {
+            try { await window._weatherCacheCleanupPromise; } catch (e) {}
+        }
         const key = lat + ',' + lon;
         if (!force && _loadAllPromise && _loadAllKey === key) return _loadAllPromise;
         const isExplicitLocationLoad = force === true;
@@ -16425,7 +16443,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('./sw.js?v=20260911-radar-turnstile-fix').then(function(reg) {
+            navigator.serviceWorker.register('./sw.js?v=20260919-fresh-weather').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(function() {
@@ -16437,12 +16455,13 @@
 
             // Evict large weather API responses from SW cache — only the app shell should persist.
             // These URLs change every refresh anyway so caching them wastes 50+ MB.
+            window._weatherCacheCleanupPromise = Promise.resolve();
             if ('caches' in window) {
-                caches.keys().then(function(cacheNames) {
-                    cacheNames.forEach(function(cacheName) {
-                        caches.open(cacheName).then(function(cache) {
-                            cache.keys().then(function(reqs) {
-                                reqs.forEach(function(req) {
+                window._weatherCacheCleanupPromise = caches.keys().then(function(cacheNames) {
+                    return Promise.all(cacheNames.map(function(cacheName) {
+                        return caches.open(cacheName).then(function(cache) {
+                            return cache.keys().then(function(reqs) {
+                                return Promise.all(reqs.map(function(req) {
                                     var u = req.url;
                                     if (u.includes('api.weather.gov') ||
                                         u.includes('pirateweather.net') ||
@@ -16453,12 +16472,13 @@
                                         u.includes('api.openstreetmap') ||
                                         u.includes('nominatim') ||
                                         u.includes('workers.dev')) {
-                                        cache.delete(req);
+                                        return cache.delete(req);
                                     }
-                                });
+                                    return Promise.resolve();
+                                }));
                             });
                         });
-                    });
+                    }));
                 });
             }
         });
