@@ -1443,6 +1443,16 @@
                     <span class="ios-toggle-track"></span>
                 </label>
             </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
+                <div>
+                    <div style="font-size:0.82em; font-weight:700; color:white;">&#9888;&#65039; SkyMonitor Custom Alerts</div>
+                    <div style="font-size:0.62em; color:#556677; margin-top:2px;">Notify when a custom alert covers you</div>
+                </div>
+                <label class="ios-toggle">
+                    <input type="checkbox" id="pref-custom-alerts" onchange="onCustomAlertsChange()">
+                    <span class="ios-toggle-track"></span>
+                </label>
+            </div>
         </div>
         <div id="us-advanced-notifications-note" style="display:none; border-top:1px solid rgba(255,255,255,0.07); padding-top:14px; margin-top:4px; font-size:0.68em; line-height:1.45; color:#778899;">
             SPC/WPC outlooks and mesoscale discussions are only available for U.S. GPS locations.
@@ -1976,7 +1986,7 @@
         function migrate() {
             var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
                         'skymonitor_swipe','pref_alert_enabled','pref_alert_type',
-                        'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd',
+                        'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd','pref_custom_alerts',
                         'report_radar_on','report_alerts_on','report_lsr_on',
                         'report_show_older','report_privacy_mode','report_custom_sky_alerts'];
             get(S.settings, '__migrated_v1').then(function(done) {
@@ -16602,6 +16612,7 @@
             spcMdEnabled:      localStorage.getItem('pref_spc_md') === 'true',
             wpcOutlookEnabled: localStorage.getItem('pref_wpc_outlook') === 'true',
             wpcMpdEnabled:     localStorage.getItem('pref_wpc_mpd') === 'true',
+            customAlertsEnabled: localStorage.getItem('pref_custom_alerts') === 'true',
         };
     }
 
@@ -16653,7 +16664,8 @@
             pref_spc_outlook:   String(document.getElementById('pref-spc-outlook').checked),
             pref_spc_md:        String(document.getElementById('pref-spc-md').checked),
             pref_wpc_outlook:   String(document.getElementById('pref-wpc-outlook').checked),
-            pref_wpc_mpd:       String(document.getElementById('pref-wpc-mpd').checked)
+            pref_wpc_mpd:       String(document.getElementById('pref-wpc-mpd').checked),
+            pref_custom_alerts: String(document.getElementById('pref-custom-alerts').checked)
         };
         Object.keys(prefs).forEach(function(k) {
             localStorage.setItem(k, prefs[k]);
@@ -16671,7 +16683,17 @@
     }
 
     function onAlertEnabledChange() {
-        var enabled = document.getElementById('pref-alert-enabled').checked;
+        var enabled = document.getElementById('pref-alert-enabled').checked ||
+            document.getElementById('pref-custom-alerts').checked;
+        var row = document.getElementById('alert-type-row');
+        row.style.opacity = enabled ? '1' : '0.35';
+        row.style.pointerEvents = enabled ? '' : 'none';
+        saveNotifPrefs();
+    }
+
+    function onCustomAlertsChange() {
+        var enabled = document.getElementById('pref-alert-enabled').checked ||
+            document.getElementById('pref-custom-alerts').checked;
         var row = document.getElementById('alert-type-row');
         row.style.opacity = enabled ? '1' : '0.35';
         row.style.pointerEvents = enabled ? '' : 'none';
@@ -16686,11 +16708,13 @@
         document.getElementById('pref-spc-md').checked        = prefs.spcMdEnabled;
         document.getElementById('pref-wpc-outlook').checked   = prefs.wpcOutlookEnabled;
         document.getElementById('pref-wpc-mpd').checked       = prefs.wpcMpdEnabled;
+        document.getElementById('pref-custom-alerts').checked = prefs.customAlertsEnabled;
         document.getElementById('pref-alert-all').classList.toggle('active', prefs.alertType === 'all');
         document.getElementById('pref-alert-important').classList.toggle('active', prefs.alertType === 'important');
         var row = document.getElementById('alert-type-row');
-        row.style.opacity = prefs.alertEnabled ? '1' : '0.35';
-        row.style.pointerEvents = prefs.alertEnabled ? '' : 'none';
+        var alertTypesEnabled = prefs.alertEnabled || prefs.customAlertsEnabled;
+        row.style.opacity = alertTypesEnabled ? '1' : '0.35';
+        row.style.pointerEvents = alertTypesEnabled ? '' : 'none';
         document.getElementById('notif-prefs-modal').style.display = 'flex';
     }
 
