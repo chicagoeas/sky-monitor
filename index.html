@@ -13498,6 +13498,11 @@
             props.senderName || props.messageType || props.category
             || props.phenomena || props.significance || props.wfo
         ));
+        const customRevisionNumber = Number(customSkyAlertValue(props, [
+            'revision_number', 'revisionNumber', 'revision'
+        ], ''));
+        const hasCustomRevision = !isNwsAlert &&
+            Number.isFinite(customRevisionNumber) && customRevisionNumber >= 1;
         // Custom alerts have issued_at with milliseconds but created_at and
         // updated_at rounded to whole seconds. Treat that initial sub-second
         // difference as the same timestamp; a real edit is later than that.
@@ -13507,14 +13512,17 @@
         // time or a VTEC continuation/extension/correction status.
         const nwsWasUpdated = isNwsAlert && sentDate && effectiveDate
             && sentDate.getTime() - effectiveDate.getTime() > 60000;
-        const hasBeenUpdated = explicitlyUpdated
-            || statusIndicatesUpdate
-            || customWasEdited
-            || nwsWasUpdated;
+        const hasBeenUpdated = hasCustomRevision
+            ? customRevisionNumber > 1
+            : explicitlyUpdated
+                || statusIndicatesUpdate
+                || customWasEdited
+                || nwsWasUpdated;
         const updateValue = updated || (isNwsAlert && sent) || issued;
         return {
             label: hasBeenUpdated ? 'Updated' : 'Issued',
-            value: hasBeenUpdated ? updateValue : (issued || updated)
+            value: hasBeenUpdated ? updateValue : (issued || updated),
+            actorLabel: hasBeenUpdated ? 'Updated by' : 'Issued by'
         };
     }
 
@@ -13825,6 +13833,7 @@
     function renderCustomSkyHazards() {
         var stack = document.getElementById('alert-stack');
         if (!stack) return;
+        var alertViewState = captureAlertViewState();
         stack.querySelectorAll('.custom-skymonitor-hazard').forEach(function(el) { el.remove(); });
         var features = window.customSkyActiveFeatures || [];
         var banner = document.getElementById('alert-banner');
@@ -13882,7 +13891,7 @@
             var headline = customSkyAlertValue(props, ['headline', 'title', 'name', 'message'], alertClass);
             var issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
             var qualifiers = customSkyAlertQualifiers(props).toUpperCase().replace(/\s*,\s*/g, ', ');
-            var issued = customSkyAlertValue(props, ['issued', 'issuedAt', 'issued_at', 'issue', 'issueTime', 'issue_time', 'effective', 'effectiveAt', 'effective_at', 'createdAt', 'created_at', 'created', 'time', 'timestamp'], '');
+            var timeInfo = reportingAlertTimeInfo(props);
             var expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
             var description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
             var shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -13896,12 +13905,6 @@
             var alertId = customSkyAlertValue(props, ['revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'], '') ||
                 (feature.id != null ? String(feature.id) : '');
             var reportUrl = alertId ? CUSTOM_SKY_ALERT_REPORT_FORM_URL + encodeURIComponent(alertId) : '';
-            var detailRows = [
-                ['Issued', issued ? formatCustomSkyAlertTime(issued) : ''],
-                ['Issued by', issuer]
-            ].filter(function(row) { return row[1]; }).map(function(row) {
-                return '<div style="margin-top:4px;"><b>' + escapeHtml(row[0]) + ':</b> ' + escapeHtml(row[1]) + '</div>';
-            }).join('');
             var summaryHtml = shortSummary ? '<div style="margin-top:8px;"><b>Short Summary</b><br>' + escapeHtml(shortSummary) + '</div>' : '';
             var actionHtml = recommendedAction ? '<div style="margin-top:8px;"><b>Recommended Action</b><br>' + escapeHtml(recommendedAction) + '</div>' : '';
             var reportHtml = reportUrl
@@ -13921,12 +13924,23 @@
              } else if (threatInfo && threatInfo.family === 'svrWatch') {
                  customCardColor = '#f9a825';
              }
-            var customHazardId = 'custom-hazard-' + index + '-' + Date.now();
+            // Keep the DOM id stable across refreshes and alert revisions so an
+            // expanded card and its internal scroll position can be restored.
+            var stableAlertId = customSkyAlertValue(props, [
+                'alert_id', 'alertId', 'alertID', 'uuid', 'alertUuid', 'alert_uuid'
+            ], '') || alertId || (feature.id != null ? String(feature.id) : '') || String(index);
+            var customHazardId = 'custom-hazard-' +
+                String(stableAlertId).replace(/[^a-zA-Z0-9_-]/g, '_');
              var customTiming = expires
                  ? '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + escapeHtml(_fmtAlertTime(expires)) + '</div>'
                 : '';
             var sourceLine = '<div style="font-size:0.72em;line-height:1.45;margin-top:3px;color:rgba(255,255,255,0.88);">SkyMonitor Custom Alert <a class="custom-alerts-help" href="/about-custom-alerts" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts">?</a></div>';
-            var fullDetails = '<div id="full-' + customHazardId + '" class="alert-full-text">' + detailRows + summaryHtml + actionHtml + '</div>';
+             var fullDetails = '<div id="full-' + customHazardId + '" class="alert-full-text">' +
+                 '<div style="margin-top:4px;"><b>' + escapeHtml(timeInfo.label) + ':</b> ' +
+                 escapeHtml(timeInfo.value ? formatCustomSkyAlertTime(timeInfo.value) : '') + '</div>' +
+                 '<div style="margin-top:4px;"><b>' + escapeHtml(timeInfo.actorLabel) + ':</b> ' +
+                 escapeHtml(issuer) + '</div>' +
+                 summaryHtml + actionHtml + '</div>';
             var card = document.createElement('div');
             card.className = 'alert-card custom-skymonitor-hazard';
             card.style.cssText = 'background:' + customCardColor + '; align-items:flex-start; cursor:default;';
@@ -13937,6 +13951,7 @@
                 sourceLine + fullDetails + '</div>';
             stack.appendChild(card);
         });
+        restoreAlertViewState(alertViewState);
     }
 
     async function loadCustomSkyAlerts() {
@@ -14054,7 +14069,7 @@
                     : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                     ['Issued by', issuer],
+                     [timeInfo.actorLabel, issuer],
                      [isArchived ? 'Archive status' : '', isArchived ? 'Expired alert · issued ' + archiveAge : '']
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
