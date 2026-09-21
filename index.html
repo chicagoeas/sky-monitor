@@ -1018,6 +1018,79 @@
             background: rgba(199,213,232,0.32); transition: background 0.2s, transform 0.2s;
             cursor: pointer;
         }
+        #historical-radar-controls {
+            display: none;
+            position: absolute;
+            left: 50%;
+            bottom: calc(14px + env(safe-area-inset-bottom));
+            z-index: 1900;
+            width: min(430px, calc(100% - 28px));
+            transform: translateX(-50%);
+            box-sizing: border-box;
+            padding: 10px 13px 9px;
+            border: 1px solid rgba(129, 212, 250, 0.34);
+            border-radius: 13px;
+            background: rgba(3, 15, 25, 0.92);
+            box-shadow: 0 8px 26px rgba(0,0,0,0.42);
+            backdrop-filter: blur(12px);
+            pointer-events: auto;
+        }
+        #historical-radar-controls.is-visible {
+            display: block;
+        }
+        #historical-radar-controls .historical-radar-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 5px;
+            color: #c6e9f7;
+            font-size: 0.72em;
+            font-weight: 800;
+            letter-spacing: 0.7px;
+            text-transform: uppercase;
+        }
+        #historical-radar-controls .historical-radar-time {
+            color: #fff;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.78em;
+            letter-spacing: 0;
+            text-transform: none;
+            white-space: nowrap;
+        }
+        #historical-radar-slider {
+            display: block;
+            width: 100%;
+            margin: 2px 0 3px;
+            accent-color: #4fc3f7;
+            cursor: pointer;
+        }
+        #historical-radar-controls .historical-radar-endpoints {
+            display: flex;
+            justify-content: space-between;
+            color: #8da7b7;
+            font-size: 0.63em;
+        }
+        #historical-radar-status {
+            min-height: 1.15em;
+            margin-top: 4px;
+            color: #8da7b7;
+            font-size: 0.64em;
+            line-height: 1.25;
+            text-align: center;
+        }
+        html.radar-route #historical-radar-controls {
+            bottom: calc(48px + env(safe-area-inset-bottom));
+        }
+        @media (max-width: 600px) {
+            #historical-radar-controls {
+                width: calc(100% - 20px);
+                padding: 9px 11px 8px;
+            }
+            #historical-radar-controls .historical-radar-heading {
+                font-size: 0.67em;
+            }
+        }
         .skymonitor-welcome-dot:hover,
         .skymonitor-welcome-dot:focus-visible {
             background: rgba(199,213,232,0.7);
@@ -1882,7 +1955,7 @@
         <!-- Card 1: Map -->
         <div id="reporting-map-card" class="toolkit-box">
             <div class="toolkit-header" style="margin-bottom:10px;">
-                <span>LIVE REPORTING MAP</span>
+                <span id="reporting-map-title">LIVE REPORTING MAP</span>
                 <div style="display:flex; gap:6px;">
                     <button onclick="refreshReportingMap()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
@@ -1892,6 +1965,20 @@
             </div>
 
             <div id="reporting-map"></div>
+            <div id="historical-radar-controls" aria-label="Historical radar timeline">
+                <div class="historical-radar-heading">
+                    <span>Historical radar</span>
+                    <span id="historical-radar-time" class="historical-radar-time">--</span>
+                </div>
+                <input id="historical-radar-slider" type="range" min="0" max="0" value="0" step="1"
+                    aria-label="Historical radar frame"
+                    oninput="onHistoricalRadarSliderInput(this.value)">
+                <div class="historical-radar-endpoints">
+                    <span id="historical-radar-start">--</span>
+                    <span id="historical-radar-end">--</span>
+                </div>
+                <div id="historical-radar-status" role="status" aria-live="polite"></div>
+            </div>
             <div id="reporting-map-attribution-fullscreen" aria-label="Map attribution">
                 Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM / NEXRAD</a>
             </div>
@@ -12699,6 +12786,16 @@
     let reportingRadarLayer = null;
     let reportingRadarLayerMode = 'mosaic';
     let reportingRadarSite = null;
+    const HISTORICAL_RADAR_FRAME_MS = 5 * 60 * 1000;
+    let historicalRadarState = {
+        active: false,
+        alertKey: '',
+        startMs: 0,
+        endMs: 0,
+        frames: [],
+        index: 0
+    };
+    let historicalRadarSliderTimer = null;
     let singleSiteRadarSiteLayer = null;
     let singleSiteRadarSites = [];
      let singleSiteRadarAllSites = [];
@@ -13839,6 +13936,7 @@
             ensureReportPinMarker();
             loadCustomSkyAlerts();
         } else {
+            deactivateHistoricalRadarMode();
             if (customSkyAlertLayer) {
                 customSkyAlertLayer.clearLayers();
                 if (reportingMap) reportingMap.removeLayer(customSkyAlertLayer);
@@ -14515,6 +14613,7 @@
             const payload = await res.json();
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
+             let historicalDeepLinkFeature = null;
             if (CUSTOM_SKY_DEEP_LINK_ID && !reportingMapManualRefresh && !features.some(function(item) {
                 return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
                     CUSTOM_SKY_DEEP_LINK_ID
@@ -14581,6 +14680,7 @@
                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                 const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
                     alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
+                 if (isDeepLinked && isArchived) historicalDeepLinkFeature = feature;
                 // The public feed should be active-only. The sole exception is
                 // the explicitly requested deep-link archive on first load.
                 // A manual refresh deliberately removes that exception so an
@@ -14664,6 +14764,9 @@
             if (CUSTOM_SKY_DEEP_LINK_ID) {
                 setTimeout(openDeepLinkedCustomSkyAlert, 0);
             }
+             if (historicalDeepLinkFeature) {
+                 activateHistoricalRadarForAlert(historicalDeepLinkFeature);
+             }
         } catch (e) {
             setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
         }
@@ -14681,6 +14784,7 @@
     }
 
     function refreshReportingMap() {
+        deactivateHistoricalRadarMode();
         // Do not let the deep-link archive fallback resurrect an old polygon.
         reportingMapManualRefresh = true;
         customSkyDeepLinkHandled = true;
@@ -14882,6 +14986,17 @@
             maxZoom: 18,
             noWrap: true
         });
+        if (mode === 'historical') {
+            const historicalLayer = nextLayer;
+            nextLayer.once('load', function() {
+                if (reportingRadarLayer !== historicalLayer || !historicalRadarState.active) return;
+                _setHistoricalRadarStatus('Frame loaded', '#9edfff');
+            });
+            nextLayer.on('tileerror', function() {
+                if (reportingRadarLayer !== historicalLayer || !historicalRadarState.active) return;
+                _setHistoricalRadarStatus('IEM could not load this frame. Try the adjacent frame.', '#ffb74d');
+            });
+        }
         reportingRadarLayer = nextLayer;
         reportingRadarLayerMode = mode;
         reportingRadarSite = site || null;
@@ -14905,8 +15020,184 @@
         }
     }
 
+    function _historicalRadarFrameUrl(timestampMs) {
+        const stamp = new Date(timestampMs);
+        const pad = function(value) { return String(value).padStart(2, '0'); };
+        const utcStamp = stamp.getUTCFullYear() +
+            pad(stamp.getUTCMonth() + 1) +
+            pad(stamp.getUTCDate()) +
+            pad(stamp.getUTCHours()) +
+            pad(stamp.getUTCMinutes());
+        return 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/' +
+            'ridge::USCOMP-N0Q-' + utcStamp + '/{z}/{x}/{y}.png';
+    }
+
+    function _historicalRadarFormatTime(timestampMs, includeDate) {
+        if (!timestampMs) return '--';
+        const value = new Date(timestampMs);
+        return value.toLocaleString([], {
+            month: includeDate ? 'short' : undefined,
+            day: includeDate ? 'numeric' : undefined,
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZone: 'UTC',
+            timeZoneName: includeDate ? 'short' : undefined
+        });
+    }
+
+    function _setHistoricalRadarStatus(message, color) {
+        const status = document.getElementById('historical-radar-status');
+        if (!status) return;
+        status.textContent = message || '';
+        status.style.color = color || '#8da7b7';
+    }
+
+    function _renderHistoricalRadarControls() {
+        const controls = document.getElementById('historical-radar-controls');
+        const slider = document.getElementById('historical-radar-slider');
+        const time = document.getElementById('historical-radar-time');
+        const start = document.getElementById('historical-radar-start');
+        const end = document.getElementById('historical-radar-end');
+        if (!controls || !slider || !time || !start || !end) return;
+
+        const frames = historicalRadarState.frames;
+        const frameCount = frames.length;
+        controls.classList.toggle('is-visible', historicalRadarState.active && frameCount > 0);
+        slider.max = String(Math.max(0, frameCount - 1));
+        slider.value = String(Math.min(historicalRadarState.index, Math.max(0, frameCount - 1)));
+        time.textContent = frameCount
+            ? _historicalRadarFormatTime(frames[historicalRadarState.index], true)
+            : '--';
+        start.textContent = frameCount ? _historicalRadarFormatTime(frames[0], false) : '--';
+        end.textContent = frameCount ? _historicalRadarFormatTime(frames[frameCount - 1], false) : '--';
+    }
+
+    function _historicalRadarTimeWindow(feature) {
+        const props = feature && feature.properties ? feature.properties : {};
+        const info = reportingAlertTimeInfo(props);
+        const issuedValue = customSkyAlertValue(props, [
+            'onset', 'effective', 'effectiveAt', 'effective_at',
+            'issued', 'issuedAt', 'issued_at', 'created_at', 'sent'
+        ], '') || (info && info.value) || '';
+        const expiresValue = customSkyAlertValue(props, [
+            'expires', 'expiresAt', 'expires_at', 'expiration',
+            'expirationTime', 'expiration_time', 'ends', 'endTime'
+        ], '');
+        const issued = parseReportDate(issuedValue);
+        const expires = parseReportDate(expiresValue);
+        if (!issued || !expires || !isFinite(issued.getTime()) || !isFinite(expires.getTime())) {
+            return null;
+        }
+        const startMs = Math.floor(issued.getTime() / HISTORICAL_RADAR_FRAME_MS) *
+            HISTORICAL_RADAR_FRAME_MS;
+        const endMs = Math.floor(expires.getTime() / HISTORICAL_RADAR_FRAME_MS) *
+            HISTORICAL_RADAR_FRAME_MS;
+        if (!isFinite(startMs) || !isFinite(endMs) || endMs < startMs) return null;
+
+        const frames = [];
+        for (let timestamp = startMs; timestamp <= endMs; timestamp += HISTORICAL_RADAR_FRAME_MS) {
+            frames.push(timestamp);
+            // Avoid creating an unbounded slider if a malformed alert contains
+            // a multi-year expiration time.
+            if (frames.length >= 2881) break;
+        }
+        return frames.length ? { startMs, endMs, frames } : null;
+    }
+
+    function _setHistoricalRadarFrame(index) {
+        if (!historicalRadarState.active || !historicalRadarState.frames.length) return;
+        const safeIndex = Math.max(0, Math.min(
+            Number(index) || 0,
+            historicalRadarState.frames.length - 1
+        ));
+        historicalRadarState.index = safeIndex;
+        _renderHistoricalRadarControls();
+        const timestampMs = historicalRadarState.frames[safeIndex];
+        _setHistoricalRadarStatus('Loading IEM radar frame\u2026', '#9edfff');
+        _replaceReportingRadarLayer(
+            _historicalRadarFrameUrl(timestampMs),
+            'historical',
+            null
+        );
+    }
+
+    function onHistoricalRadarSliderInput(value) {
+        if (!historicalRadarState.active) return;
+        const nextIndex = Number(value) || 0;
+        historicalRadarState.index = nextIndex;
+        _renderHistoricalRadarControls();
+        if (historicalRadarSliderTimer) clearTimeout(historicalRadarSliderTimer);
+        historicalRadarSliderTimer = setTimeout(function() {
+            historicalRadarSliderTimer = null;
+            _setHistoricalRadarFrame(nextIndex);
+        }, 90);
+    }
+
+    function activateHistoricalRadarForAlert(feature) {
+        if (!feature || !reportingMap || !window.L) return false;
+        const windowInfo = _historicalRadarTimeWindow(feature);
+        if (!windowInfo) {
+            _setHistoricalRadarStatus('Historical radar unavailable: alert time window missing.', '#ffb74d');
+            return false;
+        }
+        const ids = customSkyAlertIdentifiers(feature);
+        const alertKey = ids.length ? ids.join('|') : JSON.stringify(windowInfo);
+        if (historicalRadarState.active && historicalRadarState.alertKey === alertKey) {
+            return true;
+        }
+
+        historicalRadarState = {
+            active: true,
+            alertKey: alertKey,
+            startMs: windowInfo.startMs,
+            endMs: windowInfo.endMs,
+            frames: windowInfo.frames,
+            index: 0
+        };
+        const title = document.getElementById('reporting-map-title');
+        if (title) title.textContent = 'HISTORICAL RADAR';
+        _renderHistoricalRadarControls();
+        _setHistoricalRadarStatus('Loading IEM radar frame\u2026', '#9edfff');
+
+        const bounds = window.L.geoJSON(feature).getBounds();
+        if (bounds.isValid()) {
+            reportingMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 11 });
+        }
+        _setHistoricalRadarFrame(0);
+        return true;
+    }
+
+    function deactivateHistoricalRadarMode() {
+        if (historicalRadarSliderTimer) {
+            clearTimeout(historicalRadarSliderTimer);
+            historicalRadarSliderTimer = null;
+        }
+        const wasActive = historicalRadarState.active;
+        historicalRadarState = {
+            active: false,
+            alertKey: '',
+            startMs: 0,
+            endMs: 0,
+            frames: [],
+            index: 0
+        };
+        _renderHistoricalRadarControls();
+        const title = document.getElementById('reporting-map-title');
+        if (title) title.textContent = 'LIVE REPORTING MAP';
+        if (wasActive && reportingMap) {
+            if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
+                reportingMap.removeLayer(reportingRadarLayer);
+            }
+            reportingRadarLayer = null;
+            reportingRadarLayerMode = 'mosaic';
+            reportingRadarSite = null;
+            setReportingRadarLayerForLocation();
+        }
+    }
+
     function setReportingRadarLayerForLocation() {
         if (!reportingMap || !window.L) return;
+        if (historicalRadarState.active) return;
         updateSingleSiteRadarControl();
         if (!radarVisible) {
             syncSingleSiteRadarVisibility();
