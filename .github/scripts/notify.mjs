@@ -414,11 +414,45 @@ function customAlertValue(properties, keys, fallback = "") {
 
 function customAlertId(feature) {
   const properties = feature?.properties || {};
-  const raw = customAlertValue(properties, [
-    "revision_id", "revisionId", "alert_id", "alertId", "alertID",
-    "id", "uuid", "alertUuid", "alert_uuid",
-  ]) || feature?.id;
-  return raw ? `ca:${String(raw).replace(/[^a-zA-Z0-9_-]/g, "_")}` : null;
+  // Revisions are deliberately ignored. The parent alert_id is the
+  // notification identity, so R1/R2/R3 of one alert can never notify again.
+  const parentId = customAlertValue(properties, [
+    "alert_id", "alertId", "alertID", "parent_alert_id", "parentAlertId",
+  ]);
+  const revisionId = customAlertValue(properties, [
+    "revision_id", "revisionId", "revisionID",
+  ]);
+  const raw = parentId || revisionId || feature?.id;
+  if (!raw) return null;
+  const stableId = String(raw).replace(/-R\d+$/i, "");
+  return `ca:${stableId.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function customAlertKnownId(value) {
+  const text = String(value ?? "");
+  const pipe = text.lastIndexOf("|");
+  const id = pipe >= 0 ? text.slice(0, pipe) : text;
+  if (!id.startsWith("ca:")) return id;
+  // Migrate old entries such as ca:<alert>-R1|<expiry> to the permanent
+  // parent-alert key. Custom alert records must never expire.
+  return id.replace(/-R\d+$/i, "");
+}
+
+function isCustomKnownId(value) {
+  return customAlertKnownId(value).startsWith("ca:");
+}
+
+function mergeKnownAlertIds(values) {
+  const unique = [...new Set(values.map(value => {
+    const text = String(value);
+    return isCustomKnownId(text) ? customAlertKnownId(text) : text;
+  }))];
+  // Keep every custom-alert key permanently. Only non-custom provider IDs
+  // participate in the existing rolling retention limit.
+  return [
+    ...unique.filter(value => !isCustomKnownId(value)).slice(-500),
+    ...unique.filter(isCustomKnownId),
+  ];
 }
 
 function customAlertIsActive(feature, now = Date.now()) {
@@ -1150,7 +1184,11 @@ for (const row of rows) {
     }
 
     if (!subDeleted) {
-      const newKnown     = [...knownIds.filter(id => currentIds.includes(id)), ...sentAlertIds];
+      const newKnown     = mergeKnownAlertIds([
+        ...knownIds.filter(isCustomKnownId),
+        ...knownIds.filter(id => currentIds.includes(id)),
+        ...sentAlertIds,
+      ]);
       const knownChanged = newKnown.length !== knownIds.length || newKnown.some(id => !knownIds.includes(id));
       if (knownChanged) {
         await d1Query(
@@ -1248,7 +1286,7 @@ for (const row of rows) {
         ...knownParsed.map(entry => entry.raw),
         ...sentInternationalIds.values(),
       ];
-      const newKnown = [...new Set(merged)].slice(-500);
+      const newKnown = mergeKnownAlertIds(merged);
       if (JSON.stringify(newKnown) !== JSON.stringify(rawKnown)) {
         await d1Query(
           "UPDATE push_subscriptions SET known_alert_ids = ?, updated_at = datetime('now') WHERE endpoint = ?",
@@ -1277,26 +1315,27 @@ for (const row of rows) {
         console.warn(`[SkyMonitor] Could not refresh custom alert IDs: ${err.message}`);
       }
 
-      const nowSec = Math.floor(Date.now() / 1000);
       const knownParsed = rawCustomKnown.map(raw => {
         const text = String(raw);
-        const pipe = text.lastIndexOf("|");
-        if (pipe < 0) return { raw: text, id: text, exp: Infinity };
-        return {
-          raw: text,
-          id: text.slice(0, pipe),
-          exp: parseInt(text.slice(pipe + 1), 10) || Infinity,
-        };
-      }).filter(entry => entry.exp > nowSec);
+        return { raw: text, id: customAlertKnownId(text) };
+      });
       const knownSet = new Set(knownParsed.map(entry => entry.id));
       const coveredAlerts = customResult.alerts.filter(alert =>
         pushPointInGeoJson(row.lon, row.lat, alert.geometry)
       );
-      const newAlerts = coveredAlerts.filter(alert => !knownSet.has(alert.id));
+      // The feed should contain one active revision per parent alert, but
+      // dedupe here too so duplicate features cannot produce two pushes in
+      // the same run.
+      const seenCustomIds = new Set(knownSet);
+      const newAlerts = coveredAlerts.filter(alert => {
+        if (seenCustomIds.has(alert.id)) return false;
+        seenCustomIds.add(alert.id);
+        return true;
+      });
       const filteredAlerts = prefs.alertType === "important"
         ? newAlerts.filter(customAlertIsImportant)
         : newAlerts;
-      const sentCustomIds = new Map();
+      const sentCustomIds = new Set();
       const subscription = JSON.parse(row.subscription);
 
       console.log(
@@ -1324,10 +1363,10 @@ for (const row of rows) {
             break;
           }
           if (res.ok || res.status === 201) {
-            const expiry = alert.properties?.expires;
-            const parsedExpiry = expiry ? Math.floor(new Date(expiry).getTime() / 1000) : 0;
-            const expiryTs = parsedExpiry > nowSec ? parsedExpiry : nowSec + 86400 * 7;
-            sentCustomIds.set(alert.id, `${alert.id}|${expiryTs}`);
+            // One notification per parent alert, permanently. Do not attach
+            // the current revision or expiration because an update must not
+            // make the same alert eligible again.
+            sentCustomIds.add(alert.id);
           }
         } catch (err) {
           console.warn(`[SkyMonitor] custom alert push error: ${err.message}`);
@@ -1337,10 +1376,10 @@ for (const row of rows) {
 
       if (!subDeleted && sentCustomIds.size > 0) {
         const merged = [
-          ...knownParsed.map(entry => entry.raw),
-          ...sentCustomIds.values(),
+          ...knownParsed.map(entry => isCustomKnownId(entry.raw) ? entry.id : entry.raw),
+          ...sentCustomIds,
         ];
-        const newKnown = [...new Set(merged)].slice(-500);
+        const newKnown = mergeKnownAlertIds(merged);
         if (JSON.stringify(newKnown) !== JSON.stringify(rawCustomKnown)) {
           await d1Query(
             "UPDATE push_subscriptions SET known_alert_ids = ?, updated_at = datetime('now') WHERE endpoint = ?",
