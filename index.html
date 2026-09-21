@@ -13245,7 +13245,8 @@
         // Single-site radar remains an Advanced-only feature. The extra
         // server check prevents the action from appearing over Canada, Mexico,
         // or any other non-U.S. coordinate inside a broad map rectangle.
-        if (!isAdvancedDataComplexity() || !radarVisible || !radarSingleSiteEnabled ||
+        if (historicalRadarState.active ||
+            !isAdvancedDataComplexity() || !radarVisible || !radarSingleSiteEnabled ||
             !_reportingCoordinateCouldBeUS(latlng)) return;
         const url = 'https://api.weather.gov/points/' +
             encodeURIComponent(Number(latlng.lat).toFixed(4)) + ',' +
@@ -13267,13 +13268,15 @@
     function syncReportingRadarActionVisibility() {
         const button = document.getElementById('reporting-radar-action');
         if (!button) return;
-        const enabled = isAdvancedDataComplexity() && radarVisible && radarSingleSiteEnabled;
+        const enabled = !historicalRadarState.active &&
+            isAdvancedDataComplexity() && radarVisible && radarSingleSiteEnabled;
         button.style.display = enabled && button.dataset.usVerified === '1'
             ? 'inline-flex' : 'none';
     }
 
     function openRadarForReportingPopup(button) {
-        if (!button || !isAdvancedDataComplexity() || !radarVisible || !radarSingleSiteEnabled ||
+        if (!button || historicalRadarState.active ||
+            !isAdvancedDataComplexity() || !radarVisible || !radarSingleSiteEnabled ||
             button.dataset.usVerified !== '1') return;
         const la = parseFloat(button.dataset.lat);
         const lo = parseFloat(button.dataset.lon);
@@ -13364,7 +13367,11 @@
             autoPanPadding: [48, 42],
             autoPanPaddingTopLeft: [54, 54],
             autoPanPaddingBottomRight: [14, 42]
-         }).setLatLng(latlng).setContent(buildReportingPopup(nearby, latlng, !autoOpenEntry));
+         }).setLatLng(latlng).setContent(buildReportingPopup(
+             nearby,
+             latlng,
+             !autoOpenEntry && !historicalRadarState.active
+         ));
         popup.openOn(reportingMap);
          if (!autoOpenEntry) prepareReportingRadarAction(latlng);
         if (autoOpenEntry) {
@@ -13781,6 +13788,12 @@
 
          function renderSingleSiteRadarSites(sites) {
              if (!reportingMap || !window.L) return;
+             if (historicalRadarState.active) {
+                 if (singleSiteRadarSiteLayer && reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
+                     reportingMap.removeLayer(singleSiteRadarSiteLayer);
+                 }
+                 return;
+             }
              if (!singleSiteRadarSiteLayer) {
                  singleSiteRadarSiteLayer = window.L.layerGroup().addTo(reportingMap);
              } else {
@@ -15240,6 +15253,7 @@
             timestampMs: windowInfo.frames[0]
         };
          syncSingleSiteRadarVisibility();
+         syncReportingRadarActionVisibility();
         historicalRadarPending = false;
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'HISTORICAL RADAR';
@@ -15271,6 +15285,8 @@
         };
         historicalRadarRequestId++;
         historicalRadarPending = false;
+        syncSingleSiteRadarVisibility();
+        syncReportingRadarActionVisibility();
         _renderHistoricalRadarControls();
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'LIVE REPORTING MAP';
@@ -15344,6 +15360,7 @@
             return response.json();
         }).then(function(payload) {
             if (requestId !== singleSiteRadarRequestId ||
+                historicalRadarState.active ||
                 !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
             const site = _selectNearestIEMRadar(payload, location);
                  singleSiteRadarAllSites = _iemRadarSites(payload);
@@ -15402,6 +15419,9 @@
     function setRadarRouteState(isRadar) {
         const active = !!isRadar;
         const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (!active && historicalRadarState.active) {
+            deactivateHistoricalRadarMode();
+        }
         if (active && !wasFullscreenReportingMap) rememberNormalReportingPopupWidth();
         window.SKYMONITOR_RADAR_PAGE = active;
         document.documentElement.classList.toggle('radar-route', active);
