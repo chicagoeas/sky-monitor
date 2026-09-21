@@ -13571,6 +13571,30 @@
              });
          }
 
+         // Keep the single-site layer readable at the national view. WeatherWise
+         // presents a capped set of individual radar labels rather than
+         // clustering them; SkyMonitor does the same here. The selected site is
+         // added back below when it falls outside the capped slice.
+         const MAX_SINGLE_SITE_RADAR_MARKERS = 100;
+
+         function _limitIEMRadarSites(sites, requiredSite) {
+             const available = Array.isArray(sites) ? sites : [];
+             if (available.length <= MAX_SINGLE_SITE_RADAR_MARKERS) return available.slice();
+
+             const limited = available.slice(0, MAX_SINGLE_SITE_RADAR_MARKERS);
+             const requiredId = requiredSite && String(requiredSite.id || '').toUpperCase();
+             if (!requiredId || limited.some(function(site) {
+                 return String(site && site.id || '').toUpperCase() === requiredId;
+             })) {
+                 return limited;
+             }
+
+             // Keep the nearest/selected radar clickable even when the API's
+             // inventory order places it after the display limit.
+             limited[limited.length - 1] = requiredSite;
+             return limited;
+         }
+
          function renderSingleSiteRadarSites(sites) {
              if (!reportingMap || !window.L) return;
              if (!singleSiteRadarSiteLayer) {
@@ -14864,9 +14888,9 @@
         }).then(function(payload) {
             if (requestId !== singleSiteRadarRequestId ||
                 !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
-                 const sites = _iemRadarSites(payload);
-                 renderSingleSiteRadarSites(sites);
             const site = _selectNearestIEMRadar(payload, location);
+                 const sites = _limitIEMRadarSites(_iemRadarSites(payload), site);
+                 renderSingleSiteRadarSites(sites);
             if (!site) {
                 singleSiteRadarLocationKey = '';
                  _clearSingleSiteRadarSites();
