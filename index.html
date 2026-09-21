@@ -12793,9 +12793,15 @@
         startMs: 0,
         endMs: 0,
         frames: [],
-        index: 0
+         index: 0,
+         timestampMs: 0
     };
     let historicalRadarSliderTimer = null;
+     let historicalRadarRequestId = 0;
+     // A deep link may point at an archived custom alert. Probe that archive
+     // before allowing any live overlay to paint, otherwise the first render
+     // can briefly show today's alerts before historical mode is activated.
+     let historicalRadarPending = !!CUSTOM_SKY_DEEP_LINK_ID;
     let singleSiteRadarSiteLayer = null;
     let singleSiteRadarSites = [];
      let singleSiteRadarAllSites = [];
@@ -14027,6 +14033,29 @@
         return !expiresDate || expiresDate.getTime() > Date.now();
     }
 
+    function isCustomAlertActiveAt(props, timestampMs) {
+        if (!props || !isFinite(Number(timestampMs))) return false;
+        // active/status describe the record's state now, not its state at the
+        // historical frame. The validity interval is authoritative here;
+        // only cancellation/supersession removes an alert from the past.
+        const status = customSkyAlertValue(props, ['status', 'state'], '').toLowerCase();
+        if (['cancelled', 'canceled', 'superseded'].includes(status)) return false;
+        const onset = customSkyAlertValue(props, [
+            'onset', 'effective', 'effectiveAt', 'effective_at',
+            'issued', 'issuedAt', 'issued_at', 'created_at', 'sent'
+        ], '');
+        const expires = customSkyAlertValue(props, [
+            'expires', 'expiresAt', 'expires_at', 'expiration',
+            'expirationTime', 'expiration_time', 'ends', 'endTime'
+        ], '');
+        const onsetDate = parseReportDate(onset);
+        const expiresDate = parseReportDate(expires);
+        // Do not carry a currently-live record into history when it has no
+        // issue/onset timestamp with which to prove it existed at that time.
+        return !!onsetDate && onsetDate.getTime() <= timestampMs &&
+            (!expiresDate || expiresDate.getTime() > timestampMs);
+    }
+
     function customSkyAlertIdentifiers(feature) {
         const props = feature && feature.properties || {};
         return [
@@ -14295,6 +14324,25 @@
         // Show only fully elapsed minutes remaining; never round up into the
         // next hour or day (for example, 23:59:30 stays 23 hours 59 minutes).
         const totalMinutes = Math.max(0, Math.floor((parsed.getTime() - Date.now()) / 60000));
+        if (totalMinutes < 60) return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes');
+        const totalHours = Math.floor(totalMinutes / 60);
+        const days = Math.floor(totalHours / 24);
+        const hours = totalHours % 24;
+        const minutes = totalMinutes % 60;
+        const parts = [];
+        if (days) parts.push(days + (days === 1 ? ' day' : ' days'));
+        if (hours) parts.push(hours + (hours === 1 ? ' hour' : ' hours'));
+        if (minutes) parts.push(minutes + (minutes === 1 ? ' minute' : ' minutes'));
+        return parts.join(' ');
+    }
+
+    function formatReportingMinutesUntilAt(value, referenceMs) {
+        if (!value || !isFinite(Number(referenceMs))) return '';
+        const parsed = parseReportDate(value);
+        if (!parsed) return '';
+        const totalMinutes = Math.max(0, Math.floor(
+            (parsed.getTime() - Number(referenceMs)) / 60000
+        ));
         if (totalMinutes < 60) return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes');
         const totalHours = Math.floor(totalMinutes / 60);
         const days = Math.floor(totalHours / 24);
@@ -14590,6 +14638,10 @@
 
     async function loadCustomSkyAlerts() {
         if (!customSkyAlertLayer || !window.L) return;
+        const historicalTimestampMs = historicalRadarState.active
+            ? historicalRadarState.timestampMs
+            : 0;
+        const historicalArchiveProbe = historicalRadarPending && !historicalTimestampMs;
         if (!customSkyAlertsVisible) {
             customSkyAlertLayer.clearLayers();
             removeReportingPopupEntries('custom-skymonitor');
@@ -14681,11 +14733,18 @@
                 const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
                     alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
                  if (isDeepLinked && isArchived) historicalDeepLinkFeature = feature;
+                 // During an archive probe, do not let the active feed flash
+                 // onto the map. In an active historical mode, use the
+                 // selected radar frame as the custom-alert clock.
+                 if (historicalArchiveProbe && !isArchived) return;
+                 if (historicalTimestampMs &&
+                     !isCustomAlertActiveAt(props, historicalTimestampMs)) return;
                 // The public feed should be active-only. The sole exception is
                 // the explicitly requested deep-link archive on first load.
                 // A manual refresh deliberately removes that exception so an
                 // old alert cannot come back onto the live map.
-                if (isArchived && !(isDeepLinked && !reportingMapManualRefresh)) return;
+                 if (!historicalTimestampMs &&
+                     isArchived && !(isDeepLinked && !reportingMapManualRefresh)) return;
                 shortSummary = shortSummary.replace(/^\s*Full alert\s*:?\s*/i, '').trim();
                  const summaryLine = shortSummary
                      ? '<div style="margin-top:6px;"><b style="font-size:0.9em;">Short Summary</b><br><span>' + escapeHtml(shortSummary) + '</span></div>'
@@ -14706,15 +14765,20 @@
                 });
                 const issuedDate = parseReportDate(timeInfo.value);
                 const expiresDate = parseReportDate(expires);
-                const expiredAt = expiresDate && expiresDate.getTime() <= Date.now()
+                 const expiredAt = !historicalTimestampMs && expiresDate && expiresDate.getTime() <= Date.now()
                     ? expiresDate
                     : null;
-                const expiredAge = isArchived && expiredAt
+                 const expiredAge = !historicalTimestampMs && isArchived && expiredAt
                     ? formatExpiredAgo(Math.max(0, (Date.now() - expiredAt.getTime()) / 1000))
                     : '';
-                const issuedAge = isArchived && issuedDate && issuedDate.getTime() <= Date.now()
+                 const issuedAge = !historicalTimestampMs && isArchived && issuedDate && issuedDate.getTime() <= Date.now()
                     ? formatExpiredAgo(Math.max(0, (Date.now() - issuedDate.getTime()) / 1000))
                     : '';
+                 const expiresIn = expires
+                     ? (historicalTimestampMs
+                         ? formatReportingMinutesUntilAt(expires, historicalTimestampMs)
+                         : formatReportingMinutesUntil(expires))
+                     : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
                      [timeInfo.actorLabel, issuer]
@@ -14734,10 +14798,10 @@
                     title: escapeHtml(headline),
                        meta: expiredAge
                           ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
-                          : (isArchived && issuedAge
+                           : (isArchived && issuedAge
                               ? '<span style="color:#ff5252;font-weight:800;">Issued ' + escapeHtml(issuedAge) + '</span>'
                               : escapeHtml(alertType) +
-                                (expires ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expires)) : '')),
+                                 (expiresIn ? ' \u00B7 Expires in ' + escapeHtml(expiresIn) : '')),
                        detail: customDetail,
                      reportUrl: reportUrl,
                      archived: isArchived
@@ -15040,7 +15104,6 @@
             day: includeDate ? 'numeric' : undefined,
             hour: 'numeric',
             minute: '2-digit',
-            timeZone: 'UTC',
             timeZoneName: includeDate ? 'short' : undefined
         });
     }
@@ -15113,12 +15176,17 @@
         historicalRadarState.index = safeIndex;
         _renderHistoricalRadarControls();
         const timestampMs = historicalRadarState.frames[safeIndex];
-        _setHistoricalRadarStatus('Loading IEM radar frame\u2026', '#9edfff');
+        historicalRadarState.timestampMs = timestampMs;
+        _setHistoricalRadarStatus('Loading historical radar and overlays\u2026', '#9edfff');
         _replaceReportingRadarLayer(
             _historicalRadarFrameUrl(timestampMs),
             'historical',
             null
         );
+        // The selected frame is the clock for every map overlay. This call is
+        // intentionally routed through the normal load gate; that gate never
+        // falls back to a live feed while historical mode is active.
+        loadReportingMapData();
     }
 
     function onHistoricalRadarSliderInput(value) {
@@ -15152,8 +15220,10 @@
             startMs: windowInfo.startMs,
             endMs: windowInfo.endMs,
             frames: windowInfo.frames,
-            index: 0
+            index: 0,
+            timestampMs: windowInfo.frames[0]
         };
+        historicalRadarPending = false;
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'HISTORICAL RADAR';
         _renderHistoricalRadarControls();
@@ -15179,8 +15249,11 @@
             startMs: 0,
             endMs: 0,
             frames: [],
-            index: 0
+            index: 0,
+            timestampMs: 0
         };
+        historicalRadarRequestId++;
+        historicalRadarPending = false;
         _renderHistoricalRadarControls();
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'LIVE REPORTING MAP';
@@ -15627,6 +15700,132 @@
         loadReportingMapData();
     }
 
+    function _historicalRadarIso(timestampMs) {
+        return new Date(timestampMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    }
+
+    function _historicalAlertIsActiveAt(props, timestampMs) {
+        if (!props || !isFinite(Number(timestampMs))) return false;
+        const status = String(props.status || '').toLowerCase();
+        if (status.includes('cancel')) return false;
+        const start = parseReportDate(
+            props.polygon_begin || props.issue || props.effective || props.sent
+        );
+        const end = parseReportDate(
+            props.polygon_end || props.expire || props.expires || props.ends
+        );
+        return !!start && start.getTime() <= timestampMs &&
+            (!end || end.getTime() > timestampMs);
+    }
+
+    async function loadHistoricalNwsAlerts(timestampMs, L_ref, requestId) {
+        if (!alertPolygonLayer || !L_ref || !isFinite(Number(timestampMs))) return;
+        alertPolygonLayer.clearLayers();
+        removeReportingPopupEntries('nws');
+        removeReportingPopupEntries('environment-canada');
+
+        // IEM's storm-based warning archive is the historical polygon source.
+        // Query a generous lookback, then do the exact "active at frame time"
+        // test locally so a long-lived warning is not lost at the query edge.
+        const startMs = timestampMs - 48 * 3600 * 1000;
+        const url = 'https://mesonet.agron.iastate.edu/geojson/sbw.geojson?sts=' +
+            encodeURIComponent(_historicalRadarIso(startMs)) + '&ets=' +
+            encodeURIComponent(_historicalRadarIso(timestampMs + 60 * 1000));
+        try {
+            const res = await fetch(url, {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            });
+            if (!res.ok) throw new Error('Historical IEM warning request failed');
+            const data = await res.json();
+            if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+
+            const colors = {
+                TO: '#ff1744', SV: '#ff9100', FF: '#00c853',
+                MA: '#29b6f6', SQ: '#81d4fa', EW: '#ff9100', DS: '#c8a800'
+            };
+            const seen = {};
+            (data.features || []).forEach(function(feature) {
+                if (!feature || !feature.geometry) return;
+                const props = feature.properties || {};
+                const phenomena = String(props.phenomena || '').toUpperCase();
+                const significance = String(props.significance || '').toUpperCase();
+                if (significance !== 'W' || !colors[phenomena] ||
+                    !_historicalAlertIsActiveAt(props, timestampMs)) return;
+                const key = String(props.product_id || props.href ||
+                    [phenomena, props.wfo, props.eventid, props.polygon_begin].join('|'));
+                if (seen[key]) return;
+                seen[key] = true;
+
+                const color = colors[phenomena];
+                const eventName = props.ps || props.type ||
+                    (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning');
+                const issued = props.issue || props.polygon_begin;
+                const expires = props.polygon_end || props.expire;
+                const tags = [
+                    props.tornadotag, props.windtag, props.hailtag,
+                    props.windthreat, props.hailthreat
+                ].filter(function(value) { return value != null && String(value) !== ''; }).join(', ');
+                const issuedDate = parseReportDate(issued);
+                const expiresDate = parseReportDate(expires);
+                const detailRows = [
+                    ['Issued', issuedDate ? _historicalRadarFormatTime(issuedDate.getTime(), true) : ''],
+                    ['Valid through', expiresDate ? _historicalRadarFormatTime(expiresDate.getTime(), true) : ''],
+                    ['Issued by', props.wfo || 'NWS'],
+                    ['Threat details', tags],
+                    ['Historical source', 'IEM storm-based warning archive']
+                ];
+                const polygon = L_ref.geoJSON(feature.geometry, {
+                    style: {
+                        color: color,
+                        weight: 2.5,
+                        opacity: 0.95,
+                        fillColor: color,
+                        fillOpacity: 0.2
+                    }
+                });
+                registerReportingPopup(polygon, {
+                    source: 'nws',
+                    isPolygon: true,
+                    color: color,
+                    title: escapeHtml(eventName),
+                    meta: escapeHtml(props.wfo || 'NWS') + ' \u00B7 Historical',
+                    detail: reportingPopupDetailRows(detailRows) +
+                        (props.href ? '<p><a href="' + escapeHtml(props.href) +
+                            '" target="_blank" rel="noopener noreferrer">Open IEM archive record</a></p>' : '')
+                });
+                polygon.on('dblclick', function(e) {
+                    L_ref.DomEvent.stop(e);
+                    setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
+                });
+                polygon.addTo(alertPolygonLayer);
+            });
+        } catch (e) {
+            if (requestId === historicalRadarRequestId) {
+                console.warn('[SkyMonitor] Historical IEM warnings failed:', e);
+            }
+        }
+    }
+
+    async function loadHistoricalReportingMapData(timestampMs) {
+        if (!reportingMap || !window.L || !historicalRadarState.active) return;
+        const requestId = ++historicalRadarRequestId;
+        const L_ref = window.L;
+        historicalRadarState.timestampMs = timestampMs;
+        await loadHistoricalNwsAlerts(timestampMs, L_ref, requestId);
+        if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        // Custom alerts are filtered against the selected frame below. The
+        // endpoint may return today's active set, but none of it is painted
+        // unless its own validity interval contains this timestamp.
+        await loadCustomSkyAlerts();
+        if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        await loadMapReports(timestampMs);
+        if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        syncReportingMapLayers();
+        ensureReportPinMarker();
+        _setHistoricalRadarStatus('Historical overlays loaded', '#9edfff');
+    }
+
     async function loadReportingMapData() {
         if (reportingDataLoadInFlight) {
             reportingDataRefreshQueued = true;
@@ -15647,6 +15846,32 @@
     async function loadReportingMapDataNow() {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
+
+        // Archived custom-alert deep links need one archive probe before any
+        // live overlay is allowed to render. If the link resolves to an
+        // archived alert, the probe activates historical mode and this load
+        // ends here. If it is still active, the second pass below is the
+        // ordinary live map.
+        if (historicalRadarPending && !historicalRadarState.active) {
+            const wasPending = true;
+            await loadCustomSkyAlerts();
+            historicalRadarPending = false;
+            if (historicalRadarState.active) {
+                await loadHistoricalReportingMapData(historicalRadarState.timestampMs);
+                return;
+            }
+            // The first pass intentionally suppresses live features while it
+            // checks the archive. Paint them only after that check completes.
+            if (wasPending) await loadCustomSkyAlerts();
+        }
+
+        if (historicalRadarState.active) {
+            await loadHistoricalReportingMapData(
+                historicalRadarState.timestampMs || historicalRadarState.frames[historicalRadarState.index]
+            );
+            return;
+        }
+
         setReportingRadarLayerForLocation();
         syncReportingMapLayers();
         ensureReportPinMarker();
@@ -15782,16 +16007,23 @@
         if (!lsrLayer || !userReportLayer) return;
         const L_ref = window.L;
         if (!L_ref) return;
+        const historicalTimestampMs = arguments.length ? Number(arguments[0]) : 0;
+        const isHistorical = isFinite(historicalTimestampMs) && historicalTimestampMs > 0;
         const showOlder = !!document.getElementById('show-older-reports')?.checked;
         const lsrHours = showOlder ? 48 : 5;
         const FRESH_MS = 5 * 3600 * 1000;
-        const now = Date.now();
+        const now = isHistorical ? historicalTimestampMs : Date.now();
 
         // NWS Local Storm Reports via IEM MESONET
         try {
             lsrLayer.clearLayers();
             removeReportingPopupEntries('iem-lsr');
-            const lsrRes = await fetch('https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=' + lsrHours + '&fmt=geojson');
+            const lsrUrl = isHistorical
+                ? 'https://mesonet.agron.iastate.edu/geojson/lsr.php?sts=' +
+                    encodeURIComponent(_historicalRadarIso(now - lsrHours * 3600 * 1000)) +
+                    '&ets=' + encodeURIComponent(_historicalRadarIso(now)) + '&fmt=geojson'
+                : 'https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=' + lsrHours + '&fmt=geojson';
+            const lsrRes = await fetch(lsrUrl);
             if (lsrRes.ok) {
                 const lsrData = await lsrRes.json();
                     const LSR_ICON_TYPES = { tornado:'Tornado / Funnel Cloud', funnel:'Tornado / Funnel Cloud', hail:'Hail', wind:'Wind Damage', wnd:'Wind Damage', tstm:'Thunderstorm', flood:'Flooding', snow:'Heavy Snow', rain:'Rain', ice:'Ice / Freezing Rain', lightning:'Lightning Strike', fire:'Fire', dust:'Dust Storm' };
@@ -15813,6 +16045,10 @@
                     if (!f.geometry || !f.geometry.coordinates) return;
                     const lo = f.geometry.coordinates[0], la = f.geometry.coordinates[1];
                     const props = f.properties;
+                    const reportDate = parseReportDate(props.valid);
+                    if (isHistorical && (!reportDate ||
+                        reportDate.getTime() > now ||
+                        reportDate.getTime() < now - lsrHours * 3600 * 1000)) return;
                     const typeKey = (props.typetext || props.type || '').toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
                     const exactStyle = LSR_EXACT_STYLES[typeKey];
                     const matchKey = Object.keys(LSR_ICON_TYPES).find(function(k) { return typeKey.includes(k); });
@@ -15821,7 +16057,9 @@
                         ? reportIconMarkup(lsrType, 'reporting-popup-icon')
                         : reportIconMarkup('Other', 'reporting-popup-icon');
                     const dotColor = exactStyle ? exactStyle.color : (matchKey ? LSR_COLORS[matchKey] : '#90a4ae');
-                    const validStr = formatReportTime(props.valid);
+                     const validStr = isHistorical && reportDate
+                         ? _historicalRadarFormatTime(reportDate.getTime(), true)
+                         : formatReportTime(props.valid);
                     const magnitudeValue = props.magnitude == null ? '' : String(props.magnitude).trim();
                     const magfValue = props.magf == null ? '' : String(props.magf).trim();
                     const unitValue = props.unit == null ? '' : String(props.unit).trim();
@@ -15866,11 +16104,14 @@
                 const maxAgeMs = showOlder ? 48 * 3600 * 1000 : FRESH_MS;
                 reports.forEach(function(r) {
                     if (r.lat == null || r.lon == null) return;
-                     const reportDate = parseReportDate(r.time);
-                     const ageMs = reportDate ? now - reportDate.getTime() : NaN;
+                      const reportDate = parseReportDate(r.time);
+                      const ageMs = reportDate ? now - reportDate.getTime() : NaN;
+                     if (isHistorical && reportDate && reportDate.getTime() > now) return;
                     if (!isNaN(ageMs) && ageMs > maxAgeMs) return;
                     const isOld = showOlder && ageMs > FRESH_MS;
-                    const timeStr = formatReportTime(r.time);
+                     const timeStr = isHistorical && reportDate
+                         ? _historicalRadarFormatTime(reportDate.getTime(), true)
+                         : formatReportTime(r.time);
                     const icon = L_ref.divIcon({
                         html: '<div style="line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.8));opacity:' + (isOld ? 0.4 : 1) + ';">'
                             + reportIconMarkup(r.type, 'report-map-icon') + '</div>',
