@@ -13425,7 +13425,7 @@
          function _iemRadarDisplayId(site) {
              const id = String(site && site.id || '').toUpperCase();
              return String(site && site.type || '').toUpperCase() === 'NEXRAD' &&
-                 id.length === 3 ? 'K' + id : id;
+                 id.length === 3 && id.charAt(0) !== 'K' ? 'K' + id : id;
          }
 
          function _singleSiteRadarMarkerIcon(site, selected) {
@@ -14534,8 +14534,8 @@
         el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
     }
 
-    const IEM_RADAR_AVAILABILITY_URL =
-        'https://mesonet.agron.iastate.edu/json/radar.py?operation=available';
+         const IEM_RADAR_AVAILABILITY_URL =
+             'https://mesonet.agron.iastate.edu/json/radar.py?operation=available';
 
     function _reportingRadarLocation() {
         const candidates = [
@@ -14705,9 +14705,10 @@
         const requestId = ++singleSiteRadarRequestId;
         setSingleSiteRadarStatus('Finding nearest site\u2026');
         const start = new Date().toISOString().slice(0, 16) + 'Z';
+        // Omitting lat/lon asks IEM for the complete current radar inventory,
+        // not just the sites near the weather location. The local coordinates
+        // are still used to choose the initial site from that full inventory.
         const url = IEM_RADAR_AVAILABILITY_URL +
-            '&lat=' + encodeURIComponent(location.lat) +
-            '&lon=' + encodeURIComponent(location.lon) +
             '&start=' + encodeURIComponent(start);
         fetch(url, {
             cache: 'no-store',
