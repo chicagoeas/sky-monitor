@@ -13109,11 +13109,13 @@
         if (!button) return;
         button.dataset.lat = Number(latlng.lat).toFixed(5);
         button.dataset.lon = Number(latlng.lng).toFixed(5);
+        button.dataset.usVerified = '0';
         button.style.display = 'none';
         // Single-site radar remains an Advanced-only feature. The extra
         // server check prevents the action from appearing over Canada, Mexico,
         // or any other non-U.S. coordinate inside a broad map rectangle.
-        if (!isAdvancedDataComplexity() || !_reportingCoordinateCouldBeUS(latlng)) return;
+        if (!isAdvancedDataComplexity() || !radarVisible || !radarSingleSiteEnabled ||
+            !_reportingCoordinateCouldBeUS(latlng)) return;
         const url = 'https://api.weather.gov/points/' +
             encodeURIComponent(Number(latlng.lat).toFixed(4)) + ',' +
             encodeURIComponent(Number(latlng.lng).toFixed(4));
@@ -13125,27 +13127,29 @@
             return response.json();
         }).then(function(payload) {
             if (payload && payload.properties && button.isConnected) {
-                button.style.display = 'inline-flex';
+                button.dataset.usVerified = '1';
+                syncReportingRadarActionVisibility();
             }
         }).catch(function() {});
     }
 
+    function syncReportingRadarActionVisibility() {
+        const button = document.getElementById('reporting-radar-action');
+        if (!button) return;
+        const enabled = isAdvancedDataComplexity() && radarVisible && radarSingleSiteEnabled;
+        button.style.display = enabled && button.dataset.usVerified === '1'
+            ? 'inline-flex' : 'none';
+    }
+
     function openRadarForReportingPopup(button) {
-        if (!button || !isAdvancedDataComplexity()) return;
+        if (!button || !isAdvancedDataComplexity() || !radarVisible || !radarSingleSiteEnabled ||
+            button.dataset.usVerified !== '1') return;
         const la = parseFloat(button.dataset.lat);
         const lo = parseFloat(button.dataset.lon);
         if (!isFinite(la) || !isFinite(lo) ||
             !_reportingCoordinateCouldBeUS({ lat: la, lng: lo })) return;
 
         singleSiteRadarTargetLocation = { lat: la, lon: lo };
-        radarVisible = true;
-        radarSingleSiteEnabled = true;
-        localStorage.setItem('report_radar_on', '1');
-        localStorage.setItem('report_radar_single_site', '1');
-        const radarCb = document.getElementById('radar-toggle-cb');
-        if (radarCb) radarCb.checked = true;
-        const singleSiteCb = document.getElementById('single-site-radar-cb');
-        if (singleSiteCb) singleSiteCb.checked = true;
         singleSiteRadarRequestId++;
         singleSiteRadarRequestKey = '';
         singleSiteRadarLocationKey = '';
@@ -13616,6 +13620,7 @@
              }
              if (cb) cb.checked = advanced && radarSingleSiteEnabled;
              syncSingleSiteRadarVisibility();
+             syncReportingRadarActionVisibility();
              if (!advanced && radarSingleSiteEnabled) {
                  radarSingleSiteEnabled = false;
                  singleSiteRadarTargetLocation = null;
@@ -13648,6 +13653,7 @@
              }
              updateSingleSiteRadarControl();
              setSingleSiteRadarStatus(radarSingleSiteEnabled ? 'Finding nearest site\u2026' : '');
+             syncReportingRadarActionVisibility();
              setReportingRadarLayerForLocation();
              ensureReportPinMarker();
          }
@@ -14701,16 +14707,20 @@
              return radars.filter(function(site) {
                  const id = String(site && site.id || '').toUpperCase();
                  return id && id !== 'USCOMP' &&
+                     String(site.type || '').toUpperCase() === 'NEXRAD' &&
                      isFinite(Number(site.lat)) && isFinite(Number(site.lon));
              });
          }
 
     function _selectNearestIEMRadar(payload, location) {
-             const usable = _iemRadarSites(payload);
+             // Keep the initial location-based selection explicitly limited
+             // to main NEXRAD sites, independently of the inventory helper.
+             const usable = _iemRadarSites(payload).filter(function(site) {
+                 return String(site && site.type || '').toUpperCase() === 'NEXRAD';
+             });
         if (!usable.length) return null;
-         // "Nearest" means nearest available IEM radar of any supported
-         // type, including terminal radars. Their product list is resolved
-         // dynamically below, so do not substitute a farther NEXRAD site.
+         // "Nearest" means nearest available main NEXRAD site. Terminal
+         // radars are intentionally excluded from Single Site selection.
          usable.sort(function(a, b) {
             return _iemRadarDistanceSquared(a, location) -
                 _iemRadarDistanceSquared(b, location);
@@ -14892,6 +14902,7 @@
             else { reportingMap.removeLayer(reportingRadarLayer); }
         }
         updateSingleSiteRadarControl();
+        syncReportingRadarActionVisibility();
         if (radarVisible && reportingMap) setReportingRadarLayerForLocation();
         ensureReportPinMarker();
     }
