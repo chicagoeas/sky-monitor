@@ -868,8 +868,19 @@
         }
         .reporting-popup-footer {
             padding: 8px 12px; border-top: 1px solid rgba(255,255,255,0.16);
-            color: #d4deec; font-size: 0.68em; font-weight: 600;
+             color: #d4deec; font-size: 0.68em; font-weight: 600;
+             display: flex; align-items: center; gap: 8px;
         }
+        .reporting-popup-radar-action {
+             display: none; align-items: center; justify-content: center;
+             width: 28px; height: 25px; margin-left: auto; flex: 0 0 28px;
+             border: 2px solid #1685ff; border-radius: 5px;
+             background: rgba(0,96,210,0.18); color: #e8f4ff;
+             font-size: 1.2em; line-height: 1; cursor: pointer;
+         }
+        .reporting-popup-radar-action:hover {
+             background: rgba(0,128,255,0.42); border-color: #7ec4ff;
+         }
         .reporting-popup-shell.has-expanded-card .reporting-popup-footer {
             display: none;
         }
@@ -12668,6 +12679,7 @@
     let singleSiteRadarRequestKey = '';
     let singleSiteRadarRequestId = 0;
     let singleSiteRadarProductRequestId = 0;
+    let singleSiteRadarTargetLocation = null;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     // A manual map refresh is authoritative for the current map view. Once it
@@ -13064,18 +13076,85 @@
             + '</div></div>';
     }
 
-    function buildReportingPopup(entries) {
+    function buildReportingPopup(entries, latlng, allowRadarAction) {
         const count = entries.length;
         const isReportsPopup = entries.length > 0 && entries.every(function(entry) {
             return entry.source === 'iem-lsr' || entry.source === 'skymonitor-reports';
         });
         const itemNoun = isReportsPopup ? 'report' : 'alert';
+         const radarAction = latlng && allowRadarAction
+             ? '<button type="button" id="reporting-radar-action" class="reporting-popup-radar-action"'
+                 + ' title="Show nearest radar at this coordinate" aria-label="Show nearest radar at this coordinate"'
+                 + ' onclick="event.stopPropagation(); openRadarForReportingPopup(this);">&#128225;</button>'
+             : '';
         return '<div class="reporting-popup-shell">'
             + '<div class="reporting-popup-header">' + count + ' ' + itemNoun + (count === 1 ? '' : 's') + ' at this location</div>'
             + '<div class="reporting-popup-scroll">' + entries.map(buildReportingPopupCard).join('') + '</div>'
-            + '<div class="reporting-popup-footer">Tap an item to read the full details</div>'
+             + '<div class="reporting-popup-footer"><span>Tap an item to read the full details</span>' + radarAction + '</div>'
             + '</div>';
     }
+
+    function _reportingCoordinateCouldBeUS(latlng) {
+        if (!latlng || !isFinite(Number(latlng.lat)) || !isFinite(Number(latlng.lng))) return false;
+        const la = Number(latlng.lat);
+        const lo = Number(latlng.lng);
+        const alaska = la >= 51.2 && la <= 71.6 && lo >= -170.5 && lo <= -129.5;
+        const hawaii = la >= 18.7 && la <= 22.4 && lo >= -160.5 && lo <= -154.5;
+        return alaska || hawaii ||
+            (la >= 24.3 && la <= 49.5 && lo >= -125 && lo <= -66.5);
+    }
+
+    function prepareReportingRadarAction(latlng) {
+        const button = document.getElementById('reporting-radar-action');
+        if (!button) return;
+        button.dataset.lat = Number(latlng.lat).toFixed(5);
+        button.dataset.lon = Number(latlng.lng).toFixed(5);
+        button.style.display = 'none';
+        // Single-site radar remains an Advanced-only feature. The extra
+        // server check prevents the action from appearing over Canada, Mexico,
+        // or any other non-U.S. coordinate inside a broad map rectangle.
+        if (!isAdvancedDataComplexity() || !_reportingCoordinateCouldBeUS(latlng)) return;
+        const url = 'https://api.weather.gov/points/' +
+            encodeURIComponent(Number(latlng.lat).toFixed(4)) + ',' +
+            encodeURIComponent(Number(latlng.lng).toFixed(4));
+        fetch(url, {
+            cache: 'no-store',
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }).then(function(response) {
+            if (!response.ok) return null;
+            return response.json();
+        }).then(function(payload) {
+            if (payload && payload.properties && button.isConnected) {
+                button.style.display = 'inline-flex';
+            }
+        }).catch(function() {});
+    }
+
+    function openRadarForReportingPopup(button) {
+        if (!button || !isAdvancedDataComplexity()) return;
+        const la = parseFloat(button.dataset.lat);
+        const lo = parseFloat(button.dataset.lon);
+        if (!isFinite(la) || !isFinite(lo) ||
+            !_reportingCoordinateCouldBeUS({ lat: la, lng: lo })) return;
+
+        singleSiteRadarTargetLocation = { lat: la, lon: lo };
+        radarVisible = true;
+        radarSingleSiteEnabled = true;
+        localStorage.setItem('report_radar_on', '1');
+        localStorage.setItem('report_radar_single_site', '1');
+        const radarCb = document.getElementById('radar-toggle-cb');
+        if (radarCb) radarCb.checked = true;
+        const singleSiteCb = document.getElementById('single-site-radar-cb');
+        if (singleSiteCb) singleSiteCb.checked = true;
+        singleSiteRadarRequestId++;
+        singleSiteRadarRequestKey = '';
+        singleSiteRadarLocationKey = '';
+        setSingleSiteRadarStatus('Finding nearest radar at clicked coordinate\u2026');
+        updateSingleSiteRadarControl();
+        if (reportingMap) reportingMap.closePopup();
+        if (reportingMap) setReportingRadarLayerForLocation();
+    }
+    window.openRadarForReportingPopup = openRadarForReportingPopup;
 
     function toggleReportingPopupCard(id) {
         const card = document.getElementById(id);
@@ -13150,8 +13229,9 @@
             autoPanPadding: [48, 42],
             autoPanPaddingTopLeft: [54, 54],
             autoPanPaddingBottomRight: [14, 42]
-        }).setLatLng(latlng).setContent(buildReportingPopup(nearby));
+         }).setLatLng(latlng).setContent(buildReportingPopup(nearby, latlng, !autoOpenEntry));
         popup.openOn(reportingMap);
+         if (!autoOpenEntry) prepareReportingRadarAction(latlng);
         if (autoOpenEntry) {
             setTimeout(function() {
                 var cardId = reportingPopupEntryIdFor(autoOpenEntry);
@@ -13538,6 +13618,7 @@
              syncSingleSiteRadarVisibility();
              if (!advanced && radarSingleSiteEnabled) {
                  radarSingleSiteEnabled = false;
+                 singleSiteRadarTargetLocation = null;
                  localStorage.setItem('report_radar_single_site', '0');
                  singleSiteRadarRequestId++;
                  singleSiteRadarRequestKey = '';
@@ -13557,6 +13638,7 @@
              radarSingleSiteEnabled = cb ? cb.checked : !radarSingleSiteEnabled;
              if (cb) cb.checked = radarSingleSiteEnabled;
              localStorage.setItem('report_radar_single_site', radarSingleSiteEnabled ? '1' : '0');
+             if (!radarSingleSiteEnabled) singleSiteRadarTargetLocation = null;
              singleSiteRadarRequestId++;
              singleSiteRadarRequestKey = '';
              singleSiteRadarLocationKey = '';
@@ -14591,6 +14673,8 @@
 
     function _reportingRadarLocation() {
         const candidates = [
+             singleSiteRadarTargetLocation
+                 ? [singleSiteRadarTargetLocation.lat, singleSiteRadarTargetLocation.lon] : [null, null],
             [lat, lon],
             [window._gpsLat, window._gpsLon],
             [reportLat, reportLon]
@@ -14624,19 +14708,14 @@
     function _selectNearestIEMRadar(payload, location) {
              const usable = _iemRadarSites(payload);
         if (!usable.length) return null;
-
-         // Prefer WSR-88D sites because they expose the high-resolution
-         // single-site products. The fallback keeps the feature useful
-        // where IEM only reports a nearby supplemental radar.
-        const nexrad = usable.filter(function(site) {
-            return String(site.type || '').toUpperCase() === 'NEXRAD';
-        });
-        const candidates = nexrad.length ? nexrad : usable;
-        candidates.sort(function(a, b) {
+         // "Nearest" means nearest available IEM radar of any supported
+         // type, including terminal radars. Their product list is resolved
+         // dynamically below, so do not substitute a farther NEXRAD site.
+         usable.sort(function(a, b) {
             return _iemRadarDistanceSquared(a, location) -
                 _iemRadarDistanceSquared(b, location);
         });
-        return candidates[0];
+         return usable[0];
     }
 
          function loadSingleSiteRadarProducts(site) {
