@@ -13506,6 +13506,12 @@
         }).join('');
     }
 
+    function formatNwsIssuedBy(senderName, wfo) {
+        var value = String(senderName || wfo || '').trim();
+        if (!value) return 'NWS';
+        return value.replace(/^National Weather Service\b/i, 'NWS');
+    }
+
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
         const url = 'https://api.weather.gov/alerts/active?point='
             + encodeURIComponent(latlng.lat.toFixed(4) + ',' + latlng.lng.toFixed(4));
@@ -13546,7 +13552,7 @@
              const timeInfo = reportingAlertTimeInfo(alert);
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
-                 ['Issued by', alert.senderName || wfo],
+                  ['Issued by', formatNwsIssuedBy(alert.senderName, wfo)],
                  ['Alert text', alert.description],
                  ['Instructions', alert.instruction]
              ];
@@ -13689,7 +13695,8 @@
 
          function syncSingleSiteRadarVisibility() {
              const visible = !!reportingMap && radarVisible &&
-                 isAdvancedDataComplexity() && radarSingleSiteEnabled;
+                  !historicalRadarState.active &&
+                  isAdvancedDataComplexity() && radarSingleSiteEnabled;
              if (!singleSiteRadarSiteLayer || !reportingMap) return;
              if (visible) {
                  if (!reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
@@ -15232,6 +15239,7 @@
             index: 0,
             timestampMs: windowInfo.frames[0]
         };
+         syncSingleSiteRadarVisibility();
         historicalRadarPending = false;
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'HISTORICAL RADAR';
@@ -15773,7 +15781,7 @@
 
         const fallback = reportingPopupDetailRows([
             ['Issued', props.issue ? formatReportTime(props.issue) : ''],
-            ['Issued by', props.wfo ? 'NWS ' + props.wfo : 'NWS'],
+            ['Issued by', formatNwsIssuedBy('', props.wfo)],
             ['Alert text', 'The archived NWS text product is temporarily unavailable.']
         ]);
         const promise = (async function() {
@@ -15815,7 +15823,7 @@
                 const issued = props.issue || matchingProduct.valid;
                 const rows = [
                     ['Issued', issued ? formatReportTime(issued) : ''],
-                    ['Issued by', sections.issuer || (wfo ? 'NWS ' + wfo : 'NWS')],
+                    ['Issued by', formatNwsIssuedBy(sections.issuer, wfo)],
                     ['Alert text', sections.description],
                     ['Instructions', sections.instructions]
                 ];
