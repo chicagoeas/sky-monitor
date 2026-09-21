@@ -15180,14 +15180,22 @@
         if (!issued || !expires || !isFinite(issued.getTime()) || !isFinite(expires.getTime())) {
             return null;
         }
-        const startMs = Math.floor(issued.getTime() / HISTORICAL_RADAR_FRAME_MS) *
-            HISTORICAL_RADAR_FRAME_MS;
-        const endMs = Math.floor(expires.getTime() / HISTORICAL_RADAR_FRAME_MS) *
-            HISTORICAL_RADAR_FRAME_MS;
+        // The linked alert must be visible on the first frame. Do not round
+        // its issuance down to the previous 5-minute radar frame, because
+        // that timestamp can still precede the alert's effective time.
+        const startMs = issued.getTime();
+        const endMs = Math.max(
+            startMs,
+            Math.floor(expires.getTime() / HISTORICAL_RADAR_FRAME_MS) *
+                HISTORICAL_RADAR_FRAME_MS
+        );
         if (!isFinite(startMs) || !isFinite(endMs) || endMs < startMs) return null;
 
-        const frames = [];
-        for (let timestamp = startMs; timestamp <= endMs; timestamp += HISTORICAL_RADAR_FRAME_MS) {
+        const frames = [startMs];
+        let nextFrame = Math.ceil(startMs / HISTORICAL_RADAR_FRAME_MS) *
+            HISTORICAL_RADAR_FRAME_MS;
+        if (nextFrame <= startMs) nextFrame += HISTORICAL_RADAR_FRAME_MS;
+        for (let timestamp = nextFrame; timestamp <= endMs; timestamp += HISTORICAL_RADAR_FRAME_MS) {
             frames.push(timestamp);
             // Avoid creating an unbounded slider if a malformed alert contains
             // a multi-year expiration time.
