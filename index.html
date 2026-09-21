@@ -1997,7 +1997,7 @@
             var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
                         'skymonitor_swipe','pref_alert_enabled','pref_alert_type',
                         'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd','pref_custom_alerts',
-                         'report_radar_on','report_radar_single_site','report_radar_product','report_alerts_on','report_lsr_on',
+                         'report_radar_on','report_radar_single_site','report_radar_product','report_radar_product_family','report_alerts_on','report_lsr_on',
                         'report_show_older','report_privacy_mode','report_custom_sky_alerts'];
             get(S.settings, '__migrated_v1').then(function(done) {
                 if (done) return;
@@ -12679,6 +12679,8 @@
         localStorage.getItem('data_complexity') === 'specific' &&
         localStorage.getItem('report_radar_single_site') === '1';
     let radarSingleSiteProduct = localStorage.getItem('report_radar_product') || '';
+    let radarSingleSiteProductFamily =
+        localStorage.getItem('report_radar_product_family') || '';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
         ? true
@@ -13380,9 +13382,27 @@
              status.style.display = message ? 'inline' : 'none';
          }
 
+         function _radarProductFamily(product) {
+             const id = String(product && (product.id || product.product || '') || '').toUpperCase();
+             const name = String(product && (product.name || product.title || '') || '').toLowerCase();
+             if (id === 'N0S' || id === 'N0U' || id === 'N0V' || id === 'TV0' ||
+                 id.includes('VEL') || name.includes('velocity') || name.includes('radial')) {
+                 return 'velocity';
+             }
+             if (id === 'N0B' || id === 'N0Q' || id === 'N0Z' || id === 'TZL' ||
+                 id.includes('REF') || name.includes('reflectivity')) {
+                 return 'reflectivity';
+             }
+             return '';
+         }
+
          function setSingleSiteRadarProductOptions(products) {
              const select = document.getElementById('single-site-radar-product');
              if (!select) return;
+             const previousProduct = radarSingleSiteProduct ||
+                 (select.value && select.value !== 'Loading products...' ? select.value : '');
+             const previousFamily = radarSingleSiteProductFamily ||
+                 _radarProductFamily({ id: previousProduct });
              select.innerHTML = '';
              if (!products || !products.length) {
                  const option = document.createElement('option');
@@ -13399,16 +13419,26 @@
                      (product.name ? ' \u2014 ' + String(product.name) : '');
                  select.appendChild(option);
              });
-             if (radarSingleSiteProduct &&
+             const exactMatch = previousProduct &&
                  products.some(function(product) {
-                     return String(product.id || '') === radarSingleSiteProduct;
-                 })) {
-                 select.value = radarSingleSiteProduct;
-             } else {
-                 radarSingleSiteProduct = String(products[0].id || '');
-                 select.value = radarSingleSiteProduct;
-                 localStorage.setItem('report_radar_product', radarSingleSiteProduct);
-             }
+                     return String(product.id || '') === previousProduct;
+                 });
+             const familyMatch = !exactMatch && previousFamily
+                 ? products.find(function(product) {
+                     return _radarProductFamily(product) === previousFamily;
+                 }) : null;
+             const selectedProduct = exactMatch
+                 ? previousProduct
+                 : String((familyMatch || products[0]).id || '');
+             radarSingleSiteProduct = selectedProduct;
+             radarSingleSiteProductFamily = _radarProductFamily(
+                 familyMatch || products.find(function(product) {
+                     return String(product.id || '') === selectedProduct;
+                 }) || products[0]
+             ) || previousFamily;
+             select.value = selectedProduct;
+             localStorage.setItem('report_radar_product', radarSingleSiteProduct);
+             localStorage.setItem('report_radar_product_family', radarSingleSiteProductFamily);
              select.disabled = false;
          }
 
@@ -13420,6 +13450,19 @@
                  }
              }
              singleSiteRadarSites = [];
+         }
+
+         function syncSingleSiteRadarVisibility() {
+             const visible = !!reportingMap && radarVisible &&
+                 isAdvancedDataComplexity() && radarSingleSiteEnabled;
+             if (!singleSiteRadarSiteLayer || !reportingMap) return;
+             if (visible) {
+                 if (!reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
+                     singleSiteRadarSiteLayer.addTo(reportingMap);
+                 }
+             } else if (reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
+                 reportingMap.removeLayer(singleSiteRadarSiteLayer);
+             }
          }
 
          function _iemRadarDisplayId(site) {
@@ -13486,9 +13529,13 @@
              const productRow = document.getElementById('single-site-radar-product-row');
              const cb = document.getElementById('single-site-radar-cb');
              const advanced = isAdvancedDataComplexity();
-             if (row) row.style.display = advanced ? 'flex' : 'none';
-             if (productRow) productRow.style.display = advanced && radarSingleSiteEnabled ? 'flex' : 'none';
+             if (row) row.style.display = advanced && radarVisible ? 'flex' : 'none';
+             if (productRow) {
+                 productRow.style.display = advanced && radarVisible && radarSingleSiteEnabled
+                     ? 'flex' : 'none';
+             }
              if (cb) cb.checked = advanced && radarSingleSiteEnabled;
+             syncSingleSiteRadarVisibility();
              if (!advanced && radarSingleSiteEnabled) {
                  radarSingleSiteEnabled = false;
                  localStorage.setItem('report_radar_single_site', '0');
@@ -13544,7 +13591,12 @@
              const productId = select ? String(select.value || '') : '';
              if (!productId || !reportingRadarSite || !radarSingleSiteEnabled) return;
              radarSingleSiteProduct = productId;
+             const selectedProduct = singleSiteRadarProducts.find(function(product) {
+                 return String(product.id || '') === productId;
+             });
+             radarSingleSiteProductFamily = _radarProductFamily(selectedProduct || { id: productId });
              localStorage.setItem('report_radar_product', radarSingleSiteProduct);
+             localStorage.setItem('report_radar_product_family', radarSingleSiteProductFamily);
              const siteId = String(reportingRadarSite.id || '').toUpperCase();
              _replaceReportingRadarLayer(
                  'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::' +
@@ -14667,6 +14719,10 @@
     function setReportingRadarLayerForLocation() {
         if (!reportingMap || !window.L) return;
         updateSingleSiteRadarControl();
+        if (!radarVisible) {
+            syncSingleSiteRadarVisibility();
+            return;
+        }
         if (!isAdvancedDataComplexity() || !radarSingleSiteEnabled) {
             singleSiteRadarRequestId++;
             singleSiteRadarRequestKey = '';
@@ -14749,12 +14805,15 @@
 
     function toggleReportingRadar() {
         const cb = document.getElementById('radar-toggle-cb');
-        if (!reportingRadarLayer || !reportingMap) { if (cb) cb.checked = radarVisible; return; }
         radarVisible = cb ? cb.checked : !radarVisible;
         if (cb) cb.checked = radarVisible;
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
-        if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
-        else { reportingMap.removeLayer(reportingRadarLayer); }
+        if (reportingRadarLayer && reportingMap) {
+            if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
+            else { reportingMap.removeLayer(reportingRadarLayer); }
+        }
+        updateSingleSiteRadarControl();
+        if (radarVisible && reportingMap) setReportingRadarLayerForLocation();
         ensureReportPinMarker();
     }
 
