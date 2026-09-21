@@ -1159,7 +1159,7 @@
     </div>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.8</span></span>
+        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.9</span></span>
     </h1>
 
     <div id="app-location-shell" style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
@@ -12674,6 +12674,7 @@
     let reportingRadarSite = null;
     let singleSiteRadarSiteLayer = null;
     let singleSiteRadarSites = [];
+     let singleSiteRadarAllSites = [];
     let singleSiteRadarProducts = [];
     let singleSiteRadarLocationKey = '';
     let singleSiteRadarRequestKey = '';
@@ -13480,6 +13481,13 @@
              return '';
          }
 
+         function _radarProductLabel(product) {
+             const family = _radarProductFamily(product);
+             if (family === 'reflectivity') return 'Base Reflectivity';
+             if (family === 'velocity') return 'Storm Relative Velocity';
+             return String(product && (product.name || product.title || product.id) || 'Radar Product');
+         }
+
          function setSingleSiteRadarProductOptions(products) {
              const select = document.getElementById('single-site-radar-product');
              if (!select) return;
@@ -13487,8 +13495,21 @@
                  (select.value && select.value !== 'Loading products...' ? select.value : '');
              const previousFamily = radarSingleSiteProductFamily ||
                  _radarProductFamily({ id: previousProduct });
+             const displayProducts = [];
+             const displayProductIndexes = {};
+             (products || []).forEach(function(product) {
+                 const label = _radarProductLabel(product);
+                 if (displayProductIndexes[label] == null) {
+                     displayProductIndexes[label] = displayProducts.length;
+                     displayProducts.push(product);
+                 } else if (String(product.id || '') === previousProduct) {
+                     // Keep the user's current product when several API
+                     // products share the same friendly family label.
+                     displayProducts[displayProductIndexes[label]] = product;
+                 }
+             });
              select.innerHTML = '';
-             if (!products || !products.length) {
+             if (!displayProducts.length) {
                  const option = document.createElement('option');
                  option.textContent = 'Loading products\u2026';
                  option.value = '';
@@ -13496,29 +13517,28 @@
                  select.disabled = true;
                  return;
              }
-             products.forEach(function(product) {
+             displayProducts.forEach(function(product) {
                  const option = document.createElement('option');
                  option.value = String(product.id || '');
-                 option.textContent = String(product.id || '') +
-                     (product.name ? ' \u2014 ' + String(product.name) : '');
+                 option.textContent = _radarProductLabel(product);
                  select.appendChild(option);
              });
              const exactMatch = previousProduct &&
-                 products.some(function(product) {
+                 displayProducts.some(function(product) {
                      return String(product.id || '') === previousProduct;
                  });
              const familyMatch = !exactMatch && previousFamily
-                 ? products.find(function(product) {
+                 ? displayProducts.find(function(product) {
                      return _radarProductFamily(product) === previousFamily;
                  }) : null;
              const selectedProduct = exactMatch
                  ? previousProduct
-                 : String((familyMatch || products[0]).id || '');
+                 : String((familyMatch || displayProducts[0]).id || '');
              radarSingleSiteProduct = selectedProduct;
              radarSingleSiteProductFamily = _radarProductFamily(
-                 familyMatch || products.find(function(product) {
+                 familyMatch || displayProducts.find(function(product) {
                      return String(product.id || '') === selectedProduct;
-                 }) || products[0]
+                 }) || displayProducts[0]
              ) || previousFamily;
              select.value = selectedProduct;
              localStorage.setItem('report_radar_product', radarSingleSiteProduct);
@@ -13534,6 +13554,7 @@
                  }
              }
              singleSiteRadarSites = [];
+             singleSiteRadarAllSites = [];
          }
 
          function syncSingleSiteRadarVisibility() {
@@ -13571,6 +13592,56 @@
              });
          }
 
+         // Keep the single-site layer readable at the national view. WeatherWise
+         // presents a capped set of individual radar labels rather than
+         // clustering them; SkyMonitor does the same here. The cap gets smaller
+         // as the map zooms out, and the selected site is added back below when
+         // it falls outside the capped slice.
+         function _singleSiteRadarMarkerShareForZoom() {
+             if (!reportingMap || !reportingMap.getZoom) return 1;
+             const zoom = Number(reportingMap.getZoom());
+             // At the regional zoom shown in the reference, retain the full
+             // inventory. Only broader views use a percentage of the full
+             // inventory, so the behavior stays proportional as sites change.
+             if (!isFinite(zoom) || zoom >= 5) return 1;
+             // Reduce each current limited tier by another 25%, while still
+             // decreasing at each wider map view.
+             if (zoom >= 4) return 0.375;
+             if (zoom >= 3) return 0.28125;
+             return 0.1875;
+         }
+
+         function _limitIEMRadarSites(sites, requiredSite, markerShare) {
+             const available = Array.isArray(sites) ? sites : [];
+             const share = Number.isFinite(Number(markerShare))
+                 ? Math.min(1, Math.max(0, Number(markerShare)))
+                 : 1;
+             const limit = Math.max(1, Math.ceil(available.length * share));
+             if (available.length <= limit) return available.slice();
+
+             const limited = available.slice(0, limit);
+             const requiredId = requiredSite && String(requiredSite.id || '').toUpperCase();
+             if (!requiredId || limited.some(function(site) {
+                 return String(site && site.id || '').toUpperCase() === requiredId;
+             })) {
+                 return limited;
+             }
+
+             // Keep the nearest/selected radar clickable even when the API's
+             // inventory order places it after the display limit.
+             limited[limited.length - 1] = requiredSite;
+             return limited;
+         }
+
+         function refreshSingleSiteRadarMarkersForZoom() {
+             if (!singleSiteRadarAllSites.length) return;
+             renderSingleSiteRadarSites(_limitIEMRadarSites(
+                 singleSiteRadarAllSites,
+                 reportingRadarSite,
+                 _singleSiteRadarMarkerShareForZoom()
+             ));
+         }
+
          function renderSingleSiteRadarSites(sites) {
              if (!reportingMap || !window.L) return;
              if (!singleSiteRadarSiteLayer) {
@@ -13605,7 +13676,7 @@
 
          function refreshSingleSiteRadarMarkerSelection() {
              if (!singleSiteRadarSiteLayer || !singleSiteRadarSites.length) return;
-             renderSingleSiteRadarSites(singleSiteRadarSites);
+             refreshSingleSiteRadarMarkersForZoom();
          }
 
          function updateSingleSiteRadarControl() {
@@ -13692,7 +13763,9 @@
                  'single',
                  reportingRadarSite
              );
-             setSingleSiteRadarStatus(siteId + ' \u00B7 ' + productId);
+              // The selected site/product is already represented by the
+              // controls; keep the "Use Single Site" row uncluttered.
+              setSingleSiteRadarStatus('');
          }
 
     function toggleLSR() {
@@ -14864,9 +14937,14 @@
         }).then(function(payload) {
             if (requestId !== singleSiteRadarRequestId ||
                 !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
-                 const sites = _iemRadarSites(payload);
-                 renderSingleSiteRadarSites(sites);
             const site = _selectNearestIEMRadar(payload, location);
+                 singleSiteRadarAllSites = _iemRadarSites(payload);
+                 const sites = _limitIEMRadarSites(
+                     singleSiteRadarAllSites,
+                     site,
+                     _singleSiteRadarMarkerShareForZoom()
+                 );
+                 renderSingleSiteRadarSites(sites);
             if (!site) {
                 singleSiteRadarLocationKey = '';
                  _clearSingleSiteRadarSites();
@@ -15133,6 +15211,7 @@
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
         reportingMap.on('moveend zoomend', saveReportingMapView);
+        reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
         // Layer 1 — physical geography only (no labels), sits below radar
         L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
