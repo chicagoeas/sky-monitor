@@ -13578,24 +13578,27 @@
          // clustering them; SkyMonitor does the same here. The cap gets smaller
          // as the map zooms out, and the selected site is added back below when
          // it falls outside the capped slice.
-         const MAX_SINGLE_SITE_RADAR_MARKERS = 100;
-
-         function _singleSiteRadarMarkerLimitForZoom() {
-             if (!reportingMap || !reportingMap.getZoom) return Infinity;
+         function _singleSiteRadarMarkerShareForZoom() {
+             if (!reportingMap || !reportingMap.getZoom) return 1;
              const zoom = Number(reportingMap.getZoom());
              // At the regional zoom shown in the reference, retain the full
-             // inventory. Only broader views use a display limit.
-             if (!isFinite(zoom) || zoom >= 5) return Infinity;
-             if (zoom >= 4) return MAX_SINGLE_SITE_RADAR_MARKERS;
-             if (zoom >= 3) return 75;
-             return 50;
+             // inventory. Only broader views use a percentage of the full
+             // inventory, so the behavior stays proportional as sites change.
+             if (!isFinite(zoom) || zoom >= 5) return 1;
+             // These are half of the previous limited tiers (100, 75, and
+             // 50 markers respectively), while still decreasing at each
+             // wider map view.
+             if (zoom >= 4) return 0.50;
+             if (zoom >= 3) return 0.375;
+             return 0.25;
          }
 
-         function _limitIEMRadarSites(sites, requiredSite, maxMarkers) {
+         function _limitIEMRadarSites(sites, requiredSite, markerShare) {
              const available = Array.isArray(sites) ? sites : [];
-             const limit = Number.isFinite(Number(maxMarkers))
-                 ? Math.max(1, Math.floor(Number(maxMarkers)))
-                 : available.length;
+             const share = Number.isFinite(Number(markerShare))
+                 ? Math.min(1, Math.max(0, Number(markerShare)))
+                 : 1;
+             const limit = Math.max(1, Math.ceil(available.length * share));
              if (available.length <= limit) return available.slice();
 
              const limited = available.slice(0, limit);
@@ -13617,7 +13620,7 @@
              renderSingleSiteRadarSites(_limitIEMRadarSites(
                  singleSiteRadarAllSites,
                  reportingRadarSite,
-                 _singleSiteRadarMarkerLimitForZoom()
+                 _singleSiteRadarMarkerShareForZoom()
              ));
          }
 
@@ -14919,7 +14922,7 @@
                  const sites = _limitIEMRadarSites(
                      singleSiteRadarAllSites,
                      site,
-                     _singleSiteRadarMarkerLimitForZoom()
+                     _singleSiteRadarMarkerShareForZoom()
                  );
                  renderSingleSiteRadarSites(sites);
             if (!site) {
