@@ -15727,6 +15727,107 @@
             (!end || end.getTime() > timestampMs);
     }
 
+    const historicalNwsDetailsCache = {};
+
+    function _historicalNwsTextSections(rawText) {
+        const text = String(rawText || '').replace(/\r/g, '').trim();
+        if (!text) return { description: '', instructions: '', issuer: '' };
+
+        const issuerMatch = text.match(/(?:^|\n)(National Weather Service[^\n]*)/i);
+        const issuer = issuerMatch ? issuerMatch[1].replace(/\s+/g, ' ').trim() : '';
+        const bodyStartMatch = text.match(/(?:^|\n)(The National Weather Service\b[\s\S]*)/i);
+        const bodyStart = bodyStartMatch
+            ? text.indexOf(bodyStartMatch[1])
+            : 0;
+        const body = text.slice(bodyStart).trim();
+        const instructionMatch = body.match(
+            /\nPRECAUTIONARY\/PREPAREDNESS ACTIONS[^\n]*\n/i
+        );
+        if (!instructionMatch) {
+            return { description: body, instructions: '', issuer: issuer };
+        }
+
+        const description = body.slice(0, instructionMatch.index).trim();
+        let instructions = body.slice(
+            instructionMatch.index + instructionMatch[0].length
+        );
+        // The product's technical latitude/longitude and signature block are
+        // not part of the public NWS Instructions field.
+        instructions = instructions.split(/\n(?:&&|LAT\.\.\.|\$\$)/i)[0].trim();
+        return {
+            description: description,
+            instructions: instructions,
+            issuer: issuer
+        };
+    }
+
+    async function loadHistoricalNwsDetails(props) {
+        props = props || {};
+        const productId = String(props.product_id || '').trim();
+        const cacheKey = productId || [
+            props.year, props.wfo, props.phenomena, props.significance, props.eventid
+        ].join('|');
+        if (historicalNwsDetailsCache[cacheKey]) {
+            return historicalNwsDetailsCache[cacheKey];
+        }
+
+        const fallback = reportingPopupDetailRows([
+            ['Issued', props.issue ? formatReportTime(props.issue) : ''],
+            ['Issued by', props.wfo ? 'NWS ' + props.wfo : 'NWS'],
+            ['Alert text', 'The archived NWS text product is temporarily unavailable.']
+        ]);
+        const promise = (async function() {
+            const productMatch = productId.match(/^(\d{4})/);
+            const year = props.year || (productMatch && productMatch[1]);
+            const wfo = String(props.wfo || '').trim();
+            const phenomena = String(props.phenomena || '').trim();
+            const significance = String(props.significance || '').trim();
+            const eventId = props.eventid;
+            if (!year || !wfo || !phenomena || !significance || eventId == null) {
+                return fallback;
+            }
+
+            const url = 'https://mesonet.agron.iastate.edu/json/vtec_event.py?' +
+                'year=' + encodeURIComponent(year) +
+                '&wfo=' + encodeURIComponent(wfo) +
+                '&phenomena=' + encodeURIComponent(phenomena) +
+                '&significance=' + encodeURIComponent(significance) +
+                '&etn=' + encodeURIComponent(eventId);
+            try {
+                const res = await fetch(url, {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!res.ok) return fallback;
+                const payload = await res.json();
+                const products = [
+                    payload.report,
+                    ...(Array.isArray(payload.svs) ? payload.svs : [])
+                ].filter(function(item) {
+                    return item && item.text;
+                });
+                const matchingProduct = products.find(function(item) {
+                    return productId && String(item.product_id || '') === productId;
+                }) || products[0];
+                if (!matchingProduct) return fallback;
+
+                const sections = _historicalNwsTextSections(matchingProduct.text);
+                const issued = props.issue || matchingProduct.valid;
+                const rows = [
+                    ['Issued', issued ? formatReportTime(issued) : ''],
+                    ['Issued by', sections.issuer || (wfo ? 'NWS ' + wfo : 'NWS')],
+                    ['Alert text', sections.description],
+                    ['Instructions', sections.instructions]
+                ];
+                return reportingPopupDetailRows(rows) || fallback;
+            } catch (error) {
+                return fallback;
+            }
+        })();
+        historicalNwsDetailsCache[cacheKey] = promise;
+        return promise;
+    }
+
     async function loadHistoricalNwsAlerts(timestampMs, L_ref, requestId) {
         if (!alertPolygonLayer || !L_ref || !isFinite(Number(timestampMs))) return;
         alertPolygonLayer.clearLayers();
@@ -15769,20 +15870,7 @@
                 const color = colors[phenomena];
                 const eventName = props.ps || props.type ||
                     (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning');
-                const issued = props.issue || props.polygon_begin;
                 const expires = props.polygon_end || props.expire;
-                const tags = [
-                    props.tornadotag, props.windtag, props.hailtag,
-                    props.windthreat, props.hailthreat
-                ].filter(function(value) { return value != null && String(value) !== ''; }).join(', ');
-                const issuedDate = parseReportDate(issued);
-                const expiresDate = parseReportDate(expires);
-                const detailRows = [
-                    ['Issued', issuedDate ? formatReportTime(issuedDate) : ''],
-                    ['Valid through', expiresDate ? formatReportTime(expiresDate) : ''],
-                    ['Issued by', props.wfo || 'NWS'],
-                    ['Threat details', tags]
-                ];
                 const polygon = L_ref.geoJSON(feature.geometry, {
                     style: {
                         color: color,
@@ -15799,9 +15887,10 @@
                     title: escapeHtml(eventName),
                     meta: escapeHtml(props.wfo || 'NWS') +
                         (expires ? ' \u00B7 ' + escapeHtml(formatReportingExpiry(expires)) : ''),
-                    detail: reportingPopupDetailRows(detailRows) +
-                        (props.href ? '<p><a href="' + escapeHtml(props.href) +
-                            '" target="_blank" rel="noopener noreferrer">Open IEM archive record</a></p>' : '')
+                    detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
+                    loadDetails: function() {
+                        return loadHistoricalNwsDetails(props);
+                    }
                 });
                 polygon.on('dblclick', function(e) {
                     L_ref.DomEvent.stop(e);
