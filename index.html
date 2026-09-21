@@ -1864,6 +1864,10 @@
                     <span style="font-size:0.82em; color:#ccc;">&#128225; Radar Overlay <span id="radar-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="radar-toggle-cb" checked onchange="toggleReportingRadar()"><span class="ios-toggle-track"></span></label>
                 </div>
+                 <div id="single-site-radar-row" style="display:none; justify-content:space-between; align-items:center; margin:-2px 0 10px 18px; padding-left:10px; border-left:2px solid rgba(79,195,247,0.35);">
+                     <span style="font-size:0.78em; color:#aab7c4;">Use Single Site <span id="single-site-radar-status" style="display:none; color:#718496; font-size:0.88em;"></span></span>
+                     <label class="ios-toggle"><input type="checkbox" id="single-site-radar-cb" onchange="toggleSingleSiteRadar()"><span class="ios-toggle-track"></span></label>
+                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;"></span></span>
                     <label class="ios-toggle"><input type="checkbox" id="alerts-toggle-cb" checked onchange="toggleAlertPolygons()"><span class="ios-toggle-track"></span></label>
@@ -1987,7 +1991,7 @@
             var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
                         'skymonitor_swipe','pref_alert_enabled','pref_alert_type',
                         'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd','pref_custom_alerts',
-                        'report_radar_on','report_alerts_on','report_lsr_on',
+                         'report_radar_on','report_radar_single_site','report_alerts_on','report_lsr_on',
                         'report_show_older','report_privacy_mode','report_custom_sky_alerts'];
             get(S.settings, '__migrated_v1').then(function(done) {
                 if (done) return;
@@ -3668,6 +3672,7 @@
         if (spcCountdown) spcCountdown.style.display = (mode === 'specific') ? '' : 'none';
         const threatFactors = document.getElementById('threat-factors');
         if (threatFactors) threatFactors.style.display = (mode === 'specific') ? '' : 'none';
+             updateSingleSiteRadarControl();
         loadAll();
     }
 
@@ -12648,6 +12653,11 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
+         let reportingRadarLayerMode = 'mosaic';
+         let reportingRadarSite = null;
+         let singleSiteRadarLocationKey = '';
+         let singleSiteRadarRequestKey = '';
+         let singleSiteRadarRequestId = 0;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     // A manual map refresh is authoritative for the current map view. Once it
@@ -12655,6 +12665,9 @@
     // refreshes or timer-driven loads.
     let reportingMapManualRefresh = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
+         let radarSingleSiteEnabled =
+             localStorage.getItem('data_complexity') === 'specific' &&
+             localStorage.getItem('report_radar_single_site') === '1';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
         ? true
@@ -13343,6 +13356,53 @@
         localStorage.setItem('report_map_settings_open', open ? '1' : '0');
         ensureReportPinMarker();
     }
+
+         function isAdvancedDataComplexity() {
+             return (localStorage.getItem('data_complexity') || 'normal') === 'specific';
+         }
+
+         function setSingleSiteRadarStatus(message, color) {
+             const status = document.getElementById('single-site-radar-status');
+             if (!status) return;
+             status.textContent = message || '';
+             status.style.color = color || '#718496';
+             status.style.display = message ? 'inline' : 'none';
+         }
+
+         function updateSingleSiteRadarControl() {
+             const row = document.getElementById('single-site-radar-row');
+             const cb = document.getElementById('single-site-radar-cb');
+             const advanced = isAdvancedDataComplexity();
+             if (row) row.style.display = advanced ? 'flex' : 'none';
+             if (cb) cb.checked = advanced && radarSingleSiteEnabled;
+             if (!advanced && radarSingleSiteEnabled) {
+                 radarSingleSiteEnabled = false;
+                 localStorage.setItem('report_radar_single_site', '0');
+                 singleSiteRadarRequestId++;
+                 singleSiteRadarRequestKey = '';
+                 singleSiteRadarLocationKey = '';
+                 setSingleSiteRadarStatus('');
+                 setReportingRadarLayerForLocation();
+             }
+         }
+
+         function toggleSingleSiteRadar() {
+             const cb = document.getElementById('single-site-radar-cb');
+             if (!isAdvancedDataComplexity()) {
+                 radarSingleSiteEnabled = false;
+                 if (cb) cb.checked = false;
+                 return;
+             }
+             radarSingleSiteEnabled = cb ? cb.checked : !radarSingleSiteEnabled;
+             if (cb) cb.checked = radarSingleSiteEnabled;
+             localStorage.setItem('report_radar_single_site', radarSingleSiteEnabled ? '1' : '0');
+             singleSiteRadarRequestId++;
+             singleSiteRadarRequestKey = '';
+             singleSiteRadarLocationKey = '';
+             setSingleSiteRadarStatus(radarSingleSiteEnabled ? 'Finding nearest site\u2026' : '');
+             setReportingRadarLayerForLocation();
+             ensureReportPinMarker();
+         }
 
     function toggleLSR() {
         const cb = document.getElementById('lsr-toggle-cb');
@@ -14323,24 +14383,159 @@
         el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
     }
 
+    const IEM_RADAR_AVAILABILITY_URL =
+        'https://mesonet.agron.iastate.edu/json/radar.py?operation=available';
+
+    function _reportingRadarLocation() {
+        const candidates = [
+            [lat, lon],
+            [window._gpsLat, window._gpsLon],
+            [reportLat, reportLon]
+        ];
+        for (let i = 0; i < candidates.length; i++) {
+            const la = parseFloat(candidates[i][0]);
+            const lo = parseFloat(candidates[i][1]);
+            if (isFinite(la) && isFinite(lo) && la >= -90 && la <= 90 && lo >= -180 && lo <= 180) {
+                return { lat: la, lon: lo };
+            }
+        }
+        return null;
+    }
+
+    function _iemRadarDistanceSquared(site, location) {
+        const latDelta = Number(site.lat) - location.lat;
+        const lonDelta = (Number(site.lon) - location.lon) *
+            Math.cos(location.lat * Math.PI / 180);
+        return latDelta * latDelta + lonDelta * lonDelta;
+    }
+
+    function _selectNearestIEMRadar(payload, location) {
+        const radars = payload && Array.isArray(payload.radars) ? payload.radars : [];
+        const usable = radars.filter(function(site) {
+            const id = String(site && site.id || '').toUpperCase();
+            return id && id !== 'USCOMP' &&
+                isFinite(Number(site.lat)) && isFinite(Number(site.lon));
+        });
+        if (!usable.length) return null;
+
+        // Prefer WSR-88D sites because N0Q is the high-resolution
+        // single-site product. The fallback keeps the feature useful
+        // where IEM only reports a nearby supplemental radar.
+        const nexrad = usable.filter(function(site) {
+            return String(site.type || '').toUpperCase() === 'NEXRAD';
+        });
+        const candidates = nexrad.length ? nexrad : usable;
+        candidates.sort(function(a, b) {
+            return _iemRadarDistanceSquared(a, location) -
+                _iemRadarDistanceSquared(b, location);
+        });
+        return candidates[0];
+    }
+
+    function _replaceReportingRadarLayer(url, mode, site) {
+        if (!reportingMap || !window.L) return;
+        const L_ref = window.L;
+        const oldLayer = reportingRadarLayer;
+        const nextLayer = L_ref.tileLayer(url, {
+            opacity: 0.65,
+            attribution: 'Radar: IEM / NEXRAD',
+            maxZoom: 18,
+            noWrap: true
+        });
+        reportingRadarLayer = nextLayer;
+        reportingRadarLayerMode = mode;
+        reportingRadarSite = site || null;
+        if (oldLayer && reportingMap.hasLayer(oldLayer)) {
+            reportingMap.removeLayer(oldLayer);
+        }
+        if (radarVisible) nextLayer.addTo(reportingMap);
+        _updateReportingMapAttribution();
+    }
+
+    function _ensureReportingMosaicRadarLayer() {
+        if (!reportingMap || !window.L) return;
+        if (reportingRadarLayerMode !== 'mosaic' || !reportingRadarLayer) {
+            _replaceReportingRadarLayer(
+                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
+                'mosaic',
+                null
+            );
+        } else if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
+            reportingRadarLayer.addTo(reportingMap);
+        }
+    }
+
     function setReportingRadarLayerForLocation() {
         if (!reportingMap || !window.L) return;
-        var L_ref = window.L;
-        // IEM/NEXRAD is the single reporting-map radar source. It remains
-        // consistent when the weather location changes between countries.
-        if (!reportingRadarLayer) {
-            reportingRadarLayer = L_ref.tileLayer(
-                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
-                {
-                    opacity: 0.65,
-                    attribution: 'Radar: IEM / NEXRAD',
-                    maxZoom: 18,
-                    noWrap: true
-                }
-            );
+        updateSingleSiteRadarControl();
+        if (!isAdvancedDataComplexity() || !radarSingleSiteEnabled) {
+            singleSiteRadarRequestId++;
+            singleSiteRadarRequestKey = '';
+            singleSiteRadarLocationKey = '';
+            setSingleSiteRadarStatus('');
+            _ensureReportingMosaicRadarLayer();
+            updateUSOnlyLayerLabels();
+            return;
         }
-        if (reportingRadarLayer && radarVisible) reportingRadarLayer.addTo(reportingMap);
-        _updateReportingMapAttribution();
+
+        const location = _reportingRadarLocation();
+        if (!location) {
+            _ensureReportingMosaicRadarLayer();
+            setSingleSiteRadarStatus('Location unavailable');
+            updateUSOnlyLayerLabels();
+            return;
+        }
+
+        const locationKey = location.lat.toFixed(3) + ',' + location.lon.toFixed(3);
+        if (reportingRadarLayerMode === 'single' &&
+            singleSiteRadarLocationKey === locationKey) {
+            if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
+                reportingRadarLayer.addTo(reportingMap);
+            }
+            return;
+        }
+        if (singleSiteRadarRequestKey === locationKey) return;
+
+        singleSiteRadarRequestKey = locationKey;
+        const requestId = ++singleSiteRadarRequestId;
+        setSingleSiteRadarStatus('Finding nearest site\u2026');
+        const start = new Date().toISOString().slice(0, 16) + 'Z';
+        const url = IEM_RADAR_AVAILABILITY_URL +
+            '&lat=' + encodeURIComponent(location.lat) +
+            '&lon=' + encodeURIComponent(location.lon) +
+            '&start=' + encodeURIComponent(start);
+        fetch(url, {
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json' }
+        }).then(function(response) {
+            if (!response.ok) throw new Error('IEM radar availability request failed');
+            return response.json();
+        }).then(function(payload) {
+            if (requestId !== singleSiteRadarRequestId ||
+                !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
+            const site = _selectNearestIEMRadar(payload, location);
+            if (!site) {
+                singleSiteRadarLocationKey = '';
+                _ensureReportingMosaicRadarLayer();
+                setSingleSiteRadarStatus('No nearby site; mosaic active');
+                return;
+            }
+            const siteId = String(site.id).toUpperCase();
+            singleSiteRadarLocationKey = locationKey;
+            _replaceReportingRadarLayer(
+                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::' +
+                    encodeURIComponent(siteId) + '-N0Q-0/{z}/{x}/{y}.png',
+                'single',
+                site
+            );
+            setSingleSiteRadarStatus(siteId + ' \u00B7 N0Q');
+        }).catch(function(error) {
+            if (requestId !== singleSiteRadarRequestId) return;
+            console.warn('[SkyMonitor] IEM single-site radar failed:', error);
+            singleSiteRadarLocationKey = '';
+            _ensureReportingMosaicRadarLayer();
+            setSingleSiteRadarStatus('Unavailable; mosaic active');
+        });
         updateUSOnlyLayerLabels();
     }
 
@@ -14606,6 +14801,9 @@
             const cb = document.getElementById('radar-toggle-cb');
             if (cb) cb.checked = false;
         }
+         updateSingleSiteRadarControl();
+         const _singleSiteRadarCb = document.getElementById('single-site-radar-cb');
+         if (_singleSiteRadarCb) _singleSiteRadarCb.checked = isAdvancedDataComplexity() && radarSingleSiteEnabled;
         if (!alertsVisible) {
             reportingMap.removeLayer(alertPolygonLayer);
             const cb = document.getElementById('alerts-toggle-cb');
@@ -16805,6 +17003,7 @@
         if (spcCountdown2) spcCountdown2.style.display = (savedComplexity === 'specific') ? '' : 'none';
         const threatFactors2 = document.getElementById('threat-factors');
         if (threatFactors2) threatFactors2.style.display = (savedComplexity === 'specific') ? '' : 'none';
+         updateSingleSiteRadarControl();
         const savedSwipe = localStorage.getItem('skymonitor_swipe');
         if (savedSwipe === 'off') {
             document.getElementById('opt-swipe-on')?.classList.remove('active');
