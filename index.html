@@ -1868,6 +1868,12 @@
                      <span style="font-size:0.78em; color:#aab7c4;">Use Single Site <span id="single-site-radar-status" style="display:none; color:#718496; font-size:0.88em;"></span></span>
                      <label class="ios-toggle"><input type="checkbox" id="single-site-radar-cb" onchange="toggleSingleSiteRadar()"><span class="ios-toggle-track"></span></label>
                  </div>
+                 <div id="single-site-radar-product-row" style="display:none; justify-content:space-between; align-items:center; margin:-2px 0 10px 18px; padding-left:10px; border-left:2px solid rgba(79,195,247,0.2);">
+                     <span style="font-size:0.76em; color:#91a4b5;">Radar Product</span>
+                     <select id="single-site-radar-product" onchange="onSingleSiteRadarProductChange()" disabled style="max-width:190px; padding:4px 6px; border-radius:6px; border:1px solid rgba(79,195,247,0.35); background:#18242d; color:#d8e2e9; font-size:0.74em;">
+                         <option>Loading products...</option>
+                     </select>
+                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <span style="font-size:0.82em; color:#ccc;">&#9888;&#65039; Alert Polygons <span id="alerts-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;"></span></span>
                     <label class="ios-toggle"><input type="checkbox" id="alerts-toggle-cb" checked onchange="toggleAlertPolygons()"><span class="ios-toggle-track"></span></label>
@@ -1991,7 +1997,7 @@
             var keys = ['waddle_lat','waddle_lon','waddle_city','input_mode','data_complexity',
                         'skymonitor_swipe','pref_alert_enabled','pref_alert_type',
                         'pref_spc_outlook','pref_spc_md','pref_wpc_outlook','pref_wpc_mpd','pref_custom_alerts',
-                         'report_radar_on','report_radar_single_site','report_alerts_on','report_lsr_on',
+                         'report_radar_on','report_radar_single_site','report_radar_product','report_alerts_on','report_lsr_on',
                         'report_show_older','report_privacy_mode','report_custom_sky_alerts'];
             get(S.settings, '__migrated_v1').then(function(done) {
                 if (done) return;
@@ -12653,11 +12659,15 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-         let reportingRadarLayerMode = 'mosaic';
-         let reportingRadarSite = null;
-         let singleSiteRadarLocationKey = '';
-         let singleSiteRadarRequestKey = '';
-         let singleSiteRadarRequestId = 0;
+    let reportingRadarLayerMode = 'mosaic';
+    let reportingRadarSite = null;
+    let singleSiteRadarSiteLayer = null;
+    let singleSiteRadarSites = [];
+    let singleSiteRadarProducts = [];
+    let singleSiteRadarLocationKey = '';
+    let singleSiteRadarRequestKey = '';
+    let singleSiteRadarRequestId = 0;
+    let singleSiteRadarProductRequestId = 0;
     let reportingDataLoadInFlight = false;
     let reportingDataRefreshQueued = false;
     // A manual map refresh is authoritative for the current map view. Once it
@@ -12665,9 +12675,10 @@
     // refreshes or timer-driven loads.
     let reportingMapManualRefresh = false;
     let radarVisible = localStorage.getItem('report_radar_on') !== '0';
-         let radarSingleSiteEnabled =
-             localStorage.getItem('data_complexity') === 'specific' &&
-             localStorage.getItem('report_radar_single_site') === '1';
+    let radarSingleSiteEnabled =
+        localStorage.getItem('data_complexity') === 'specific' &&
+        localStorage.getItem('report_radar_single_site') === '1';
+    let radarSingleSiteProduct = localStorage.getItem('report_radar_product') || '';
     let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
         ? true
@@ -13369,11 +13380,114 @@
              status.style.display = message ? 'inline' : 'none';
          }
 
+         function setSingleSiteRadarProductOptions(products) {
+             const select = document.getElementById('single-site-radar-product');
+             if (!select) return;
+             select.innerHTML = '';
+             if (!products || !products.length) {
+                 const option = document.createElement('option');
+                 option.textContent = 'Loading products\u2026';
+                 option.value = '';
+                 select.appendChild(option);
+                 select.disabled = true;
+                 return;
+             }
+             products.forEach(function(product) {
+                 const option = document.createElement('option');
+                 option.value = String(product.id || '');
+                 option.textContent = String(product.id || '') +
+                     (product.name ? ' \u2014 ' + String(product.name) : '');
+                 select.appendChild(option);
+             });
+             if (radarSingleSiteProduct &&
+                 products.some(function(product) {
+                     return String(product.id || '') === radarSingleSiteProduct;
+                 })) {
+                 select.value = radarSingleSiteProduct;
+             } else {
+                 radarSingleSiteProduct = String(products[0].id || '');
+                 select.value = radarSingleSiteProduct;
+                 localStorage.setItem('report_radar_product', radarSingleSiteProduct);
+             }
+             select.disabled = false;
+         }
+
+         function _clearSingleSiteRadarSites() {
+             if (singleSiteRadarSiteLayer) {
+                 singleSiteRadarSiteLayer.clearLayers();
+                 if (reportingMap && reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
+                     reportingMap.removeLayer(singleSiteRadarSiteLayer);
+                 }
+             }
+             singleSiteRadarSites = [];
+         }
+
+         function _iemRadarDisplayId(site) {
+             const id = String(site && site.id || '').toUpperCase();
+             return String(site && site.type || '').toUpperCase() === 'NEXRAD' &&
+                 id.length === 3 ? 'K' + id : id;
+         }
+
+         function _singleSiteRadarMarkerIcon(site, selected) {
+             const id = _iemRadarDisplayId(site);
+             const background = selected ? '#4fc3f7' : '#16242e';
+             const color = selected ? '#07131d' : '#d8e2e9';
+             const border = selected ? '#ffffff' : '#4fc3f7';
+             return window.L.divIcon({
+                 className: '',
+                 html: '<div style="min-width:42px;height:21px;padding:0 4px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:' +
+                     background + ';color:' + color + ';border:2px solid ' + border +
+                     ';border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.55);font-size:10px;font-weight:900;letter-spacing:0.3px;white-space:nowrap;">' +
+                     escapeHtml(id) + '</div>',
+                 iconSize: [50, 25],
+                 iconAnchor: [25, 12]
+             });
+         }
+
+         function renderSingleSiteRadarSites(sites) {
+             if (!reportingMap || !window.L) return;
+             if (!singleSiteRadarSiteLayer) {
+                 singleSiteRadarSiteLayer = window.L.layerGroup().addTo(reportingMap);
+             } else {
+                 singleSiteRadarSiteLayer.clearLayers();
+                 if (!reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
+                     singleSiteRadarSiteLayer.addTo(reportingMap);
+                 }
+             }
+             singleSiteRadarSites = Array.isArray(sites) ? sites.slice() : [];
+             singleSiteRadarSites.forEach(function(site) {
+                 const siteId = String(site.id || '').toUpperCase();
+                 const displayId = _iemRadarDisplayId(site);
+                 const marker = window.L.marker([Number(site.lat), Number(site.lon)], {
+                     icon: _singleSiteRadarMarkerIcon(site, !!reportingRadarSite &&
+                         String(reportingRadarSite.id || '').toUpperCase() === siteId),
+                     keyboard: true,
+                     title: displayId
+                 });
+                 marker.bindTooltip(displayId + (site.name ? ' \u00B7 ' + site.name : ''), {
+                     direction: 'top',
+                     offset: [0, -10]
+                 });
+                 marker.on('click', function(event) {
+                     if (window.L.DomEvent) window.L.DomEvent.stop(event);
+                     selectSingleSiteRadar(siteId);
+                 });
+                 marker.addTo(singleSiteRadarSiteLayer);
+             });
+         }
+
+         function refreshSingleSiteRadarMarkerSelection() {
+             if (!singleSiteRadarSiteLayer || !singleSiteRadarSites.length) return;
+             renderSingleSiteRadarSites(singleSiteRadarSites);
+         }
+
          function updateSingleSiteRadarControl() {
              const row = document.getElementById('single-site-radar-row');
+             const productRow = document.getElementById('single-site-radar-product-row');
              const cb = document.getElementById('single-site-radar-cb');
              const advanced = isAdvancedDataComplexity();
              if (row) row.style.display = advanced ? 'flex' : 'none';
+             if (productRow) productRow.style.display = advanced && radarSingleSiteEnabled ? 'flex' : 'none';
              if (cb) cb.checked = advanced && radarSingleSiteEnabled;
              if (!advanced && radarSingleSiteEnabled) {
                  radarSingleSiteEnabled = false;
@@ -13399,9 +13513,46 @@
              singleSiteRadarRequestId++;
              singleSiteRadarRequestKey = '';
              singleSiteRadarLocationKey = '';
+             if (radarSingleSiteEnabled) {
+                 singleSiteRadarProducts = [];
+                 setSingleSiteRadarProductOptions([]);
+             }
+             updateSingleSiteRadarControl();
              setSingleSiteRadarStatus(radarSingleSiteEnabled ? 'Finding nearest site\u2026' : '');
              setReportingRadarLayerForLocation();
              ensureReportPinMarker();
+         }
+
+         function selectSingleSiteRadar(siteId) {
+             if (!isAdvancedDataComplexity() || !radarSingleSiteEnabled) return;
+             const site = singleSiteRadarSites.find(function(item) {
+                 return String(item.id || '').toUpperCase() === String(siteId || '').toUpperCase();
+             });
+             if (!site) return;
+             reportingRadarSite = site;
+             singleSiteRadarRequestKey = singleSiteRadarLocationKey;
+             singleSiteRadarProductRequestId++;
+             singleSiteRadarProducts = [];
+             setSingleSiteRadarProductOptions([]);
+             setSingleSiteRadarStatus('Loading ' + _iemRadarDisplayId(site) + '\u2026');
+             refreshSingleSiteRadarMarkerSelection();
+             loadSingleSiteRadarProducts(site);
+         }
+
+         function onSingleSiteRadarProductChange() {
+             const select = document.getElementById('single-site-radar-product');
+             const productId = select ? String(select.value || '') : '';
+             if (!productId || !reportingRadarSite || !radarSingleSiteEnabled) return;
+             radarSingleSiteProduct = productId;
+             localStorage.setItem('report_radar_product', radarSingleSiteProduct);
+             const siteId = String(reportingRadarSite.id || '').toUpperCase();
+             _replaceReportingRadarLayer(
+                 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::' +
+                     encodeURIComponent(siteId) + '-' + encodeURIComponent(productId) + '-0/{z}/{x}/{y}.png',
+                 'single',
+                 reportingRadarSite
+             );
+             setSingleSiteRadarStatus(siteId + ' \u00B7 ' + productId);
          }
 
     function toggleLSR() {
@@ -14409,17 +14560,21 @@
         return latDelta * latDelta + lonDelta * lonDelta;
     }
 
+         function _iemRadarSites(payload) {
+             const radars = payload && Array.isArray(payload.radars) ? payload.radars : [];
+             return radars.filter(function(site) {
+                 const id = String(site && site.id || '').toUpperCase();
+                 return id && id !== 'USCOMP' &&
+                     isFinite(Number(site.lat)) && isFinite(Number(site.lon));
+             });
+         }
+
     function _selectNearestIEMRadar(payload, location) {
-        const radars = payload && Array.isArray(payload.radars) ? payload.radars : [];
-        const usable = radars.filter(function(site) {
-            const id = String(site && site.id || '').toUpperCase();
-            return id && id !== 'USCOMP' &&
-                isFinite(Number(site.lat)) && isFinite(Number(site.lon));
-        });
+             const usable = _iemRadarSites(payload);
         if (!usable.length) return null;
 
-        // Prefer WSR-88D sites because N0Q is the high-resolution
-        // single-site product. The fallback keeps the feature useful
+         // Prefer WSR-88D sites because they expose the high-resolution
+         // single-site products. The fallback keeps the feature useful
         // where IEM only reports a nearby supplemental radar.
         const nexrad = usable.filter(function(site) {
             return String(site.type || '').toUpperCase() === 'NEXRAD';
@@ -14431,6 +14586,50 @@
         });
         return candidates[0];
     }
+
+         function loadSingleSiteRadarProducts(site) {
+             if (!site || !radarSingleSiteEnabled) return;
+             const requestId = ++singleSiteRadarProductRequestId;
+             const siteId = String(site.id || '').toUpperCase();
+             const start = new Date().toISOString().slice(0, 16) + 'Z';
+             const url = 'https://mesonet.agron.iastate.edu/json/radar.py?operation=products' +
+                 '&radar=' + encodeURIComponent(siteId) +
+                 '&start=' + encodeURIComponent(start);
+             setSingleSiteRadarStatus('Loading ' + siteId + ' products\u2026');
+             fetch(url, {
+                 cache: 'no-store',
+                 headers: { 'Accept': 'application/json' }
+             }).then(function(response) {
+                 if (!response.ok) throw new Error('IEM radar products request failed');
+                 return response.json();
+             }).then(function(payload) {
+                 if (requestId !== singleSiteRadarProductRequestId ||
+                     !radarSingleSiteEnabled || !isAdvancedDataComplexity() ||
+                     !reportingRadarSite ||
+                     String(reportingRadarSite.id || '').toUpperCase() !== siteId) return;
+                 const products = payload && Array.isArray(payload.products)
+                     ? payload.products.filter(function(product) {
+                         return product && product.id;
+                     }) : [];
+                 if (!products.length) {
+                     singleSiteRadarProducts = [];
+                     setSingleSiteRadarProductOptions([]);
+                     _ensureReportingMosaicRadarLayer();
+                     setSingleSiteRadarStatus(_iemRadarDisplayId(site) + ' has no current products; mosaic active');
+                     return;
+                 }
+                 singleSiteRadarProducts = products;
+                 setSingleSiteRadarProductOptions(products);
+                 onSingleSiteRadarProductChange();
+             }).catch(function(error) {
+                 if (requestId !== singleSiteRadarProductRequestId) return;
+                 console.warn('[SkyMonitor] IEM radar products failed:', error);
+                 singleSiteRadarProducts = [];
+                 setSingleSiteRadarProductOptions([]);
+                 _ensureReportingMosaicRadarLayer();
+                 setSingleSiteRadarStatus('Products unavailable; mosaic active');
+             });
+         }
 
     function _replaceReportingRadarLayer(url, mode, site) {
         if (!reportingMap || !window.L) return;
@@ -14472,6 +14671,11 @@
             singleSiteRadarRequestId++;
             singleSiteRadarRequestKey = '';
             singleSiteRadarLocationKey = '';
+                 singleSiteRadarProductRequestId++;
+                 reportingRadarSite = null;
+                 singleSiteRadarProducts = [];
+                 setSingleSiteRadarProductOptions([]);
+                 _clearSingleSiteRadarSites();
             setSingleSiteRadarStatus('');
             _ensureReportingMosaicRadarLayer();
             updateUSOnlyLayerLabels();
@@ -14480,6 +14684,7 @@
 
         const location = _reportingRadarLocation();
         if (!location) {
+                 _clearSingleSiteRadarSites();
             _ensureReportingMosaicRadarLayer();
             setSingleSiteRadarStatus('Location unavailable');
             updateUSOnlyLayerLabels();
@@ -14513,26 +14718,28 @@
         }).then(function(payload) {
             if (requestId !== singleSiteRadarRequestId ||
                 !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
+                 const sites = _iemRadarSites(payload);
+                 renderSingleSiteRadarSites(sites);
             const site = _selectNearestIEMRadar(payload, location);
             if (!site) {
                 singleSiteRadarLocationKey = '';
+                 _clearSingleSiteRadarSites();
                 _ensureReportingMosaicRadarLayer();
                 setSingleSiteRadarStatus('No nearby site; mosaic active');
                 return;
             }
-            const siteId = String(site.id).toUpperCase();
+                 reportingRadarSite = site;
             singleSiteRadarLocationKey = locationKey;
-            _replaceReportingRadarLayer(
-                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::' +
-                    encodeURIComponent(siteId) + '-N0Q-0/{z}/{x}/{y}.png',
-                'single',
-                site
-            );
-            setSingleSiteRadarStatus(siteId + ' \u00B7 N0Q');
+                 singleSiteRadarRequestKey = locationKey;
+                 refreshSingleSiteRadarMarkerSelection();
+                 singleSiteRadarProducts = [];
+                 setSingleSiteRadarProductOptions([]);
+                 loadSingleSiteRadarProducts(site);
         }).catch(function(error) {
             if (requestId !== singleSiteRadarRequestId) return;
             console.warn('[SkyMonitor] IEM single-site radar failed:', error);
             singleSiteRadarLocationKey = '';
+                 _clearSingleSiteRadarSites();
             _ensureReportingMosaicRadarLayer();
             setSingleSiteRadarStatus('Unavailable; mosaic active');
         });
