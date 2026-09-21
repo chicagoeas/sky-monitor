@@ -13481,6 +13481,13 @@
              return '';
          }
 
+         function _radarProductLabel(product) {
+             const family = _radarProductFamily(product);
+             if (family === 'reflectivity') return 'Base Reflectivity';
+             if (family === 'velocity') return 'Storm Relative Velocity';
+             return String(product && (product.name || product.title || product.id) || 'Radar Product');
+         }
+
          function setSingleSiteRadarProductOptions(products) {
              const select = document.getElementById('single-site-radar-product');
              if (!select) return;
@@ -13488,8 +13495,21 @@
                  (select.value && select.value !== 'Loading products...' ? select.value : '');
              const previousFamily = radarSingleSiteProductFamily ||
                  _radarProductFamily({ id: previousProduct });
+             const displayProducts = [];
+             const displayProductIndexes = {};
+             (products || []).forEach(function(product) {
+                 const label = _radarProductLabel(product);
+                 if (displayProductIndexes[label] == null) {
+                     displayProductIndexes[label] = displayProducts.length;
+                     displayProducts.push(product);
+                 } else if (String(product.id || '') === previousProduct) {
+                     // Keep the user's current product when several API
+                     // products share the same friendly family label.
+                     displayProducts[displayProductIndexes[label]] = product;
+                 }
+             });
              select.innerHTML = '';
-             if (!products || !products.length) {
+             if (!displayProducts.length) {
                  const option = document.createElement('option');
                  option.textContent = 'Loading products\u2026';
                  option.value = '';
@@ -13497,29 +13517,28 @@
                  select.disabled = true;
                  return;
              }
-             products.forEach(function(product) {
+             displayProducts.forEach(function(product) {
                  const option = document.createElement('option');
                  option.value = String(product.id || '');
-                 option.textContent = String(product.id || '') +
-                     (product.name ? ' \u2014 ' + String(product.name) : '');
+                 option.textContent = _radarProductLabel(product);
                  select.appendChild(option);
              });
              const exactMatch = previousProduct &&
-                 products.some(function(product) {
+                 displayProducts.some(function(product) {
                      return String(product.id || '') === previousProduct;
                  });
              const familyMatch = !exactMatch && previousFamily
-                 ? products.find(function(product) {
+                 ? displayProducts.find(function(product) {
                      return _radarProductFamily(product) === previousFamily;
                  }) : null;
              const selectedProduct = exactMatch
                  ? previousProduct
-                 : String((familyMatch || products[0]).id || '');
+                 : String((familyMatch || displayProducts[0]).id || '');
              radarSingleSiteProduct = selectedProduct;
              radarSingleSiteProductFamily = _radarProductFamily(
-                 familyMatch || products.find(function(product) {
+                 familyMatch || displayProducts.find(function(product) {
                      return String(product.id || '') === selectedProduct;
-                 }) || products[0]
+                 }) || displayProducts[0]
              ) || previousFamily;
              select.value = selectedProduct;
              localStorage.setItem('report_radar_product', radarSingleSiteProduct);
@@ -13744,7 +13763,9 @@
                  'single',
                  reportingRadarSite
              );
-             setSingleSiteRadarStatus(siteId + ' \u00B7 ' + productId);
+              // The selected site/product is already represented by the
+              // controls; keep the "Use Single Site" row uncluttered.
+              setSingleSiteRadarStatus('');
          }
 
     function toggleLSR() {
