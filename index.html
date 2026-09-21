@@ -14336,6 +14336,17 @@
         return parts.join(' ');
     }
 
+    function formatReportingExpiry(value) {
+        if (!value) return '';
+        const parsed = parseReportDate(value);
+        if (!parsed) return '';
+        const diffMs = parsed.getTime() - Date.now();
+        if (diffMs <= 0) {
+            return 'Expired ' + formatExpiredAgo(Math.max(0, -diffMs / 1000));
+        }
+        return 'Expires in ' + formatReportingMinutesUntil(value);
+    }
+
     function formatReportingMinutesUntilAt(value, referenceMs) {
         if (!value || !isFinite(Number(referenceMs))) return '';
         const parsed = parseReportDate(value);
@@ -14765,19 +14776,17 @@
                 });
                 const issuedDate = parseReportDate(timeInfo.value);
                 const expiresDate = parseReportDate(expires);
-                 const expiredAt = !historicalTimestampMs && expiresDate && expiresDate.getTime() <= Date.now()
+                  const expiredAt = expiresDate && expiresDate.getTime() <= Date.now()
                     ? expiresDate
                     : null;
-                 const expiredAge = !historicalTimestampMs && isArchived && expiredAt
+                  const expiredAge = isArchived && expiredAt
                     ? formatExpiredAgo(Math.max(0, (Date.now() - expiredAt.getTime()) / 1000))
                     : '';
-                 const issuedAge = !historicalTimestampMs && isArchived && issuedDate && issuedDate.getTime() <= Date.now()
+                  const issuedAge = isArchived && issuedDate && issuedDate.getTime() <= Date.now()
                     ? formatExpiredAgo(Math.max(0, (Date.now() - issuedDate.getTime()) / 1000))
                     : '';
-                 const expiresIn = expires
-                     ? (historicalTimestampMs
-                         ? formatReportingMinutesUntilAt(expires, historicalTimestampMs)
-                         : formatReportingMinutesUntil(expires))
+                  const expiryMeta = expires
+                      ? formatReportingExpiry(expires)
                      : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
@@ -14801,7 +14810,7 @@
                            : (isArchived && issuedAge
                               ? '<span style="color:#ff5252;font-weight:800;">Issued ' + escapeHtml(issuedAge) + '</span>'
                               : escapeHtml(alertType) +
-                                 (expiresIn ? ' \u00B7 Expires in ' + escapeHtml(expiresIn) : '')),
+                                  (expiryMeta ? ' \u00B7 ' + escapeHtml(expiryMeta) : '')),
                        detail: customDetail,
                      reportUrl: reportUrl,
                      archived: isArchived
@@ -15769,11 +15778,10 @@
                 const issuedDate = parseReportDate(issued);
                 const expiresDate = parseReportDate(expires);
                 const detailRows = [
-                    ['Issued', issuedDate ? _historicalRadarFormatTime(issuedDate.getTime(), true) : ''],
-                    ['Valid through', expiresDate ? _historicalRadarFormatTime(expiresDate.getTime(), true) : ''],
+                    ['Issued', issuedDate ? formatReportTime(issuedDate) : ''],
+                    ['Valid through', expiresDate ? formatReportTime(expiresDate) : ''],
                     ['Issued by', props.wfo || 'NWS'],
-                    ['Threat details', tags],
-                    ['Historical source', 'IEM storm-based warning archive']
+                    ['Threat details', tags]
                 ];
                 const polygon = L_ref.geoJSON(feature.geometry, {
                     style: {
@@ -15789,7 +15797,8 @@
                     isPolygon: true,
                     color: color,
                     title: escapeHtml(eventName),
-                    meta: escapeHtml(props.wfo || 'NWS') + ' \u00B7 Historical',
+                    meta: escapeHtml(props.wfo || 'NWS') +
+                        (expires ? ' \u00B7 ' + escapeHtml(formatReportingExpiry(expires)) : ''),
                     detail: reportingPopupDetailRows(detailRows) +
                         (props.href ? '<p><a href="' + escapeHtml(props.href) +
                             '" target="_blank" rel="noopener noreferrer">Open IEM archive record</a></p>' : '')
@@ -16057,9 +16066,7 @@
                         ? reportIconMarkup(lsrType, 'reporting-popup-icon')
                         : reportIconMarkup('Other', 'reporting-popup-icon');
                     const dotColor = exactStyle ? exactStyle.color : (matchKey ? LSR_COLORS[matchKey] : '#90a4ae');
-                     const validStr = isHistorical && reportDate
-                         ? _historicalRadarFormatTime(reportDate.getTime(), true)
-                         : formatReportTime(props.valid);
+                     const validStr = formatReportTime(props.valid);
                     const magnitudeValue = props.magnitude == null ? '' : String(props.magnitude).trim();
                     const magfValue = props.magf == null ? '' : String(props.magf).trim();
                     const unitValue = props.unit == null ? '' : String(props.unit).trim();
@@ -16109,9 +16116,7 @@
                      if (isHistorical && reportDate && reportDate.getTime() > now) return;
                     if (!isNaN(ageMs) && ageMs > maxAgeMs) return;
                     const isOld = showOlder && ageMs > FRESH_MS;
-                     const timeStr = isHistorical && reportDate
-                         ? _historicalRadarFormatTime(reportDate.getTime(), true)
-                         : formatReportTime(r.time);
+                     const timeStr = formatReportTime(r.time);
                     const icon = L_ref.divIcon({
                         html: '<div style="line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.8));opacity:' + (isOld ? 0.4 : 1) + ';">'
                             + reportIconMarkup(r.type, 'report-map-icon') + '</div>',
