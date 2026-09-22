@@ -15789,13 +15789,45 @@
         const text = String(rawText || '').replace(/\r/g, '').trim();
         if (!text) return { description: '', instructions: '', issuer: '' };
 
-        const issuerMatch = text.match(/(?:^|\n)(National Weather Service[^\n]*)/i);
-        const issuer = issuerMatch ? issuerMatch[1].replace(/\s+/g, ' ').trim() : '';
-        const bodyStartMatch = text.match(/(?:^|\n)(The National Weather Service\b[\s\S]*)/i);
-        const bodyStart = bodyStartMatch
-            ? text.indexOf(bodyStartMatch[1])
-            : 0;
-        const body = text.slice(bodyStart).trim();
+        const lines = text.split('\n');
+        const issuerIndex = lines.findIndex(function(line) {
+            return /^(?:National Weather Service|NWS)\b/i.test(line.trim());
+        });
+        const issuer = issuerIndex >= 0
+            ? lines[issuerIndex].replace(/\s+/g, ' ').trim()
+            : '';
+
+        // NWS updates such as Flash Flood Statements include a product
+        // header, UGC/VTEC block, and then a human-readable paragraph that
+        // starts with an ellipsis headline. Skip the metadata and headline so
+        // the popup receives the same filtered narrative as a live alert.
+        let bodyStartIndex = -1;
+        if (issuerIndex >= 0) {
+            for (let i = issuerIndex + 1; i < lines.length; i++) {
+                if (!/^\s*\.\.\./.test(lines[i])) continue;
+                let headlineEnd = i;
+                while (headlineEnd < lines.length &&
+                    !/\.\.\.\s*$/.test(lines[headlineEnd].trim())) {
+                    headlineEnd++;
+                }
+                let next = headlineEnd < lines.length ? headlineEnd + 1 : i + 1;
+                while (next < lines.length && !lines[next].trim()) next++;
+                bodyStartIndex = next < lines.length ? next : i;
+                break;
+            }
+        }
+
+        let body;
+        if (bodyStartIndex >= 0) {
+            body = lines.slice(bodyStartIndex).join('\n').trim();
+        } else {
+            const bodyStartMatch = text.match(/(?:^|\n)(The National Weather Service\b[\s\S]*)/i);
+            const bodyStart = bodyStartMatch
+                ? text.indexOf(bodyStartMatch[1])
+                : 0;
+            body = text.slice(bodyStart).trim();
+        }
+        body = body.split(/\n(?:&&|LAT\.\.\.|\$\$)/i)[0].trim();
         const instructionMatch = body.match(
             /\nPRECAUTIONARY\/PREPAREDNESS ACTIONS[^\n]*\n/i
         );
