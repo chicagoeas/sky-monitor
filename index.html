@@ -13110,6 +13110,8 @@
     let historicalRadarInitialLoadComplete = false;
     let historicalRadarLayerRequestId = 0;
     let historicalRadarLayerTransition = null;
+    let historicalRadarViewGeneration = 0;
+    let historicalRadarViewportRefreshTimer = null;
     const HISTORICAL_RADAR_TILE_KEEP_BUFFER = 4;
      let historicalRadarRequestId = 0;
     let historicalRadarRequestedMs = 0;
@@ -15630,6 +15632,39 @@
         });
     }
 
+    function _invalidateHistoricalRadarViewport() {
+        if (!historicalRadarState.active) return;
+        historicalRadarViewGeneration++;
+        _cancelHistoricalRadarLayerTransition();
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (!entry) return;
+            entry.loaded = false;
+            entry.tileLoaded = false;
+            entry.readyGeneration = -1;
+            entry.generation = -1;
+        });
+    }
+
+    function _refreshHistoricalRadarViewportPrefetch() {
+        if (!historicalRadarState.active) return;
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (entry && entry.layer && entry.layer.redraw) {
+                _armHistoricalRadarPrefetchEntry(entry);
+                entry.layer.redraw();
+            }
+        });
+    }
+
+    function _scheduleHistoricalRadarViewportRefresh() {
+        if (historicalRadarViewportRefreshTimer) {
+            clearTimeout(historicalRadarViewportRefreshTimer);
+        }
+        historicalRadarViewportRefreshTimer = setTimeout(function() {
+            historicalRadarViewportRefreshTimer = null;
+            _refreshHistoricalRadarViewportPrefetch();
+        }, 0);
+    }
+
     function _cancelHistoricalRadarLayerTransition() {
         historicalRadarLayerRequestId++;
         const pending = historicalRadarLayerTransition;
@@ -15660,7 +15695,11 @@
                  ? prefetchedEntry.layer
                  : _historicalRadarTileLayer(url, 0, false);
              const loadToken = historicalRadarLoadToken;
-             let nextLayerHasTile = !!(prefetchedEntry && prefetchedEntry.tileLoaded);
+             let nextLayerHasTile = !!(
+                 prefetchedEntry &&
+                 prefetchedEntry.tileLoaded &&
+                 prefetchedEntry.readyGeneration === historicalRadarViewGeneration
+             );
              let committed = false;
              const commit = function() {
                  if (committed || requestId !== historicalRadarLayerRequestId ||
@@ -15704,7 +15743,12 @@
                  // promoted, so give the listener a turn to commit it.
                  setTimeout(commit, 0);
              } else if (radarVisible) {
-                 nextLayer.addTo(reportingMap);
+                 if (prefetchedEntry && reportingMap.hasLayer(nextLayer) &&
+                     nextLayer.redraw) {
+                     nextLayer.redraw();
+                 } else {
+                     nextLayer.addTo(reportingMap);
+                 }
              } else {
                  // With radar hidden there are no tiles to wait for.
                  setTimeout(commit, 0);
@@ -15759,8 +15803,38 @@
             if (entry && entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
                 reportingMap.removeLayer(entry.layer);
             }
+            if (entry && entry.layer) {
+                if (entry._tileLoadHandler) entry.layer.off('tileload', entry._tileLoadHandler);
+                if (entry._loadHandler) entry.layer.off('load', entry._loadHandler);
+            }
         });
         historicalRadarPrefetchLayers.clear();
+    }
+
+    function _armHistoricalRadarPrefetchEntry(entry) {
+        if (!entry || !entry.layer) return;
+        const generation = historicalRadarViewGeneration;
+        entry.generation = generation;
+        entry.loaded = false;
+        entry.tileLoaded = false;
+        entry.readyGeneration = -1;
+        if (entry._tileLoadHandler) {
+            entry.layer.off('tileload', entry._tileLoadHandler);
+        }
+        if (entry._loadHandler) {
+            entry.layer.off('load', entry._loadHandler);
+        }
+        entry._tileLoadHandler = function() {
+            if (entry.generation === generation) entry.tileLoaded = true;
+        };
+        entry._loadHandler = function() {
+            if (entry.generation !== generation) return;
+            entry.loaded = true;
+            entry.readyGeneration = generation;
+            _markHistoricalRadarPrefetchIfReady(entry.loadToken);
+        };
+        entry.layer.on('tileload', entry._tileLoadHandler);
+        entry.layer.on('load', entry._loadHandler);
     }
 
     function _markHistoricalRadarPrefetchIfReady(token) {
@@ -15768,7 +15842,10 @@
         if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
         let ready = true;
         historicalRadarPrefetchLayers.forEach(function(entry) {
-            if (!entry || !entry.loaded || !entry.tileLoaded) ready = false;
+            if (!entry || !entry.loaded || !entry.tileLoaded ||
+                entry.readyGeneration !== historicalRadarViewGeneration) {
+                ready = false;
+            }
         });
         if (ready) _markHistoricalRadarLoadingPart('prefetch', token);
     }
@@ -15802,15 +15879,11 @@
                 layer: layer,
                 loaded: false,
                 tileLoaded: false,
+                readyGeneration: -1,
+                generation: -1,
                 loadToken: historicalRadarLoadToken
             };
-            layer.on('tileload', function() {
-                entry.tileLoaded = true;
-            });
-            layer.once('load', function() {
-                entry.loaded = true;
-                _markHistoricalRadarPrefetchIfReady(entry.loadToken);
-            });
+            _armHistoricalRadarPrefetchEntry(entry);
             historicalRadarPrefetchLayers.set(key, entry);
             layer.addTo(reportingMap);
         }
@@ -16428,6 +16501,10 @@
             historicalRadarPlaybackTimer = null;
         }
         historicalRadarPlaying = false;
+        if (historicalRadarViewportRefreshTimer) {
+            clearTimeout(historicalRadarViewportRefreshTimer);
+            historicalRadarViewportRefreshTimer = null;
+        }
         _cancelHistoricalRadarLayerTransition();
         clearHistoricalRadarPrefetch();
         historicalRadarLoadToken++;
@@ -16831,7 +16908,11 @@
         window.reportingMap = reportingMap;
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
-        reportingMap.on('moveend zoomend', saveReportingMapView);
+        reportingMap.on('movestart zoomstart', _invalidateHistoricalRadarViewport);
+        reportingMap.on('moveend zoomend', function() {
+            saveReportingMapView();
+            _scheduleHistoricalRadarViewportRefresh();
+        });
         reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
         // Layer 1 — physical geography only (no labels), sits below radar
