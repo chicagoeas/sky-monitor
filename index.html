@@ -13096,7 +13096,6 @@
     let historicalRadarSliderTimer = null;
     let historicalRadarPlaybackTimer = null;
     let historicalRadarPlaying = false;
-    const HISTORICAL_RADAR_PREFETCH_COUNT = 18;
     const HISTORICAL_RADAR_ON_DEMAND_COUNT = 50;
     const HISTORICAL_DATA_CACHE_BUCKET_MS = 6 * 60 * 60 * 1000;
     const HISTORICAL_DATA_CACHE_MAX_ENTRIES = 12;
@@ -13105,7 +13104,7 @@
     let historicalRadarLoadToken = 0;
     let historicalRadarLoadingParts = null;
     // Historical playback should not restart the progress indicator for every
-    // frame. It is a session-level indicator for the first historical load.
+    // frame. It is a sequence-level indicator for the initial warmup.
     let historicalRadarInitialLoadStarted = false;
     let historicalRadarInitialLoadComplete = false;
     let historicalRadarLayerRequestId = 0;
@@ -15634,22 +15633,18 @@
 
     function _invalidateHistoricalRadarViewport() {
         if (!historicalRadarState.active) return;
+        // A map move must not cancel a frame transition or make already-warm
+        // frames cold again. Leaflet keeps the tile DOM attached to each
+        // hidden layer, so the cached frame can continue to paint while the
+        // viewport settles. The layers are redrawn on moveend below to warm
+        // only the newly exposed edge tiles.
         historicalRadarViewGeneration++;
-        _cancelHistoricalRadarLayerTransition();
-        historicalRadarPrefetchLayers.forEach(function(entry) {
-            if (!entry) return;
-            entry.loaded = false;
-            entry.tileLoaded = false;
-            entry.readyGeneration = -1;
-            entry.generation = -1;
-        });
     }
 
     function _refreshHistoricalRadarViewportPrefetch() {
         if (!historicalRadarState.active) return;
         historicalRadarPrefetchLayers.forEach(function(entry) {
             if (entry && entry.layer && entry.layer.redraw) {
-                _armHistoricalRadarPrefetchEntry(entry);
                 entry.layer.redraw();
             }
         });
@@ -15665,12 +15660,24 @@
         }, 0);
     }
 
+    function _isHistoricalRadarCachedLayer(layer) {
+        if (!layer) return false;
+        let cached = false;
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (entry && entry.layer === layer) cached = true;
+        });
+        return cached;
+    }
+
     function _cancelHistoricalRadarLayerTransition() {
         historicalRadarLayerRequestId++;
         const pending = historicalRadarLayerTransition;
         if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
             reportingMap && reportingMap.hasLayer(pending.layer)) {
-            reportingMap.removeLayer(pending.layer);
+            if (pending.layer.setOpacity) pending.layer.setOpacity(0);
+            if (!_isHistoricalRadarCachedLayer(pending.layer)) {
+                reportingMap.removeLayer(pending.layer);
+            }
         }
         historicalRadarLayerTransition = null;
     }
@@ -15697,8 +15704,7 @@
              const loadToken = historicalRadarLoadToken;
              let nextLayerHasTile = !!(
                  prefetchedEntry &&
-                 prefetchedEntry.tileLoaded &&
-                 prefetchedEntry.readyGeneration === historicalRadarViewGeneration
+                  prefetchedEntry.tileLoaded
              );
              let committed = false;
              const commit = function() {
@@ -15715,7 +15721,10 @@
                  reportingRadarSite = null;
                  if (nextLayer.setOpacity) nextLayer.setOpacity(0.65);
                  if (oldLayer && oldLayer !== nextLayer && reportingMap.hasLayer(oldLayer)) {
-                     reportingMap.removeLayer(oldLayer);
+                      if (oldLayer.setOpacity) oldLayer.setOpacity(0);
+                      if (!_isHistoricalRadarCachedLayer(oldLayer)) {
+                          reportingMap.removeLayer(oldLayer);
+                      }
                  }
                  if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
                      reportingMap.removeLayer(nextLayer);
@@ -15738,7 +15747,7 @@
                  layer: nextLayer
              };
 
-             if (prefetchedEntry && prefetchedEntry.loaded) {
+              if (prefetchedEntry && prefetchedEntry.loaded && nextLayerHasTile) {
                  // The warm layer may have emitted "load" before it was
                  // promoted, so give the listener a turn to commit it.
                  setTimeout(commit, 0);
@@ -15805,6 +15814,7 @@
             }
             if (entry && entry.layer) {
                 if (entry._tileLoadHandler) entry.layer.off('tileload', entry._tileLoadHandler);
+                if (entry._tileErrorHandler) entry.layer.off('tileerror', entry._tileErrorHandler);
                 if (entry._loadHandler) entry.layer.off('load', entry._loadHandler);
             }
         });
@@ -15817,15 +15827,30 @@
         entry.generation = generation;
         entry.loaded = false;
         entry.tileLoaded = false;
+        entry.failed = false;
         entry.readyGeneration = -1;
         if (entry._tileLoadHandler) {
             entry.layer.off('tileload', entry._tileLoadHandler);
+        }
+        if (entry._tileErrorHandler) {
+            entry.layer.off('tileerror', entry._tileErrorHandler);
         }
         if (entry._loadHandler) {
             entry.layer.off('load', entry._loadHandler);
         }
         entry._tileLoadHandler = function() {
             if (entry.generation === generation) entry.tileLoaded = true;
+        };
+        entry._tileErrorHandler = function() {
+            if (entry.generation !== generation) return;
+            // A historical scan can legitimately have no rendered tiles. Do
+            // not hold the initial "Loading" gate forever for that frame;
+            // selecting it later will still show the normal unavailable-frame
+            // message from the active layer.
+            entry.failed = true;
+            entry.loaded = true;
+            entry.readyGeneration = generation;
+            _markHistoricalRadarPrefetchIfReady(entry.loadToken);
         };
         entry._loadHandler = function() {
             if (entry.generation !== generation) return;
@@ -15834,6 +15859,7 @@
             _markHistoricalRadarPrefetchIfReady(entry.loadToken);
         };
         entry.layer.on('tileload', entry._tileLoadHandler);
+        entry.layer.on('tileerror', entry._tileErrorHandler);
         entry.layer.on('load', entry._loadHandler);
     }
 
@@ -15842,8 +15868,8 @@
         if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
         let ready = true;
         historicalRadarPrefetchLayers.forEach(function(entry) {
-            if (!entry || !entry.loaded || !entry.tileLoaded ||
-                entry.readyGeneration !== historicalRadarViewGeneration) {
+            if (!entry || !entry.loaded || (!entry.tileLoaded && !entry.failed) ||
+                entry.readyGeneration < 0) {
                 ready = false;
             }
         });
@@ -15857,25 +15883,31 @@
             _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
             return;
         }
-        const keep = new Set();
         const currentIndex = Math.max(0, Math.min(Number(index) || 0, frames.length - 1));
-        // Keep the current frame in the warm set until the active radar layer
-        // takes it over below; otherwise a slider step would discard the
-        // prefetched layer just before it could be reused.
-        keep.add(String(frames[currentIndex]));
-        for (let offset = 1; offset <= Math.min(HISTORICAL_RADAR_PREFETCH_COUNT, frames.length - 1); offset++) {
-            const nextIndex = (currentIndex + offset) % frames.length;
-            const timestampMs = frames[nextIndex];
+        // Warm the complete sequence, not only the next few frames. This is
+        // intentionally sequence-scoped: clearHistoricalRadarPrefetch() tears
+        // it down when historical mode ends or a new sequence is selected.
+        frames.forEach(function(timestampMs, frameIndex) {
             const key = String(timestampMs);
-            keep.add(key);
-            if (historicalRadarPrefetchLayers.has(key)) continue;
+            if (historicalRadarPrefetchLayers.has(key)) {
+                const existing = historicalRadarPrefetchLayers.get(key);
+                if (existing && existing.layer && reportingMap &&
+                    !reportingMap.hasLayer(existing.layer)) {
+                    existing.layer.addTo(reportingMap);
+                }
+                if (existing && existing.layer && existing.layer !== reportingRadarLayer &&
+                    existing.layer.setOpacity) {
+                    existing.layer.setOpacity(0);
+                }
+                return;
+            }
             const layer = _historicalRadarTileLayer(
                 _historicalRadarFrameUrl(timestampMs),
                 0,
                 true
             );
             const entry = {
-                index: nextIndex,
+                index: frameIndex,
                 layer: layer,
                 loaded: false,
                 tileLoaded: false,
@@ -15886,16 +15918,14 @@
             _armHistoricalRadarPrefetchEntry(entry);
             historicalRadarPrefetchLayers.set(key, entry);
             layer.addTo(reportingMap);
-        }
-        // Do not retain a growing stack of hidden tile layers after a manual
-        // slider jump. The browser's HTTP cache keeps successfully loaded
-        // tiles available even after their warm layer is removed.
+        });
+        // Keep the selected frame hidden until the transition commits. Every
+        // other cached frame remains attached but transparent, allowing
+        // Leaflet to retain its loaded tiles across pans and zooms.
         historicalRadarPrefetchLayers.forEach(function(entry, key) {
-            if (keep.has(key)) return;
-            if (entry && entry.layer && reportingMap.hasLayer(entry.layer)) {
-                reportingMap.removeLayer(entry.layer);
-            }
-            historicalRadarPrefetchLayers.delete(key);
+            if (!entry || !entry.layer || !entry.layer.setOpacity) return;
+            entry.layer.setOpacity(key === String(frames[currentIndex]) &&
+                entry.layer === reportingRadarLayer ? 0.65 : 0);
         });
         _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
     }
@@ -15904,7 +15934,9 @@
         const key = String(timestampMs);
         const entry = historicalRadarPrefetchLayers.get(key);
         if (!entry) return null;
-        historicalRadarPrefetchLayers.delete(key);
+        if (entry.layer && reportingMap && !reportingMap.hasLayer(entry.layer)) {
+            entry.layer.addTo(reportingMap);
+        }
         if (entry.layer && entry.layer.setOpacity) entry.layer.setOpacity(0);
         return entry;
     }
@@ -16268,6 +16300,10 @@
         if (!reportingMap || !window.L) return;
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
+        // The frame cache belongs to one historical sequence. A new picker
+        // selection must warm its complete sequence before playback is enabled.
+        historicalRadarInitialLoadStarted = false;
+        historicalRadarInitialLoadComplete = false;
         const frameMs = HISTORICAL_RADAR_FRAME_MS;
         const firstFrame = Math.floor(selectedMs / frameMs) * frameMs + frameMs;
         const latestAvailableFrame = Math.floor(Date.now() / frameMs) * frameMs;
@@ -16466,6 +16502,10 @@
         }
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
+        // Archived alerts can have a different number and cadence of frames;
+        // never carry the previous sequence's "warm" state into this one.
+        historicalRadarInitialLoadStarted = false;
+        historicalRadarInitialLoadComplete = false;
 
         historicalRadarState = {
             active: true,
@@ -16509,9 +16549,8 @@
         clearHistoricalRadarPrefetch();
         historicalRadarLoadToken++;
         historicalRadarLoadingParts = null;
-        if (!historicalRadarInitialLoadComplete) {
-            historicalRadarInitialLoadStarted = false;
-        }
+        historicalRadarInitialLoadStarted = false;
+        historicalRadarInitialLoadComplete = false;
         _setHistoricalRadarStatus('');
         const wasActive = historicalRadarState.active;
         historicalRadarState = {
