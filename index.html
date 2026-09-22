@@ -15793,7 +15793,17 @@
     function _removeHistoricalRadarPrefetchEntry(key) {
         const entry = historicalRadarPrefetchLayers.get(key);
         if (!entry) return;
-        if (entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
+        // The committed radar layer is also tracked as a warm entry. Preserve
+        // it on the map while replacing a sequence or rebuilding the warm
+        // window; removing it here would create a blank gap before the next
+        // historical frame is ready.
+        const keepCommittedLayerVisible = entry.layer &&
+            entry.layer === reportingRadarLayer &&
+            historicalRadarState.active &&
+            radarVisible;
+        if (keepCommittedLayerVisible && entry.layer.setOpacity) {
+            entry.layer.setOpacity(0.65);
+        } else if (entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
             reportingMap.removeLayer(entry.layer);
         }
         if (entry.layer) {
@@ -16146,8 +16156,11 @@
         });
         historicalRadarPrefetchLayers.forEach(function(entry, key) {
             if (!entry || !entry.layer || !entry.layer.setOpacity) return;
-            entry.layer.setOpacity(key === String(frames[currentIndex]) &&
-                entry.layer === reportingRadarLayer ? 0.65 : 0);
+            // Keep the committed frame visible until its replacement has a
+            // usable tile. In particular, changing the slider used to hide
+            // the old active layer here, before _replaceReportingRadarLayer
+            // had proved that the new frame could draw.
+            entry.layer.setOpacity(entry.layer === reportingRadarLayer ? 0.65 : 0);
         });
         _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
         _checkHistoricalRadarViewportWarmup();
@@ -16160,7 +16173,17 @@
         if (entry.layer && reportingMap && !reportingMap.hasLayer(entry.layer)) {
             entry.layer.addTo(reportingMap);
         }
-        if (entry.layer && entry.layer.setOpacity) entry.layer.setOpacity(0);
+        // The selected layer is also kept in the prefetch map so viewport
+        // changes can redraw it. Never hide that layer while waiting for the
+        // redraw to finish: it is the only guaranteed visible fallback if the
+        // new tile request stalls.
+        if (entry.layer && entry.layer !== reportingRadarLayer &&
+            entry.layer.setOpacity) {
+            entry.layer.setOpacity(0);
+        } else if (entry.layer && entry.layer === reportingRadarLayer &&
+            radarVisible && entry.layer.setOpacity) {
+            entry.layer.setOpacity(0.65);
+        }
         return entry;
     }
 
