@@ -13098,7 +13098,12 @@
     let historicalRadarPlaying = false;
     const HISTORICAL_RADAR_PREFETCH_COUNT = 6;
     const HISTORICAL_RADAR_ON_DEMAND_COUNT = 50;
+    const HISTORICAL_DATA_CACHE_BUCKET_MS = 6 * 60 * 60 * 1000;
+    const HISTORICAL_DATA_CACHE_MAX_ENTRIES = 12;
     let historicalRadarPrefetchLayers = new Map();
+    let historicalRadarFetchCache = new Map();
+    let historicalRadarLoadToken = 0;
+    let historicalRadarLoadingParts = null;
      let historicalRadarRequestId = 0;
     let historicalRadarRequestedMs = 0;
     let historicalRadarPickerDate = null;
@@ -15131,13 +15136,18 @@
         }
         setCustomSkyAlertsStatus('Loading custom alerts\u2026', '#718496');
         try {
-            const res = await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, {
-                headers: { 'Accept': 'application/geo+json, application/json' }
-            });
-            if (!res.ok) {
-                throw new Error('Failed to fetch');
-            }
-            const payload = await res.json();
+            const payload = historicalTimestampMs
+                ? await _fetchHistoricalRadarJson(
+                    'custom-alerts:active',
+                    CUSTOM_SKY_ALERTS_WORKER_URL,
+                    { headers: { 'Accept': 'application/geo+json, application/json' } }
+                )
+                : await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, {
+                    headers: { 'Accept': 'application/geo+json, application/json' }
+                }).then(function(response) {
+                    if (!response.ok) throw new Error('Failed to fetch');
+                    return response.json();
+                });
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
              let historicalDeepLinkFeature = null;
@@ -15147,13 +15157,20 @@
                 ) !== -1;
             })) {
                 try {
-                    const archiveResponse = await fetch(
-                        CUSTOM_SKY_ALERT_ARCHIVE_URL + '/' +
-                        encodeURIComponent(CUSTOM_SKY_DEEP_LINK_ID),
-                        { headers: { 'Accept': 'application/json, application/geo+json' } }
-                    );
-                    if (archiveResponse.ok) {
-                        const archivePayload = await archiveResponse.json();
+                    const archiveUrl = CUSTOM_SKY_ALERT_ARCHIVE_URL + '/' +
+                        encodeURIComponent(CUSTOM_SKY_DEEP_LINK_ID);
+                    const archivePayload = historicalTimestampMs
+                        ? await _fetchHistoricalRadarJson(
+                            'custom-alert-archive:' + CUSTOM_SKY_DEEP_LINK_ID,
+                            archiveUrl,
+                            { headers: { 'Accept': 'application/json, application/geo+json' } }
+                        )
+                        : await fetch(archiveUrl, {
+                            headers: { 'Accept': 'application/json, application/geo+json' }
+                        }).then(function(response) {
+                            return response.ok ? response.json() : null;
+                        });
+                    if (archivePayload) {
                         const archiveCandidates = [];
                         if (archivePayload.feature) archiveCandidates.push(archivePayload.feature);
                         if (Array.isArray(archivePayload.revisions)) {
@@ -15609,13 +15626,14 @@
         if (mode === 'historical' && nextLayer.setOpacity) nextLayer.setOpacity(0.65);
         if (mode === 'historical') {
             const historicalLayer = nextLayer;
+            const loadToken = historicalRadarLoadToken;
             nextLayer.once('load', function() {
                 if (reportingRadarLayer !== historicalLayer || !historicalRadarState.active) return;
-                _setHistoricalRadarStatus('Frame loaded', '#9edfff');
+                _markHistoricalRadarLoadingPart('radar', loadToken);
             });
             nextLayer.on('tileerror', function() {
                 if (reportingRadarLayer !== historicalLayer || !historicalRadarState.active) return;
-                _setHistoricalRadarStatus('IEM could not load this frame. Try the adjacent frame.', '#ffb74d');
+                _setHistoricalRadarStatus('Radar frame unavailable. Try the adjacent frame.', '#ffb74d');
             });
         }
         reportingRadarLayer = nextLayer;
@@ -15625,6 +15643,11 @@
             reportingMap.removeLayer(oldLayer);
         }
         if (radarVisible) nextLayer.addTo(reportingMap);
+        if (mode === 'historical') {
+            // A prefetched layer may already have loaded before it becomes
+            // active, so do not wait for another Leaflet "load" event.
+            _markHistoricalRadarLoadingPart('radar', historicalRadarLoadToken);
+        }
         _updateReportingMapAttribution();
     }
 
@@ -15720,11 +15743,108 @@
         });
     }
 
+    function _historicalRadarCachePrune() {
+        while (historicalRadarFetchCache.size > HISTORICAL_DATA_CACHE_MAX_ENTRIES) {
+            let oldestKey = null;
+            let oldestUsed = Infinity;
+            historicalRadarFetchCache.forEach(function(entry, key) {
+                const lastUsed = entry && entry.lastUsed || 0;
+                if (lastUsed < oldestUsed) {
+                    oldestUsed = lastUsed;
+                    oldestKey = key;
+                }
+            });
+            if (oldestKey == null) break;
+            historicalRadarFetchCache.delete(oldestKey);
+        }
+    }
+
+    function _fetchHistoricalRadarJson(cacheKey, url, options) {
+        const now = Date.now();
+        const existing = historicalRadarFetchCache.get(cacheKey);
+        if (existing) {
+            existing.lastUsed = now;
+            if (existing.promise) return existing.promise;
+            return Promise.resolve(existing.value);
+        }
+
+        const request = fetch(url, options || {})
+            .then(function(response) {
+                if (!response.ok) throw new Error('Historical data request failed');
+                return response.json();
+            })
+            .then(function(value) {
+                const entry = historicalRadarFetchCache.get(cacheKey);
+                if (entry) {
+                    entry.value = value;
+                    entry.promise = null;
+                    entry.lastUsed = Date.now();
+                    _historicalRadarCachePrune();
+                }
+                return value;
+            })
+            .catch(function(error) {
+                historicalRadarFetchCache.delete(cacheKey);
+                throw error;
+            });
+
+        historicalRadarFetchCache.set(cacheKey, {
+            value: null,
+            promise: request,
+            lastUsed: now
+        });
+        _historicalRadarCachePrune();
+        return request;
+    }
+
     function _setHistoricalRadarStatus(message, color) {
         const status = document.getElementById('historical-radar-status');
         if (!status) return;
         status.textContent = message || '';
         status.style.color = color || '#8da7b7';
+        status.style.display = message ? 'block' : 'none';
+    }
+
+    function _setHistoricalRadarLoading(percent, token) {
+        if (token != null && token !== historicalRadarLoadToken) return;
+        const bounded = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+        _setHistoricalRadarStatus('Loading... ' + bounded + '%', '#9edfff');
+    }
+
+    function _beginHistoricalRadarLoading() {
+        const token = ++historicalRadarLoadToken;
+        historicalRadarLoadingParts = {
+            token: token,
+            radar: false,
+            alerts: false,
+            custom: false,
+            reports: false
+        };
+        _setHistoricalRadarLoading(3, token);
+        return token;
+    }
+
+    function _markHistoricalRadarLoadingPart(part, token) {
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+        if (Object.prototype.hasOwnProperty.call(state, part)) state[part] = true;
+        const percent =
+            (state.radar ? 25 : 3) +
+            (state.alerts ? 25 : 0) +
+            (state.custom ? 20 : 0) +
+            (state.reports ? 25 : 0);
+        _setHistoricalRadarLoading(Math.min(99, percent), token);
+    }
+
+    function _finishHistoricalRadarLoading(token) {
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+        _setHistoricalRadarLoading(100, token);
+        setTimeout(function() {
+            if (historicalRadarLoadToken !== token) return;
+            historicalRadarLoadingParts = null;
+            _setHistoricalRadarStatus('');
+        }, 260);
     }
 
     function _renderHistoricalRadarControls() {
@@ -16090,8 +16210,8 @@
         _renderHistoricalRadarControls();
         const timestampMs = historicalRadarState.frames[safeIndex];
         historicalRadarState.timestampMs = timestampMs;
+        _beginHistoricalRadarLoading();
         primeHistoricalRadarFrames(safeIndex);
-        _setHistoricalRadarStatus('Loading historical radar and overlays\u2026', '#9edfff');
         _replaceReportingRadarLayer(
             _historicalRadarFrameUrl(timestampMs),
             'historical',
@@ -16146,7 +16266,6 @@
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'HISTORICAL REPORTING MAP';
         _renderHistoricalRadarControls();
-        _setHistoricalRadarStatus('Loading IEM radar frame\u2026', '#9edfff');
 
         const bounds = window.L.geoJSON(feature).getBounds();
         if (bounds.isValid()) {
@@ -16167,6 +16286,9 @@
         }
         historicalRadarPlaying = false;
         clearHistoricalRadarPrefetch();
+        historicalRadarLoadToken++;
+        historicalRadarLoadingParts = null;
+        _setHistoricalRadarStatus('');
         const wasActive = historicalRadarState.active;
         historicalRadarState = {
             active: false,
@@ -16840,17 +16962,24 @@
         // IEM's storm-based warning archive is the historical polygon source.
         // Query a generous lookback, then do the exact "active at frame time"
         // test locally so a long-lived warning is not lost at the query edge.
-        const startMs = timestampMs - 48 * 3600 * 1000;
+        // One six-hour response covers every historical frame in the bucket.
+        // The frame-time filter below still decides which alerts are active,
+        // so moving the slider does not require another network request.
+        const bucketStartMs = Math.floor(timestampMs / HISTORICAL_DATA_CACHE_BUCKET_MS) *
+            HISTORICAL_DATA_CACHE_BUCKET_MS;
+        const bucketEndMs = Math.min(
+            bucketStartMs + HISTORICAL_DATA_CACHE_BUCKET_MS,
+            Date.now()
+        );
+        const startMs = bucketStartMs - 48 * 3600 * 1000;
         const url = 'https://mesonet.agron.iastate.edu/geojson/sbw.geojson?sts=' +
             encodeURIComponent(_historicalRadarIso(startMs)) + '&ets=' +
-            encodeURIComponent(_historicalRadarIso(timestampMs + 60 * 1000));
+            encodeURIComponent(_historicalRadarIso(bucketEndMs + 60 * 1000));
         try {
-            const res = await fetch(url, {
+            const data = await _fetchHistoricalRadarJson('nws-alerts:' + bucketStartMs, url, {
                 cache: 'no-store',
                 headers: { 'Accept': 'application/geo+json, application/json' }
             });
-            if (!res.ok) throw new Error('Historical IEM warning request failed');
-            const data = await res.json();
             if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
 
             const colors = {
@@ -16912,20 +17041,24 @@
     async function loadHistoricalReportingMapData(timestampMs) {
         if (!reportingMap || !window.L || !historicalRadarState.active) return;
         const requestId = ++historicalRadarRequestId;
+        const loadToken = historicalRadarLoadToken;
         const L_ref = window.L;
         historicalRadarState.timestampMs = timestampMs;
         await loadHistoricalNwsAlerts(timestampMs, L_ref, requestId);
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        _markHistoricalRadarLoadingPart('alerts', loadToken);
         // Custom alerts are filtered against the selected frame below. The
         // endpoint may return today's active set, but none of it is painted
         // unless its own validity interval contains this timestamp.
         await loadCustomSkyAlerts();
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
-        await loadMapReports(timestampMs);
+        _markHistoricalRadarLoadingPart('custom', loadToken);
+        await loadMapReports(timestampMs, loadToken);
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        _markHistoricalRadarLoadingPart('reports', loadToken);
         syncReportingMapLayers();
         ensureReportPinMarker();
-        _setHistoricalRadarStatus('Historical overlays loaded', '#9edfff');
+        _finishHistoricalRadarLoading(loadToken);
     }
 
     async function loadReportingMapData() {
@@ -17115,6 +17248,15 @@
         const lsrHours = showOlder ? 48 : 5;
         const FRESH_MS = 5 * 3600 * 1000;
         const now = isHistorical ? historicalTimestampMs : Date.now();
+        const historicalBucketStartMs = isHistorical
+            ? Math.floor(now / HISTORICAL_DATA_CACHE_BUCKET_MS) * HISTORICAL_DATA_CACHE_BUCKET_MS
+            : 0;
+        const historicalBucketEndMs = isHistorical
+            ? Math.min(
+                historicalBucketStartMs + HISTORICAL_DATA_CACHE_BUCKET_MS,
+                Date.now()
+            )
+            : 0;
 
         // NWS Local Storm Reports via IEM MESONET
         try {
@@ -17122,12 +17264,24 @@
             removeReportingPopupEntries('iem-lsr');
             const lsrUrl = isHistorical
                 ? 'https://mesonet.agron.iastate.edu/geojson/lsr.php?sts=' +
-                    encodeURIComponent(_historicalRadarIso(now - lsrHours * 3600 * 1000)) +
+                    encodeURIComponent(_historicalRadarIso(
+                        historicalBucketStartMs - lsrHours * 3600 * 1000
+                    )) +
                     '&ets=' + encodeURIComponent(_historicalRadarIso(now)) + '&fmt=geojson'
                 : 'https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=' + lsrHours + '&fmt=geojson';
-            const lsrRes = await fetch(lsrUrl);
-            if (lsrRes.ok) {
-                const lsrData = await lsrRes.json();
+            const lsrData = isHistorical
+                ? await _fetchHistoricalRadarJson(
+                    'iem-lsr:' + lsrHours + ':' + historicalBucketStartMs,
+                    lsrUrl.replace(
+                        /ets=[^&]+/,
+                        'ets=' + encodeURIComponent(_historicalRadarIso(historicalBucketEndMs))
+                    ),
+                    { cache: 'no-store' }
+                )
+                : await fetch(lsrUrl).then(function(response) {
+                    return response.ok ? response.json() : null;
+                });
+            if (lsrData) {
                     const LSR_ICON_TYPES = { tornado:'Tornado / Funnel Cloud', funnel:'Tornado / Funnel Cloud', hail:'Hail', wind:'Wind Damage', wnd:'Wind Damage', tstm:'Thunderstorm', flood:'Flooding', snow:'Heavy Snow', rain:'Rain', ice:'Ice / Freezing Rain', lightning:'Lightning Strike', fire:'Fire', dust:'Dust Storm' };
                  const LSR_COLORS = { tornado:'#ff1744', funnel:'#90a4ae', hail:'#e0f7fa', wind:'#ff9100', wnd:'#ff9100', tstm:'#ffeb3b', flood:'#00e676', snow:'#b0bec5', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa', lightning:'#90a4ae', dust:'#c8a800' };
                 // IEM uses several abbreviated storm-report type names. Resolve
@@ -17197,9 +17351,16 @@
         try {
             userReportLayer.clearLayers();
             removeReportingPopupEntries('skymonitor-reports');
-            const rRes = await fetch(REPORTS_WORKER_URL);
-            if (rRes.ok) {
-                const payload = await rRes.json();
+            const payload = isHistorical
+                ? await _fetchHistoricalRadarJson(
+                    'skymonitor-reports',
+                    REPORTS_WORKER_URL,
+                    { cache: 'no-store' }
+                )
+                : await fetch(REPORTS_WORKER_URL).then(function(response) {
+                    return response.ok ? response.json() : null;
+                });
+            if (payload) {
                 const reports = Array.isArray(payload) ? payload : (payload.reports || []);
                 const maxAgeMs = showOlder ? 48 * 3600 * 1000 : FRESH_MS;
                 reports.forEach(function(r) {
