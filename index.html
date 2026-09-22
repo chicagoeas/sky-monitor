@@ -12830,6 +12830,11 @@
         : localStorage.getItem('report_custom_sky_alerts') === '1';
     let customSkyDeepLinkHandled = false;
     let customSkyDeepLinkEntry = null;
+    // Keep the archive feature that activated historical mode available for
+    // subsequent frame reloads. The live feed is active-only and may omit the
+    // long-fused alert immediately after the first archive probe.
+    let customSkyHistoricalDeepLinkFeature = null;
+    let customSkyAlertLoadGeneration = 0;
     let normalReportingPopupWidth = null;
     // Keep the report pin across a full page reload. The map object is
     // recreated on refresh, so in-memory coordinates alone are not enough to
@@ -13962,6 +13967,8 @@
             ensureReportPinMarker();
             loadCustomSkyAlerts();
         } else {
+            customSkyAlertLoadGeneration++;
+            customSkyHistoricalDeepLinkFeature = null;
             deactivateHistoricalRadarMode();
             if (customSkyAlertLayer) {
                 customSkyAlertLayer.clearLayers();
@@ -14098,13 +14105,71 @@
         }).filter(Boolean);
     }
 
+    function customSkyAlertRenderKey(feature) {
+        const props = feature && feature.properties || {};
+        const revisionId = customSkyAlertValue(props, [
+            'revision_id', 'revisionId', 'revision_uuid', 'revisionUuid',
+            'alert_revision_id', 'alertRevisionId'
+        ], '') || (feature && feature.id != null ? String(feature.id) : '');
+        if (revisionId) return 'revision:' + revisionId;
+
+        // If a source does not expose a revision id, include the validity
+        // window, headline, and geometry so separate revisions are preserved
+        // while an exact live/archive duplicate collapses to one entry.
+        const alertId = customSkyAlertValue(props, [
+            'alert_id', 'alertId', 'alertID',
+            'parent_alert_id', 'parentAlertId',
+            'alert_group_id', 'alertGroupId',
+            'event_id', 'eventId',
+            'uuid', 'alertUuid', 'alert_uuid'
+        ], '');
+        const info = reportingAlertTimeInfo(props);
+        const issued = customSkyAlertValue(props, [
+            'onset', 'effective', 'effectiveAt', 'effective_at',
+            'issued', 'issuedAt', 'issued_at', 'createdAt', 'created_at',
+            'created', 'time', 'timestamp', 'sent', 'sentAt', 'sent_at'
+        ], '') || (info && info.value) || '';
+        const expires = customSkyAlertValue(props, [
+            'expires', 'expiresAt', 'expires_at', 'expiration',
+            'expirationTime', 'expiration_time', 'ends', 'endTime'
+        ], '');
+        const headline = customSkyAlertValue(
+            props,
+            ['headline', 'title', 'name', 'message'],
+            ''
+        ).trim().toLowerCase();
+        let geometry = '';
+        try {
+            geometry = JSON.stringify(feature && feature.geometry || '');
+        } catch (e) {}
+        return [
+            'content',
+            alertId,
+            issued,
+            expires,
+            headline,
+            geometry
+        ].join('|');
+    }
+
+    function dedupeCustomSkyAlertFeatures(features) {
+        const seen = new Set();
+        return (features || []).filter(function(feature) {
+            const key = customSkyAlertRenderKey(feature);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }
+
     function customSkyAlertRevisionGroupKey(feature) {
         const props = feature && feature.properties || {};
         const stableId = customSkyAlertValue(props, [
             'alert_id', 'alertId', 'alertID',
             'parent_alert_id', 'parentAlertId',
             'alert_group_id', 'alertGroupId',
-            'event_id', 'eventId'
+            'event_id', 'eventId',
+            'uuid', 'alertUuid', 'alert_uuid'
         ], '');
         return stableId ? 'custom-alert:' + stableId : '';
     }
@@ -14726,6 +14791,7 @@
 
     async function loadCustomSkyAlerts() {
         if (!customSkyAlertLayer || !window.L) return;
+        const loadGeneration = ++customSkyAlertLoadGeneration;
         const historicalTimestampMs = historicalRadarState.active
             ? historicalRadarState.timestampMs
             : 0;
@@ -14741,8 +14807,6 @@
             customSkyAlertLayer.addTo(reportingMap);
         }
         setCustomSkyAlertsStatus('Loading custom alerts\u2026', '#718496');
-        customSkyAlertLayer.clearLayers();
-        removeReportingPopupEntries('custom-skymonitor');
         try {
             const res = await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, {
                 headers: { 'Accept': 'application/geo+json, application/json' }
@@ -14827,12 +14891,30 @@
             features = features.map(toCustomSkyAlertFeature).filter(function(feature) {
                 return feature && feature.geometry;
             });
+            if (CUSTOM_SKY_DEEP_LINK_ID &&
+                !reportingMapManualRefresh &&
+                customSkyHistoricalDeepLinkFeature &&
+                !features.some(function(feature) {
+                    return customSkyAlertIdentifiers(feature).indexOf(
+                        CUSTOM_SKY_DEEP_LINK_ID
+                    ) !== -1;
+                })) {
+                features.push(customSkyHistoricalDeepLinkFeature);
+            }
             if (historicalTimestampMs) {
                 features = selectCustomSkyAlertRevisionsForFrame(
                     features,
                     historicalTimestampMs
                 );
             }
+            features = dedupeCustomSkyAlertFeatures(features);
+            // Fetch and filter off to the side, then replace the visible
+            // layer in one commit. This prevents a slow archive request from
+            // blanking the polygon while an older popup remains on screen.
+            if (loadGeneration !== customSkyAlertLoadGeneration) return;
+            if (reportingMap && reportingMap.closePopup) reportingMap.closePopup();
+            customSkyAlertLayer.clearLayers();
+            removeReportingPopupEntries('custom-skymonitor');
             let renderedCount = 0;
 
             features.forEach(function(item) {
@@ -14870,7 +14952,10 @@
                      (CUSTOM_SKY_DEEP_LINK_ID &&
                          alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1)
                  );
-                 if (isDeepLinked && isArchived) historicalDeepLinkFeature = feature;
+                  if (isDeepLinked && isArchived) {
+                      historicalDeepLinkFeature = feature;
+                      customSkyHistoricalDeepLinkFeature = feature;
+                  }
                  // During an archive probe, do not let the active feed flash
                  // onto the map. In an active historical mode, use the
                  // selected radar frame as the custom-alert clock.
@@ -14892,6 +14977,7 @@
                     : '';
                 const mdContent = isMd ? buildCustomSkyMdPopup(props, description) : '';
                 const polygon = L_ref.geoJSON(feature, {
+                    pane: 'custom-alerts',
                     style: {
                         color: isDeepLinked ? '#ffffff' : color,
                         weight: isDeepLinked ? 6 : 2.5,
@@ -15769,6 +15855,8 @@
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
+        const customAlertPane = reportingMap.createPane('custom-alerts');
+        customAlertPane.style.zIndex = 450;
         reportingMap.on('moveend zoomend', saveReportingMapView);
         reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
