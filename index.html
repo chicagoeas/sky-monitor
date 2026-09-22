@@ -15831,29 +15831,42 @@
         historicalRadarLayerTransition = null;
     }
 
-    function _replaceReportingRadarLayer(url, mode, site) {
+    function _replaceReportingRadarLayer(url, mode, site, retryAttempt) {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
          const oldLayer = reportingRadarLayer;
+         const currentRetryAttempt = Number(retryAttempt) || 0;
 
          if (mode === 'historical') {
              // Keep the visible frame in place while the requested frame
-             // finishes loading. Playback can request another frame before a
-             // slow network response completes, so cancel only the pending
-             // hidden transition and leave the current layer untouched.
+              // finishes loading. Playback can request another frame before a
+              // slow network response completes, so cancel only the pending
+              // transition; the replacement below always owns a fresh tile
+              // layer when the committed layer is involved.
              _cancelHistoricalRadarLayerTransition();
 
              const requestId = ++historicalRadarLayerRequestId;
              const prefetchedEntry = takeHistoricalRadarPrefetchLayer(
                  historicalRadarState.timestampMs
              );
-             const nextLayer = prefetchedEntry
-                 ? prefetchedEntry.layer
+              // Never reuse the committed layer for a viewport refresh. A
+              // Leaflet tile layer keeps its old images while redraw() is
+              // pending, which makes a stale frame look like a successful
+              // load. Only promote a non-active warm layer when it already
+              // has a tile for the current viewport; otherwise create a
+              // genuinely fresh layer.
+              const usablePrefetchedEntry = prefetchedEntry &&
+                  prefetchedEntry.layer !== oldLayer &&
+                  _historicalRadarEntryReadyForViewport(prefetchedEntry)
+                  ? prefetchedEntry
+                  : null;
+              const nextLayer = usablePrefetchedEntry
+                  ? usablePrefetchedEntry.layer
                  : _historicalRadarTileLayer(url, 0, false);
              const loadToken = historicalRadarLoadToken;
              let nextLayerHasTile = !!(
-                 prefetchedEntry &&
-                  _historicalRadarEntryReadyForViewport(prefetchedEntry)
+                  usablePrefetchedEntry &&
+                  _historicalRadarEntryReadyForViewport(usablePrefetchedEntry)
              );
              let committed = false;
              const commit = function() {
@@ -15886,14 +15899,22 @@
                  _updateReportingMapAttribution();
              };
 
+              // Hide the committed frame while a genuinely fresh layer
+              // warms. Showing it here would make the selected timestamp look
+              // loaded even though Leaflet is still displaying old images.
+              if (oldLayer && oldLayer !== nextLayer &&
+                  radarVisible && reportingMap.hasLayer(oldLayer) &&
+                  oldLayer.setOpacity) {
+                  oldLayer.setOpacity(0);
+              }
              nextLayer.on('tileload', function() {
-                  nextLayerHasTile = prefetchedEntry
-                      ? _historicalRadarEntryReadyForViewport(prefetchedEntry)
+                   nextLayerHasTile = usablePrefetchedEntry
+                       ? _historicalRadarEntryReadyForViewport(usablePrefetchedEntry)
                       : true;
              });
               nextLayer.once('load', function() {
-                  if (prefetchedEntry) {
-                      nextLayerHasTile = _historicalRadarEntryReadyForViewport(prefetchedEntry);
+                   if (usablePrefetchedEntry) {
+                       nextLayerHasTile = _historicalRadarEntryReadyForViewport(usablePrefetchedEntry);
                   }
                   commit();
               });
@@ -15904,13 +15925,14 @@
              });
              historicalRadarLayerTransition = {
                  requestId: requestId,
-                 layer: nextLayer
+                  layer: nextLayer,
+                  retryAttempt: currentRetryAttempt
              };
               // Leaflet normally emits "load" after the visible tiles arrive,
               // but a failed/stalled tile request can leave that event absent.
-              // Stop waiting after ~3.3 seconds: keep the last usable layer
-              // visible, finish the loading gate, and allow a later viewport
-              // refresh or adjacent-frame selection to try again.
+              // Stop waiting after ~3.3 seconds, retry once with a fresh
+              // layer, then report the selected frame as unavailable rather
+              // than silently presenting stale imagery.
               historicalRadarLayerTransition.timeoutId = setTimeout(function() {
                   if (requestId !== historicalRadarLayerRequestId ||
                       !historicalRadarState.active || committed) return;
@@ -15930,22 +15952,49 @@
                       reportingMap && reportingMap.hasLayer(nextLayer)) {
                       reportingMap.removeLayer(nextLayer);
                   }
-                  // The old frame remains usable while this particular scan
-                  // is unavailable. Most importantly, the UI cannot remain
-                  // stuck in "Loading..." waiting for a dead tile request.
+                  if (usablePrefetchedEntry) {
+                      _removeHistoricalRadarPrefetchEntry(
+                          String(historicalRadarState.timestampMs)
+                      );
+                  }
+                  if (currentRetryAttempt < 1 &&
+                      historicalRadarState.active &&
+                      historicalRadarState.timestampMs) {
+                      _setHistoricalRadarStatus(
+                          'Radar tile stalled. Retrying fresh tiles\u2026',
+                          '#ffb74d'
+                      );
+                      const retryTimestampMs = historicalRadarState.timestampMs;
+                      setTimeout(function() {
+                          if (!historicalRadarState.active ||
+                              historicalRadarState.timestampMs !== retryTimestampMs ||
+                              historicalRadarLayerTransition) return;
+                          _replaceReportingRadarLayer(
+                              _historicalRadarFrameUrl(retryTimestampMs),
+                              'historical',
+                              null,
+                              currentRetryAttempt + 1
+                          );
+                      }, 40);
+                      return;
+                  }
+                  // The old frame stays hidden after a failed retry. This is
+                  // intentional: showing it would misrepresent the selected
+                  // historical timestamp. The adjacent-frame action remains
+                  // available and starts a new, independent tile request.
                   _markHistoricalRadarLoadingPart('radar', loadToken);
                   _setHistoricalRadarStatus(
-                      'Radar frame took too long to load. Try the adjacent frame.',
+                      'Radar frame unavailable. Try the adjacent frame.',
                       '#ffb74d'
                   );
               }, HISTORICAL_RADAR_TRANSITION_TIMEOUT_MS);
 
-              if (prefetchedEntry && prefetchedEntry.loaded && nextLayerHasTile) {
+               if (usablePrefetchedEntry && usablePrefetchedEntry.loaded && nextLayerHasTile) {
                  // The warm layer may have emitted "load" before it was
                  // promoted, so give the listener a turn to commit it.
                  setTimeout(commit, 0);
              } else if (radarVisible) {
-                 if (prefetchedEntry && reportingMap.hasLayer(nextLayer) &&
+                  if (usablePrefetchedEntry && reportingMap.hasLayer(nextLayer) &&
                      nextLayer.redraw) {
                      nextLayer.redraw();
                  } else {
@@ -16174,9 +16223,9 @@
             entry.layer.addTo(reportingMap);
         }
         // The selected layer is also kept in the prefetch map so viewport
-        // changes can redraw it. Never hide that layer while waiting for the
-        // redraw to finish: it is the only guaranteed visible fallback if the
-        // new tile request stalls.
+        // changes can redraw it. Do not hide it in this helper; the swap
+        // routine decides when to hide the committed layer and always creates
+        // a separate layer when it needs genuinely fresh viewport tiles.
         if (entry.layer && entry.layer !== reportingRadarLayer &&
             entry.layer.setOpacity) {
             entry.layer.setOpacity(0);
