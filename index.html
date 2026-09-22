@@ -13118,7 +13118,12 @@
     // Keep a small rolling window attached to Leaflet. Attaching the entire
     // slider sequence makes every pan/zoom update dozens of tile layers.
     const HISTORICAL_RADAR_WARM_FRAME_COUNT = 3;
-    const HISTORICAL_RADAR_WARMUP_TIMEOUT_MS = 10000;
+    // A radar frame must never leave the historical controls in a loading
+    // state indefinitely. The tile endpoint is normally much faster than
+    // this; the watchdog below keeps a slow/stalled request from wedging the
+    // map until the user changes the view again.
+    const HISTORICAL_RADAR_WARMUP_TIMEOUT_MS = 3500;
+    const HISTORICAL_RADAR_TRANSITION_TIMEOUT_MS = 3300;
     const HISTORICAL_RADAR_TILE_KEEP_BUFFER = 2;
      let historicalRadarRequestId = 0;
     let historicalRadarRequestedMs = 0;
@@ -15729,6 +15734,7 @@
 
     function _refreshHistoricalRadarViewportPrefetch() {
         if (!historicalRadarState.active) return;
+        const refreshGeneration = historicalRadarViewGeneration;
         historicalRadarPrefetchLayers.forEach(function(entry) {
             if (entry && entry.layer && entry.layer.redraw) {
                 entry.viewportGeneration = historicalRadarViewGeneration;
@@ -15749,6 +15755,19 @@
                 if (entry) entry.viewportRefreshPending = false;
             });
             _checkHistoricalRadarViewportWarmup();
+            // movestart cancels a hidden frame transition so it cannot promote
+            // tiles for the old viewport. Re-arm the selected frame after
+            // moveend; without this pass, a pan during the first load could
+            // leave the historical layer waiting for an event that will never
+            // arrive.
+            if (refreshGeneration === historicalRadarViewGeneration &&
+                historicalRadarState.active && !historicalRadarLayerTransition) {
+                _replaceReportingRadarLayer(
+                    _historicalRadarFrameUrl(historicalRadarState.timestampMs),
+                    'historical',
+                    null
+                );
+            }
         }, 120);
     }
 
@@ -15788,6 +15807,10 @@
     function _cancelHistoricalRadarLayerTransition() {
         historicalRadarLayerRequestId++;
         const pending = historicalRadarLayerTransition;
+        if (pending && pending.timeoutId) {
+            clearTimeout(pending.timeoutId);
+            pending.timeoutId = null;
+        }
         if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
             reportingMap && reportingMap.hasLayer(pending.layer)) {
             if (pending.layer.setOpacity) pending.layer.setOpacity(0);
@@ -15830,6 +15853,10 @@
                  committed = true;
                  if (historicalRadarLayerTransition &&
                      historicalRadarLayerTransition.requestId === requestId) {
+                      if (historicalRadarLayerTransition.timeoutId) {
+                          clearTimeout(historicalRadarLayerTransition.timeoutId);
+                          historicalRadarLayerTransition.timeoutId = null;
+                      }
                      historicalRadarLayerTransition = null;
                  }
                  reportingRadarLayer = nextLayer;
@@ -15869,6 +15896,39 @@
                  requestId: requestId,
                  layer: nextLayer
              };
+              // Leaflet normally emits "load" after the visible tiles arrive,
+              // but a failed/stalled tile request can leave that event absent.
+              // Stop waiting after ~3.3 seconds: keep the last usable layer
+              // visible, finish the loading gate, and allow a later viewport
+              // refresh or adjacent-frame selection to try again.
+              historicalRadarLayerTransition.timeoutId = setTimeout(function() {
+                  if (requestId !== historicalRadarLayerRequestId ||
+                      !historicalRadarState.active || committed) return;
+                  nextLayerHasTile = nextLayerHasTile ||
+                      _historicalRadarLayerHasViewportTile(nextLayer);
+                  if (nextLayerHasTile || !radarVisible) {
+                      commit();
+                      return;
+                  }
+                  if (historicalRadarLayerTransition &&
+                      historicalRadarLayerTransition.requestId === requestId) {
+                      historicalRadarLayerTransition = null;
+                  }
+                  historicalRadarLayerRequestId++;
+                  if (nextLayer !== reportingRadarLayer &&
+                      !_isHistoricalRadarCachedLayer(nextLayer) &&
+                      reportingMap && reportingMap.hasLayer(nextLayer)) {
+                      reportingMap.removeLayer(nextLayer);
+                  }
+                  // The old frame remains usable while this particular scan
+                  // is unavailable. Most importantly, the UI cannot remain
+                  // stuck in "Loading..." waiting for a dead tile request.
+                  _markHistoricalRadarLoadingPart('radar', loadToken);
+                  _setHistoricalRadarStatus(
+                      'Radar frame took too long to load. Try the adjacent frame.',
+                      '#ffb74d'
+                  );
+              }, HISTORICAL_RADAR_TRANSITION_TIMEOUT_MS);
 
               if (prefetchedEntry && prefetchedEntry.loaded && nextLayerHasTile) {
                  // The warm layer may have emitted "load" before it was
