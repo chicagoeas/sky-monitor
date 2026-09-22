@@ -14710,15 +14710,32 @@
                     );
                     if (archiveResponse.ok) {
                         const archivePayload = await archiveResponse.json();
-                        const archivedFeature = archivePayload.feature ||
+                        const archiveCandidates = [];
+                        if (archivePayload.feature) archiveCandidates.push(archivePayload.feature);
+                        if (Array.isArray(archivePayload.revisions)) {
+                            archiveCandidates.push(...archivePayload.revisions);
+                        }
+                        // A link identifies one specific revision. Do not
+                        // silently replace a long-lived alert with the last
+                        // archive revision, which may have a different
+                        // geometry or time window.
+                        const linkedArchivedFeature = archiveCandidates.find(function(item) {
+                            const feature = toCustomSkyAlertFeature(item);
+                            return customSkyAlertIdentifiers(feature).indexOf(
+                                CUSTOM_SKY_DEEP_LINK_ID
+                            ) !== -1;
+                        });
+                        const archivedFeature = linkedArchivedFeature ||
+                            archivePayload.feature ||
                             (Array.isArray(archivePayload.revisions)
                                 ? archivePayload.revisions[archivePayload.revisions.length - 1]
                                 : null);
-                        if (archivedFeature && archivedFeature.geometry) {
+                        const normalizedArchivedFeature = toCustomSkyAlertFeature(archivedFeature);
+                        if (normalizedArchivedFeature && normalizedArchivedFeature.geometry) {
                             features = features.concat([{
-                                ...archivedFeature,
+                                ...normalizedArchivedFeature,
                                 properties: {
-                                    ...(archivedFeature.properties || {}),
+                                    ...(normalizedArchivedFeature.properties || {}),
                                     _skymonitorArchived: true
                                 }
                             }]);
