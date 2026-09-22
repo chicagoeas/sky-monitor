@@ -14094,6 +14094,59 @@
         }).filter(Boolean);
     }
 
+    function customSkyAlertRevisionGroupKey(feature) {
+        const props = feature && feature.properties || {};
+        const stableId = customSkyAlertValue(props, [
+            'alert_id', 'alertId', 'alertID',
+            'parent_alert_id', 'parentAlertId',
+            'alert_group_id', 'alertGroupId',
+            'event_id', 'eventId'
+        ], '');
+        return stableId ? 'custom-alert:' + stableId : '';
+    }
+
+    function customSkyAlertRevisionTime(feature) {
+        const props = feature && feature.properties || {};
+        const info = reportingAlertTimeInfo(props);
+        const value = info && info.value
+            ? info.value
+            : customSkyAlertValue(props, [
+                'updated', 'updatedAt', 'updated_at',
+                'modified', 'modifiedAt', 'modified_at',
+                'onset', 'effective', 'issued', 'issuedAt', 'issued_at'
+            ], '');
+        const parsed = parseReportDate(value);
+        const revision = Number(customSkyAlertValue(props, [
+            'revision_number', 'revisionNumber', 'revision'
+        ], ''));
+        return {
+            timeMs: parsed && isFinite(parsed.getTime()) ? parsed.getTime() : 0,
+            revision: Number.isFinite(revision) ? revision : 0
+        };
+    }
+
+    function selectCustomSkyAlertRevisionsForFrame(features, timestampMs) {
+        if (!isFinite(Number(timestampMs))) return features;
+        const winners = {};
+        (features || []).forEach(function(feature) {
+            const key = customSkyAlertRevisionGroupKey(feature);
+            if (!key || !isCustomAlertActiveAt(feature.properties || {}, timestampMs)) return;
+            const version = customSkyAlertRevisionTime(feature);
+            if (version.timeMs > timestampMs) return;
+            const current = winners[key];
+            if (!current ||
+                version.timeMs > current.version.timeMs ||
+                (version.timeMs === current.version.timeMs &&
+                    version.revision > current.version.revision)) {
+                winners[key] = { feature: feature, version: version };
+            }
+        });
+        return (features || []).filter(function(feature) {
+            const key = customSkyAlertRevisionGroupKey(feature);
+            return !key || !winners[key] || winners[key].feature === feature;
+        });
+    }
+
     function reportingAlertTimeInfo(props) {
         const issued = customSkyAlertValue(props, [
             'issued',
@@ -14725,26 +14778,56 @@
                                 CUSTOM_SKY_DEEP_LINK_ID
                             ) !== -1;
                         });
-                        const archivedFeature = linkedArchivedFeature ||
+                        const normalizedArchiveFeatures = archiveCandidates
+                            .map(toCustomSkyAlertFeature)
+                            .filter(function(feature) {
+                                return feature && feature.geometry;
+                            });
+                        const fallbackArchivedFeature = linkedArchivedFeature ||
                             archivePayload.feature ||
                             (Array.isArray(archivePayload.revisions)
                                 ? archivePayload.revisions[archivePayload.revisions.length - 1]
                                 : null);
-                        const normalizedArchivedFeature = toCustomSkyAlertFeature(archivedFeature);
-                        if (normalizedArchivedFeature && normalizedArchivedFeature.geometry) {
-                            features = features.concat([{
-                                ...normalizedArchivedFeature,
-                                properties: {
-                                    ...(normalizedArchivedFeature.properties || {}),
-                                    _skymonitorArchived: true
-                                }
-                            }]);
+                        const normalizedFallbackFeature = toCustomSkyAlertFeature(
+                            fallbackArchivedFeature
+                        );
+                        const archiveFeatures = normalizedArchiveFeatures.length
+                            ? normalizedArchiveFeatures
+                            : (normalizedFallbackFeature && normalizedFallbackFeature.geometry
+                                ? [normalizedFallbackFeature]
+                                : []);
+                        if (archiveFeatures.length) {
+                            features = features.concat(archiveFeatures.map(function(feature, index) {
+                                const isLinkedRevision =
+                                    customSkyAlertIdentifiers(feature).indexOf(
+                                        CUSTOM_SKY_DEEP_LINK_ID
+                                    ) !== -1 ||
+                                    (!linkedArchivedFeature &&
+                                        index === archiveFeatures.length - 1);
+                                return {
+                                    ...feature,
+                                    properties: {
+                                        ...(feature.properties || {}),
+                                        _skymonitorArchived: true,
+                                        _skymonitorDeepLinkRevision: isLinkedRevision
+                                    }
+                                };
+                            }));
                             archivedDeepLink = true;
                         }
                     }
                 } catch (archiveError) {
                     console.warn('[SkyMonitor] Archived custom alert lookup failed:', archiveError);
                 }
+            }
+            features = features.map(toCustomSkyAlertFeature).filter(function(feature) {
+                return feature && feature.geometry;
+            });
+            if (historicalTimestampMs) {
+                features = selectCustomSkyAlertRevisionsForFrame(
+                    features,
+                    historicalTimestampMs
+                );
             }
             let renderedCount = 0;
 
@@ -14778,13 +14861,16 @@
                 // customSkyAlertColor remains available to home/severe cards.
                 const color = CUSTOM_SKY_MAP_ALERT_COLOR;
                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
-                const isDeepLinked = CUSTOM_SKY_DEEP_LINK_ID &&
-                    alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1;
+                 const isDeepLinked = Boolean(
+                     props._skymonitorDeepLinkRevision === true ||
+                     (CUSTOM_SKY_DEEP_LINK_ID &&
+                         alertIdentifiers.indexOf(CUSTOM_SKY_DEEP_LINK_ID) !== -1)
+                 );
                  if (isDeepLinked && isArchived) historicalDeepLinkFeature = feature;
                  // During an archive probe, do not let the active feed flash
                  // onto the map. In an active historical mode, use the
                  // selected radar frame as the custom-alert clock.
-                 if (historicalArchiveProbe && !isArchived) return;
+                  if (historicalArchiveProbe && !isDeepLinked) return;
                  if (historicalTimestampMs &&
                      !isCustomAlertActiveAt(props, historicalTimestampMs)) return;
                 // The public feed should be active-only. The sole exception is
