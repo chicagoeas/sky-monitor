@@ -14065,9 +14065,25 @@
         if (!props || !isFinite(Number(timestampMs))) return false;
         // active/status describe the record's state now, not its state at the
         // historical frame. The validity interval is authoritative here;
-        // only cancellation/supersession removes an alert from the past.
+        // cancellation/supersession removes an alert only from frames at or
+        // after the actual close time.
         const status = customSkyAlertValue(props, ['status', 'state'], '').toLowerCase();
-        if (['cancelled', 'canceled', 'superseded'].includes(status)) return false;
+        const isClosedStatus = [
+            'cancelled', 'canceled', 'superseded', 'closed', 'ended', 'inactive'
+        ].includes(status);
+        if (isClosedStatus) {
+            // Custom-alert records often expose only updated_at when a
+            // cancellation is issued. Prefer an explicit close timestamp, but
+            // use that update time as the historical cutoff when necessary.
+            const closedAt = customSkyAlertValue(props, [
+                'cancelledAt', 'cancelled_at', 'canceledAt', 'canceled_at',
+                'supersededAt', 'superseded_at', 'closedAt', 'closed_at',
+                'endedAt', 'ended_at', 'inactiveAt', 'inactive_at',
+                'updated', 'updatedAt', 'updated_at', 'lastUpdated', 'last_updated'
+            ], '');
+            const closedDate = parseReportDate(closedAt);
+            if (closedDate && closedDate.getTime() <= timestampMs) return false;
+        }
         const onset = customSkyAlertValue(props, [
             'onset', 'effective', 'effectiveAt', 'effective_at',
             'issued', 'issuedAt', 'issued_at', 'issue', 'issueTime',
