@@ -15274,7 +15274,18 @@
             // layer in one commit. This prevents a slow archive request from
             // blanking the polygon while an older popup remains on screen.
             if (loadGeneration !== customSkyAlertLoadGeneration) return;
-            if (reportingMap && reportingMap.closePopup) reportingMap.closePopup();
+            // Keep the deep-linked custom alert open while its historical
+            // radar frame is being rebuilt. The popup is the user's primary
+            // context for this route, and closing it here makes it disappear
+            // immediately after the alert link opens it.
+            const keepHistoricalCustomAlertPopupOpen =
+                !!CUSTOM_SKY_DEEP_LINK_ID &&
+                historicalRadarState.active &&
+                customSkyDeepLinkHandled;
+            if (reportingMap && reportingMap.closePopup &&
+                !keepHistoricalCustomAlertPopupOpen) {
+                reportingMap.closePopup();
+            }
             customSkyAlertLayer.clearLayers();
             removeReportingPopupEntries('custom-skymonitor');
             let renderedCount = 0;
