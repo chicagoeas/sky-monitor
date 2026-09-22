@@ -2245,7 +2245,7 @@
                             <input id="historical-radar-picker-time" type="time" step="60">
                         </div>
                         <div id="historical-radar-picker-note" class="historical-radar-picker-note">
-                            Radar archive begins Jan 1, 1997. Future dates and times are not available.
+                            Radar archive begins Jan 1, 1995. Future dates and times are not available.
                         </div>
                     </div>
                     <div class="historical-radar-picker-footer">
@@ -13062,8 +13062,12 @@
     let reportingRadarLayerMode = 'mosaic';
     let reportingRadarSite = null;
     const HISTORICAL_RADAR_FRAME_MS = 5 * 60 * 1000;
-    const HISTORICAL_RADAR_EARLIEST_YEAR = 1997;
+    // IEM's older N0R composite is archived from 1 Jan 1995. N0Q begins
+    // on 13 Nov 2010 at 16:25 UTC, so historical frames must switch
+    // products at that boundary instead of requesting N0Q for every date.
+    const HISTORICAL_RADAR_EARLIEST_YEAR = 1995;
     const HISTORICAL_RADAR_EARLIEST_MS = new Date(HISTORICAL_RADAR_EARLIEST_YEAR, 0, 1).getTime();
+    const HISTORICAL_RADAR_N0Q_START_MS = Date.UTC(2010, 10, 13, 16, 25);
     let historicalRadarState = {
         active: false,
         alertKey: '',
@@ -15623,13 +15627,14 @@
     function _historicalRadarFrameUrl(timestampMs) {
         const stamp = new Date(timestampMs);
         const pad = function(value) { return String(value).padStart(2, '0'); };
+        const product = timestampMs < HISTORICAL_RADAR_N0Q_START_MS ? 'N0R' : 'N0Q';
         const utcStamp = stamp.getUTCFullYear() +
             pad(stamp.getUTCMonth() + 1) +
             pad(stamp.getUTCDate()) +
             pad(stamp.getUTCHours()) +
             pad(stamp.getUTCMinutes());
         return 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/' +
-            'ridge::USCOMP-N0Q-' + utcStamp + '/{z}/{x}/{y}.png';
+            'ridge::USCOMP-' + product + '-' + utcStamp + '/{z}/{x}/{y}.png';
     }
 
     function clearHistoricalRadarPrefetch() {
@@ -15819,7 +15824,7 @@
             button.onclick = function() {
                 historicalRadarPickerDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
                 historicalRadarPickerMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-                _historicalRadarPickerSetNote('Radar archive begins Jan 1, 1997. Future dates and times are not available.', false);
+                _historicalRadarPickerSetNote('Radar archive begins Jan 1, 1995. Future dates and times are not available.', false);
                 _renderHistoricalRadarPickerCalendar();
             };
             calendar.appendChild(button);
@@ -15845,7 +15850,7 @@
         timeInput.value = String(baseDate.getHours()).padStart(2, '0') + ':' +
             String(baseDate.getMinutes()).padStart(2, '0');
         _historicalRadarPickerSetNote(
-            'Times are local. Radar archive begins Jan 1, 1997; future dates and times are not available.',
+            'Times are local. Radar archive begins Jan 1, 1995; older frames use IEM N0R radar. Future dates and times are not available.',
             false
         );
         _renderHistoricalRadarPickerCalendar();
