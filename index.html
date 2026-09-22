@@ -12823,6 +12823,8 @@
     let historicalRadarSliderTimer = null;
     let historicalRadarPlaybackTimer = null;
     let historicalRadarPlaying = false;
+    const HISTORICAL_RADAR_PREFETCH_COUNT = 6;
+    let historicalRadarPrefetchLayers = new Map();
      let historicalRadarRequestId = 0;
      // A deep link may point at an archived custom alert. Probe that archive
      // before allowing any live overlay to paint, otherwise the first render
@@ -15309,12 +15311,21 @@
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
         const oldLayer = reportingRadarLayer;
-        const nextLayer = L_ref.tileLayer(url, {
-            opacity: 0.65,
-            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
-            maxZoom: 18,
-            noWrap: true
-        });
+        const nextLayer = mode === 'historical'
+            ? (takeHistoricalRadarPrefetchLayer(historicalRadarState.timestampMs) ||
+                L_ref.tileLayer(url, {
+                    opacity: 0.65,
+                    attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+                    maxZoom: 18,
+                    noWrap: true
+                }))
+            : L_ref.tileLayer(url, {
+                opacity: 0.65,
+                attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+                maxZoom: 18,
+                noWrap: true
+            });
+        if (mode === 'historical' && nextLayer.setOpacity) nextLayer.setOpacity(0.65);
         if (mode === 'historical') {
             const historicalLayer = nextLayer;
             nextLayer.once('load', function() {
@@ -15359,6 +15370,60 @@
             pad(stamp.getUTCMinutes());
         return 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/' +
             'ridge::USCOMP-N0Q-' + utcStamp + '/{z}/{x}/{y}.png';
+    }
+
+    function clearHistoricalRadarPrefetch() {
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (entry && entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
+                reportingMap.removeLayer(entry.layer);
+            }
+        });
+        historicalRadarPrefetchLayers.clear();
+    }
+
+    function primeHistoricalRadarFrames(index) {
+        if (!reportingMap || !window.L || !historicalRadarState.active) return;
+        const frames = historicalRadarState.frames || [];
+        if (frames.length < 2) return;
+        const keep = new Set();
+        const currentIndex = Math.max(0, Math.min(Number(index) || 0, frames.length - 1));
+        // Keep the current frame in the warm set until the active radar layer
+        // takes it over below; otherwise a slider step would discard the
+        // prefetched layer just before it could be reused.
+        keep.add(String(frames[currentIndex]));
+        for (let offset = 1; offset <= Math.min(HISTORICAL_RADAR_PREFETCH_COUNT, frames.length - 1); offset++) {
+            const nextIndex = (currentIndex + offset) % frames.length;
+            const timestampMs = frames[nextIndex];
+            const key = String(timestampMs);
+            keep.add(key);
+            if (historicalRadarPrefetchLayers.has(key)) continue;
+            const layer = window.L.tileLayer(_historicalRadarFrameUrl(timestampMs), {
+                opacity: 0,
+                maxZoom: 18,
+                noWrap: true
+            });
+            historicalRadarPrefetchLayers.set(key, { index: nextIndex, layer: layer });
+            layer.addTo(reportingMap);
+        }
+        // Do not retain a growing stack of hidden tile layers after a manual
+        // slider jump. The browser's HTTP cache keeps successfully loaded
+        // tiles available even after their warm layer is removed.
+        historicalRadarPrefetchLayers.forEach(function(entry, key) {
+            if (keep.has(key)) return;
+            if (entry && entry.layer && reportingMap.hasLayer(entry.layer)) {
+                reportingMap.removeLayer(entry.layer);
+            }
+            historicalRadarPrefetchLayers.delete(key);
+        });
+    }
+
+    function takeHistoricalRadarPrefetchLayer(timestampMs) {
+        const key = String(timestampMs);
+        const entry = historicalRadarPrefetchLayers.get(key);
+        if (!entry) return null;
+        historicalRadarPrefetchLayers.delete(key);
+        if (entry.layer && entry.layer.setOpacity) entry.layer.setOpacity(0.65);
+        return entry.layer;
     }
 
     function _historicalRadarFormatTime(timestampMs, includeDate) {
@@ -15514,6 +15579,7 @@
         _renderHistoricalRadarControls();
         const timestampMs = historicalRadarState.frames[safeIndex];
         historicalRadarState.timestampMs = timestampMs;
+        primeHistoricalRadarFrames(safeIndex);
         _setHistoricalRadarStatus('Loading historical radar and overlays\u2026', '#9edfff');
         _replaceReportingRadarLayer(
             _historicalRadarFrameUrl(timestampMs),
@@ -15552,6 +15618,7 @@
             return true;
         }
         stopHistoricalRadarPlayback();
+        clearHistoricalRadarPrefetch();
 
         historicalRadarState = {
             active: true,
@@ -15588,6 +15655,7 @@
             historicalRadarPlaybackTimer = null;
         }
         historicalRadarPlaying = false;
+        clearHistoricalRadarPrefetch();
         const wasActive = historicalRadarState.active;
         historicalRadarState = {
             active: false,
