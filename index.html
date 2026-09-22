@@ -15767,13 +15767,17 @@
 
     function _historicalAlertIsActiveAt(props, timestampMs) {
         if (!props || !isFinite(Number(timestampMs))) return false;
-        const status = String(props.status || '').toLowerCase();
-        if (status.includes('cancel')) return false;
+        const status = String(props.status || '').trim().toUpperCase();
+        if (status === 'CAN' || status === 'EXP' || status.includes('CANCEL') ||
+            status.includes('EXPIRE')) return false;
+        const revisionIssued = parseReportDate(props.issue || props.sent || props.effective);
+        if (revisionIssued && revisionIssued.getTime() > timestampMs) return false;
         const start = parseReportDate(
             props.polygon_begin || props.issue || props.effective || props.sent
         );
         const end = parseReportDate(
-            props.polygon_end || props.expire || props.expires || props.ends
+            props.expire || props.expire_utc || props.expires || props.ends ||
+            props.polygon_end
         );
         return !!start && start.getTime() <= timestampMs &&
             (!end || end.getTime() > timestampMs);
@@ -15816,9 +15820,14 @@
     async function loadHistoricalNwsDetails(props) {
         props = props || {};
         const productId = String(props.product_id || '').trim();
-        const cacheKey = productId || [
+        const baseCacheKey = productId || [
             props.year, props.wfo, props.phenomena, props.significance, props.eventid
         ].join('|');
+        const frameTimestamp = historicalRadarState.active &&
+            isFinite(Number(historicalRadarState.timestampMs))
+            ? Number(historicalRadarState.timestampMs)
+            : 0;
+        const cacheKey = baseCacheKey + '|frame:' + frameTimestamp;
         if (historicalNwsDetailsCache[cacheKey]) {
             return historicalNwsDetailsCache[cacheKey];
         }
@@ -15858,13 +15867,23 @@
                 ].filter(function(item) {
                     return item && item.text;
                 });
-                const matchingProduct = products.find(function(item) {
+                const eligibleProducts = products.filter(function(item) {
+                    if (!frameTimestamp) return true;
+                    const valid = parseReportDate(item.valid);
+                    return !valid || valid.getTime() <= frameTimestamp;
+                }).sort(function(a, b) {
+                    const aTime = parseReportDate(a.valid);
+                    const bTime = parseReportDate(b.valid);
+                    return (bTime ? bTime.getTime() : 0) -
+                        (aTime ? aTime.getTime() : 0);
+                });
+                const matchingProduct = eligibleProducts[0] || products.find(function(item) {
                     return productId && String(item.product_id || '') === productId;
                 }) || products[0];
                 if (!matchingProduct) return fallback;
 
                 const sections = _historicalNwsTextSections(matchingProduct.text);
-                const issued = props.issue || matchingProduct.valid;
+                const issued = matchingProduct.valid || props.issue;
                 const rows = [
                     ['Issued', issued ? formatReportTime(issued) : ''],
                     ['Issued by', formatNwsIssuedBy(sections.issuer, wfo)],
@@ -15922,7 +15941,8 @@
                 const color = colors[phenomena];
                 const eventName = props.ps || props.type ||
                     (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning');
-                const expires = props.polygon_end || props.expire;
+                const expires = props.expire || props.expire_utc ||
+                    props.expires || props.ends || props.polygon_end;
                 const polygon = L_ref.geoJSON(feature.geometry, {
                     style: {
                         color: color,
