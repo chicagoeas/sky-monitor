@@ -13110,6 +13110,14 @@
     let historicalRadarInitialLoadComplete = false;
     let historicalRadarLayerRequestId = 0;
     let historicalRadarLayerTransition = null;
+    const HISTORICAL_RADAR_FRAME_READY_TIMEOUT_MS = 2800;
+    const HISTORICAL_RADAR_TILE_KEEP_BUFFER = 4;
+    const HISTORICAL_RADAR_WARM_FRAME_COUNT = 6;
+    const HISTORICAL_RADAR_WARM_ZOOM_RADIUS = 1;
+    const HISTORICAL_RADAR_WARM_TILE_LIMIT = 5000;
+    let historicalRadarWarmTiles = new Map();
+    let historicalRadarWarmTileQueue = [];
+    let historicalRadarWarmTileTimer = null;
      let historicalRadarRequestId = 0;
     let historicalRadarRequestedMs = 0;
     let historicalRadarPickerDate = null;
@@ -15611,6 +15619,35 @@
              });
          }
 
+    function _historicalRadarTileLayer(url, opacity, isPrefetch) {
+        return window.L.tileLayer(url, {
+            opacity: opacity,
+            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+            maxZoom: 18,
+            noWrap: true,
+            // Keep several tile rows/columns outside the viewport so modest
+            // pans do not immediately trigger a new radar download.
+            keepBuffer: isPrefetch ? HISTORICAL_RADAR_TILE_KEEP_BUFFER : HISTORICAL_RADAR_TILE_KEEP_BUFFER + 1,
+            // Hidden warm layers should wait until a map move settles. The
+            // active layer may load edge tiles during a pan for a smoother
+            // transition into the new viewport.
+            updateWhenIdle: !!isPrefetch,
+            updateWhenZooming: false,
+            reuseTiles: true
+        });
+    }
+
+    function _cancelHistoricalRadarLayerTransition() {
+        historicalRadarLayerRequestId++;
+        const pending = historicalRadarLayerTransition;
+        if (pending && pending.timeoutId) clearTimeout(pending.timeoutId);
+        if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
+            reportingMap && reportingMap.hasLayer(pending.layer)) {
+            reportingMap.removeLayer(pending.layer);
+        }
+        historicalRadarLayerTransition = null;
+    }
+
     function _replaceReportingRadarLayer(url, mode, site) {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
@@ -15621,14 +15658,7 @@
              // finishes loading. Playback can request another frame before a
              // slow network response completes, so cancel only the pending
              // hidden transition and leave the current layer untouched.
-             if (historicalRadarLayerTransition) {
-                 if (historicalRadarLayerTransition.layer &&
-                     historicalRadarLayerTransition.layer !== reportingRadarLayer &&
-                     reportingMap.hasLayer(historicalRadarLayerTransition.layer)) {
-                     reportingMap.removeLayer(historicalRadarLayerTransition.layer);
-                 }
-                 historicalRadarLayerTransition = null;
-             }
+             _cancelHistoricalRadarLayerTransition();
 
              const requestId = ++historicalRadarLayerRequestId;
              const prefetchedEntry = takeHistoricalRadarPrefetchLayer(
@@ -15636,18 +15666,18 @@
              );
              const nextLayer = prefetchedEntry
                  ? prefetchedEntry.layer
-                 : L_ref.tileLayer(url, {
-                     opacity: 0,
-                     attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
-                     maxZoom: 18,
-                     noWrap: true
-                 });
+                 : _historicalRadarTileLayer(url, 0, false);
              const loadToken = historicalRadarLoadToken;
              let committed = false;
              const commit = function() {
                  if (committed || requestId !== historicalRadarLayerRequestId ||
                      !historicalRadarState.active) return;
                  committed = true;
+                 if (historicalRadarLayerTransition &&
+                     historicalRadarLayerTransition.requestId === requestId &&
+                     historicalRadarLayerTransition.timeoutId) {
+                     clearTimeout(historicalRadarLayerTransition.timeoutId);
+                 }
                  historicalRadarLayerTransition = null;
                  reportingRadarLayer = nextLayer;
                  reportingRadarLayerMode = 'historical';
@@ -15669,7 +15699,17 @@
                      !historicalRadarState.active) return;
                  _setHistoricalRadarStatus('Radar frame unavailable. Try the adjacent frame.', '#ffb74d');
              });
-             historicalRadarLayerTransition = { requestId: requestId, layer: nextLayer };
+             historicalRadarLayerTransition = {
+                 requestId: requestId,
+                 layer: nextLayer,
+                 timeoutId: setTimeout(function() {
+                     // A failed tile should not strand playback on the
+                     // previous frame forever. Promote whatever the layer
+                     // received after a bounded wait; the browser/IEM cache
+                     // can fill any missing tile on the next viewport update.
+                     commit();
+                 }, HISTORICAL_RADAR_FRAME_READY_TIMEOUT_MS)
+             };
 
              if (prefetchedEntry && prefetchedEntry.loaded) {
                  // The warm layer may have emitted "load" before it was
@@ -15726,6 +15766,104 @@
             'ridge::USCOMP-' + product + '-' + utcStamp + '/{z}/{x}/{y}.png';
     }
 
+    function _historicalRadarWarmTileUrl(timestampMs, zoom, x, y) {
+        return _historicalRadarFrameUrl(timestampMs)
+            .replace('{z}', String(zoom))
+            .replace('{x}', String(x))
+            .replace('{y}', String(y));
+    }
+
+    function _drainHistoricalRadarWarmTileQueue() {
+        historicalRadarWarmTileTimer = null;
+        let started = 0;
+        while (historicalRadarWarmTileQueue.length && started < 24) {
+            const url = historicalRadarWarmTileQueue.shift();
+            if (!historicalRadarWarmTiles.has(url)) continue;
+            const image = new Image();
+            image.decoding = 'async';
+            image.onload = image.onerror = function() {};
+            image.src = url;
+            started++;
+        }
+        if (historicalRadarWarmTileQueue.length) {
+            historicalRadarWarmTileTimer = setTimeout(
+                _drainHistoricalRadarWarmTileQueue,
+                30
+            );
+        }
+    }
+
+    function _queueHistoricalRadarWarmTile(url) {
+        if (!url || historicalRadarWarmTiles.has(url)) return;
+        historicalRadarWarmTiles.set(url, true);
+        historicalRadarWarmTileQueue.push(url);
+        while (historicalRadarWarmTiles.size > HISTORICAL_RADAR_WARM_TILE_LIMIT) {
+            const oldest = historicalRadarWarmTiles.keys().next().value;
+            if (oldest == null) break;
+            historicalRadarWarmTiles.delete(oldest);
+        }
+        if (!historicalRadarWarmTileTimer) {
+            historicalRadarWarmTileTimer = setTimeout(
+                _drainHistoricalRadarWarmTileQueue,
+                0
+            );
+        }
+    }
+
+    function _warmHistoricalRadarViewportTiles() {
+        if (!reportingMap || !historicalRadarState.active || !window.L) return;
+        const frames = historicalRadarState.frames || [];
+        if (!frames.length) return;
+        const currentIndex = Math.max(
+            0,
+            Math.min(Number(historicalRadarState.index) || 0, frames.length - 1)
+        );
+        const frameCount = Math.min(HISTORICAL_RADAR_WARM_FRAME_COUNT, frames.length);
+        const currentZoom = Math.round(reportingMap.getZoom());
+        const mapBounds = reportingMap.getBounds();
+        if (!mapBounds || !isFinite(currentZoom)) return;
+
+        // Warm the current viewport plus one tile ring at the current zoom and
+        // its two neighbors. The Leaflet layers cover the current zoom, while
+        // these explicit image requests make a zoom-in or zoom-out hit the
+        // browser cache instead of waiting for a fresh radar grid.
+        const northWest = mapBounds.getNorthWest();
+        const southEast = mapBounds.getSouthEast();
+        for (let offset = 0; offset < frameCount; offset++) {
+            const frameIndex = (currentIndex + offset) % frames.length;
+            const timestampMs = frames[frameIndex];
+            for (
+                let zoom = Math.max(2, currentZoom - HISTORICAL_RADAR_WARM_ZOOM_RADIUS);
+                zoom <= Math.min(18, currentZoom + HISTORICAL_RADAR_WARM_ZOOM_RADIUS);
+                zoom++
+            ) {
+                const topLeft = reportingMap.project(northWest, zoom).divideBy(256).floor();
+                const bottomRight = reportingMap.project(southEast, zoom).divideBy(256).floor();
+                const maxTile = Math.pow(2, zoom) - 1;
+                const minX = Math.max(0, Math.floor(topLeft.x) - 1);
+                const maxX = Math.min(maxTile, Math.floor(bottomRight.x) + 1);
+                const minY = Math.max(0, Math.floor(topLeft.y) - 1);
+                const maxY = Math.min(maxTile, Math.floor(bottomRight.y) + 1);
+                for (let x = minX; x <= maxX; x++) {
+                    for (let y = minY; y <= maxY; y++) {
+                        _queueHistoricalRadarWarmTile(
+                            _historicalRadarWarmTileUrl(timestampMs, zoom, x, y)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    function _clearHistoricalRadarWarmTiles() {
+        historicalRadarWarmTiles.clear();
+        historicalRadarWarmTileQueue = [];
+        if (historicalRadarWarmTileTimer) {
+            clearTimeout(historicalRadarWarmTileTimer);
+            historicalRadarWarmTileTimer = null;
+        }
+    }
+
     function clearHistoricalRadarPrefetch() {
         historicalRadarPrefetchLayers.forEach(function(entry) {
             if (entry && entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
@@ -15751,11 +15889,11 @@
             const key = String(timestampMs);
             keep.add(key);
             if (historicalRadarPrefetchLayers.has(key)) continue;
-            const layer = window.L.tileLayer(_historicalRadarFrameUrl(timestampMs), {
-                opacity: 0,
-                maxZoom: 18,
-                noWrap: true
-            });
+            const layer = _historicalRadarTileLayer(
+                _historicalRadarFrameUrl(timestampMs),
+                0,
+                true
+            );
             const entry = { index: nextIndex, layer: layer, loaded: false };
             layer.once('load', function() {
                 entry.loaded = true;
@@ -16274,6 +16412,7 @@
         historicalRadarState.timestampMs = timestampMs;
         _beginHistoricalRadarLoading();
         primeHistoricalRadarFrames(safeIndex);
+        _warmHistoricalRadarViewportTiles();
         _replaceReportingRadarLayer(
             _historicalRadarFrameUrl(timestampMs),
             'historical',
@@ -16289,6 +16428,12 @@
         if (!historicalRadarState.active) return;
         if (historicalRadarPlaying) stopHistoricalRadarPlayback();
         const nextIndex = Number(value) || 0;
+        // Invalidate a slow frame that is still warming while the user drags
+        // the slider. Otherwise its late load event can promote the old
+        // selection after the slider has already moved on.
+        if (historicalRadarLayerTransition) {
+            _cancelHistoricalRadarLayerTransition();
+        }
         historicalRadarState.index = nextIndex;
         _renderHistoricalRadarControls();
         if (historicalRadarSliderTimer) clearTimeout(historicalRadarSliderTimer);
@@ -16347,15 +16492,9 @@
             historicalRadarPlaybackTimer = null;
         }
         historicalRadarPlaying = false;
-        historicalRadarLayerRequestId++;
-        if (historicalRadarLayerTransition &&
-            historicalRadarLayerTransition.layer &&
-            reportingMap &&
-            reportingMap.hasLayer(historicalRadarLayerTransition.layer)) {
-            reportingMap.removeLayer(historicalRadarLayerTransition.layer);
-        }
-        historicalRadarLayerTransition = null;
+        _cancelHistoricalRadarLayerTransition();
         clearHistoricalRadarPrefetch();
+        _clearHistoricalRadarWarmTiles();
         historicalRadarLoadToken++;
         historicalRadarLoadingParts = null;
         if (!historicalRadarInitialLoadComplete) {
@@ -16757,7 +16896,10 @@
         window.reportingMap = reportingMap;
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
-        reportingMap.on('moveend zoomend', saveReportingMapView);
+        reportingMap.on('moveend zoomend', function() {
+            saveReportingMapView();
+            _warmHistoricalRadarViewportTiles();
+        });
         reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
         // Layer 1 — physical geography only (no labels), sits below radar
