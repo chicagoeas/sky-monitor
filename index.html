@@ -16867,8 +16867,15 @@
          syncSingleSiteRadarVisibility();
          syncReportingRadarActionVisibility();
         historicalRadarPending = false;
+        // An archived custom-alert deep link is still initially opened at
+        // /radar?alert=... because that is the public link format. Once the
+        // archive probe proves that the alert is expired, move the browser to
+        // the canonical historical route while retaining the alert ID.
+        if ((window.location.pathname.replace(/\/+$/, '') || '/') !== '/radar/historical') {
+            enterHistoricalRadarRoute();
+        }
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'HISTORICAL REPORTING MAP';
+        if (title) title.textContent = 'HISTORICAL RADAR';
         _renderHistoricalRadarControls();
 
         const bounds = window.L.geoJSON(feature).getBounds();
@@ -17142,7 +17149,8 @@
     function enterHistoricalRadarRoute() {
         const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
         if (currentPath === '/radar/historical') return;
-        window.history.pushState({ skymonitorRadar: true, historicalRadar: true }, '', '/radar/historical');
+        const nextUrl = '/radar/historical' + window.location.search + window.location.hash;
+        window.history.pushState({ skymonitorRadar: true, historicalRadar: true }, '', nextUrl);
         if (currentPath !== '/radar') {
             setRadarRouteState(true, true);
         } else {
