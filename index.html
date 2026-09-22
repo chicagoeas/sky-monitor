@@ -1058,6 +1058,24 @@
             text-transform: none;
             white-space: nowrap;
         }
+        #historical-radar-play {
+            min-width: 31px;
+            height: 25px;
+            padding: 0 7px;
+            border: 1px solid rgba(129, 212, 250, 0.5);
+            border-radius: 6px;
+            background: rgba(79, 195, 247, 0.14);
+            color: #d9f5ff;
+            font-size: 0.86em;
+            font-weight: 900;
+            line-height: 1;
+            cursor: pointer;
+        }
+        #historical-radar-play:hover,
+        #historical-radar-play:focus-visible {
+            background: rgba(79, 195, 247, 0.3);
+            outline: none;
+        }
         #historical-radar-slider {
             display: block;
             width: 100%;
@@ -1968,7 +1986,13 @@
             <div id="historical-radar-controls" aria-label="Historical radar timeline">
                 <div class="historical-radar-heading">
                     <span>Historical radar</span>
-                    <span id="historical-radar-time" class="historical-radar-time">--</span>
+                    <span style="display:flex;align-items:center;gap:7px;">
+                        <span id="historical-radar-time" class="historical-radar-time">--</span>
+                        <button id="historical-radar-play" type="button"
+                            onclick="toggleHistoricalRadarPlayback()"
+                            aria-label="Play historical radar"
+                            title="Play historical radar">&#9654;</button>
+                    </span>
                 </div>
                 <input id="historical-radar-slider" type="range" min="0" max="0" value="0" step="1"
                     aria-label="Historical radar frame"
@@ -12797,6 +12821,8 @@
          timestampMs: 0
     };
     let historicalRadarSliderTimer = null;
+    let historicalRadarPlaybackTimer = null;
+    let historicalRadarPlaying = false;
      let historicalRadarRequestId = 0;
      // A deep link may point at an archived custom alert. Probe that archive
      // before allowing any live overlay to paint, otherwise the first render
@@ -14073,13 +14099,14 @@
         ].includes(status);
         if (isClosedStatus) {
             // Custom-alert records often expose only updated_at when a
-            // cancellation is issued. Prefer an explicit close timestamp, but
-            // use that update time as the historical cutoff when necessary.
+            // cancellation is issued. An ordinary update timestamp is not a
+            // cancellation boundary: the alert's declared expiration remains
+            // authoritative unless the payload supplies an explicit close
+            // timestamp.
             const closedAt = customSkyAlertValue(props, [
                 'cancelledAt', 'cancelled_at', 'canceledAt', 'canceled_at',
                 'supersededAt', 'superseded_at', 'closedAt', 'closed_at',
-                'endedAt', 'ended_at', 'inactiveAt', 'inactive_at',
-                'updated', 'updatedAt', 'updated_at', 'lastUpdated', 'last_updated'
+                'endedAt', 'ended_at', 'inactiveAt', 'inactive_at'
             ], '');
             const closedDate = parseReportDate(closedAt);
             if (closedDate && closedDate.getTime() <= timestampMs) return false;
@@ -15359,6 +15386,7 @@
         const time = document.getElementById('historical-radar-time');
         const start = document.getElementById('historical-radar-start');
         const end = document.getElementById('historical-radar-end');
+        const play = document.getElementById('historical-radar-play');
         if (!controls || !slider || !time || !start || !end) return;
 
         const frames = historicalRadarState.frames;
@@ -15371,6 +15399,54 @@
             : '--';
         start.textContent = frameCount ? _historicalRadarFormatTime(frames[0], false) : '--';
         end.textContent = frameCount ? _historicalRadarFormatTime(frames[frameCount - 1], false) : '--';
+        if (play) {
+            const canPlay = historicalRadarState.active && frameCount > 1;
+            play.disabled = !canPlay;
+            play.textContent = historicalRadarPlaying ? '\u23f8' : '\u25b6';
+            play.setAttribute('aria-label', historicalRadarPlaying ? 'Pause historical radar' : 'Play historical radar');
+            play.title = historicalRadarPlaying ? 'Pause historical radar' : 'Play historical radar';
+        }
+    }
+
+    function stopHistoricalRadarPlayback() {
+        if (historicalRadarPlaybackTimer) {
+            clearTimeout(historicalRadarPlaybackTimer);
+            historicalRadarPlaybackTimer = null;
+        }
+        historicalRadarPlaying = false;
+        _renderHistoricalRadarControls();
+    }
+
+    function scheduleHistoricalRadarPlayback() {
+        if (!historicalRadarPlaying || !historicalRadarState.active) return;
+        if (historicalRadarPlaybackTimer) clearTimeout(historicalRadarPlaybackTimer);
+        historicalRadarPlaybackTimer = setTimeout(function() {
+            historicalRadarPlaybackTimer = null;
+            if (!historicalRadarPlaying || !historicalRadarState.active) return;
+            const nextIndex = historicalRadarState.index + 1;
+            if (nextIndex >= historicalRadarState.frames.length) {
+                stopHistoricalRadarPlayback();
+                return;
+            }
+            _setHistoricalRadarFrame(nextIndex);
+            scheduleHistoricalRadarPlayback();
+        }, 1800);
+    }
+
+    function toggleHistoricalRadarPlayback() {
+        if (!historicalRadarState.active || historicalRadarState.frames.length < 2) return;
+        if (historicalRadarPlaying) {
+            stopHistoricalRadarPlayback();
+            return;
+        }
+        if (historicalRadarState.index >= historicalRadarState.frames.length - 1) {
+            historicalRadarState.index = 0;
+            _renderHistoricalRadarControls();
+            _setHistoricalRadarFrame(0);
+        }
+        historicalRadarPlaying = true;
+        _renderHistoricalRadarControls();
+        scheduleHistoricalRadarPlayback();
     }
 
     function _historicalRadarTimeWindow(feature) {
@@ -15450,6 +15526,7 @@
 
     function onHistoricalRadarSliderInput(value) {
         if (!historicalRadarState.active) return;
+        if (historicalRadarPlaying) stopHistoricalRadarPlayback();
         const nextIndex = Number(value) || 0;
         historicalRadarState.index = nextIndex;
         _renderHistoricalRadarControls();
@@ -15462,6 +15539,7 @@
 
     function activateHistoricalRadarForAlert(feature) {
         if (!feature || !reportingMap || !window.L) return false;
+        stopHistoricalRadarPlayback();
         const windowInfo = _historicalRadarTimeWindow(feature);
         if (!windowInfo) {
             _setHistoricalRadarStatus('Historical radar unavailable: alert time window missing.', '#ffb74d');
@@ -15503,6 +15581,11 @@
             clearTimeout(historicalRadarSliderTimer);
             historicalRadarSliderTimer = null;
         }
+        if (historicalRadarPlaybackTimer) {
+            clearTimeout(historicalRadarPlaybackTimer);
+            historicalRadarPlaybackTimer = null;
+        }
+        historicalRadarPlaying = false;
         const wasActive = historicalRadarState.active;
         historicalRadarState = {
             active: false,
