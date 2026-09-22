@@ -13893,11 +13893,12 @@
             const alert = alertCandidates[0];
             if (!alert || (!alert.description && !alert.instruction)) return unavailable;
              const timeInfo = reportingAlertTimeInfo(alert);
+              const parsedAlertText = _historicalNwsTextSections(alert.description || '');
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
                   ['Issued by', formatNwsIssuedBy(alert.senderName, wfo)],
-                 ['Alert text', alert.description],
-                 ['Instructions', alert.instruction]
+                  ['Alert text', parsedAlertText.description || alert.description],
+                  ['Instructions', parsedAlertText.instructions || alert.instruction]
              ];
             return reportingPopupDetailRows(rows);
         } catch (e) {
@@ -17447,23 +17448,41 @@
             ? lines[issuerIndex].replace(/\s+/g, ' ').trim()
             : '';
 
-        // NWS updates such as Flash Flood Statements include a product
-        // header, UGC/VTEC block, and then a human-readable paragraph that
-        // starts with an ellipsis headline. Skip the metadata and headline so
-        // the popup receives the same filtered narrative as a live alert.
+        // Older NWS products often put several human-readable preamble lines
+        // before the actual report, for example:
+        //
+        //   ...TORNADO EMERGENCY CONTINUES...
+        //   AT 604 PM CDT...NATIONAL WEATHER SERVICE DOPPLER RADAR...
+        //
+        // The first clocked "AT" sentence is the narrative boundary. It is
+        // more reliable than treating every ellipsis line as the beginning of
+        // the alert because legacy products use ellipses for both headers and
+        // prose.
         let bodyStartIndex = -1;
-        if (issuerIndex >= 0) {
-            for (let i = issuerIndex + 1; i < lines.length; i++) {
-                if (!/^\s*\.\.\./.test(lines[i])) continue;
-                let headlineEnd = i;
-                while (headlineEnd < lines.length &&
-                    !/\.\.\.\s*$/.test(lines[headlineEnd].trim())) {
-                    headlineEnd++;
-                }
-                let next = headlineEnd < lines.length ? headlineEnd + 1 : i + 1;
-                while (next < lines.length && !lines[next].trim()) next++;
-                bodyStartIndex = next < lines.length ? next : i;
+        for (let i = 0; i < lines.length; i++) {
+            if (/^\s*AT\s+\d{1,4}(?::\d{2})?\s*(?:AM|PM)\b/i.test(lines[i])) {
+                bodyStartIndex = i;
                 break;
+            }
+        }
+
+        // NWS updates such as Flash Flood Statements can lack a clocked
+        // narrative boundary. In that case, keep the existing issuer/
+        // ellipsis fallback: skip the product header and ellipsis headline.
+        if (issuerIndex >= 0) {
+            if (bodyStartIndex < 0) {
+                for (let i = issuerIndex + 1; i < lines.length; i++) {
+                    if (!/^\s*\.\.\./.test(lines[i])) continue;
+                    let headlineEnd = i;
+                    while (headlineEnd < lines.length &&
+                        !/\.\.\.\s*$/.test(lines[headlineEnd].trim())) {
+                        headlineEnd++;
+                    }
+                    let next = headlineEnd < lines.length ? headlineEnd + 1 : i + 1;
+                    while (next < lines.length && !lines[next].trim()) next++;
+                    bodyStartIndex = next < lines.length ? next : i;
+                    break;
+                }
             }
         }
 
@@ -17477,9 +17496,9 @@
                 : 0;
             body = text.slice(bodyStart).trim();
         }
-        body = body.split(/\n(?:&&|LAT\.\.\.|\$\$)/i)[0].trim();
+        body = body.split(/\n\s*(?:&&|LAT\.\.\.|\$\$)/i)[0].trim();
         const instructionMatch = body.match(
-            /\nPRECAUTIONARY\/PREPAREDNESS ACTIONS[^\n]*\n/i
+            /(?:^|\n)\s*PRECAUTIONARY\/PREPAREDNESS ACTIONS[^\n]*(?:\n|$)/i
         );
         if (!instructionMatch) {
             return { description: body, instructions: '', issuer: issuer };
@@ -17866,6 +17885,27 @@
         ensureReportPinMarker();
     }
 
+    function normalizeIemLsrTypeLabel(value) {
+        let label = String(value || 'LSR').replace(/\s+/g, ' ').trim();
+        // Legacy IEM typetext values append compact casualty codes such as
+        // "TORNADO -- 1 F". F means fatality in that report format; it is not
+        // part of the report type and should never leak into the popup title.
+        label = label.replace(
+            /\s*(?:--?|—|:)\s*\d+\s*(?:F|FATAL(?:ITY|ITIES)?|INJ(?:URY|URIES)?)\s*$/i,
+            ''
+        ).trim();
+        return label || 'LSR';
+    }
+
+    function normalizeIemLsrMagnitude(value) {
+        const magnitude = String(value || '').replace(/\s+/g, ' ').trim();
+        // Some legacy records expose the casualty code in magnitude as well
+        // as in typetext. Do not render it as if it were a measurement.
+        return /^\d+\s*(?:F|FATAL(?:ITY|ITIES)?|INJ(?:URY|URIES)?)$/i.test(magnitude)
+            ? ''
+            : magnitude;
+    }
+
     async function loadMapReports() {
         if (!lsrLayer || !userReportLayer) return;
         const L_ref = window.L;
@@ -17933,7 +17973,9 @@
                     if (isHistorical && (!reportDate ||
                         reportDate.getTime() > now ||
                         reportDate.getTime() < now - lsrHours * 3600 * 1000)) return;
-                    const typeKey = (props.typetext || props.type || '').toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+                     const rawLsrType = props.typetext || props.type || '';
+                     const lsrTypeLabel = normalizeIemLsrTypeLabel(rawLsrType);
+                     const typeKey = rawLsrType.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
                     const exactStyle = LSR_EXACT_STYLES[typeKey];
                     const matchKey = Object.keys(LSR_ICON_TYPES).find(function(k) { return typeKey.includes(k); });
                     const lsrType = exactStyle ? exactStyle.icon : (matchKey && LSR_ICON_TYPES[matchKey]);
@@ -17954,16 +17996,17 @@
                         magnitudeParts.push(magfValue);
                     }
                     const magnitudeText = magnitudeParts.join(' ');
-                    const magnitudeWithUnit = unitValue && magnitudeText.toLowerCase().indexOf(unitValue.toLowerCase()) === -1
+                     const magnitudeWithUnit = unitValue && magnitudeText.toLowerCase().indexOf(unitValue.toLowerCase()) === -1
                         ? magnitudeText + ' ' + unitValue
                         : magnitudeText;
-                     const mag = magnitudeWithUnit ? ' \u2014 ' + magnitudeWithUnit : '';
+                     const displayMagnitude = normalizeIemLsrMagnitude(magnitudeWithUnit);
+                      const mag = displayMagnitude ? ' \u2014 ' + displayMagnitude : '';
                     const marker = L_ref.circleMarker([la, lo], { radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
                         .addTo(lsrLayer);
                     registerReportingPopup(marker, {
                         source: 'iem-lsr',
                         color: dotColor,
-                         title: lsrIcon + escapeHtml(props.typetext || 'LSR') + escapeHtml(mag),
+                         title: lsrIcon + escapeHtml(lsrTypeLabel) + escapeHtml(mag),
                         meta: escapeHtml(props.city || 'Unknown location') + (validStr ? ' \u00B7 ' + escapeHtml(validStr) : ''),
                          detail: reportingPopupDetailRows([
                              ['County / state', [props.county, props.st].filter(Boolean).join(', ')],
