@@ -13111,6 +13111,9 @@
     let historicalRadarLayerTransition = null;
     let historicalRadarViewGeneration = 0;
     let historicalRadarViewportRefreshTimer = null;
+    let historicalRadarViewportWarmupTimer = null;
+    let historicalRadarViewportWarming = false;
+    let historicalRadarPlaybackRequested = false;
     let historicalRadarWarmupTimer = null;
     // Keep a small rolling window attached to Leaflet. Attaching the entire
     // slider sequence makes every pan/zoom update dozens of tile layers.
@@ -15642,15 +15645,111 @@
         // remains visible while Leaflet moves it, and the small warm window is
         // refreshed once after moveend.
         historicalRadarViewGeneration++;
+        historicalRadarViewportWarming = true;
+        // A pending playback swap belongs to the old viewport. Keep the
+        // current visible frame and discard only that pending promotion.
+        if (historicalRadarLayerTransition) {
+            _cancelHistoricalRadarLayerTransition();
+        }
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (!entry) return;
+            entry.viewportGeneration = historicalRadarViewGeneration;
+            entry.viewportReady = false;
+            entry.viewportRefreshPending = true;
+        });
+        if (historicalRadarPlaying) {
+            stopHistoricalRadarPlayback();
+        }
+        historicalRadarPlaybackRequested = false;
+    }
+
+    function _historicalRadarLayerHasViewportTile(layer) {
+        if (!reportingMap || !layer || !layer._tiles) return false;
+        const zoom = reportingMap.getZoom();
+        return Object.keys(layer._tiles).some(function(key) {
+            const tile = layer._tiles[key];
+            const coords = tile && tile.coords;
+            const image = tile && tile.el;
+            return !!(tile && image && image.complete && image.naturalWidth > 0 &&
+                (!coords || coords.z === zoom));
+        });
+    }
+
+    function _historicalRadarEntryReadyForViewport(entry) {
+        if (!entry || entry.viewportGeneration !== historicalRadarViewGeneration) {
+            return false;
+        }
+        if (entry.viewportRefreshPending) return false;
+        if (entry.viewportReady) return true;
+        if (_historicalRadarLayerHasViewportTile(entry.layer)) {
+            entry.viewportReady = true;
+            return true;
+        }
+        return false;
+    }
+
+    function _historicalRadarViewportWarmupReady() {
+        if (!historicalRadarState.active || !historicalRadarState.frames.length) return true;
+        const frames = historicalRadarState.frames;
+        const index = historicalRadarState.index;
+        const targetIndexes = [index];
+        if (frames.length > 1) targetIndexes.push((index + 1) % frames.length);
+        return targetIndexes.every(function(frameIndex) {
+            const entry = historicalRadarPrefetchLayers.get(String(frames[frameIndex]));
+            return _historicalRadarEntryReadyForViewport(entry);
+        });
+    }
+
+    function _checkHistoricalRadarViewportWarmup() {
+        if (!historicalRadarState.active) return;
+        if (_historicalRadarViewportWarmupReady()) {
+            historicalRadarViewportWarming = false;
+            if (historicalRadarViewportWarmupTimer) {
+                clearTimeout(historicalRadarViewportWarmupTimer);
+                historicalRadarViewportWarmupTimer = null;
+            }
+            if (historicalRadarPlaybackRequested) {
+                historicalRadarPlaybackRequested = false;
+                historicalRadarPlaying = true;
+                _renderHistoricalRadarControls();
+                scheduleHistoricalRadarPlayback();
+            } else if (historicalRadarInitialLoadComplete && !historicalRadarLoadingParts) {
+                _setHistoricalRadarStatus('');
+            }
+            return;
+        }
+        historicalRadarViewportWarming = true;
+        if (!historicalRadarViewportWarmupTimer) {
+            historicalRadarViewportWarmupTimer = setTimeout(function() {
+                historicalRadarViewportWarmupTimer = null;
+                _checkHistoricalRadarViewportWarmup();
+            }, 120);
+        }
     }
 
     function _refreshHistoricalRadarViewportPrefetch() {
         if (!historicalRadarState.active) return;
         historicalRadarPrefetchLayers.forEach(function(entry) {
             if (entry && entry.layer && entry.layer.redraw) {
+                entry.viewportGeneration = historicalRadarViewGeneration;
+                // A tile from the previous viewport is not enough to promote
+                // this frame after a large pan. Let redraw/load establish
+                // readiness for the new viewport.
+                entry.viewportReady = false;
+                entry.viewportRefreshPending = true;
                 entry.layer.redraw();
             }
         });
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+        }
+        historicalRadarViewportWarmupTimer = setTimeout(function() {
+            historicalRadarViewportWarmupTimer = null;
+            historicalRadarPrefetchLayers.forEach(function(entry) {
+                if (entry) entry.viewportRefreshPending = false;
+            });
+            _checkHistoricalRadarViewportWarmup();
+        }, 120);
     }
 
     function _scheduleHistoricalRadarViewportRefresh() {
@@ -15721,7 +15820,7 @@
              const loadToken = historicalRadarLoadToken;
              let nextLayerHasTile = !!(
                  prefetchedEntry &&
-                  prefetchedEntry.tileLoaded
+                  _historicalRadarEntryReadyForViewport(prefetchedEntry)
              );
              let committed = false;
              const commit = function() {
@@ -15751,9 +15850,16 @@
              };
 
              nextLayer.on('tileload', function() {
-                 nextLayerHasTile = true;
+                  nextLayerHasTile = prefetchedEntry
+                      ? _historicalRadarEntryReadyForViewport(prefetchedEntry)
+                      : true;
              });
-             nextLayer.once('load', commit);
+              nextLayer.once('load', function() {
+                  if (prefetchedEntry) {
+                      nextLayerHasTile = _historicalRadarEntryReadyForViewport(prefetchedEntry);
+                  }
+                  commit();
+              });
              nextLayer.on('tileerror', function() {
                  if (requestId !== historicalRadarLayerRequestId ||
                      !historicalRadarState.active) return;
@@ -15838,6 +15944,9 @@
         entry.tileLoaded = false;
         entry.failed = false;
         entry.ready = false;
+        entry.viewportGeneration = generation;
+        entry.viewportReady = false;
+        entry.viewportRefreshPending = false;
         if (entry._tileLoadHandler) {
             entry.layer.off('tileload', entry._tileLoadHandler);
         }
@@ -15850,7 +15959,12 @@
         entry._tileLoadHandler = function() {
             if (entry.generation !== generation) return;
             entry.tileLoaded = true;
+            if (entry.viewportGeneration === historicalRadarViewGeneration &&
+                !entry.viewportRefreshPending) {
+                entry.viewportReady = true;
+            }
             _markHistoricalRadarWarmFrameReady(entry);
+            _checkHistoricalRadarViewportWarmup();
         };
         entry._tileErrorHandler = function() {
             if (entry.generation !== generation) return;
@@ -15860,12 +15974,22 @@
             // message from the active layer.
             entry.failed = true;
             entry.loaded = true;
+            if (entry.viewportGeneration === historicalRadarViewGeneration &&
+                !entry.viewportRefreshPending) {
+                entry.viewportReady = true;
+            }
             _markHistoricalRadarWarmFrameReady(entry);
+            _checkHistoricalRadarViewportWarmup();
         };
         entry._loadHandler = function() {
             if (entry.generation !== generation) return;
             entry.loaded = true;
+            if (entry.viewportGeneration === historicalRadarViewGeneration &&
+                !entry.viewportRefreshPending) {
+                entry.viewportReady = true;
+            }
             _markHistoricalRadarWarmFrameReady(entry);
+            _checkHistoricalRadarViewportWarmup();
         };
         entry.layer.on('tileload', entry._tileLoadHandler);
         entry.layer.on('tileerror', entry._tileErrorHandler);
@@ -15966,6 +16090,7 @@
                 entry.layer === reportingRadarLayer ? 0.65 : 0);
         });
         _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
+        _checkHistoricalRadarViewportWarmup();
     }
 
     function takeHistoricalRadarPrefetchLayer(timestampMs) {
@@ -16366,6 +16491,12 @@
         if (!reportingMap || !window.L) return;
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+            historicalRadarViewportWarmupTimer = null;
+        }
+        historicalRadarViewportWarming = false;
+        historicalRadarPlaybackRequested = false;
         // The frame cache belongs to one historical sequence. A new picker
         // selection must warm its complete sequence before playback is enabled.
         historicalRadarInitialLoadStarted = false;
@@ -16445,6 +16576,18 @@
     function toggleHistoricalRadarPlayback() {
         if (!historicalRadarState.active || historicalRadarState.frames.length < 2 ||
             !historicalRadarInitialLoadComplete) return;
+        if (historicalRadarViewportWarming) {
+            // A user can press play immediately after moving the map. Keep the
+            // current frame visible, warm the new viewport, then start without
+            // ever promoting a stale/blank cached layer.
+            historicalRadarPlaybackRequested = true;
+            primeHistoricalRadarFrames(historicalRadarState.index);
+            _refreshHistoricalRadarViewportPrefetch();
+            if (!historicalRadarLoadingParts) {
+                _setHistoricalRadarStatus('Loading... 0%', '#9edfff');
+            }
+            return;
+        }
         if (historicalRadarPlaying) {
             stopHistoricalRadarPlayback();
             return;
@@ -16568,6 +16711,12 @@
         }
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+            historicalRadarViewportWarmupTimer = null;
+        }
+        historicalRadarViewportWarming = false;
+        historicalRadarPlaybackRequested = false;
         // Archived alerts can have a different number and cadence of frames;
         // never carry the previous sequence's "warm" state into this one.
         historicalRadarInitialLoadStarted = false;
@@ -16615,12 +16764,18 @@
             clearTimeout(historicalRadarWarmupTimer);
             historicalRadarWarmupTimer = null;
         }
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+            historicalRadarViewportWarmupTimer = null;
+        }
         _cancelHistoricalRadarLayerTransition();
         clearHistoricalRadarPrefetch();
         historicalRadarLoadToken++;
         historicalRadarLoadingParts = null;
         historicalRadarInitialLoadStarted = false;
         historicalRadarInitialLoadComplete = false;
+        historicalRadarViewportWarming = false;
+        historicalRadarPlaybackRequested = false;
         _setHistoricalRadarStatus('');
         const wasActive = historicalRadarState.active;
         historicalRadarState = {
