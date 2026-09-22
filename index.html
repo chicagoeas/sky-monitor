@@ -10,9 +10,11 @@
         (function () {
             var path = window.location.pathname.replace(/\/+$/, '') || '/';
             var infoPage = path === '/privacy' || path === '/about-custom-alerts';
-            var radarPage = path === '/radar';
+            var historicalRadarPage = path === '/radar/historical';
+            var radarPage = path === '/radar' || historicalRadarPage;
             window.SKYMONITOR_INFO_PAGE = infoPage;
             window.SKYMONITOR_RADAR_PAGE = radarPage;
+            window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRadarPage;
             window.SKYMONITOR_INFO_KIND = path === '/privacy' ? 'privacy' :
                 (path === '/about-custom-alerts' ? 'custom-alerts' : '');
             var infoPaths = { '/privacy': true, '/about-custom-alerts': true };
@@ -38,7 +40,7 @@
                     var radarRefPath = radarRef && radarRef.origin === window.location.origin
                         ? (radarRef.pathname.replace(/\/+$/, '') || '/')
                         : '';
-                    if (radarRefPath === '/radar') armSkipLaunch();
+                    if (radarRefPath === '/radar' || radarRefPath === '/radar/historical') armSkipLaunch();
                 }
                 document.addEventListener('click', function (event) {
                     var link = event.target && event.target.closest
@@ -48,7 +50,8 @@
                     var destination = new URL(link.href, window.location.href);
                     var destinationPath = destination.pathname.replace(/\/+$/, '') || '/';
                     if (destination.origin === window.location.origin &&
-                        (infoPaths[destinationPath] || destinationPath === '/radar' || destinationPath === '/')) {
+                        (infoPaths[destinationPath] || destinationPath === '/radar' ||
+                            destinationPath === '/radar/historical' || destinationPath === '/')) {
                         armSkipLaunch();
                     }
                 }, true);
@@ -60,7 +63,9 @@
                     : 'About Custom Alerts · SkyMonitor';
             } else if (radarPage) {
                 document.documentElement.classList.add('radar-route');
-                document.title = 'Live Reporting Map · SkyMonitor';
+                document.title = historicalRadarPage
+                    ? 'Historical Radar · SkyMonitor'
+                    : 'Live Reporting Map · SkyMonitor';
             }
             // Returning from an informational page is a normal in-app
             // navigation, not a cold start. Hide the launch splash before the
@@ -2226,7 +2231,7 @@
                     <div class="historical-radar-picker-head">
                         <div>
                             <div id="historical-radar-picker-title" class="historical-radar-picker-kicker">HISTORICAL RADAR</div>
-                            <div style="margin-top:4px;color:#9fb2c2;font-size:0.68em;">Choose a past time to load the next 50 IEM scans</div>
+                            <div style="margin-top:4px;color:#9fb2c2;font-size:0.68em;">Choose a past time and view the next 50 radar scans</div>
                         </div>
                         <button class="historical-radar-picker-close" type="button" onclick="closeHistoricalRadarPicker()" aria-label="Close date picker">&#10005;</button>
                     </div>
@@ -4048,6 +4053,9 @@
             // Verified — re-trigger the reporting tab navigation now that the flag is set
             var repNav = document.getElementById('nav-reporting');
             if (repNav) window.switchTab('reporting', repNav);
+            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE) {
+                setTimeout(function() { openHistoricalRadarPicker(); }, 180);
+            }
             if (window._pendingCustomSkyMDKey) {
                 setTimeout(function() { _tryOpenPendingCustomSkyMD(0); }, 180);
             }
@@ -15840,6 +15848,7 @@
         const picker = document.getElementById('historical-radar-picker');
         const timeInput = document.getElementById('historical-radar-picker-time');
         if (!picker || !timeInput) return;
+        enterHistoricalRadarRoute();
         const baseMs = historicalRadarRequestedMs ||
             (historicalRadarState.active && historicalRadarState.startMs) ||
             (Date.now() - 4 * 60 * 60 * 1000);
@@ -15862,6 +15871,12 @@
         const picker = document.getElementById('historical-radar-picker');
         if (picker) picker.classList.remove('is-open');
         setModalOpen(false);
+        const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (currentPath === '/radar/historical' && !historicalRadarState.active) {
+            window.history.replaceState({ skymonitorRadar: true }, '', '/radar');
+            window.SKYMONITOR_HISTORICAL_RADAR_PAGE = false;
+            setRadarRouteState(true, false);
+        }
     }
 
     function shiftHistoricalRadarPickerMonth(delta) {
@@ -15915,8 +15930,8 @@
             _historicalRadarPickerSetNote('Choose a date and time that is in the past.', true);
             return;
         }
-        closeHistoricalRadarPicker();
         activateOnDemandHistoricalRadar(selectedMs);
+        closeHistoricalRadarPicker();
     }
 
     function activateOnDemandHistoricalRadar(selectedMs) {
@@ -16156,6 +16171,10 @@
         historicalRadarRequestedMs = 0;
         historicalRadarRequestId++;
         historicalRadarPending = false;
+        if ((window.location.pathname.replace(/\/+$/, '') || '/') === '/radar/historical') {
+            window.history.replaceState({ skymonitorRadar: true }, '', '/radar');
+            window.SKYMONITOR_HISTORICAL_RADAR_PAGE = false;
+        }
         syncSingleSiteRadarVisibility();
         syncReportingRadarActionVisibility();
         _renderHistoricalRadarControls();
@@ -16287,10 +16306,11 @@
         // previously saved (possibly exact) location.
     }
 
-    function setRadarRouteState(isRadar) {
+    function setRadarRouteState(isRadar, isHistorical) {
         const active = !!isRadar;
+        const historicalRoute = active && !!isHistorical;
         const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
-        if (!active && historicalRadarState.active) {
+        if ((!active || !historicalRoute) && historicalRadarState.active) {
             // Leaving fullscreen is also leaving historical mode. Use the
             // normal refresh cleanup so the archived custom alert, historical
             // overlays, and popup entries are removed before live data loads.
@@ -16298,8 +16318,11 @@
         }
         if (active && !wasFullscreenReportingMap) rememberNormalReportingPopupWidth();
         window.SKYMONITOR_RADAR_PAGE = active;
+        window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRoute;
         document.documentElement.classList.toggle('radar-route', active);
-        document.title = active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor';
+        document.title = historicalRoute
+            ? 'Historical Radar · SkyMonitor'
+            : (active ? 'Live Reporting Map · SkyMonitor' : 'SkyMonitor');
         if (!active) applyNormalReportingPopupWidth();
 
         const routeNav = document.getElementById('nav-reporting');
@@ -16327,6 +16350,9 @@
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
                     ensureReportPinMarker();
+                }
+                if (historicalRoute && !historicalRadarState.active) {
+                    openHistoricalRadarPicker();
                 }
             }, 80);
         } else {
@@ -16361,6 +16387,18 @@
         setRadarRouteState(isRadar);
     }
 
+    function enterHistoricalRadarRoute() {
+        const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (currentPath === '/radar/historical') return;
+        window.history.pushState({ skymonitorRadar: true, historicalRadar: true }, '', '/radar/historical');
+        if (currentPath !== '/radar') {
+            setRadarRouteState(true, true);
+        } else {
+            window.SKYMONITOR_HISTORICAL_RADAR_PAGE = true;
+            document.title = 'Historical Radar · SkyMonitor';
+        }
+    }
+
     function openRadarRoute() {
         navigateRadarRoute(true);
     }
@@ -16371,7 +16409,8 @@
 
     window.addEventListener('popstate', function() {
         const path = window.location.pathname.replace(/\/+$/, '') || '/';
-        setRadarRouteState(path === '/radar');
+        const isHistorical = path === '/radar/historical';
+        setRadarRouteState(path === '/radar' || isHistorical, isHistorical);
     });
 
     function findMeReporting() {
@@ -19097,6 +19136,9 @@
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
                     loadReportingMapData();
+                }
+                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE) {
+                    openHistoricalRadarPicker();
                 }
             }, 80);
             window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
