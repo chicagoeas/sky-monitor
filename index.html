@@ -1196,10 +1196,27 @@
             opacity: 0.35;
             cursor: default;
         }
+        .historical-radar-month-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
         #historical-radar-month-label {
             color: #fff;
             font-size: 0.95em;
             font-weight: 800;
+        }
+        #historical-radar-picker-year {
+            min-width: 67px;
+            padding: 5px 20px 5px 7px;
+            border: 1px solid rgba(129,212,250,0.35);
+            border-radius: 6px;
+            background: #0b151d;
+            color: #fff;
+            font: inherit;
+            font-size: 0.78em;
+            font-weight: 800;
+            cursor: pointer;
         }
         .historical-radar-calendar-grid {
             display: grid;
@@ -2216,7 +2233,10 @@
                     <div class="historical-radar-picker-body">
                         <div class="historical-radar-month-nav">
                             <button id="historical-radar-picker-prev" type="button" onclick="shiftHistoricalRadarPickerMonth(-1)" aria-label="Previous month">&#8249;</button>
-                            <span id="historical-radar-month-label"></span>
+                            <div class="historical-radar-month-title">
+                                <span id="historical-radar-month-label"></span>
+                                <select id="historical-radar-picker-year" onchange="jumpHistoricalRadarPickerYear(this.value)" aria-label="Jump to year"></select>
+                            </div>
                             <button id="historical-radar-picker-next" type="button" onclick="shiftHistoricalRadarPickerMonth(1)" aria-label="Next month">&#8250;</button>
                         </div>
                         <div id="historical-radar-calendar" class="historical-radar-calendar-grid"></div>
@@ -2225,7 +2245,7 @@
                             <input id="historical-radar-picker-time" type="time" step="60">
                         </div>
                         <div id="historical-radar-picker-note" class="historical-radar-picker-note">
-                            Future dates and times are not available.
+                            Radar archive begins Jan 1, 1997. Future dates and times are not available.
                         </div>
                     </div>
                     <div class="historical-radar-picker-footer">
@@ -13042,6 +13062,8 @@
     let reportingRadarLayerMode = 'mosaic';
     let reportingRadarSite = null;
     const HISTORICAL_RADAR_FRAME_MS = 5 * 60 * 1000;
+    const HISTORICAL_RADAR_EARLIEST_YEAR = 1997;
+    const HISTORICAL_RADAR_EARLIEST_MS = new Date(HISTORICAL_RADAR_EARLIEST_YEAR, 0, 1).getTime();
     let historicalRadarState = {
         active: false,
         alertKey: '',
@@ -15751,6 +15773,7 @@
         const label = document.getElementById('historical-radar-month-label');
         const nextButton = document.getElementById('historical-radar-picker-next');
         const prevButton = document.getElementById('historical-radar-picker-prev');
+        const yearSelect = document.getElementById('historical-radar-picker-year');
         if (!calendar || !label || !historicalRadarPickerMonth) return;
 
         const month = historicalRadarPickerMonth;
@@ -15758,9 +15781,20 @@
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1);
         const firstDay = monthStart.getDay();
         const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
-        const minDate = new Date(1995, 0, 1);
+        const minDate = new Date(HISTORICAL_RADAR_EARLIEST_YEAR, 0, 1);
         const selectedKey = _historicalRadarPickerDateKey(historicalRadarPickerDate);
-        label.textContent = month.toLocaleString([], { month: 'short', year: 'numeric' });
+        label.textContent = month.toLocaleString([], { month: 'short' });
+        if (yearSelect) {
+            const currentYear = now.getFullYear();
+            yearSelect.innerHTML = '';
+            for (let year = currentYear; year >= HISTORICAL_RADAR_EARLIEST_YEAR; year--) {
+                const option = document.createElement('option');
+                option.value = String(year);
+                option.textContent = String(year);
+                yearSelect.appendChild(option);
+            }
+            yearSelect.value = String(month.getFullYear());
+        }
         calendar.innerHTML = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(function(day) {
             return '<span class="historical-radar-weekday">' + day + '</span>';
         }).join('');
@@ -15785,13 +15819,13 @@
             button.onclick = function() {
                 historicalRadarPickerDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
                 historicalRadarPickerMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-                _historicalRadarPickerSetNote('Future dates and times are not available.', false);
+                _historicalRadarPickerSetNote('Radar archive begins Jan 1, 1997. Future dates and times are not available.', false);
                 _renderHistoricalRadarPickerCalendar();
             };
             calendar.appendChild(button);
         }
         const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-        const oldestMonth = new Date(1995, 0, 1).getTime();
+        const oldestMonth = new Date(HISTORICAL_RADAR_EARLIEST_YEAR, 0, 1).getTime();
         const shownMonth = monthStart.getTime();
         if (prevButton) prevButton.disabled = shownMonth <= oldestMonth;
         if (nextButton) nextButton.disabled = shownMonth >= currentMonth;
@@ -15811,7 +15845,7 @@
         timeInput.value = String(baseDate.getHours()).padStart(2, '0') + ':' +
             String(baseDate.getMinutes()).padStart(2, '0');
         _historicalRadarPickerSetNote(
-            'Times are shown in your local timezone. Future dates and times are not available.',
+            'Times are local. Radar archive begins Jan 1, 1997; future dates and times are not available.',
             false
         );
         _renderHistoricalRadarPickerCalendar();
@@ -15833,8 +15867,36 @@
             1
         );
         const now = new Date();
-        if (next > new Date(now.getFullYear(), now.getMonth(), 1) || next < new Date(1995, 0, 1)) return;
+        if (next > new Date(now.getFullYear(), now.getMonth(), 1) ||
+            next < new Date(HISTORICAL_RADAR_EARLIEST_YEAR, 0, 1)) return;
         historicalRadarPickerMonth = next;
+        _renderHistoricalRadarPickerCalendar();
+    }
+
+    function jumpHistoricalRadarPickerYear(yearValue) {
+        const year = Number(yearValue);
+        if (!isFinite(year) || year < HISTORICAL_RADAR_EARLIEST_YEAR) return;
+        const now = new Date();
+        const month = historicalRadarPickerMonth ? historicalRadarPickerMonth.getMonth() : now.getMonth();
+        const maxMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const requestedMonth = new Date(year, month, 1);
+        if (requestedMonth > maxMonth) {
+            historicalRadarPickerMonth = maxMonth;
+        } else {
+            historicalRadarPickerMonth = requestedMonth;
+        }
+        const targetMonth = historicalRadarPickerMonth.getMonth();
+        const targetYear = historicalRadarPickerMonth.getFullYear();
+        const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+        const currentDay = historicalRadarPickerDate ? historicalRadarPickerDate.getDate() : 1;
+        let day = Math.min(currentDay, daysInTargetMonth);
+        if (targetYear === now.getFullYear() && targetMonth === now.getMonth()) {
+            day = Math.min(day, now.getDate());
+        }
+        historicalRadarPickerDate = new Date(targetYear, targetMonth, day);
+        if (historicalRadarPickerDate.getTime() < HISTORICAL_RADAR_EARLIEST_MS) {
+            historicalRadarPickerDate = new Date(HISTORICAL_RADAR_EARLIEST_YEAR, 0, 1);
+        }
         _renderHistoricalRadarPickerCalendar();
     }
 
