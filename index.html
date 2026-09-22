@@ -15184,18 +15184,31 @@
         // its issuance down to the previous 5-minute radar frame, because
         // that timestamp can still precede the alert's effective time.
         const startMs = issued.getTime();
+        const alertDurationMs = Math.max(0, expires.getTime() - startMs);
+        const oneHourMs = 60 * 60 * 1000;
+        const sixHoursMs = 6 * oneHourMs;
+        const twelveHoursMs = 12 * oneHourMs;
+        const oneDayMs = 24 * oneHourMs;
+        let frameIntervalMs = HISTORICAL_RADAR_FRAME_MS;
+        if (alertDurationMs <= oneHourMs) {
+            frameIntervalMs = 60 * 1000;
+        } else if (alertDurationMs > oneDayMs) {
+            frameIntervalMs = oneHourMs;
+        } else if (alertDurationMs > twelveHoursMs) {
+            frameIntervalMs = 15 * 60 * 1000;
+        } else if (alertDurationMs > sixHoursMs) {
+            frameIntervalMs = 10 * 60 * 1000;
+        }
         const endMs = Math.max(
             startMs,
-            Math.floor(expires.getTime() / HISTORICAL_RADAR_FRAME_MS) *
-                HISTORICAL_RADAR_FRAME_MS
+            Math.floor(expires.getTime() / frameIntervalMs) * frameIntervalMs
         );
         if (!isFinite(startMs) || !isFinite(endMs) || endMs < startMs) return null;
 
         const frames = [startMs];
-        let nextFrame = Math.ceil(startMs / HISTORICAL_RADAR_FRAME_MS) *
-            HISTORICAL_RADAR_FRAME_MS;
-        if (nextFrame <= startMs) nextFrame += HISTORICAL_RADAR_FRAME_MS;
-        for (let timestamp = nextFrame; timestamp <= endMs; timestamp += HISTORICAL_RADAR_FRAME_MS) {
+        let nextFrame = Math.ceil(startMs / frameIntervalMs) * frameIntervalMs;
+        if (nextFrame <= startMs) nextFrame += frameIntervalMs;
+        for (let timestamp = nextFrame; timestamp <= endMs; timestamp += frameIntervalMs) {
             frames.push(timestamp);
             // Avoid creating an unbounded slider if a malformed alert contains
             // a multi-year expiration time.
