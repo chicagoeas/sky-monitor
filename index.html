@@ -360,6 +360,14 @@
         html.radar-route #open-radar-btn {
             display: none !important;
         }
+        /* Historical radar is a fullscreen-only action. */
+        #historical-radar-clock-button {
+            display: none;
+        }
+        html.radar-route #historical-radar-clock-button {
+            display: inline-flex;
+            align-items: center;
+        }
         html.radar-route #close-radar-btn {
             display: inline-flex !important;
             align-items: center;
@@ -13088,9 +13096,35 @@
     let historicalRadarSliderTimer = null;
     let historicalRadarPlaybackTimer = null;
     let historicalRadarPlaying = false;
-    const HISTORICAL_RADAR_PREFETCH_COUNT = 6;
     const HISTORICAL_RADAR_ON_DEMAND_COUNT = 50;
+    const HISTORICAL_DATA_CACHE_BUCKET_MS = 6 * 60 * 60 * 1000;
+    const HISTORICAL_DATA_CACHE_MAX_ENTRIES = 12;
     let historicalRadarPrefetchLayers = new Map();
+    let historicalRadarFetchCache = new Map();
+    let historicalRadarLoadToken = 0;
+    let historicalRadarLoadingParts = null;
+    // Historical playback should not restart the progress indicator for every
+    // frame. It is a sequence-level indicator for the initial warmup.
+    let historicalRadarInitialLoadStarted = false;
+    let historicalRadarInitialLoadComplete = false;
+    let historicalRadarLayerRequestId = 0;
+    let historicalRadarLayerTransition = null;
+    let historicalRadarViewGeneration = 0;
+    let historicalRadarViewportRefreshTimer = null;
+    let historicalRadarViewportWarmupTimer = null;
+    let historicalRadarViewportWarming = false;
+    let historicalRadarPlaybackRequested = false;
+    let historicalRadarWarmupTimer = null;
+    // Keep a small rolling window attached to Leaflet. Attaching the entire
+    // slider sequence makes every pan/zoom update dozens of tile layers.
+    const HISTORICAL_RADAR_WARM_FRAME_COUNT = 3;
+    // A radar frame must never leave the historical controls in a loading
+    // state indefinitely. The tile endpoint is normally much faster than
+    // this; the watchdog below keeps a slow/stalled request from wedging the
+    // map until the user changes the view again.
+    const HISTORICAL_RADAR_WARMUP_TIMEOUT_MS = 3500;
+    const HISTORICAL_RADAR_TRANSITION_TIMEOUT_MS = 3300;
+    const HISTORICAL_RADAR_TILE_KEEP_BUFFER = 2;
      let historicalRadarRequestId = 0;
     let historicalRadarRequestedMs = 0;
     let historicalRadarPickerDate = null;
@@ -13859,11 +13893,12 @@
             const alert = alertCandidates[0];
             if (!alert || (!alert.description && !alert.instruction)) return unavailable;
              const timeInfo = reportingAlertTimeInfo(alert);
+              const parsedAlertText = _historicalNwsTextSections(alert.description || '');
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
                   ['Issued by', formatNwsIssuedBy(alert.senderName, wfo)],
-                 ['Alert text', alert.description],
-                 ['Instructions', alert.instruction]
+                  ['Alert text', parsedAlertText.description || alert.description],
+                  ['Instructions', parsedAlertText.instructions || alert.instruction]
              ];
             return reportingPopupDetailRows(rows);
         } catch (e) {
@@ -14046,10 +14081,11 @@
          function _singleSiteRadarMarkerShareForZoom() {
              if (!reportingMap || !reportingMap.getZoom) return 1;
              const zoom = Number(reportingMap.getZoom());
-             // At the regional zoom shown in the reference, retain the full
-             // inventory. Only broader views use a percentage of the full
-             // inventory, so the behavior stays proportional as sites change.
-             if (!isFinite(zoom) || zoom >= 5) return 1;
+             // At zoom 6 and closer, retain the full inventory. At zoom 5,
+             // show a smaller regional set before applying the wider-view
+             // limits below.
+             if (!isFinite(zoom) || zoom >= 6) return 1;
+             if (zoom >= 5) return 0.66;
              // Reduce each current limited tier by another 25%, while still
              // decreasing at each wider map view.
              if (zoom >= 4) return 0.375;
@@ -15122,13 +15158,18 @@
         }
         setCustomSkyAlertsStatus('Loading custom alerts\u2026', '#718496');
         try {
-            const res = await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, {
-                headers: { 'Accept': 'application/geo+json, application/json' }
-            });
-            if (!res.ok) {
-                throw new Error('Failed to fetch');
-            }
-            const payload = await res.json();
+            const payload = historicalTimestampMs
+                ? await _fetchHistoricalRadarJson(
+                    'custom-alerts:active',
+                    CUSTOM_SKY_ALERTS_WORKER_URL,
+                    { headers: { 'Accept': 'application/geo+json, application/json' } }
+                )
+                : await fetch(CUSTOM_SKY_ALERTS_WORKER_URL, {
+                    headers: { 'Accept': 'application/geo+json, application/json' }
+                }).then(function(response) {
+                    if (!response.ok) throw new Error('Failed to fetch');
+                    return response.json();
+                });
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
              let historicalDeepLinkFeature = null;
@@ -15138,13 +15179,20 @@
                 ) !== -1;
             })) {
                 try {
-                    const archiveResponse = await fetch(
-                        CUSTOM_SKY_ALERT_ARCHIVE_URL + '/' +
-                        encodeURIComponent(CUSTOM_SKY_DEEP_LINK_ID),
-                        { headers: { 'Accept': 'application/json, application/geo+json' } }
-                    );
-                    if (archiveResponse.ok) {
-                        const archivePayload = await archiveResponse.json();
+                    const archiveUrl = CUSTOM_SKY_ALERT_ARCHIVE_URL + '/' +
+                        encodeURIComponent(CUSTOM_SKY_DEEP_LINK_ID);
+                    const archivePayload = historicalTimestampMs
+                        ? await _fetchHistoricalRadarJson(
+                            'custom-alert-archive:' + CUSTOM_SKY_DEEP_LINK_ID,
+                            archiveUrl,
+                            { headers: { 'Accept': 'application/json, application/geo+json' } }
+                        )
+                        : await fetch(archiveUrl, {
+                            headers: { 'Accept': 'application/json, application/geo+json' }
+                        }).then(function(response) {
+                            return response.ok ? response.json() : null;
+                        });
+                    if (archivePayload) {
                         const archiveCandidates = [];
                         if (archivePayload.feature) archiveCandidates.push(archivePayload.feature);
                         if (Array.isArray(archivePayload.revisions)) {
@@ -15579,44 +15627,401 @@
              });
          }
 
-    function _replaceReportingRadarLayer(url, mode, site) {
+    function _historicalRadarTileLayer(url, opacity, isPrefetch) {
+        return window.L.tileLayer(url, {
+            opacity: opacity,
+            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+            maxZoom: 18,
+            noWrap: true,
+            // Keep several tile rows/columns outside the viewport so modest
+            // pans do not immediately trigger a new radar download.
+            keepBuffer: isPrefetch ? HISTORICAL_RADAR_TILE_KEEP_BUFFER : HISTORICAL_RADAR_TILE_KEEP_BUFFER + 1,
+            // Hidden warm layers should wait until a map move settles. The
+            // active layer may load edge tiles during a pan for a smoother
+            // transition into the new viewport.
+            updateWhenIdle: !!isPrefetch,
+            updateWhenZooming: false,
+            reuseTiles: true
+        });
+    }
+
+    function _invalidateHistoricalRadarViewport() {
+        if (!historicalRadarState.active) return;
+        // Do not cancel a frame transition during a gesture. The active layer
+        // remains visible while Leaflet moves it, and the small warm window is
+        // refreshed once after moveend.
+        historicalRadarViewGeneration++;
+        historicalRadarViewportWarming = true;
+        // A pending playback swap belongs to the old viewport. Keep the
+        // current visible frame and discard only that pending promotion.
+        if (historicalRadarLayerTransition) {
+            _cancelHistoricalRadarLayerTransition();
+        }
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (!entry) return;
+            entry.viewportGeneration = historicalRadarViewGeneration;
+            entry.viewportReady = false;
+            entry.viewportRefreshPending = true;
+        });
+        if (historicalRadarPlaying) {
+            stopHistoricalRadarPlayback();
+        }
+        historicalRadarPlaybackRequested = false;
+    }
+
+    function _historicalRadarLayerHasViewportTile(layer) {
+        if (!reportingMap || !layer || !layer._tiles) return false;
+        const zoom = reportingMap.getZoom();
+        return Object.keys(layer._tiles).some(function(key) {
+            const tile = layer._tiles[key];
+            const coords = tile && tile.coords;
+            const image = tile && tile.el;
+            return !!(tile && image && image.complete && image.naturalWidth > 0 &&
+                (!coords || coords.z === zoom));
+        });
+    }
+
+    function _historicalRadarEntryReadyForViewport(entry) {
+        if (!entry || entry.viewportGeneration !== historicalRadarViewGeneration) {
+            return false;
+        }
+        if (entry.viewportRefreshPending) return false;
+        if (entry.viewportReady) return true;
+        if (_historicalRadarLayerHasViewportTile(entry.layer)) {
+            entry.viewportReady = true;
+            return true;
+        }
+        return false;
+    }
+
+    function _historicalRadarViewportWarmupReady() {
+        if (!historicalRadarState.active || !historicalRadarState.frames.length) return true;
+        const frames = historicalRadarState.frames;
+        const index = historicalRadarState.index;
+        const targetIndexes = [index];
+        if (frames.length > 1) targetIndexes.push((index + 1) % frames.length);
+        return targetIndexes.every(function(frameIndex) {
+            const entry = historicalRadarPrefetchLayers.get(String(frames[frameIndex]));
+            return _historicalRadarEntryReadyForViewport(entry);
+        });
+    }
+
+    function _checkHistoricalRadarViewportWarmup() {
+        if (!historicalRadarState.active) return;
+        if (_historicalRadarViewportWarmupReady()) {
+            historicalRadarViewportWarming = false;
+            if (historicalRadarViewportWarmupTimer) {
+                clearTimeout(historicalRadarViewportWarmupTimer);
+                historicalRadarViewportWarmupTimer = null;
+            }
+            if (historicalRadarPlaybackRequested) {
+                historicalRadarPlaybackRequested = false;
+                historicalRadarPlaying = true;
+                _renderHistoricalRadarControls();
+                scheduleHistoricalRadarPlayback();
+            } else if (historicalRadarInitialLoadComplete && !historicalRadarLoadingParts) {
+                _setHistoricalRadarStatus('');
+            }
+            return;
+        }
+        historicalRadarViewportWarming = true;
+        if (!historicalRadarViewportWarmupTimer) {
+            historicalRadarViewportWarmupTimer = setTimeout(function() {
+                historicalRadarViewportWarmupTimer = null;
+                _checkHistoricalRadarViewportWarmup();
+            }, 120);
+        }
+    }
+
+    function _refreshHistoricalRadarViewportPrefetch() {
+        if (!historicalRadarState.active) return;
+        const refreshGeneration = historicalRadarViewGeneration;
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (entry && entry.layer && entry.layer.redraw) {
+                entry.viewportGeneration = historicalRadarViewGeneration;
+                // A tile from the previous viewport is not enough to promote
+                // this frame after a large pan. Let redraw/load establish
+                // readiness for the new viewport.
+                entry.viewportReady = false;
+                entry.viewportRefreshPending = true;
+                entry.layer.redraw();
+            }
+        });
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+        }
+        historicalRadarViewportWarmupTimer = setTimeout(function() {
+            historicalRadarViewportWarmupTimer = null;
+            historicalRadarPrefetchLayers.forEach(function(entry) {
+                if (entry) entry.viewportRefreshPending = false;
+            });
+            _checkHistoricalRadarViewportWarmup();
+            // movestart cancels a hidden frame transition so it cannot promote
+            // tiles for the old viewport. Re-arm the selected frame after
+            // moveend; without this pass, a pan during the first load could
+            // leave the historical layer waiting for an event that will never
+            // arrive.
+            if (refreshGeneration === historicalRadarViewGeneration &&
+                historicalRadarState.active && !historicalRadarLayerTransition) {
+                _replaceReportingRadarLayer(
+                    _historicalRadarFrameUrl(historicalRadarState.timestampMs),
+                    'historical',
+                    null
+                );
+            }
+        }, 120);
+    }
+
+    function _scheduleHistoricalRadarViewportRefresh() {
+        if (historicalRadarViewportRefreshTimer) {
+            clearTimeout(historicalRadarViewportRefreshTimer);
+        }
+        historicalRadarViewportRefreshTimer = setTimeout(function() {
+            historicalRadarViewportRefreshTimer = null;
+            _refreshHistoricalRadarViewportPrefetch();
+        }, 0);
+    }
+
+    function _isHistoricalRadarCachedLayer(layer) {
+        if (!layer) return false;
+        let cached = false;
+        historicalRadarPrefetchLayers.forEach(function(entry) {
+            if (entry && entry.layer === layer) cached = true;
+        });
+        return cached;
+    }
+
+    function _removeHistoricalRadarPrefetchEntry(key) {
+        const entry = historicalRadarPrefetchLayers.get(key);
+        if (!entry) return;
+        // The committed radar layer is also tracked as a warm entry. Preserve
+        // it on the map while replacing a sequence or rebuilding the warm
+        // window; removing it here would create a blank gap before the next
+        // historical frame is ready.
+        const keepCommittedLayerVisible = entry.layer &&
+            entry.layer === reportingRadarLayer &&
+            historicalRadarState.active &&
+            radarVisible;
+        if (keepCommittedLayerVisible && entry.layer.setOpacity) {
+            entry.layer.setOpacity(0.65);
+        } else if (entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
+            reportingMap.removeLayer(entry.layer);
+        }
+        if (entry.layer) {
+            if (entry._tileLoadHandler) entry.layer.off('tileload', entry._tileLoadHandler);
+            if (entry._tileErrorHandler) entry.layer.off('tileerror', entry._tileErrorHandler);
+            if (entry._loadHandler) entry.layer.off('load', entry._loadHandler);
+        }
+        historicalRadarPrefetchLayers.delete(key);
+    }
+
+    function _cancelHistoricalRadarLayerTransition() {
+        historicalRadarLayerRequestId++;
+        const pending = historicalRadarLayerTransition;
+        if (pending && pending.timeoutId) {
+            clearTimeout(pending.timeoutId);
+            pending.timeoutId = null;
+        }
+        if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
+            reportingMap && reportingMap.hasLayer(pending.layer)) {
+            if (pending.layer.setOpacity) pending.layer.setOpacity(0);
+            if (!_isHistoricalRadarCachedLayer(pending.layer)) {
+                reportingMap.removeLayer(pending.layer);
+            }
+        }
+        historicalRadarLayerTransition = null;
+    }
+
+    function _replaceReportingRadarLayer(url, mode, site, retryAttempt) {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
-        const oldLayer = reportingRadarLayer;
-        const nextLayer = mode === 'historical'
-            ? (takeHistoricalRadarPrefetchLayer(historicalRadarState.timestampMs) ||
-                L_ref.tileLayer(url, {
-                    opacity: 0.65,
-                    attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
-                    maxZoom: 18,
-                    noWrap: true
-                }))
-            : L_ref.tileLayer(url, {
-                opacity: 0.65,
-                attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
-                maxZoom: 18,
-                noWrap: true
-            });
-        if (mode === 'historical' && nextLayer.setOpacity) nextLayer.setOpacity(0.65);
-        if (mode === 'historical') {
-            const historicalLayer = nextLayer;
-            nextLayer.once('load', function() {
-                if (reportingRadarLayer !== historicalLayer || !historicalRadarState.active) return;
-                _setHistoricalRadarStatus('Frame loaded', '#9edfff');
-            });
-            nextLayer.on('tileerror', function() {
-                if (reportingRadarLayer !== historicalLayer || !historicalRadarState.active) return;
-                _setHistoricalRadarStatus('IEM could not load this frame. Try the adjacent frame.', '#ffb74d');
-            });
-        }
-        reportingRadarLayer = nextLayer;
-        reportingRadarLayerMode = mode;
-        reportingRadarSite = site || null;
-        if (oldLayer && reportingMap.hasLayer(oldLayer)) {
-            reportingMap.removeLayer(oldLayer);
-        }
-        if (radarVisible) nextLayer.addTo(reportingMap);
-        _updateReportingMapAttribution();
+         const oldLayer = reportingRadarLayer;
+         const currentRetryAttempt = Number(retryAttempt) || 0;
+
+         if (mode === 'historical') {
+             // Keep the visible frame in place while the requested frame
+              // finishes loading. Playback can request another frame before a
+              // slow network response completes, so cancel only the pending
+              // transition; the replacement below always owns a fresh tile
+              // layer when the committed layer is involved.
+             _cancelHistoricalRadarLayerTransition();
+
+             const requestId = ++historicalRadarLayerRequestId;
+             const prefetchedEntry = takeHistoricalRadarPrefetchLayer(
+                 historicalRadarState.timestampMs
+             );
+              // Never reuse the committed layer for a viewport refresh. A
+              // Leaflet tile layer keeps its old images while redraw() is
+              // pending, which makes a stale frame look like a successful
+              // load. Only promote a non-active warm layer when it already
+              // has a tile for the current viewport; otherwise create a
+              // genuinely fresh layer.
+              const usablePrefetchedEntry = prefetchedEntry &&
+                  prefetchedEntry.layer !== oldLayer &&
+                  _historicalRadarEntryReadyForViewport(prefetchedEntry)
+                  ? prefetchedEntry
+                  : null;
+              const nextLayer = usablePrefetchedEntry
+                  ? usablePrefetchedEntry.layer
+                 : _historicalRadarTileLayer(url, 0, false);
+             const loadToken = historicalRadarLoadToken;
+             let nextLayerHasTile = !!(
+                  usablePrefetchedEntry &&
+                  _historicalRadarEntryReadyForViewport(usablePrefetchedEntry)
+             );
+             let committed = false;
+             const commit = function() {
+                 if (committed || requestId !== historicalRadarLayerRequestId ||
+                     !historicalRadarState.active ||
+                     (radarVisible && !nextLayerHasTile)) return;
+                 committed = true;
+                 if (historicalRadarLayerTransition &&
+                     historicalRadarLayerTransition.requestId === requestId) {
+                      if (historicalRadarLayerTransition.timeoutId) {
+                          clearTimeout(historicalRadarLayerTransition.timeoutId);
+                          historicalRadarLayerTransition.timeoutId = null;
+                      }
+                     historicalRadarLayerTransition = null;
+                 }
+                 reportingRadarLayer = nextLayer;
+                 reportingRadarLayerMode = 'historical';
+                 reportingRadarSite = null;
+                 if (nextLayer.setOpacity) nextLayer.setOpacity(0.65);
+                 if (oldLayer && oldLayer !== nextLayer && reportingMap.hasLayer(oldLayer)) {
+                      if (oldLayer.setOpacity) oldLayer.setOpacity(0);
+                      if (!_isHistoricalRadarCachedLayer(oldLayer)) {
+                          reportingMap.removeLayer(oldLayer);
+                      }
+                 }
+                 if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
+                     reportingMap.removeLayer(nextLayer);
+                 }
+                 _markHistoricalRadarLoadingPart('radar', loadToken);
+                 _updateReportingMapAttribution();
+             };
+
+              // Hide the committed frame while a genuinely fresh layer
+              // warms. Showing it here would make the selected timestamp look
+              // loaded even though Leaflet is still displaying old images.
+              if (oldLayer && oldLayer !== nextLayer &&
+                  radarVisible && reportingMap.hasLayer(oldLayer) &&
+                  oldLayer.setOpacity) {
+                  oldLayer.setOpacity(0);
+              }
+             nextLayer.on('tileload', function() {
+                   nextLayerHasTile = usablePrefetchedEntry
+                       ? _historicalRadarEntryReadyForViewport(usablePrefetchedEntry)
+                      : true;
+             });
+              nextLayer.once('load', function() {
+                   if (usablePrefetchedEntry) {
+                       nextLayerHasTile = _historicalRadarEntryReadyForViewport(usablePrefetchedEntry);
+                  }
+                  commit();
+              });
+             nextLayer.on('tileerror', function() {
+                 if (requestId !== historicalRadarLayerRequestId ||
+                     !historicalRadarState.active) return;
+                 _setHistoricalRadarStatus('Radar frame unavailable. Try the adjacent frame.', '#ffb74d');
+             });
+             historicalRadarLayerTransition = {
+                 requestId: requestId,
+                  layer: nextLayer,
+                  retryAttempt: currentRetryAttempt
+             };
+              // Leaflet normally emits "load" after the visible tiles arrive,
+              // but a failed/stalled tile request can leave that event absent.
+              // Stop waiting after ~3.3 seconds, retry once with a fresh
+              // layer, then report the selected frame as unavailable rather
+              // than silently presenting stale imagery.
+              historicalRadarLayerTransition.timeoutId = setTimeout(function() {
+                  if (requestId !== historicalRadarLayerRequestId ||
+                      !historicalRadarState.active || committed) return;
+                  nextLayerHasTile = nextLayerHasTile ||
+                      _historicalRadarLayerHasViewportTile(nextLayer);
+                  if (nextLayerHasTile || !radarVisible) {
+                      commit();
+                      return;
+                  }
+                  if (historicalRadarLayerTransition &&
+                      historicalRadarLayerTransition.requestId === requestId) {
+                      historicalRadarLayerTransition = null;
+                  }
+                  historicalRadarLayerRequestId++;
+                  if (nextLayer !== reportingRadarLayer &&
+                      !_isHistoricalRadarCachedLayer(nextLayer) &&
+                      reportingMap && reportingMap.hasLayer(nextLayer)) {
+                      reportingMap.removeLayer(nextLayer);
+                  }
+                  if (usablePrefetchedEntry) {
+                      _removeHistoricalRadarPrefetchEntry(
+                          String(historicalRadarState.timestampMs)
+                      );
+                  }
+                  if (currentRetryAttempt < 1 &&
+                      historicalRadarState.active &&
+                      historicalRadarState.timestampMs) {
+                      _setHistoricalRadarStatus(
+                          'Radar tile stalled. Retrying fresh tiles\u2026',
+                          '#ffb74d'
+                      );
+                      const retryTimestampMs = historicalRadarState.timestampMs;
+                      setTimeout(function() {
+                          if (!historicalRadarState.active ||
+                              historicalRadarState.timestampMs !== retryTimestampMs ||
+                              historicalRadarLayerTransition) return;
+                          _replaceReportingRadarLayer(
+                              _historicalRadarFrameUrl(retryTimestampMs),
+                              'historical',
+                              null,
+                              currentRetryAttempt + 1
+                          );
+                      }, 40);
+                      return;
+                  }
+                  // The old frame stays hidden after a failed retry. This is
+                  // intentional: showing it would misrepresent the selected
+                  // historical timestamp. The adjacent-frame action remains
+                  // available and starts a new, independent tile request.
+                  _markHistoricalRadarLoadingPart('radar', loadToken);
+                  _setHistoricalRadarStatus(
+                      'Radar frame unavailable. Try the adjacent frame.',
+                      '#ffb74d'
+                  );
+              }, HISTORICAL_RADAR_TRANSITION_TIMEOUT_MS);
+
+               if (usablePrefetchedEntry && usablePrefetchedEntry.loaded && nextLayerHasTile) {
+                 // The warm layer may have emitted "load" before it was
+                 // promoted, so give the listener a turn to commit it.
+                 setTimeout(commit, 0);
+             } else if (radarVisible) {
+                  if (usablePrefetchedEntry && reportingMap.hasLayer(nextLayer) &&
+                     nextLayer.redraw) {
+                     nextLayer.redraw();
+                 } else {
+                     nextLayer.addTo(reportingMap);
+                 }
+             } else {
+                 // With radar hidden there are no tiles to wait for.
+                 setTimeout(commit, 0);
+             }
+             return;
+         }
+
+         const nextLayer = L_ref.tileLayer(url, {
+             opacity: 0.65,
+             attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+             maxZoom: 18,
+             noWrap: true
+         });
+         reportingRadarLayer = nextLayer;
+         reportingRadarLayerMode = mode;
+         reportingRadarSite = site || null;
+         if (oldLayer && reportingMap.hasLayer(oldLayer)) {
+             reportingMap.removeLayer(oldLayer);
+         }
+         if (radarVisible) nextLayer.addTo(reportingMap);
+         _updateReportingMapAttribution();
     }
 
     function _ensureReportingMosaicRadarLayer() {
@@ -15646,57 +16051,190 @@
     }
 
     function clearHistoricalRadarPrefetch() {
-        historicalRadarPrefetchLayers.forEach(function(entry) {
-            if (entry && entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
-                reportingMap.removeLayer(entry.layer);
-            }
+        Array.from(historicalRadarPrefetchLayers.keys()).forEach(function(key) {
+            _removeHistoricalRadarPrefetchEntry(key);
         });
-        historicalRadarPrefetchLayers.clear();
+    }
+
+    function _armHistoricalRadarPrefetchEntry(entry) {
+        if (!entry || !entry.layer) return;
+        const generation = historicalRadarViewGeneration;
+        entry.generation = generation;
+        entry.loaded = false;
+        entry.tileLoaded = false;
+        entry.failed = false;
+        entry.ready = false;
+        entry.viewportGeneration = generation;
+        entry.viewportReady = false;
+        entry.viewportRefreshPending = false;
+        if (entry._tileLoadHandler) {
+            entry.layer.off('tileload', entry._tileLoadHandler);
+        }
+        if (entry._tileErrorHandler) {
+            entry.layer.off('tileerror', entry._tileErrorHandler);
+        }
+        if (entry._loadHandler) {
+            entry.layer.off('load', entry._loadHandler);
+        }
+        entry._tileLoadHandler = function() {
+            if (entry.generation !== generation) return;
+            entry.tileLoaded = true;
+            if (entry.viewportGeneration === historicalRadarViewGeneration &&
+                !entry.viewportRefreshPending) {
+                entry.viewportReady = true;
+            }
+            _markHistoricalRadarWarmFrameReady(entry);
+            _checkHistoricalRadarViewportWarmup();
+        };
+        entry._tileErrorHandler = function() {
+            if (entry.generation !== generation) return;
+            // A historical scan can legitimately have no rendered tiles. Do
+            // not hold the initial "Loading" gate forever for that frame;
+            // selecting it later will still show the normal unavailable-frame
+            // message from the active layer.
+            entry.failed = true;
+            entry.loaded = true;
+            if (entry.viewportGeneration === historicalRadarViewGeneration &&
+                !entry.viewportRefreshPending) {
+                entry.viewportReady = true;
+            }
+            _markHistoricalRadarWarmFrameReady(entry);
+            _checkHistoricalRadarViewportWarmup();
+        };
+        entry._loadHandler = function() {
+            if (entry.generation !== generation) return;
+            entry.loaded = true;
+            if (entry.viewportGeneration === historicalRadarViewGeneration &&
+                !entry.viewportRefreshPending) {
+                entry.viewportReady = true;
+            }
+            _markHistoricalRadarWarmFrameReady(entry);
+            _checkHistoricalRadarViewportWarmup();
+        };
+        entry.layer.on('tileload', entry._tileLoadHandler);
+        entry.layer.on('tileerror', entry._tileErrorHandler);
+        entry.layer.on('load', entry._loadHandler);
+    }
+
+    function _historicalRadarWarmTargetCount() {
+        const frames = historicalRadarState.frames || [];
+        return Math.min(frames.length, HISTORICAL_RADAR_WARM_FRAME_COUNT + 1);
+    }
+
+    function _historicalRadarWarmKeys(index) {
+        const frames = historicalRadarState.frames || [];
+        const total = frames.length;
+        if (!total) return new Set();
+        const currentIndex = Math.max(0, Math.min(Number(index) || 0, total - 1));
+        const keys = new Set();
+        // Keep one previous frame for manual back-clicks and a forward window
+        // for playback. The modulo makes playback wrap without a cold restart.
+        for (let offset = -1; offset <= HISTORICAL_RADAR_WARM_FRAME_COUNT; offset++) {
+            const frameIndex = (currentIndex + offset + total) % total;
+            keys.add(String(frames[frameIndex]));
+        }
+        return keys;
+    }
+
+    function _markHistoricalRadarWarmFrameReady(entry) {
+        if (!entry || entry.ready) return;
+        if (!entry.tileLoaded && !entry.failed) return;
+        entry.ready = true;
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== historicalRadarLoadToken) return;
+        state.warmReady = Array.from(historicalRadarPrefetchLayers.values())
+            .filter(function(item) { return item && item.ready; }).length;
+        _updateHistoricalRadarLoadingProgress(state.token);
+    }
+
+    function _markHistoricalRadarPrefetchIfReady(token) {
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+        state.warmReady = Array.from(historicalRadarPrefetchLayers.values())
+            .filter(function(entry) { return entry && entry.ready; }).length;
+        _updateHistoricalRadarLoadingProgress(token);
     }
 
     function primeHistoricalRadarFrames(index) {
         if (!reportingMap || !window.L || !historicalRadarState.active) return;
         const frames = historicalRadarState.frames || [];
-        if (frames.length < 2) return;
-        const keep = new Set();
-        const currentIndex = Math.max(0, Math.min(Number(index) || 0, frames.length - 1));
-        // Keep the current frame in the warm set until the active radar layer
-        // takes it over below; otherwise a slider step would discard the
-        // prefetched layer just before it could be reused.
-        keep.add(String(frames[currentIndex]));
-        for (let offset = 1; offset <= Math.min(HISTORICAL_RADAR_PREFETCH_COUNT, frames.length - 1); offset++) {
-            const nextIndex = (currentIndex + offset) % frames.length;
-            const timestampMs = frames[nextIndex];
-            const key = String(timestampMs);
-            keep.add(key);
-            if (historicalRadarPrefetchLayers.has(key)) continue;
-            const layer = window.L.tileLayer(_historicalRadarFrameUrl(timestampMs), {
-                opacity: 0,
-                maxZoom: 18,
-                noWrap: true
-            });
-            historicalRadarPrefetchLayers.set(key, { index: nextIndex, layer: layer });
-            layer.addTo(reportingMap);
+        if (frames.length < 2) {
+            _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
+            return;
         }
-        // Do not retain a growing stack of hidden tile layers after a manual
-        // slider jump. The browser's HTTP cache keeps successfully loaded
-        // tiles available even after their warm layer is removed.
-        historicalRadarPrefetchLayers.forEach(function(entry, key) {
-            if (keep.has(key)) return;
-            if (entry && entry.layer && reportingMap.hasLayer(entry.layer)) {
-                reportingMap.removeLayer(entry.layer);
+        const currentIndex = Math.max(0, Math.min(Number(index) || 0, frames.length - 1));
+        const warmKeys = _historicalRadarWarmKeys(currentIndex);
+        warmKeys.forEach(function(key) {
+            const timestampMs = Number(key);
+            const frameIndex = frames.indexOf(timestampMs);
+            if (historicalRadarPrefetchLayers.has(key)) {
+                const existing = historicalRadarPrefetchLayers.get(key);
+                if (existing && existing.layer && reportingMap &&
+                    !reportingMap.hasLayer(existing.layer)) {
+                    existing.layer.addTo(reportingMap);
+                }
+                if (existing && existing.layer && existing.layer !== reportingRadarLayer &&
+                    existing.layer.setOpacity) {
+                    existing.layer.setOpacity(0);
+                }
+                return;
             }
-            historicalRadarPrefetchLayers.delete(key);
+            const layer = _historicalRadarTileLayer(
+                _historicalRadarFrameUrl(timestampMs),
+                0,
+                true
+            );
+            const entry = {
+                index: frameIndex,
+                layer: layer,
+                loaded: false,
+                tileLoaded: false,
+                generation: -1,
+                ready: false,
+                loadToken: historicalRadarLoadToken
+            };
+            _armHistoricalRadarPrefetchEntry(entry);
+            historicalRadarPrefetchLayers.set(key, entry);
+            layer.addTo(reportingMap);
         });
+        // Drop old warm layers so panning/zooming only updates this small
+        // rolling window, not the entire historical slider.
+        historicalRadarPrefetchLayers.forEach(function(entry, key) {
+            if (warmKeys.has(key)) return;
+            if (entry && entry.layer === reportingRadarLayer) return;
+            _removeHistoricalRadarPrefetchEntry(key);
+        });
+        historicalRadarPrefetchLayers.forEach(function(entry, key) {
+            if (!entry || !entry.layer || !entry.layer.setOpacity) return;
+            // Keep the committed frame visible until its replacement has a
+            // usable tile. In particular, changing the slider used to hide
+            // the old active layer here, before _replaceReportingRadarLayer
+            // had proved that the new frame could draw.
+            entry.layer.setOpacity(entry.layer === reportingRadarLayer ? 0.65 : 0);
+        });
+        _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
+        _checkHistoricalRadarViewportWarmup();
     }
 
     function takeHistoricalRadarPrefetchLayer(timestampMs) {
         const key = String(timestampMs);
         const entry = historicalRadarPrefetchLayers.get(key);
         if (!entry) return null;
-        historicalRadarPrefetchLayers.delete(key);
-        if (entry.layer && entry.layer.setOpacity) entry.layer.setOpacity(0.65);
-        return entry.layer;
+        if (entry.layer && reportingMap && !reportingMap.hasLayer(entry.layer)) {
+            entry.layer.addTo(reportingMap);
+        }
+        // The selected layer is also kept in the prefetch map so viewport
+        // changes can redraw it. Do not hide it in this helper; the swap
+        // routine decides when to hide the committed layer and always creates
+        // a separate layer when it needs genuinely fresh viewport tiles.
+        if (entry.layer && entry.layer !== reportingRadarLayer &&
+            entry.layer.setOpacity) {
+            entry.layer.setOpacity(0);
+        } else if (entry.layer && entry.layer === reportingRadarLayer &&
+            radarVisible && entry.layer.setOpacity) {
+            entry.layer.setOpacity(0.65);
+        }
+        return entry;
     }
 
     function _historicalRadarFormatTime(timestampMs, includeDate) {
@@ -15711,11 +16249,155 @@
         });
     }
 
+    function _historicalRadarCachePrune() {
+        while (historicalRadarFetchCache.size > HISTORICAL_DATA_CACHE_MAX_ENTRIES) {
+            let oldestKey = null;
+            let oldestUsed = Infinity;
+            historicalRadarFetchCache.forEach(function(entry, key) {
+                const lastUsed = entry && entry.lastUsed || 0;
+                if (lastUsed < oldestUsed) {
+                    oldestUsed = lastUsed;
+                    oldestKey = key;
+                }
+            });
+            if (oldestKey == null) break;
+            historicalRadarFetchCache.delete(oldestKey);
+        }
+    }
+
+    function _fetchHistoricalRadarJson(cacheKey, url, options) {
+        const now = Date.now();
+        const existing = historicalRadarFetchCache.get(cacheKey);
+        if (existing) {
+            existing.lastUsed = now;
+            if (existing.promise) return existing.promise;
+            return Promise.resolve(existing.value);
+        }
+
+        const request = fetch(url, options || {})
+            .then(function(response) {
+                if (!response.ok) throw new Error('Historical data request failed');
+                return response.json();
+            })
+            .then(function(value) {
+                const entry = historicalRadarFetchCache.get(cacheKey);
+                if (entry) {
+                    entry.value = value;
+                    entry.promise = null;
+                    entry.lastUsed = Date.now();
+                    _historicalRadarCachePrune();
+                }
+                return value;
+            })
+            .catch(function(error) {
+                historicalRadarFetchCache.delete(cacheKey);
+                throw error;
+            });
+
+        historicalRadarFetchCache.set(cacheKey, {
+            value: null,
+            promise: request,
+            lastUsed: now
+        });
+        _historicalRadarCachePrune();
+        return request;
+    }
+
     function _setHistoricalRadarStatus(message, color) {
         const status = document.getElementById('historical-radar-status');
         if (!status) return;
         status.textContent = message || '';
         status.style.color = color || '#8da7b7';
+        status.style.display = message ? 'block' : 'none';
+    }
+
+    function _setHistoricalRadarLoading(percent, token) {
+        if (token != null && token !== historicalRadarLoadToken) return;
+        const bounded = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+        _setHistoricalRadarStatus('Loading... ' + bounded + '%', '#9edfff');
+    }
+
+    function _beginHistoricalRadarLoading() {
+        if (historicalRadarInitialLoadComplete) {
+            historicalRadarLoadingParts = null;
+            return historicalRadarLoadToken;
+        }
+        if (historicalRadarInitialLoadStarted) {
+            return historicalRadarLoadToken;
+        }
+        historicalRadarInitialLoadStarted = true;
+        const token = ++historicalRadarLoadToken;
+        historicalRadarLoadingParts = {
+            token: token,
+            radar: false,
+            prefetch: false,
+            alerts: false,
+            custom: false,
+            reports: false,
+            warmTarget: _historicalRadarWarmTargetCount(),
+            warmReady: 0,
+            timedOut: false
+        };
+        _setHistoricalRadarLoading(3, token);
+        if (historicalRadarWarmupTimer) clearTimeout(historicalRadarWarmupTimer);
+        historicalRadarWarmupTimer = setTimeout(function() {
+            historicalRadarWarmupTimer = null;
+            const state = historicalRadarLoadingParts;
+            if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+            state.timedOut = true;
+            _finishHistoricalRadarLoading(token);
+        }, HISTORICAL_RADAR_WARMUP_TIMEOUT_MS);
+        return token;
+    }
+
+    function _updateHistoricalRadarLoadingProgress(token) {
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+        const target = Math.max(1, state.warmTarget || 1);
+        const warmReady = Math.min(target, state.warmReady || 0);
+        const radarProgress = state.radar ? 5 : 0;
+        const warmProgress = Math.round(20 * warmReady / target);
+        const percent = radarProgress + warmProgress +
+            (state.alerts ? 25 : 0) +
+            (state.custom ? 20 : 0) +
+            (state.reports ? 25 : 0);
+        _setHistoricalRadarLoading(
+            Math.min(99, percent),
+            token
+        );
+        if (warmReady >= target) state.prefetch = true;
+        if (state.radar && state.prefetch && state.alerts &&
+            state.custom && state.reports) {
+            _finishHistoricalRadarLoading(token);
+        }
+    }
+
+    function _markHistoricalRadarLoadingPart(part, token) {
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+        if (Object.prototype.hasOwnProperty.call(state, part)) state[part] = true;
+        _updateHistoricalRadarLoadingProgress(token);
+    }
+
+    function _finishHistoricalRadarLoading(token) {
+        const state = historicalRadarLoadingParts;
+        if (!state || state.token !== token || token !== historicalRadarLoadToken) return;
+        if (!state.timedOut && (!state.radar || !state.prefetch || !state.alerts ||
+            !state.custom || !state.reports)) return;
+        if (historicalRadarWarmupTimer) {
+            clearTimeout(historicalRadarWarmupTimer);
+            historicalRadarWarmupTimer = null;
+        }
+        if (state.finished) return;
+        state.finished = true;
+        historicalRadarInitialLoadComplete = true;
+        _setHistoricalRadarLoading(100, token);
+        _renderHistoricalRadarControls();
+        setTimeout(function() {
+            if (historicalRadarLoadToken !== token) return;
+            historicalRadarLoadingParts = null;
+            _setHistoricalRadarStatus('');
+        }, 260);
     }
 
     function _renderHistoricalRadarControls() {
@@ -15738,7 +16420,11 @@
         start.textContent = frameCount ? _historicalRadarFormatTime(frames[0], false) : '--';
         end.textContent = frameCount ? _historicalRadarFormatTime(frames[frameCount - 1], false) : '--';
         if (play) {
-            const canPlay = historicalRadarState.active && frameCount > 1;
+            // Do not let playback start while the initial radar window is
+            // still warming. Once enabled, the next frames are already in
+            // Leaflet's tile cache instead of racing the network at 500ms.
+            const canPlay = historicalRadarState.active && frameCount > 1 &&
+                historicalRadarInitialLoadComplete;
             play.disabled = !canPlay;
             play.textContent = historicalRadarPlaying ? '\u23f8' : '\u25b6';
             play.setAttribute('aria-label', historicalRadarPlaying ? 'Pause historical radar' : 'Play historical radar');
@@ -15938,6 +16624,16 @@
         if (!reportingMap || !window.L) return;
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+            historicalRadarViewportWarmupTimer = null;
+        }
+        historicalRadarViewportWarming = false;
+        historicalRadarPlaybackRequested = false;
+        // The frame cache belongs to one historical sequence. A new picker
+        // selection must warm its complete sequence before playback is enabled.
+        historicalRadarInitialLoadStarted = false;
+        historicalRadarInitialLoadComplete = false;
         const frameMs = HISTORICAL_RADAR_FRAME_MS;
         const firstFrame = Math.floor(selectedMs / frameMs) * frameMs + frameMs;
         const latestAvailableFrame = Math.floor(Date.now() / frameMs) * frameMs;
@@ -15990,6 +16686,14 @@
         historicalRadarPlaybackTimer = setTimeout(function() {
             historicalRadarPlaybackTimer = null;
             if (!historicalRadarPlaying || !historicalRadarState.active) return;
+            // Never advance the clock while the requested radar layer is
+            // still loading. Waiting here preserves a smooth, ordered
+            // sequence; cancelling the transition every 500ms is what made
+            // playback appear stuck on an old frame.
+            if (historicalRadarLayerTransition) {
+                scheduleHistoricalRadarPlayback();
+                return;
+            }
             const nextIndex = historicalRadarState.index + 1;
             if (nextIndex >= historicalRadarState.frames.length) {
                 // Loop continuously from the first historical frame.
@@ -16003,7 +16707,20 @@
     }
 
     function toggleHistoricalRadarPlayback() {
-        if (!historicalRadarState.active || historicalRadarState.frames.length < 2) return;
+        if (!historicalRadarState.active || historicalRadarState.frames.length < 2 ||
+            !historicalRadarInitialLoadComplete) return;
+        if (historicalRadarViewportWarming) {
+            // A user can press play immediately after moving the map. Keep the
+            // current frame visible, warm the new viewport, then start without
+            // ever promoting a stale/blank cached layer.
+            historicalRadarPlaybackRequested = true;
+            primeHistoricalRadarFrames(historicalRadarState.index);
+            _refreshHistoricalRadarViewportPrefetch();
+            if (!historicalRadarLoadingParts) {
+                _setHistoricalRadarStatus('Loading... 0%', '#9edfff');
+            }
+            return;
+        }
         if (historicalRadarPlaying) {
             stopHistoricalRadarPlayback();
             return;
@@ -16081,8 +16798,8 @@
         _renderHistoricalRadarControls();
         const timestampMs = historicalRadarState.frames[safeIndex];
         historicalRadarState.timestampMs = timestampMs;
+        _beginHistoricalRadarLoading();
         primeHistoricalRadarFrames(safeIndex);
-        _setHistoricalRadarStatus('Loading historical radar and overlays\u2026', '#9edfff');
         _replaceReportingRadarLayer(
             _historicalRadarFrameUrl(timestampMs),
             'historical',
@@ -16098,6 +16815,12 @@
         if (!historicalRadarState.active) return;
         if (historicalRadarPlaying) stopHistoricalRadarPlayback();
         const nextIndex = Number(value) || 0;
+        // Invalidate a slow frame that is still warming while the user drags
+        // the slider. Otherwise its late load event can promote the old
+        // selection after the slider has already moved on.
+        if (historicalRadarLayerTransition) {
+            _cancelHistoricalRadarLayerTransition();
+        }
         historicalRadarState.index = nextIndex;
         _renderHistoricalRadarControls();
         if (historicalRadarSliderTimer) clearTimeout(historicalRadarSliderTimer);
@@ -16121,6 +16844,16 @@
         }
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+            historicalRadarViewportWarmupTimer = null;
+        }
+        historicalRadarViewportWarming = false;
+        historicalRadarPlaybackRequested = false;
+        // Archived alerts can have a different number and cadence of frames;
+        // never carry the previous sequence's "warm" state into this one.
+        historicalRadarInitialLoadStarted = false;
+        historicalRadarInitialLoadComplete = false;
 
         historicalRadarState = {
             active: true,
@@ -16137,7 +16870,6 @@
         const title = document.getElementById('reporting-map-title');
         if (title) title.textContent = 'HISTORICAL REPORTING MAP';
         _renderHistoricalRadarControls();
-        _setHistoricalRadarStatus('Loading IEM radar frame\u2026', '#9edfff');
 
         const bounds = window.L.geoJSON(feature).getBounds();
         if (bounds.isValid()) {
@@ -16157,7 +16889,27 @@
             historicalRadarPlaybackTimer = null;
         }
         historicalRadarPlaying = false;
+        if (historicalRadarViewportRefreshTimer) {
+            clearTimeout(historicalRadarViewportRefreshTimer);
+            historicalRadarViewportRefreshTimer = null;
+        }
+        if (historicalRadarWarmupTimer) {
+            clearTimeout(historicalRadarWarmupTimer);
+            historicalRadarWarmupTimer = null;
+        }
+        if (historicalRadarViewportWarmupTimer) {
+            clearTimeout(historicalRadarViewportWarmupTimer);
+            historicalRadarViewportWarmupTimer = null;
+        }
+        _cancelHistoricalRadarLayerTransition();
         clearHistoricalRadarPrefetch();
+        historicalRadarLoadToken++;
+        historicalRadarLoadingParts = null;
+        historicalRadarInitialLoadStarted = false;
+        historicalRadarInitialLoadComplete = false;
+        historicalRadarViewportWarming = false;
+        historicalRadarPlaybackRequested = false;
+        _setHistoricalRadarStatus('');
         const wasActive = historicalRadarState.active;
         historicalRadarState = {
             active: false,
@@ -16547,13 +17299,21 @@
             minZoom: 2,
             maxBounds: reportingWorldBounds,
             maxBoundsViscosity: 1.0,
-            worldCopyJump: false
+            worldCopyJump: false,
+            // Radar frames are deliberately swapped only after their tiles
+            // are ready. Leaflet's default per-tile fade makes that swap look
+            // like a flash/flicker during playback.
+            fadeAnimation: false
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
-        reportingMap.on('moveend zoomend', saveReportingMapView);
+        reportingMap.on('movestart zoomstart', _invalidateHistoricalRadarViewport);
+        reportingMap.on('moveend zoomend', function() {
+            saveReportingMapView();
+            _scheduleHistoricalRadarViewportRefresh();
+        });
         reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
         // Layer 1 — physical geography only (no labels), sits below radar
@@ -16688,23 +17448,41 @@
             ? lines[issuerIndex].replace(/\s+/g, ' ').trim()
             : '';
 
-        // NWS updates such as Flash Flood Statements include a product
-        // header, UGC/VTEC block, and then a human-readable paragraph that
-        // starts with an ellipsis headline. Skip the metadata and headline so
-        // the popup receives the same filtered narrative as a live alert.
+        // Older NWS products often put several human-readable preamble lines
+        // before the actual report, for example:
+        //
+        //   ...TORNADO EMERGENCY CONTINUES...
+        //   AT 604 PM CDT...NATIONAL WEATHER SERVICE DOPPLER RADAR...
+        //
+        // The first clocked "AT" sentence is the narrative boundary. It is
+        // more reliable than treating every ellipsis line as the beginning of
+        // the alert because legacy products use ellipses for both headers and
+        // prose.
         let bodyStartIndex = -1;
-        if (issuerIndex >= 0) {
-            for (let i = issuerIndex + 1; i < lines.length; i++) {
-                if (!/^\s*\.\.\./.test(lines[i])) continue;
-                let headlineEnd = i;
-                while (headlineEnd < lines.length &&
-                    !/\.\.\.\s*$/.test(lines[headlineEnd].trim())) {
-                    headlineEnd++;
-                }
-                let next = headlineEnd < lines.length ? headlineEnd + 1 : i + 1;
-                while (next < lines.length && !lines[next].trim()) next++;
-                bodyStartIndex = next < lines.length ? next : i;
+        for (let i = 0; i < lines.length; i++) {
+            if (/^\s*AT\s+\d{1,4}(?::\d{2})?\s*(?:AM|PM)\b/i.test(lines[i])) {
+                bodyStartIndex = i;
                 break;
+            }
+        }
+
+        // NWS updates such as Flash Flood Statements can lack a clocked
+        // narrative boundary. In that case, keep the existing issuer/
+        // ellipsis fallback: skip the product header and ellipsis headline.
+        if (issuerIndex >= 0) {
+            if (bodyStartIndex < 0) {
+                for (let i = issuerIndex + 1; i < lines.length; i++) {
+                    if (!/^\s*\.\.\./.test(lines[i])) continue;
+                    let headlineEnd = i;
+                    while (headlineEnd < lines.length &&
+                        !/\.\.\.\s*$/.test(lines[headlineEnd].trim())) {
+                        headlineEnd++;
+                    }
+                    let next = headlineEnd < lines.length ? headlineEnd + 1 : i + 1;
+                    while (next < lines.length && !lines[next].trim()) next++;
+                    bodyStartIndex = next < lines.length ? next : i;
+                    break;
+                }
             }
         }
 
@@ -16718,9 +17496,9 @@
                 : 0;
             body = text.slice(bodyStart).trim();
         }
-        body = body.split(/\n(?:&&|LAT\.\.\.|\$\$)/i)[0].trim();
+        body = body.split(/\n\s*(?:&&|LAT\.\.\.|\$\$)/i)[0].trim();
         const instructionMatch = body.match(
-            /\nPRECAUTIONARY\/PREPAREDNESS ACTIONS[^\n]*\n/i
+            /(?:^|\n)\s*PRECAUTIONARY\/PREPAREDNESS ACTIONS[^\n]*(?:\n|$)/i
         );
         if (!instructionMatch) {
             return { description: body, instructions: '', issuer: issuer };
@@ -16831,17 +17609,24 @@
         // IEM's storm-based warning archive is the historical polygon source.
         // Query a generous lookback, then do the exact "active at frame time"
         // test locally so a long-lived warning is not lost at the query edge.
-        const startMs = timestampMs - 48 * 3600 * 1000;
+        // One six-hour response covers every historical frame in the bucket.
+        // The frame-time filter below still decides which alerts are active,
+        // so moving the slider does not require another network request.
+        const bucketStartMs = Math.floor(timestampMs / HISTORICAL_DATA_CACHE_BUCKET_MS) *
+            HISTORICAL_DATA_CACHE_BUCKET_MS;
+        const bucketEndMs = Math.min(
+            bucketStartMs + HISTORICAL_DATA_CACHE_BUCKET_MS,
+            Date.now()
+        );
+        const startMs = bucketStartMs - 48 * 3600 * 1000;
         const url = 'https://mesonet.agron.iastate.edu/geojson/sbw.geojson?sts=' +
             encodeURIComponent(_historicalRadarIso(startMs)) + '&ets=' +
-            encodeURIComponent(_historicalRadarIso(timestampMs + 60 * 1000));
+            encodeURIComponent(_historicalRadarIso(bucketEndMs + 60 * 1000));
         try {
-            const res = await fetch(url, {
+            const data = await _fetchHistoricalRadarJson('nws-alerts:' + bucketStartMs, url, {
                 cache: 'no-store',
                 headers: { 'Accept': 'application/geo+json, application/json' }
             });
-            if (!res.ok) throw new Error('Historical IEM warning request failed');
-            const data = await res.json();
             if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
 
             const colors = {
@@ -16903,20 +17688,24 @@
     async function loadHistoricalReportingMapData(timestampMs) {
         if (!reportingMap || !window.L || !historicalRadarState.active) return;
         const requestId = ++historicalRadarRequestId;
+        const loadToken = historicalRadarLoadToken;
         const L_ref = window.L;
         historicalRadarState.timestampMs = timestampMs;
         await loadHistoricalNwsAlerts(timestampMs, L_ref, requestId);
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        _markHistoricalRadarLoadingPart('alerts', loadToken);
         // Custom alerts are filtered against the selected frame below. The
         // endpoint may return today's active set, but none of it is painted
         // unless its own validity interval contains this timestamp.
         await loadCustomSkyAlerts();
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
-        await loadMapReports(timestampMs);
+        _markHistoricalRadarLoadingPart('custom', loadToken);
+        await loadMapReports(timestampMs, loadToken);
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
+        _markHistoricalRadarLoadingPart('reports', loadToken);
         syncReportingMapLayers();
         ensureReportPinMarker();
-        _setHistoricalRadarStatus('Historical overlays loaded', '#9edfff');
+        _finishHistoricalRadarLoading(loadToken);
     }
 
     async function loadReportingMapData() {
@@ -17096,6 +17885,27 @@
         ensureReportPinMarker();
     }
 
+    function normalizeIemLsrTypeLabel(value) {
+        let label = String(value || 'LSR').replace(/\s+/g, ' ').trim();
+        // Legacy IEM typetext values append compact casualty codes such as
+        // "TORNADO -- 1 F". F means fatality in that report format; it is not
+        // part of the report type and should never leak into the popup title.
+        label = label.replace(
+            /\s*(?:--?|—|:)\s*\d+\s*(?:F|FATAL(?:ITY|ITIES)?|INJ(?:URY|URIES)?)\s*$/i,
+            ''
+        ).trim();
+        return label || 'LSR';
+    }
+
+    function normalizeIemLsrMagnitude(value) {
+        const magnitude = String(value || '').replace(/\s+/g, ' ').trim();
+        // Some legacy records expose the casualty code in magnitude as well
+        // as in typetext. Do not render it as if it were a measurement.
+        return /^\d+\s*(?:F|FATAL(?:ITY|ITIES)?|INJ(?:URY|URIES)?)$/i.test(magnitude)
+            ? ''
+            : magnitude;
+    }
+
     async function loadMapReports() {
         if (!lsrLayer || !userReportLayer) return;
         const L_ref = window.L;
@@ -17106,6 +17916,15 @@
         const lsrHours = showOlder ? 48 : 5;
         const FRESH_MS = 5 * 3600 * 1000;
         const now = isHistorical ? historicalTimestampMs : Date.now();
+        const historicalBucketStartMs = isHistorical
+            ? Math.floor(now / HISTORICAL_DATA_CACHE_BUCKET_MS) * HISTORICAL_DATA_CACHE_BUCKET_MS
+            : 0;
+        const historicalBucketEndMs = isHistorical
+            ? Math.min(
+                historicalBucketStartMs + HISTORICAL_DATA_CACHE_BUCKET_MS,
+                Date.now()
+            )
+            : 0;
 
         // NWS Local Storm Reports via IEM MESONET
         try {
@@ -17113,12 +17932,24 @@
             removeReportingPopupEntries('iem-lsr');
             const lsrUrl = isHistorical
                 ? 'https://mesonet.agron.iastate.edu/geojson/lsr.php?sts=' +
-                    encodeURIComponent(_historicalRadarIso(now - lsrHours * 3600 * 1000)) +
+                    encodeURIComponent(_historicalRadarIso(
+                        historicalBucketStartMs - lsrHours * 3600 * 1000
+                    )) +
                     '&ets=' + encodeURIComponent(_historicalRadarIso(now)) + '&fmt=geojson'
                 : 'https://mesonet.agron.iastate.edu/geojson/lsr.php?hours=' + lsrHours + '&fmt=geojson';
-            const lsrRes = await fetch(lsrUrl);
-            if (lsrRes.ok) {
-                const lsrData = await lsrRes.json();
+            const lsrData = isHistorical
+                ? await _fetchHistoricalRadarJson(
+                    'iem-lsr:' + lsrHours + ':' + historicalBucketStartMs,
+                    lsrUrl.replace(
+                        /ets=[^&]+/,
+                        'ets=' + encodeURIComponent(_historicalRadarIso(historicalBucketEndMs))
+                    ),
+                    { cache: 'no-store' }
+                )
+                : await fetch(lsrUrl).then(function(response) {
+                    return response.ok ? response.json() : null;
+                });
+            if (lsrData) {
                     const LSR_ICON_TYPES = { tornado:'Tornado / Funnel Cloud', funnel:'Tornado / Funnel Cloud', hail:'Hail', wind:'Wind Damage', wnd:'Wind Damage', tstm:'Thunderstorm', flood:'Flooding', snow:'Heavy Snow', rain:'Rain', ice:'Ice / Freezing Rain', lightning:'Lightning Strike', fire:'Fire', dust:'Dust Storm' };
                  const LSR_COLORS = { tornado:'#ff1744', funnel:'#90a4ae', hail:'#e0f7fa', wind:'#ff9100', wnd:'#ff9100', tstm:'#ffeb3b', flood:'#00e676', snow:'#b0bec5', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa', lightning:'#90a4ae', dust:'#c8a800' };
                 // IEM uses several abbreviated storm-report type names. Resolve
@@ -17142,7 +17973,9 @@
                     if (isHistorical && (!reportDate ||
                         reportDate.getTime() > now ||
                         reportDate.getTime() < now - lsrHours * 3600 * 1000)) return;
-                    const typeKey = (props.typetext || props.type || '').toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+                     const rawLsrType = props.typetext || props.type || '';
+                     const lsrTypeLabel = normalizeIemLsrTypeLabel(rawLsrType);
+                     const typeKey = rawLsrType.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
                     const exactStyle = LSR_EXACT_STYLES[typeKey];
                     const matchKey = Object.keys(LSR_ICON_TYPES).find(function(k) { return typeKey.includes(k); });
                     const lsrType = exactStyle ? exactStyle.icon : (matchKey && LSR_ICON_TYPES[matchKey]);
@@ -17163,16 +17996,17 @@
                         magnitudeParts.push(magfValue);
                     }
                     const magnitudeText = magnitudeParts.join(' ');
-                    const magnitudeWithUnit = unitValue && magnitudeText.toLowerCase().indexOf(unitValue.toLowerCase()) === -1
+                     const magnitudeWithUnit = unitValue && magnitudeText.toLowerCase().indexOf(unitValue.toLowerCase()) === -1
                         ? magnitudeText + ' ' + unitValue
                         : magnitudeText;
-                     const mag = magnitudeWithUnit ? ' \u2014 ' + magnitudeWithUnit : '';
+                     const displayMagnitude = normalizeIemLsrMagnitude(magnitudeWithUnit);
+                      const mag = displayMagnitude ? ' \u2014 ' + displayMagnitude : '';
                     const marker = L_ref.circleMarker([la, lo], { radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
                         .addTo(lsrLayer);
                     registerReportingPopup(marker, {
                         source: 'iem-lsr',
                         color: dotColor,
-                         title: lsrIcon + escapeHtml(props.typetext || 'LSR') + escapeHtml(mag),
+                         title: lsrIcon + escapeHtml(lsrTypeLabel) + escapeHtml(mag),
                         meta: escapeHtml(props.city || 'Unknown location') + (validStr ? ' \u00B7 ' + escapeHtml(validStr) : ''),
                          detail: reportingPopupDetailRows([
                              ['County / state', [props.county, props.st].filter(Boolean).join(', ')],
@@ -17188,9 +18022,16 @@
         try {
             userReportLayer.clearLayers();
             removeReportingPopupEntries('skymonitor-reports');
-            const rRes = await fetch(REPORTS_WORKER_URL);
-            if (rRes.ok) {
-                const payload = await rRes.json();
+            const payload = isHistorical
+                ? await _fetchHistoricalRadarJson(
+                    'skymonitor-reports',
+                    REPORTS_WORKER_URL,
+                    { cache: 'no-store' }
+                )
+                : await fetch(REPORTS_WORKER_URL).then(function(response) {
+                    return response.ok ? response.json() : null;
+                });
+            if (payload) {
                 const reports = Array.isArray(payload) ? payload : (payload.reports || []);
                 const maxAgeMs = showOlder ? 48 * 3600 * 1000 : FRESH_MS;
                 reports.forEach(function(r) {
