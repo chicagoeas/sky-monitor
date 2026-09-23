@@ -1503,7 +1503,7 @@
     </div>
 
     <h1>
-        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.9</span></span>
+        <span>SkyMonitor <span style="font-size:0.4em; color:#888; font-weight:normal;">v1.1.9.5</span></span>
     </h1>
 
     <div id="app-location-shell" style="display: flex; align-items: flex-start; gap: 10px; max-width: 100%; overflow: hidden;">
@@ -2441,6 +2441,7 @@
     var _turnstileReturnTab = 'home';
     var _turnstileReturnScrollX = 0;
     var _turnstileReturnScrollY = 0;
+    var _turnstilePendingRadarExit = false;
 
     // Weather provider credentials live in the Cloudflare Worker, never in this file.
     // Replace this URL with the deployed worker URL during integration.
@@ -4041,6 +4042,12 @@
         if (gate) gate.style.display = 'none';
         setModalOpen(false);
         if (goHome) {
+            // If verification was requested before leaving fullscreen, X
+            // cancels that exit and keeps the user on the radar route.
+            if (_turnstilePendingRadarExit) {
+                _turnstilePendingRadarExit = false;
+                return;
+            }
             // X pressed — return to the tab that opened the gate. That tab
             // remains active while the modal is open, but restore it here as
             // well in case another navigation changed it meanwhile.
@@ -4058,10 +4065,22 @@
                 });
             });
         } else {
+            // Finish a deferred fullscreen exit only after verification
+            // succeeds. This keeps the unverified user from reaching the
+            // normal live reporting tab.
+            if (_turnstilePendingRadarExit) {
+                _turnstilePendingRadarExit = false;
+                navigateRadarRoute(false);
+                return;
+            }
             // Verified — re-trigger the reporting tab navigation now that the flag is set
             var repNav = document.getElementById('nav-reporting');
             if (repNav) window.switchTab('reporting', repNav);
-            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE) {
+            // A direct custom-alert link may promote itself to
+            // /radar/historical after the archive lookup. It already has its
+            // target alert/time context, so do not interrupt it with the
+            // generic date picker. The clock button still opens it normally.
+            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE && !CUSTOM_SKY_DEEP_LINK_ID) {
                 setTimeout(function() { openHistoricalRadarPicker(); }, 180);
             }
             if (window._pendingCustomSkyMDKey) {
@@ -17080,6 +17099,25 @@
         const active = !!isRadar;
         const historicalRoute = active && !!isHistorical;
         const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (!active && wasFullscreenReportingMap && !_turnstileVerified &&
+            !_turnstilePendingRadarExit) {
+            // Browser-back can leave the fullscreen URL before this handler
+            // runs. Restore the radar route while verification is pending so
+            // X genuinely keeps the user in fullscreen.
+            _turnstilePendingRadarExit = true;
+            const returnPath = window.SKYMONITOR_HISTORICAL_RADAR_PAGE
+                ? '/radar/historical'
+                : '/radar';
+            try {
+                window.history.replaceState(
+                    { skymonitorRadar: true, historicalRadar: returnPath === '/radar/historical' },
+                    '',
+                    returnPath + window.location.search + window.location.hash
+                );
+            } catch (e) {}
+            showTurnstileGate();
+            return;
+        }
         if ((!active || !historicalRoute) && historicalRadarState.active) {
             // Leaving fullscreen is also leaving historical mode. Use the
             // normal refresh cleanup so the archived custom alert, historical
@@ -17104,11 +17142,6 @@
             window.switchTab('reporting', routeNav);
         }
 
-        if (active && !_turnstileVerified) {
-            showTurnstileGate();
-            return;
-        }
-
         if (active) {
             renderReportCategories();
             if (!window._radarRefreshTimer) {
@@ -17121,7 +17154,7 @@
                     syncReportingMapLayers();
                     ensureReportPinMarker();
                 }
-                if (historicalRoute && !historicalRadarState.active) {
+                if (historicalRoute && !historicalRadarState.active && !CUSTOM_SKY_DEEP_LINK_ID) {
                     openHistoricalRadarPicker();
                 }
             }, 80);
@@ -17151,6 +17184,13 @@
         saveReportingMapView();
         const nextPath = isRadar ? '/radar' : '/';
         const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (!isRadar &&
+            (currentPath === '/radar' || currentPath === '/radar/historical') &&
+            !_turnstileVerified) {
+            _turnstilePendingRadarExit = true;
+            showTurnstileGate();
+            return;
+        }
         if (currentPath !== nextPath) {
             window.history.pushState({ skymonitorRadar: !!isRadar }, '', nextPath);
         }
@@ -19580,8 +19620,10 @@
 
     const _origSwitchTab = switchTab;
     window.switchTab = function(tabId, element) {
-        // Gate: reporting tab requires Turnstile verification once per session
-        if (tabId === 'reporting' && !_turnstileVerified) {
+        // Fullscreen radar is read-only, so its internal Reporting-tab
+        // activation does not need verification. The normal Reporting tab
+        // still requires Turnstile, including when fullscreen is exited.
+        if (tabId === 'reporting' && !_turnstileVerified && !window.SKYMONITOR_RADAR_PAGE) {
             showTurnstileGate();
             return; // don't switch yet — gate will re-trigger switchTab after verification
         }
@@ -19985,10 +20027,8 @@
         }
         if (window.SKYMONITOR_RADAR_PAGE) {
             window._dismissLaunch();
-            if (!_turnstileVerified) {
-                showTurnstileGate();
-                return;
-            }
+            // Direct fullscreen radar routes are read-only. Turnstile is
+            // requested only when the user exits to live reporting.
             renderReportCategories();
             setTimeout(function() {
                 initReportingMap();
@@ -19997,7 +20037,11 @@
                     syncReportingMapLayers();
                     loadReportingMapData();
                 }
-                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE) {
+                // Direct custom-alert links can arrive at /radar/historical
+                // after an expired-alert lookup. Do not show the manual date
+                // picker for that flow; it remains available from the clock
+                // controls once the map is open.
+                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE && !CUSTOM_SKY_DEEP_LINK_ID) {
                     openHistoricalRadarPicker();
                 }
             }, 80);
