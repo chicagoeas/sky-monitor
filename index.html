@@ -2441,6 +2441,7 @@
     var _turnstileReturnTab = 'home';
     var _turnstileReturnScrollX = 0;
     var _turnstileReturnScrollY = 0;
+    var _turnstilePendingRadarExit = false;
 
     // Weather provider credentials live in the Cloudflare Worker, never in this file.
     // Replace this URL with the deployed worker URL during integration.
@@ -4041,6 +4042,12 @@
         if (gate) gate.style.display = 'none';
         setModalOpen(false);
         if (goHome) {
+            // If verification was requested before leaving fullscreen, X
+            // cancels that exit and keeps the user on the radar route.
+            if (_turnstilePendingRadarExit) {
+                _turnstilePendingRadarExit = false;
+                return;
+            }
             // X pressed — return to the tab that opened the gate. That tab
             // remains active while the modal is open, but restore it here as
             // well in case another navigation changed it meanwhile.
@@ -4058,6 +4065,14 @@
                 });
             });
         } else {
+            // Finish a deferred fullscreen exit only after verification
+            // succeeds. This keeps the unverified user from reaching the
+            // normal live reporting tab.
+            if (_turnstilePendingRadarExit) {
+                _turnstilePendingRadarExit = false;
+                navigateRadarRoute(false);
+                return;
+            }
             // Verified — re-trigger the reporting tab navigation now that the flag is set
             var repNav = document.getElementById('nav-reporting');
             if (repNav) window.switchTab('reporting', repNav);
@@ -17084,6 +17099,25 @@
         const active = !!isRadar;
         const historicalRoute = active && !!isHistorical;
         const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
+        if (!active && wasFullscreenReportingMap && !_turnstileVerified &&
+            !_turnstilePendingRadarExit) {
+            // Browser-back can leave the fullscreen URL before this handler
+            // runs. Restore the radar route while verification is pending so
+            // X genuinely keeps the user in fullscreen.
+            _turnstilePendingRadarExit = true;
+            const returnPath = window.SKYMONITOR_HISTORICAL_RADAR_PAGE
+                ? '/radar/historical'
+                : '/radar';
+            try {
+                window.history.replaceState(
+                    { skymonitorRadar: true, historicalRadar: returnPath === '/radar/historical' },
+                    '',
+                    returnPath + window.location.search + window.location.hash
+                );
+            } catch (e) {}
+            showTurnstileGate();
+            return;
+        }
         if ((!active || !historicalRoute) && historicalRadarState.active) {
             // Leaving fullscreen is also leaving historical mode. Use the
             // normal refresh cleanup so the archived custom alert, historical
@@ -17150,6 +17184,13 @@
         saveReportingMapView();
         const nextPath = isRadar ? '/radar' : '/';
         const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (!isRadar &&
+            (currentPath === '/radar' || currentPath === '/radar/historical') &&
+            !_turnstileVerified) {
+            _turnstilePendingRadarExit = true;
+            showTurnstileGate();
+            return;
+        }
         if (currentPath !== nextPath) {
             window.history.pushState({ skymonitorRadar: !!isRadar }, '', nextPath);
         }
