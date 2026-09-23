@@ -4061,7 +4061,11 @@
             // Verified — re-trigger the reporting tab navigation now that the flag is set
             var repNav = document.getElementById('nav-reporting');
             if (repNav) window.switchTab('reporting', repNav);
-            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE) {
+            // A direct custom-alert link may promote itself to
+            // /radar/historical after the archive lookup. It already has its
+            // target alert/time context, so do not interrupt it with the
+            // generic date picker. The clock button still opens it normally.
+            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE && !CUSTOM_SKY_DEEP_LINK_ID) {
                 setTimeout(function() { openHistoricalRadarPicker(); }, 180);
             }
             if (window._pendingCustomSkyMDKey) {
@@ -17104,11 +17108,6 @@
             window.switchTab('reporting', routeNav);
         }
 
-        if (active && !_turnstileVerified) {
-            showTurnstileGate();
-            return;
-        }
-
         if (active) {
             renderReportCategories();
             if (!window._radarRefreshTimer) {
@@ -17121,7 +17120,7 @@
                     syncReportingMapLayers();
                     ensureReportPinMarker();
                 }
-                if (historicalRoute && !historicalRadarState.active) {
+                if (historicalRoute && !historicalRadarState.active && !CUSTOM_SKY_DEEP_LINK_ID) {
                     openHistoricalRadarPicker();
                 }
             }, 80);
@@ -19580,8 +19579,10 @@
 
     const _origSwitchTab = switchTab;
     window.switchTab = function(tabId, element) {
-        // Gate: reporting tab requires Turnstile verification once per session
-        if (tabId === 'reporting' && !_turnstileVerified) {
+        // Fullscreen radar is read-only, so its internal Reporting-tab
+        // activation does not need verification. The normal Reporting tab
+        // still requires Turnstile, including when fullscreen is exited.
+        if (tabId === 'reporting' && !_turnstileVerified && !window.SKYMONITOR_RADAR_PAGE) {
             showTurnstileGate();
             return; // don't switch yet — gate will re-trigger switchTab after verification
         }
@@ -19985,10 +19986,8 @@
         }
         if (window.SKYMONITOR_RADAR_PAGE) {
             window._dismissLaunch();
-            if (!_turnstileVerified) {
-                showTurnstileGate();
-                return;
-            }
+            // Direct fullscreen radar routes are read-only. Turnstile is
+            // requested only when the user exits to live reporting.
             renderReportCategories();
             setTimeout(function() {
                 initReportingMap();
@@ -19997,7 +19996,11 @@
                     syncReportingMapLayers();
                     loadReportingMapData();
                 }
-                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE) {
+                // Direct custom-alert links can arrive at /radar/historical
+                // after an expired-alert lookup. Do not show the manual date
+                // picker for that flow; it remains available from the clock
+                // controls once the map is open.
+                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE && !CUSTOM_SKY_DEEP_LINK_ID) {
                     openHistoricalRadarPicker();
                 }
             }, 80);
