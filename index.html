@@ -2364,7 +2364,7 @@
                 </div>
             </div>
             <div id="reporting-map-attribution-fullscreen" aria-label="Map attribution">
-                Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">Radar: LibreWXR</a>
+                Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, Radar: LibreWXR
             </div>
 
             <!-- Layer settings panel (hidden until gear tapped) -->
@@ -2411,7 +2411,7 @@
                 <div id="reporting-map-info">
                     <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; min-height:1em;"></div>
                     <div id="reporting-map-attribution" aria-label="Map attribution">
-                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">Radar: LibreWXR</a>
+                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, Radar: LibreWXR
                     </div>
                 </div>
                 <button onclick="findMeReporting()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.72em; cursor:pointer;">&#128205; Find Me</button>
@@ -14346,12 +14346,11 @@
              localStorage.setItem('report_radar_single_site', radarSingleSiteEnabled ? '1' : '0');
              if (!radarSingleSiteEnabled) singleSiteRadarTargetLocation = null;
              singleSiteRadarRequestId++;
+             singleSiteRadarProductRequestId++;
              singleSiteRadarRequestKey = '';
              singleSiteRadarLocationKey = '';
-             if (radarSingleSiteEnabled) {
-                 singleSiteRadarProducts = [];
-                 setSingleSiteRadarProductOptions([]);
-             }
+             singleSiteRadarProducts = [];
+             setSingleSiteRadarProductOptions([]);
              updateSingleSiteRadarControl();
              setSingleSiteRadarStatus(radarSingleSiteEnabled ? 'Finding nearest site\u2026' : '');
              syncReportingRadarActionVisibility();
@@ -15677,12 +15676,15 @@
 
     function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
-        if (!el) return;
-        var radarAttribution = reportingRadarLayerMode === 'historical' ||
-            reportingRadarLayerMode === 'single'
-            ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>'
-            : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>';
-        el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+        var fullscreen = document.getElementById('reporting-map-attribution-fullscreen');
+        var usesIEM = reportingRadarLayerMode === 'historical' ||
+            reportingRadarLayerMode === 'single';
+        var radarAttribution = usesIEM
+            ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>'
+            : 'Radar: LibreWXR';
+        var attribution = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+        if (el) el.innerHTML = attribution;
+        if (fullscreen) fullscreen.innerHTML = attribution;
     }
 
     function _liveRadarFrameUrl(timestampMs) {
@@ -16029,7 +16031,7 @@
     function _historicalRadarTileLayer(url, opacity, isPrefetch) {
         return window.L.tileLayer(url, {
             opacity: opacity,
-            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>',
             maxZoom: 18,
             noWrap: true,
             // Keep several tile rows/columns outside the viewport so modest
@@ -16439,7 +16441,7 @@
              const requestId = ++liveRadarLayerRequestId;
              const nextLayer = L_ref.tileLayer(url, {
                  opacity: 0,
-                 attribution: 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
+                 attribution: 'Radar: LibreWXR',
                  maxZoom: 18,
                  noWrap: true,
                  className: 'radar-frame-tile-layer'
@@ -16524,8 +16526,8 @@
          const nextLayer = L_ref.tileLayer(url, {
              opacity: 0.65,
              attribution: mode === 'single'
-                 ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>'
-                 : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
+                 ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>'
+                 : 'Radar: LibreWXR',
              maxZoom: 18,
              noWrap: true
          });
@@ -17496,6 +17498,15 @@
             singleSiteRadarRequestKey = '';
             singleSiteRadarLocationKey = '';
             singleSiteRadarProductRequestId++;
+            if (reportingRadarLayerMode === 'single') {
+                if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
+                    reportingMap.removeLayer(reportingRadarLayer);
+                }
+                reportingRadarLayer = null;
+                reportingRadarLayerMode = 'live';
+                reportingRadarSite = null;
+                _updateReportingMapAttribution();
+            }
             reportingRadarSite = null;
             singleSiteRadarProducts = [];
             setSingleSiteRadarProductOptions([]);
