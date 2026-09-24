@@ -1779,7 +1779,7 @@
             <h2>About SkyMonitor custom alerts</h2>
 
             <h3>What are SkyMonitor custom alerts?</h3>
-            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Flood Watch, Severe Thunderstorm Watch, Tornado Watch, Special Weather Statement, Mesoscale Discussion, and Mesoscale Precipitation Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
+            <p>SkyMonitor custom alerts are issued by trusted SkyMonitor users. In addition to the built-in alert classes, issuers can select any operational three-letter NWS event code; SkyMonitor keeps that code's event category for map colors and hazard handling while allowing the public headline to be edited. Custom alerts are not official NWS products. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
 
             <h3>Can I trust SkyMonitor custom alerts?</h3>
             <p>You should NEVER completely trust a SkyMonitor custom alert. They are not issued by meteorologists or experts. However, they are useful for tracking specific storms and what they are capable of producing, even if there is too low a probability for the NWS to rely on. For example, a storm might have a probable chance of producing a tornado; however, the NWS thinks that chance is too low or even misses the chance entirely, which can happen, although rarely, and therefore a SkyMonitor custom alert could let you know of the possible danger. There are also situations where SkyMonitor custom alerts can come a few minutes or even multiple minutes BEFORE the NWS issues one; for example, a SkyMonitor custom Severe Thunderstorm Warning could come slightly before the NWS’s actual Severe Thunderstorm Warning.</p>
@@ -15003,8 +15003,59 @@
         return formatReportTime(value);
     }
 
+    // NWS operational NWR-SAME event codes. The editor and API Worker use the
+    // same official list so custom alerts retain their actual event identity.
+    const CUSTOM_SKY_NWS_CODE_LABELS = {
+        BZW: 'Blizzard Warning', CFA: 'Coastal Flood Watch',
+        CFW: 'Coastal Flood Warning', DSW: 'Dust Storm Warning',
+        EWW: 'Extreme Wind Warning', FFA: 'Flash Flood Watch',
+        FFW: 'Flash Flood Warning', FFS: 'Flash Flood Statement',
+        FLA: 'Flood Watch', FLW: 'Flood Warning',
+        FLS: 'Flood Statement', HWA: 'High Wind Watch',
+        HWW: 'High Wind Warning', HUA: 'Hurricane Watch',
+        HUW: 'Hurricane Warning', HLS: 'Hurricane Statement',
+        SVA: 'Severe Thunderstorm Watch', SVR: 'Severe Thunderstorm Warning',
+        SVS: 'Severe Weather Statement', SQW: 'Snow Squall Warning',
+        SMW: 'Special Marine Warning', SPS: 'Special Weather Statement',
+        SSA: 'Storm Surge Watch', SSW: 'Storm Surge Warning',
+        TOA: 'Tornado Watch', TOR: 'Tornado Warning',
+        TRA: 'Tropical Storm Watch', TRW: 'Tropical Storm Warning',
+        TSA: 'Tsunami Watch', TSW: 'Tsunami Warning',
+        WSA: 'Winter Storm Watch', WSW: 'Winter Storm Warning',
+        AVA: 'Avalanche Watch', AVW: 'Avalanche Warning',
+        BLU: 'Blue Alert', CAE: 'Child Abduction Emergency',
+        CDW: 'Civil Danger Warning', CEM: 'Civil Emergency Message',
+        EQW: 'Earthquake Warning', EVI: 'Evacuation Immediate',
+        FRW: 'Fire Warning', HMW: 'Hazardous Materials Warning',
+        LEW: 'Law Enforcement Warning', LAE: 'Local Area Emergency',
+        TOE: '911 Telephone Outage Emergency',
+        NUW: 'Nuclear Power Plant Warning', RHW: 'Radiological Hazard Warning',
+        SPW: 'Shelter in Place Warning', VOW: 'Volcano Warning',
+        ADR: 'Administrative Message', DMO: 'Practice/Demo Warning',
+        RMT: 'Required Monthly Test', RWT: 'Required Weekly Test'
+    };
+
+    function customSkyAlertCode(props) {
+        const value = customSkyAlertValue(props, [
+            'alertClass', 'alert_class', 'alertClassCode', 'alert_class_code',
+            'severity', 'alertType', 'alert_type', 'event', 'type'
+        ], '').trim().toUpperCase();
+        return Object.prototype.hasOwnProperty.call(CUSTOM_SKY_NWS_CODE_LABELS, value)
+            ? value
+            : '';
+    }
+
     function customSkyAlertColor(props) {
-        const value = customSkyAlertValue(props, ['severity', 'level', 'priority', 'alertType', 'event', 'type'], '').toLowerCase();
+        const code = customSkyAlertCode(props);
+        const value = customSkyAlertValue(props, [
+            'severity', 'level', 'priority', 'alertType', 'event', 'type'
+        ], '').toLowerCase();
+        if (['TOR', 'TOA', 'HUW', 'HUA', 'TRW', 'TRA', 'TSW', 'TSA', 'EWW'].includes(code)) return '#ff1744';
+        if (['SVR', 'SVS', 'SVA', 'SVW', 'HWW', 'HWA', 'SQW', 'DSW'].includes(code)) return '#ff9100';
+        if (['FFW', 'FFA', 'FFS', 'FLW', 'FLA', 'FLS', 'CFW', 'CFA', 'SSA', 'SSW'].includes(code)) return '#00c853';
+        if (['BZW', 'WSW', 'WSA', 'AVA', 'AVW'].includes(code)) return '#81d4fa';
+        if (['BLU', 'CAE', 'CDW', 'CEM', 'EQW', 'EVI', 'FRW', 'HMW', 'LAE', 'LEW', 'NUW', 'RHW', 'SPW', 'TOE', 'VOW'].includes(code)) return '#e53935';
+        if (code === 'SMW') return '#4dd0e1';
         if (value.includes('tow') || value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
         if (value.includes('svr') || value.includes('svw') || value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
         if (value.includes('mpd') || value.includes('precipitation discussion')) return '#4dd0e1';
@@ -15013,10 +15064,6 @@
         if (value.includes('wind')) return '#ffd54f';
         return '#ce93d8';
     }
-
-    // Custom alert polygons use one consistent map-specific color regardless
-    // of alert type. Home/severe cards intentionally keep their own colors.
-    const CUSTOM_SKY_MAP_ALERT_COLOR = '#ce93d8';
 
     function customSkyPointInRing(point, ring) {
         var inside = false;
@@ -15062,15 +15109,18 @@
         // Qualifiers are the authoritative severity signal. Do not infer
         // severity from issuer-editable headlines or descriptions.
         var classSignals = classText;
-        var family = '', score = 0, label = '', color = '#ff9100';
+        var family = '', score = 0, label = '', color = '#ff9100', bannerScore = 0;
+        var nwsCode = customSkyAlertCode(props);
         // SkyMonitor MDs intentionally never enter threat-level scoring.
         if (isCustomSkyMesoscaleDiscussion(props) || /\bMD\b|MESOSCALE DISCUSSION/.test(classText)) return null;
-        if (/\bTOW\b|TORNADO WATCH/.test(classSignals)) {
+        if (/\bTOA\b|\bTOW\b|TORNADO WATCH/.test(classSignals)) {
             family = 'tornadoWatch'; score = 4; label = 'SkyMonitor Tornado Watch'; color = '#e53935';
-        } else if (/\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
+        } else if (/\bSVA\b|\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
             family = 'svrWatch'; score = 3; label = 'SkyMonitor Severe Thunderstorm Watch'; color = '#ffb300';
-        } else if (/\bFLW\b|FLOOD WATCH/.test(classSignals)) {
-            family = 'floodWatch'; score = 2; label = 'SkyMonitor Flood Watch'; color = '#00c853';
+        } else if (/\bFFA\b|\bFLA\b|\bCFA\b|\bSSA\b|FLOOD WATCH/.test(classSignals)) {
+            family = 'floodWatch'; score = 2; label = 'SkyMonitor ' + (CUSTOM_SKY_NWS_CODE_LABELS[nwsCode] || 'Flood Watch'); color = '#00c853';
+        } else if (/\bFLW\b|FLOOD WARNING/.test(classSignals)) {
+            family = 'floodWarning'; score = 4; label = 'SkyMonitor Flood Warning'; color = '#00c853';
         } else if (/\bTOR\b|TORNADO/.test(classSignals)) {
             family = 'tornado'; score = 8; label = 'SkyMonitor Tornado Warning'; color = '#ff1744';
             if (/TORNADO EMERGENCY/.test(qualifiers)) {
@@ -15080,8 +15130,11 @@
             } else if (/OBSERVED|CONFIRMED|SPOTTER|LAW ENFORCEMENT|PUBLIC CONFIRMED|SURFACE OBSERV/.test(qualifiers)) {
                 score = 11; label = 'SkyMonitor Confirmed Tornado'; color = '#ff1744';
             }
-        } else if (/\bSVR\b|SEVERE THUNDERSTORM/.test(classSignals)) {
+        } else if (/\bSVR\b|\bSVS\b|SEVERE THUNDERSTORM|SEVERE WEATHER STATEMENT/.test(classSignals)) {
             family = 'svr'; score = 6; label = 'SkyMonitor SVR Warning'; color = '#ff9100';
+            if (/\bSVS\b|SEVERE WEATHER STATEMENT/.test(classSignals)) {
+                score = 2; label = 'SkyMonitor Severe Weather Statement';
+            }
             if (/DESTRUCTIVE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Destructive SVR'; color = '#ff5722'; }
             else if (/CONSIDERABLE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Considerable SVR'; color = '#ff7043'; }
             if (/TORNADO POSSIBLE/.test(qualifiers)) score += 1;
@@ -15089,12 +15142,33 @@
             family = 'flashFlood'; score = 6; label = 'SkyMonitor Flash Flood Warning'; color = '#00bcd4';
             if (/FLASH FLOOD EMERGENCY|CATASTROPHIC/.test(qualifiers)) { score = 16; label = 'SkyMonitor Flash Flood Emergency'; color = '#e040fb'; }
             else if (/CONSIDERABLE/.test(qualifiers)) { score = 9; label = 'SkyMonitor Considerable Flash Flood Warning'; }
+        } else if (/\bFFS\b|FLASH FLOOD STATEMENT/.test(classSignals)) {
+            family = 'flashFlood'; score = 2; label = 'SkyMonitor Flash Flood Statement'; color = '#00bcd4';
         } else if (/\bSPS\b|SPECIAL WEATHER STATEMENT/.test(classSignals)) {
             family = 'sps'; score = 1; label = 'SkyMonitor Special Weather Statement'; color = '#ffeb3b';
             if (/DEVELOPING STORM|STRONG WIND|SMALL HAIL|SNOW SQUALL/.test(qualifiers)) score += 1;
+        } else if (nwsCode) {
+            // Preserve visibility and code-family color for all other valid
+            // NWS event types without assigning an unverified threat score.
+            family = 'other';
+            score = 0;
+            var nwsEventLabel = CUSTOM_SKY_NWS_CODE_LABELS[nwsCode];
+            label = 'SkyMonitor ' + nwsEventLabel;
+            color = customSkyAlertColor(props);
+            if (['ADR', 'DMO', 'RMT', 'RWT'].indexOf(nwsCode) === -1) {
+                if (['BLU', 'CAE', 'CEM', 'EVI', 'LAE', 'TOE'].indexOf(nwsCode) !== -1 ||
+                    /WARNING|EMERGENCY/.test(nwsEventLabel.toUpperCase())) {
+                    bannerScore = 6000;
+                } else if (/WATCH/.test(nwsEventLabel.toUpperCase())) {
+                    bannerScore = 3500;
+                } else {
+                    bannerScore = 1500;
+                }
+            }
         } else return null;
         return {
             family: family, score: score, label: label, color: color, feature: feature,
+            bannerScore: bannerScore,
             isDestructive: family === 'svr' && /DESTRUCTIVE/.test(qualifiers)
         };
     }
@@ -15152,7 +15226,9 @@
         if (threatInfo.family === 'svrWatch') return 6000;
         if (threatInfo.family === 'flashFlood') return threatInfo.score >= 16 ? 14000 : 8000;
         if (threatInfo.family === 'floodWatch') return 5000;
+        if (threatInfo.family === 'floodWarning') return 7500;
         if (threatInfo.family === 'sps') return 2000;
+        if (threatInfo.family === 'other') return Number(threatInfo.bannerScore) || 0;
         return 0;
     }
 
@@ -15200,6 +15276,8 @@
                     bannerColor = '#00838f';
                 } else if (bannerThreat.family === 'floodWatch') {
                     bannerColor = '#2e7d32';
+                } else if (bannerThreat.family === 'floodWarning') {
+                    bannerColor = '#00c853';
                 } else if (bannerThreat.family === 'svrWatch') {
                     bannerColor = '#f9a825';
                 }
@@ -15249,6 +15327,8 @@
                  customCardColor = '#2e7d32';
              } else if (threatInfo && threatInfo.family === 'svrWatch') {
                  customCardColor = '#f9a825';
+             } else if (threatInfo && threatInfo.family === 'other') {
+                 customCardColor = customSkyAlertColor(props);
              }
             // Keep the DOM id stable across refreshes and alert revisions so an
             // expanded card and its internal scroll position can be restored.
@@ -15443,7 +15523,15 @@
                     : rawHeadline;
                 const isArchived = props._skymonitorArchived === true ||
                     !isCustomAlertCurrentlyActive(props);
-                const alertType = isMd ? customSkyDiscussionLabel(props) : 'Custom alert';
+                const alertTypeCode = customSkyAlertValue(props, [
+                    'alertClass', 'alert_class', 'alertClassCode', 'alert_class_code',
+                    'severity', 'alertType', 'alert_type', 'event', 'type'
+                ], '').trim().toUpperCase();
+                const alertType = isMd
+                    ? customSkyDiscussionLabel(props)
+                    : (CUSTOM_SKY_NWS_CODE_LABELS[alertTypeCode]
+                        ? alertTypeCode + ' · ' + CUSTOM_SKY_NWS_CODE_LABELS[alertTypeCode]
+                        : (alertTypeCode ? 'SkyMonitor ' + alertTypeCode : 'Custom alert'));
                 const issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
                 const description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
                 let shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -15457,9 +15545,9 @@
                 }
                 const timeInfo = reportingAlertTimeInfo(props);
                 const expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
-                // The map has one consistent purple custom-alert treatment.
-                // customSkyAlertColor remains available to home/severe cards.
-                const color = CUSTOM_SKY_MAP_ALERT_COLOR;
+                // Reflect the NWS event type on the map; the editable headline
+                // remains independent from the alert's underlying event code.
+                const color = customSkyAlertColor(props);
                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                  const isDeepLinked = Boolean(
                      props._skymonitorDeepLinkRevision === true ||
