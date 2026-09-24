@@ -1092,21 +1092,76 @@
         #historical-radar-slider {
             display: block;
             width: 100%;
-            margin: 2px 0 3px;
-            accent-color: #4fc3f7;
+            height: 24px;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            appearance: none;
+            -webkit-appearance: none;
+            background: transparent;
+            outline: none;
             cursor: pointer;
+            touch-action: pan-y;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #historical-radar-slider::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: 999px;
+            background: linear-gradient(
+                to right,
+                #4fc3f7 0,
+                #4fc3f7 var(--radar-progress, 0%),
+                rgba(255,255,255,0.26) var(--radar-progress, 0%),
+                rgba(255,255,255,0.26) 100%
+            );
+        }
+        #historical-radar-slider::-moz-range-track {
+            height: 4px;
+            border: 0;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.26);
+        }
+        #historical-radar-slider::-moz-range-progress {
+            height: 4px;
+            border-radius: 999px;
+            background: #4fc3f7;
+        }
+        #historical-radar-slider::-webkit-slider-thumb {
+            width: 14px;
+            height: 14px;
+            margin-top: -5px;
+            appearance: none;
+            -webkit-appearance: none;
+            border: 2px solid #07131d;
+            border-radius: 50%;
+            background: #eafaff;
+            box-shadow: 0 0 0 2px #4fc3f7, 0 0 9px rgba(79,195,247,0.62);
+        }
+        #historical-radar-slider::-moz-range-thumb {
+            width: 10px;
+            height: 10px;
+            border: 2px solid #07131d;
+            border-radius: 50%;
+            background: #eafaff;
+            box-shadow: 0 0 0 2px #4fc3f7, 0 0 9px rgba(79,195,247,0.62);
+        }
+        #historical-radar-slider:focus-visible::-webkit-slider-thumb {
+            box-shadow: 0 0 0 2px #07131d, 0 0 0 5px #4fc3f7;
+        }
+        #historical-radar-slider:focus-visible::-moz-range-thumb {
+            box-shadow: 0 0 0 2px #07131d, 0 0 0 5px #4fc3f7;
         }
         .radar-timeline-wrap {
             position: relative;
-            padding-top: 1px;
+            padding-top: 0;
         }
         #radar-current-marker {
             display: none;
             position: absolute;
-            top: 3px;
+            top: 5px;
             left: 0%;
             width: 2px;
-            height: 13px;
+            height: 14px;
             border-radius: 2px;
             background: #ffffff;
             box-shadow: 0 0 0 1px rgba(79,195,247,0.7), 0 0 7px rgba(79,195,247,0.95);
@@ -1118,13 +1173,21 @@
             content: '';
             position: absolute;
             left: 50%;
-            bottom: -3px;
-            width: 7px;
-            height: 7px;
+            bottom: -2px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background: #4fc3f7;
             box-shadow: 0 0 0 1px rgba(255,255,255,0.9);
             transform: translateX(-50%);
+        }
+        #reporting-map .leaflet-layer.radar-frame-tile-layer {
+            transition: opacity 150ms linear;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #reporting-map .leaflet-layer.radar-frame-tile-layer {
+                transition: none;
+            }
         }
         #historical-radar-controls .historical-radar-endpoints {
             display: flex;
@@ -13136,6 +13199,8 @@
     const LIBREWXR_WEATHER_MAPS_URL = LIBREWXR_RADAR_BASE_URL + '/public/weather-maps.json';
     const LIVE_RADAR_FRAME_MS = 650;
     const LIVE_RADAR_CURRENT_HOLD_MS = 3200;
+    const LIVE_RADAR_TRANSITION_TIMEOUT_MS = 2400;
+    const LIVE_RADAR_CROSSFADE_MS = 160;
     let liveRadarState = {
         active: false,
         frames: [],
@@ -13151,6 +13216,8 @@
     let liveRadarRequestId = 0;
     let liveRadarFrameRequestId = 0;
     let liveRadarInitialLoadComplete = false;
+    let liveRadarLayerTransition = null;
+    let liveRadarLayerRequestId = 0;
     const HISTORICAL_RADAR_FRAME_MS = 5 * 60 * 1000;
     // IEM's older N0R composite is archived from 1 Jan 1995. N0Q begins
     // on 13 Nov 2010 at 16:25 UTC, so historical frames must switch
@@ -15619,9 +15686,10 @@
     }
 
     function _liveRadarFrameUrl(timestampMs) {
+        // LibreWXR scheme 10 is the Viper HD reflectivity palette.
         return LIBREWXR_RADAR_BASE_URL + '/v2/radar/' +
             Math.floor(Number(timestampMs) / 1000) +
-            '/256/{z}/{x}/{y}/2/1_0.png';
+            '/256/{z}/{x}/{y}/10/1_0.png';
     }
 
     function _liveRadarFormatTime(timestampMs, includeDate) {
@@ -15658,6 +15726,17 @@
         return bestIndex;
     }
 
+    function _updateRadarSliderProgress(slider) {
+        if (!slider) return;
+        const min = Number(slider.min) || 0;
+        const max = Number(slider.max) || 0;
+        const value = Number(slider.value) || 0;
+        const progress = max > min
+            ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100))
+            : 0;
+        slider.style.setProperty('--radar-progress', progress + '%');
+    }
+
     function _renderLiveRadarControls() {
         const controls = document.getElementById('historical-radar-controls');
         const slider = document.getElementById('historical-radar-slider');
@@ -15677,6 +15756,7 @@
         if (kicker) kicker.textContent = 'LIVE RADAR';
         slider.max = String(Math.max(0, frameCount - 1));
         slider.value = String(Math.min(liveRadarState.index, Math.max(0, frameCount - 1)));
+        _updateRadarSliderProgress(slider);
         slider.setAttribute('aria-label', 'Live radar frame');
         time.textContent = frameCount
             ? _liveRadarFormatTime(frames[liveRadarState.index], true)
@@ -15786,7 +15866,8 @@
     }
 
     function scheduleLiveRadarPlayback() {
-        if (!liveRadarPlaying || !liveRadarState.active) return;
+        if (!liveRadarPlaying || !liveRadarState.active ||
+            liveRadarLayerTransition) return;
         if (liveRadarPlaybackTimer) clearTimeout(liveRadarPlaybackTimer);
         const atCurrentAfterLoop = liveRadarLastPlaybackIndex !== null &&
             liveRadarState.index === liveRadarState.currentIndex &&
@@ -15797,7 +15878,7 @@
             liveRadarLastPlaybackIndex = liveRadarState.index;
             const nextIndex = (liveRadarState.index + 1) % liveRadarState.frames.length;
             _setLiveRadarFrame(nextIndex);
-            scheduleLiveRadarPlayback();
+            if (!liveRadarLayerTransition) scheduleLiveRadarPlayback();
         }, atCurrentAfterLoop ? LIVE_RADAR_CURRENT_HOLD_MS : LIVE_RADAR_FRAME_MS);
     }
 
@@ -16150,11 +16231,35 @@
         historicalRadarLayerTransition = null;
     }
 
+    function _cancelLiveRadarLayerTransition() {
+        liveRadarLayerRequestId++;
+        const pending = liveRadarLayerTransition;
+        if (pending && pending.timeoutId) {
+            clearTimeout(pending.timeoutId);
+            pending.timeoutId = null;
+        }
+        if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
+            reportingMap && reportingMap.hasLayer(pending.layer)) {
+            reportingMap.removeLayer(pending.layer);
+        }
+        liveRadarLayerTransition = null;
+    }
+
+    function _liveRadarLayerHasTile(layer) {
+        if (!layer || !layer._tiles) return false;
+        return Object.keys(layer._tiles).some(function(key) {
+            const tile = layer._tiles[key];
+            return !!(tile && tile.el && tile.el.complete && tile.el.naturalWidth > 0);
+        });
+    }
+
     function _replaceReportingRadarLayer(url, mode, site, retryAttempt) {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
          const oldLayer = reportingRadarLayer;
          const currentRetryAttempt = Number(retryAttempt) || 0;
+
+         if (mode !== 'live') _cancelLiveRadarLayerTransition();
 
          if (mode === 'historical') {
              // Keep the visible frame in place while the requested frame
@@ -16322,6 +16427,96 @@
              } else {
                  // With radar hidden there are no tiles to wait for.
                  setTimeout(commit, 0);
+             }
+             return;
+         }
+
+         if (mode === 'live') {
+             // Load the replacement above the committed scan, but keep it
+             // invisible until the new viewport has real radar tiles. This
+             // prevents the map from flashing its basemap between frames.
+             _cancelLiveRadarLayerTransition();
+             const requestId = ++liveRadarLayerRequestId;
+             const nextLayer = L_ref.tileLayer(url, {
+                 opacity: 0,
+                 attribution: 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
+                 maxZoom: 18,
+                 noWrap: true,
+                 className: 'radar-frame-tile-layer'
+             });
+             let nextLayerHasTile = false;
+             let committed = false;
+             const finish = function() {
+                 if (committed || requestId !== liveRadarLayerRequestId) return;
+                 committed = true;
+                 if (liveRadarLayerTransition &&
+                     liveRadarLayerTransition.requestId === requestId) {
+                     if (liveRadarLayerTransition.timeoutId) {
+                         clearTimeout(liveRadarLayerTransition.timeoutId);
+                     }
+                     liveRadarLayerTransition = null;
+                 }
+                 const previousLayer = reportingRadarLayer;
+                 reportingRadarLayer = nextLayer;
+                 reportingRadarLayerMode = 'live';
+                 reportingRadarSite = null;
+                 if (nextLayer.setOpacity) nextLayer.setOpacity(0.65);
+                 if (previousLayer && previousLayer !== nextLayer &&
+                     reportingMap.hasLayer(previousLayer)) {
+                     if (previousLayer.setOpacity) previousLayer.setOpacity(0);
+                     setTimeout(function() {
+                         if (reportingMap && previousLayer !== reportingRadarLayer &&
+                             reportingMap.hasLayer(previousLayer)) {
+                             reportingMap.removeLayer(previousLayer);
+                         }
+                     }, LIVE_RADAR_CROSSFADE_MS);
+                 }
+                 if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
+                     reportingMap.removeLayer(nextLayer);
+                 }
+                 _updateReportingMapAttribution();
+                 _renderLiveRadarControls();
+                 if (liveRadarPlaying) scheduleLiveRadarPlayback();
+             };
+             const fail = function() {
+                 if (committed || requestId !== liveRadarLayerRequestId) return;
+                 if (liveRadarLayerTransition &&
+                     liveRadarLayerTransition.requestId === requestId) {
+                     if (liveRadarLayerTransition.timeoutId) {
+                         clearTimeout(liveRadarLayerTransition.timeoutId);
+                     }
+                     liveRadarLayerTransition = null;
+                 }
+                 if (reportingMap.hasLayer(nextLayer)) {
+                     reportingMap.removeLayer(nextLayer);
+                 }
+                 if (liveRadarPlaying) scheduleLiveRadarPlayback();
+             };
+             nextLayer.on('tileload', function() {
+                 nextLayerHasTile = true;
+             });
+             nextLayer.once('load', function() {
+                 nextLayerHasTile = nextLayerHasTile ||
+                     _liveRadarLayerHasTile(nextLayer);
+                 if (nextLayerHasTile) finish();
+                 else fail();
+             });
+             liveRadarLayerTransition = {
+                 requestId: requestId,
+                 layer: nextLayer,
+                 timeoutId: null
+             };
+             liveRadarLayerTransition.timeoutId = setTimeout(function() {
+                 if (requestId !== liveRadarLayerRequestId || committed) return;
+                 nextLayerHasTile = nextLayerHasTile ||
+                     _liveRadarLayerHasTile(nextLayer);
+                 if (nextLayerHasTile) finish();
+                 else fail();
+             }, LIVE_RADAR_TRANSITION_TIMEOUT_MS);
+             if (radarVisible) {
+                 nextLayer.addTo(reportingMap);
+             } else {
+                 finish();
              }
              return;
          }
@@ -16743,6 +16938,7 @@
         if (kicker) kicker.textContent = 'HISTORICAL RADAR';
         slider.max = String(Math.max(0, frameCount - 1));
         slider.value = String(Math.min(historicalRadarState.index, Math.max(0, frameCount - 1)));
+        _updateRadarSliderProgress(slider);
         slider.setAttribute('aria-label', 'Historical radar frame');
         time.textContent = frameCount
             ? _historicalRadarFormatTime(frames[historicalRadarState.index], true)
@@ -17385,6 +17581,7 @@
         radarVisible = cb ? cb.checked : !radarVisible;
         if (cb) cb.checked = radarVisible;
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
+        if (!radarVisible) _cancelLiveRadarLayerTransition();
         if (reportingRadarLayer && reportingMap) {
             if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
             else { reportingMap.removeLayer(reportingRadarLayer); }
