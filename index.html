@@ -11643,7 +11643,13 @@
         // strength, not two independent tornado scores).
         var customThreatFlags = { tornado: false, tornadoObserved: false, tornadoPDS: false,
             tornadoEmergency: false, svrDestructive: false, ffConsiderable: false,
-            ffCatastrophic: false, ffEmergency: false };
+            ffCatastrophic: false, ffEmergency: false, hurricaneWarning: false,
+            typhoonWarning: false, tsunamiWarning: false, stormSurgeWarning: false,
+            extremeWindWarning: false, highWindWarning: false, blizzardWarning: false,
+            iceStormWarning: false, winterStormWarning: false, snowSquallWarning: false,
+            dustStormWarning: false, floodWarning: false, coastalFloodWarning: false,
+            lakeshoreFloodWarning: false, floodAdvisory: false, tornadoWatch: false,
+            svrWatch: false };
         var nwsFamilyScores = {};
         if (window.activeTornadoWarning) {
             nwsFamilyScores.tornado = window.activeTornadoEmergency ? 20 :
@@ -11656,6 +11662,30 @@
                 ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 9 : 6);
         }
         if (_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('special weather statement'); })) nwsFamilyScores.sps = 1;
+        // Extend the same duplicate-suppression rule to the NWS families
+        // represented by custom operational codes. A real NWS Hurricane
+        // Warning and a SkyMonitor HUW covering the same location should not
+        // count as two separate hurricane warnings.
+        [
+            ['tropical', 'hurricane warning', 9],
+            ['tropical', 'tropical storm warning', 6],
+            ['stormSurge', 'storm surge warning', 8],
+            ['tsunami', 'tsunami warning', 9],
+            ['extremeWind', 'extreme wind warning', 8],
+            ['highWind', 'high wind warning', 5],
+            ['blizzard', 'blizzard warning', 6],
+            ['winterStorm', 'winter storm warning', 5],
+            ['snowSquall', 'snow squall warning', 5],
+            ['dustStorm', 'dust storm warning', 5],
+            ['coastalFlood', 'coastal flood warning', 2],
+            ['floodWarning', 'flood warning', 2]
+        ].forEach(function(mapping) {
+            if (_threatAlertEvents.some(function(eventName) {
+                return eventName.toLowerCase().includes(mapping[1]);
+            })) {
+                nwsFamilyScores[mapping[0]] = mapping[2];
+            }
+        });
         (window.customSkyThreatAlerts || []).forEach(function(custom) {
             var existing = nwsFamilyScores[custom.family] || 0;
             var increment = Math.max(0, custom.score - existing);
@@ -11664,6 +11694,14 @@
                 factorList.push({ label: custom.label, color: custom.color });
                 nwsFamilyScores[custom.family] = custom.score;
             }
+            if (custom.hazardCategory) {
+                hazardCats[custom.hazardCategory] = (hazardCats[custom.hazardCategory] || 0) + 1;
+            }
+            Object.keys(custom.flags || {}).forEach(function(flagName) {
+                if (custom.flags[flagName] && Object.prototype.hasOwnProperty.call(customThreatFlags, flagName)) {
+                    customThreatFlags[flagName] = true;
+                }
+            });
             if (custom.family === 'tornado') {
                 customThreatFlags.tornado = true;
                 if (custom.score >= 11) customThreatFlags.tornadoObserved = true;
@@ -11737,10 +11775,14 @@
         // LIFE THREATENING, CRITICAL, and DANGEROUS are strictly flag-driven.
         // No score, no matter how high, can reach these tiers — only specific alert types can.
         const _tierEvtsLower = _threatAlertEvents.map(function(e) { return e.toLowerCase(); });
-        const _hasExtremeWindWarning = _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
-        const _hasTyphoonWarning     = _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
-        const _hasHurricaneWarningNow = _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
-        const _hasTsunamiWarning     = _tierEvtsLower.some(function(e) { return e.includes('tsunami warning'); });
+        const _hasExtremeWindWarning = customThreatFlags.extremeWindWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
+        const _hasTyphoonWarning     = customThreatFlags.typhoonWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
+        const _hasHurricaneWarningNow = customThreatFlags.hurricaneWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
+        const _hasTsunamiWarning     = customThreatFlags.tsunamiWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('tsunami warning'); });
 
         // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency,
         // Extreme Wind Warning, and Typhoon/Hurricane/Tsunami Warning — these are all
@@ -11766,6 +11808,10 @@
         const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
         const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (
             customThreatFlags.tornado ||
+            customThreatFlags.extremeWindWarning ||
+            customThreatFlags.snowSquallWarning ||
+            customThreatFlags.dustStormWarning ||
+            customThreatFlags.floodWarning ||
             _threatAlertEvents.some(function(e) {
             var el = e.toLowerCase();
             return _SHORT_FUSED.some(function(w) { return el.includes(w); });
@@ -11806,35 +11852,35 @@
             extremeHeatWarning: _activeNow('extreme heat warning'),
             heatAdvisory:       _activeNow('heat advisory') && !_activeNow('extreme heat warning'),
             // Winter — specific before generic
-            blizzardWarning:    _activeNow('blizzard warning'),
-            iceStormWarning:    _activeNow('ice storm warning'),
-            winterStormWarning: _activeNow('winter storm warning') && !_activeNow('blizzard warning') && !_activeNow('ice storm warning'),
+            blizzardWarning:    customThreatFlags.blizzardWarning || _activeNow('blizzard warning'),
+            iceStormWarning:    customThreatFlags.iceStormWarning || _activeNow('ice storm warning'),
+            winterStormWarning: customThreatFlags.winterStormWarning || (_activeNow('winter storm warning') && !_activeNow('blizzard warning') && !_activeNow('ice storm warning')),
             windChillWarning:   _activeNow('wind chill warning'),
-            snowSquallWarning:  _activeNow('snow squall warning'),
+            snowSquallWarning:  customThreatFlags.snowSquallWarning || _activeNow('snow squall warning'),
             // Wind
-            extremeWindWarning: _activeNow('extreme wind warning'),
-            highWindWarning:    _activeNow('high wind warning') && !_activeNow('extreme wind warning'),
+            extremeWindWarning: customThreatFlags.extremeWindWarning || _activeNow('extreme wind warning'),
+            highWindWarning:    customThreatFlags.highWindWarning || (_activeNow('high wind warning') && !_activeNow('extreme wind warning')),
             windWarningLabel:   (window.activeAlertEvents || []).some(function(e) {
                 return e.toLowerCase() === 'wind warning';
             }),
             // Watches
-            tornadoWatch:       _activeNow('tornado watch'),
-            svrWatch:           _activeNow('severe thunderstorm watch') && !_activeNow('tornado watch'),
+            tornadoWatch:       customThreatFlags.tornadoWatch || _activeNow('tornado watch'),
+            svrWatch:           customThreatFlags.svrWatch || (_activeNow('severe thunderstorm watch') && !_activeNow('tornado watch')),
             // Flood — specific before generic (coastal > river > flash > advisory)
             highSurfWarning:      _activeNow('high surf warning'),
             highSurfAdvisory:     _activeNow('high surf advisory') && !_activeNow('high surf warning'),
-            coastalFloodWarning:  _activeNow('coastal flood warning'),
+            coastalFloodWarning:  customThreatFlags.coastalFloodWarning || _activeNow('coastal flood warning'),
             coastalFloodAdvisory: _activeNow('coastal flood advisory') && !_activeNow('coastal flood warning'),
-            lakeshoreFloodWarning: _activeNow('lakeshore flood warning'),
-            floodWarning:         _activeNow('flood warning') && !_activeNow('flash flood warning') && !_activeNow('coastal flood warning') && !_activeNow('lakeshore flood warning'),
-            floodAdvisory:        _activeNow('flood advisory') && !_activeNow('flood warning') && !_activeNow('flash flood warning'),
+            lakeshoreFloodWarning: customThreatFlags.lakeshoreFloodWarning || _activeNow('lakeshore flood warning'),
+            floodWarning:         customThreatFlags.floodWarning || (_activeNow('flood warning') && !_activeNow('flash flood warning') && !_activeNow('coastal flood warning') && !_activeNow('lakeshore flood warning')),
+            floodAdvisory:        customThreatFlags.floodAdvisory || (_activeNow('flood advisory') && !_activeNow('flood warning') && !_activeNow('flash flood warning')),
             // Other
-            dustStormWarning:   _activeNow('dust storm warning'),
+            dustStormWarning:   customThreatFlags.dustStormWarning || _activeNow('dust storm warning'),
             denseFogAdvisory:   _activeNow('dense fog advisory'),
-            hurricaneWarning:   _activeNow('hurricane warning') || _activeNow('hurricane local statement'),
-            typhoonWarning:     _activeNow('typhoon warning'),
-            tsunamiWarning:     _activeNow('tsunami warning'),
-            stormSurgeWarning:  _activeNow('storm surge warning'),
+            hurricaneWarning:   customThreatFlags.hurricaneWarning || _activeNow('hurricane warning') || _activeNow('hurricane local statement'),
+            typhoonWarning:     customThreatFlags.typhoonWarning || _activeNow('typhoon warning'),
+            tsunamiWarning:     customThreatFlags.tsunamiWarning || _activeNow('tsunami warning'),
+            stormSurgeWarning:  customThreatFlags.stormSurgeWarning || _activeNow('storm surge warning'),
             internationalAlerts: _intlAlertCount > 0,
             internationalSeverity: _intlMaxSeverity,
         };
@@ -15108,67 +15154,138 @@
         var qualifiers = customSkyAlertQualifiers(props).toUpperCase();
         // Qualifiers are the authoritative severity signal. Do not infer
         // severity from issuer-editable headlines or descriptions.
-        var classSignals = classText;
-        var family = '', score = 0, label = '', color = '#ff9100', bannerScore = 0;
         var nwsCode = customSkyAlertCode(props);
+        var nwsEventLabel = CUSTOM_SKY_NWS_CODE_LABELS[nwsCode] || '';
+        // Include the official event label so custom codes follow the same
+        // event-family rules as the corresponding NWS product.
+        var classSignals = (classText + ' ' + nwsEventLabel).toUpperCase();
+        var family = '', score = 0, label = '', color = '#ff9100', bannerScore = 0;
+        var hazardCategory = 'other';
+        var flags = {};
         // SkyMonitor MDs intentionally never enter threat-level scoring.
         if (isCustomSkyMesoscaleDiscussion(props) || /\bMD\b|MESOSCALE DISCUSSION/.test(classText)) return null;
         if (/\bTOA\b|\bTOW\b|TORNADO WATCH/.test(classSignals)) {
             family = 'tornadoWatch'; score = 4; label = 'SkyMonitor Tornado Watch'; color = '#e53935';
+            hazardCategory = 'convective'; bannerScore = 4500; flags.tornadoWatch = true;
         } else if (/\bSVA\b|\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
             family = 'svrWatch'; score = 3; label = 'SkyMonitor Severe Thunderstorm Watch'; color = '#ffb300';
+            hazardCategory = 'convective'; bannerScore = 4300; flags.svrWatch = true;
+        } else if (/\bHUA\b|HURRICANE WATCH/.test(classSignals)) {
+            family = 'tropical'; score = 6; label = 'SkyMonitor Hurricane Watch'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.hurricaneWatch = true;
+        } else if (/\bHUW\b|HURRICANE WARNING/.test(classSignals)) {
+            family = 'tropical'; score = 9; label = 'SkyMonitor Hurricane Warning'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 12500; flags.hurricaneWarning = true;
+        } else if (/\bTRA\b|TROPICAL STORM WATCH/.test(classSignals)) {
+            family = 'tropical'; score = 4; label = 'SkyMonitor Tropical Storm Watch'; color = '#ffb300';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.tropicalStormWatch = true;
+        } else if (/\bTRW\b|TROPICAL STORM WARNING/.test(classSignals)) {
+            family = 'tropical'; score = 6; label = 'SkyMonitor Tropical Storm Warning'; color = '#ff9100';
+            hazardCategory = 'tropical'; bannerScore = 7030; flags.tropicalStormWarning = true;
+        } else if (/\bSSA\b|STORM SURGE WATCH/.test(classSignals)) {
+            family = 'stormSurge'; score = 5; label = 'SkyMonitor Storm Surge Watch'; color = '#ffb300';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.stormSurgeWatch = true;
+        } else if (/\bSSW\b|STORM SURGE WARNING/.test(classSignals)) {
+            family = 'stormSurge'; score = 8; label = 'SkyMonitor Storm Surge Warning'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 7030; flags.stormSurgeWarning = true;
+        } else if (/\bTSA\b|TSUNAMI WATCH/.test(classSignals)) {
+            family = 'tsunami'; score = 4; label = 'SkyMonitor Tsunami Watch'; color = '#ffb300';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.tsunamiWatch = true;
+        } else if (/\bTSW\b|TSUNAMI WARNING/.test(classSignals)) {
+            family = 'tsunami'; score = 9; label = 'SkyMonitor Tsunami Warning'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 12500; flags.tsunamiWarning = true;
         } else if (/\bFFA\b|\bFLA\b|\bCFA\b|\bSSA\b|FLOOD WATCH/.test(classSignals)) {
-            family = 'floodWatch'; score = 2; label = 'SkyMonitor ' + (CUSTOM_SKY_NWS_CODE_LABELS[nwsCode] || 'Flood Watch'); color = '#00c853';
+            family = 'floodWatch'; score = 2; label = 'SkyMonitor ' + (nwsEventLabel || 'Flood Watch'); color = '#00c853';
+            hazardCategory = 'flood'; bannerScore = 4000; flags.floodWatch = true;
+        } else if (/\bCFW\b|COASTAL FLOOD WARNING/.test(classSignals)) {
+            family = 'coastalFlood'; score = 2; label = 'SkyMonitor Coastal Flood Warning'; color = '#00c853';
+            hazardCategory = 'flood'; bannerScore = 7030; flags.coastalFloodWarning = true;
+        } else if (/\bFFW\b|FLASH FLOOD WARNING/.test(classSignals)) {
+            family = 'flashFlood'; score = 6; label = 'SkyMonitor Flash Flood Warning'; color = '#00bcd4';
+            hazardCategory = 'flood'; bannerScore = 8000; flags.flashFloodWarning = true;
+            if (/FLASH FLOOD EMERGENCY|CATASTROPHIC/.test(qualifiers)) { score = 16; label = 'SkyMonitor Flash Flood Emergency'; color = '#e040fb'; bannerScore = 14000; flags.flashFloodEmergency = true; }
+            else if (/CONSIDERABLE/.test(qualifiers)) { score = 9; label = 'SkyMonitor Considerable Flash Flood Warning'; flags.flashFloodConsiderable = true; }
         } else if (/\bFLW\b|FLOOD WARNING/.test(classSignals)) {
-            family = 'floodWarning'; score = 4; label = 'SkyMonitor Flood Warning'; color = '#00c853';
+            family = 'floodWarning'; score = 2; label = 'SkyMonitor Flood Warning'; color = '#00c853';
+            hazardCategory = 'flood'; bannerScore = 7030; flags.floodWarning = true;
         } else if (/\bTOR\b|TORNADO/.test(classSignals)) {
             family = 'tornado'; score = 8; label = 'SkyMonitor Tornado Warning'; color = '#ff1744';
+            hazardCategory = 'convective'; bannerScore = 11000; flags.tornadoWarning = true;
             if (/TORNADO EMERGENCY/.test(qualifiers)) {
                 score = 20; label = 'SkyMonitor Tornado Emergency'; color = '#e040fb';
+                bannerScore = 15000; flags.tornadoEmergency = true;
             } else if (/PDS|PARTICULARLY DANGEROUS/.test(qualifiers)) {
                 score = 15; label = 'SkyMonitor PDS Tornado Warning'; color = '#e040fb';
+                bannerScore = 13000; flags.tornadoPDS = true;
             } else if (/OBSERVED|CONFIRMED|SPOTTER|LAW ENFORCEMENT|PUBLIC CONFIRMED|SURFACE OBSERV/.test(qualifiers)) {
                 score = 11; label = 'SkyMonitor Confirmed Tornado'; color = '#ff1744';
+                bannerScore = 12000; flags.tornadoObserved = true;
             }
         } else if (/\bSVR\b|\bSVS\b|SEVERE THUNDERSTORM|SEVERE WEATHER STATEMENT/.test(classSignals)) {
             family = 'svr'; score = 6; label = 'SkyMonitor SVR Warning'; color = '#ff9100';
+            hazardCategory = 'convective'; bannerScore = 8500; flags.svrWarning = true;
             if (/\bSVS\b|SEVERE WEATHER STATEMENT/.test(classSignals)) {
-                score = 2; label = 'SkyMonitor Severe Weather Statement';
+                score = 2; label = 'SkyMonitor Severe Weather Statement'; bannerScore = 2000;
             }
-            if (/DESTRUCTIVE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Destructive SVR'; color = '#ff5722'; }
-            else if (/CONSIDERABLE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Considerable SVR'; color = '#ff7043'; }
+            if (/DESTRUCTIVE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Destructive SVR'; color = '#ff5722'; bannerScore = 10000; flags.svrDestructive = true; }
+            else if (/CONSIDERABLE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Considerable SVR'; color = '#ff7043'; flags.svrConsiderable = true; }
             if (/TORNADO POSSIBLE/.test(qualifiers)) score += 1;
-        } else if (/\bFFW\b|FLASH FLOOD WARNING/.test(classSignals)) {
-            family = 'flashFlood'; score = 6; label = 'SkyMonitor Flash Flood Warning'; color = '#00bcd4';
-            if (/FLASH FLOOD EMERGENCY|CATASTROPHIC/.test(qualifiers)) { score = 16; label = 'SkyMonitor Flash Flood Emergency'; color = '#e040fb'; }
-            else if (/CONSIDERABLE/.test(qualifiers)) { score = 9; label = 'SkyMonitor Considerable Flash Flood Warning'; }
         } else if (/\bFFS\b|FLASH FLOOD STATEMENT/.test(classSignals)) {
             family = 'flashFlood'; score = 2; label = 'SkyMonitor Flash Flood Statement'; color = '#00bcd4';
+            hazardCategory = 'flood'; bannerScore = 2000; flags.flashFloodStatement = true;
         } else if (/\bSPS\b|SPECIAL WEATHER STATEMENT/.test(classSignals)) {
             family = 'sps'; score = 1; label = 'SkyMonitor Special Weather Statement'; color = '#ffeb3b';
+            hazardCategory = 'other'; bannerScore = 2000; flags.specialWeatherStatement = true;
             if (/DEVELOPING STORM|STRONG WIND|SMALL HAIL|SNOW SQUALL/.test(qualifiers)) score += 1;
+        } else if (/\bEWW\b|EXTREME WIND WARNING/.test(classSignals)) {
+            family = 'extremeWind'; score = 8; label = 'SkyMonitor Extreme Wind Warning'; color = '#ff9100';
+            hazardCategory = 'wind'; bannerScore = 20000; flags.extremeWindWarning = true;
+        } else if (/\bHWW\b|HIGH WIND WARNING/.test(classSignals)) {
+            family = 'highWind'; score = 5; label = 'SkyMonitor High Wind Warning'; color = '#ffb300';
+            hazardCategory = 'wind'; bannerScore = 7030; flags.highWindWarning = true;
+        } else if (/\bHWA\b|HIGH WIND WATCH/.test(classSignals)) {
+            family = 'highWind'; score = 3; label = 'SkyMonitor High Wind Watch'; color = '#ffb300';
+            hazardCategory = 'wind'; bannerScore = 4000; flags.highWindWatch = true;
+        } else if (/\bDSW\b|DUST STORM WARNING/.test(classSignals)) {
+            family = 'dustStorm'; score = 5; label = 'SkyMonitor Dust Storm Warning'; color = '#a1887f';
+            hazardCategory = 'wind'; bannerScore = 7030; flags.dustStormWarning = true;
+        } else if (/\bBZW\b|BLIZZARD WARNING/.test(classSignals)) {
+            family = 'blizzard'; score = 6; label = 'SkyMonitor Blizzard Warning'; color = '#64b5f6';
+            hazardCategory = 'winter'; bannerScore = 7030; flags.blizzardWarning = true;
+        } else if (/\bWSW\b|WINTER STORM WARNING/.test(classSignals)) {
+            family = 'winterStorm'; score = 5; label = 'SkyMonitor Winter Storm Warning'; color = '#90caf9';
+            hazardCategory = 'winter'; bannerScore = 7030; flags.winterStormWarning = true;
+        } else if (/\bSQW\b|SNOW SQUALL WARNING/.test(classSignals)) {
+            family = 'snowSquall'; score = 5; label = 'SkyMonitor Snow Squall Warning'; color = '#90caf9';
+            hazardCategory = 'winter'; bannerScore = 7030; flags.snowSquallWarning = true;
+        } else if (/\bWSA\b|WINTER STORM WATCH/.test(classSignals)) {
+            family = 'winterStorm'; score = 3; label = 'SkyMonitor Winter Storm Watch'; color = '#90caf9';
+            hazardCategory = 'winter'; bannerScore = 4000; flags.winterStormWatch = true;
         } else if (nwsCode) {
-            // Preserve visibility and code-family color for all other valid
-            // NWS event types without assigning an unverified threat score.
+            // Preserve the full NWS event identity for every remaining
+            // operational code. Generic products use the same catch-all
+            // scoring bands as their NWS counterparts.
             family = 'other';
-            score = 0;
-            var nwsEventLabel = CUSTOM_SKY_NWS_CODE_LABELS[nwsCode];
+            var nwsEventLower = nwsEventLabel.toLowerCase();
             label = 'SkyMonitor ' + nwsEventLabel;
             color = customSkyAlertColor(props);
-            if (['ADR', 'DMO', 'RMT', 'RWT'].indexOf(nwsCode) === -1) {
-                if (['BLU', 'CAE', 'CEM', 'EVI', 'LAE', 'TOE'].indexOf(nwsCode) !== -1 ||
-                    /WARNING|EMERGENCY/.test(nwsEventLabel.toUpperCase())) {
-                    bannerScore = 6000;
-                } else if (/WATCH/.test(nwsEventLabel.toUpperCase())) {
-                    bannerScore = 3500;
-                } else {
-                    bannerScore = 1500;
-                }
+            if (/WARNING|EMERGENCY/.test(nwsEventLabel.toUpperCase())) {
+                score = 3; bannerScore = 7030;
+            } else if (nwsEventLower.includes('watch')) {
+                score = 2; bannerScore = 4000;
+            } else if (nwsEventLower.includes('advisory')) {
+                score = 1; bannerScore = 3000;
+            } else if (nwsEventLower.includes('statement')) {
+                score = 1; bannerScore = 2000;
+            } else if (['ADR', 'RMT', 'RWT'].indexOf(nwsCode) === -1) {
+                bannerScore = 1500;
             }
         } else return null;
         return {
             family: family, score: score, label: label, color: color, feature: feature,
             bannerScore: bannerScore,
+            hazardCategory: hazardCategory,
+            flags: flags,
             isDestructive: family === 'svr' && /DESTRUCTIVE/.test(qualifiers)
         };
     }
@@ -15215,6 +15332,7 @@
 
     function customSkyBannerScore(threatInfo) {
         if (!threatInfo) return 0;
+        if (Number(threatInfo.bannerScore) > 0) return Number(threatInfo.bannerScore);
         if (threatInfo.family === 'tornado') {
             if (threatInfo.score >= 20) return 15000;
             if (threatInfo.score >= 15) return 13000;
@@ -15280,6 +15398,16 @@
                     bannerColor = '#00c853';
                 } else if (bannerThreat.family === 'svrWatch') {
                     bannerColor = '#f9a825';
+                } else if (bannerThreat.family === 'tropical' ||
+                    bannerThreat.family === 'tsunami' ||
+                    bannerThreat.family === 'stormSurge') {
+                    bannerColor = bannerThreat.flags && (
+                        bannerThreat.flags.hurricaneWarning ||
+                        bannerThreat.flags.tsunamiWarning ||
+                        bannerThreat.flags.stormSurgeWarning
+                    ) ? '#ff1744' : '#ff9100';
+                } else if (bannerThreat.family === 'extremeWind') {
+                    bannerColor = '#ff1744';
                 }
                 banner.style.display = 'block';
                 banner.style.background = bannerColor;
@@ -15293,6 +15421,14 @@
             var threatInfo = customSkyThreatInfo(feature);
             var alertClass = customSkyAlertValue(props, ['alertClass', 'alert_class', 'alertClassCode', 'alert_class_code', 'class', 'severity', 'alertType', 'alert_type', 'event', 'type'], 'Custom Alert');
             var headline = customSkyAlertValue(props, ['headline', 'title', 'name', 'message'], alertClass);
+            var customCode = customSkyAlertCode(props);
+            // Keep the editable public headline, but make the provenance
+            // explicit in the advanced alert card just as the threat factor
+            // does: “SkyMonitor Hurricane Warning”, not only “Hurricane Warning”.
+            var displayHeadline = customCode && headline &&
+                !/^SkyMonitor\b/i.test(headline)
+                ? 'SkyMonitor ' + headline
+                : headline;
             var issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
             var qualifiers = customSkyAlertQualifiers(props).toUpperCase().replace(/\s*,\s*/g, ', ');
             var timeInfo = reportingAlertTimeInfo(props);
@@ -15327,6 +15463,18 @@
                  customCardColor = '#2e7d32';
              } else if (threatInfo && threatInfo.family === 'svrWatch') {
                  customCardColor = '#f9a825';
+             } else if (threatInfo && (
+                 threatInfo.family === 'tropical' ||
+                 threatInfo.family === 'tsunami' ||
+                 threatInfo.family === 'stormSurge'
+             )) {
+                 customCardColor = threatInfo.flags && (
+                     threatInfo.flags.hurricaneWarning ||
+                     threatInfo.flags.tsunamiWarning ||
+                     threatInfo.flags.stormSurgeWarning
+                 ) ? '#ff1744' : '#ff9100';
+             } else if (threatInfo && threatInfo.family === 'extremeWind') {
+                 customCardColor = '#ff1744';
              } else if (threatInfo && threatInfo.family === 'other') {
                  customCardColor = customSkyAlertColor(props);
              }
@@ -15351,7 +15499,7 @@
             card.className = 'alert-card custom-skymonitor-hazard';
             card.style.cssText = 'background:' + customCardColor + '; align-items:flex-start; cursor:default;';
             card.innerHTML = '<img src="https://www.weather.gov/bundles/templating/images/top_news/important.png" style="width:55px;border-radius:5px;margin-top:2px;flex-shrink:0;" alt="">' +
-                '<div style="flex:1;min-width:0;"><div style="font-weight:bold;">' + escapeHtml(headline) +
+                '<div style="flex:1;min-width:0;"><div style="font-weight:bold;">' + escapeHtml(displayHeadline) +
                 '</div><div class="alert-meta-row">' + customTiming +
                 '<button class="alert-expand-btn" id="btn-' + customHazardId + '" onclick="event.stopPropagation(); toggleAlertText(\'' + customHazardId + '\')">&#9660; Show more</button>' + reportHtml + '</div>' +
                 sourceLine + fullDetails + '</div>';
