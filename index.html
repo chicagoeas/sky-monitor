@@ -1096,6 +1096,36 @@
             accent-color: #4fc3f7;
             cursor: pointer;
         }
+        .radar-timeline-wrap {
+            position: relative;
+            padding-top: 1px;
+        }
+        #radar-current-marker {
+            display: none;
+            position: absolute;
+            top: 3px;
+            left: 0%;
+            width: 2px;
+            height: 13px;
+            border-radius: 2px;
+            background: #ffffff;
+            box-shadow: 0 0 0 1px rgba(79,195,247,0.7), 0 0 7px rgba(79,195,247,0.95);
+            transform: translateX(-1px);
+            pointer-events: none;
+            z-index: 2;
+        }
+        #radar-current-marker::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: -3px;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #4fc3f7;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.9);
+            transform: translateX(-50%);
+        }
         #historical-radar-controls .historical-radar-endpoints {
             display: flex;
             justify-content: space-between;
@@ -2215,18 +2245,21 @@
             <div id="reporting-map"></div>
             <div id="historical-radar-controls" aria-label="Historical radar timeline">
                 <div class="historical-radar-heading">
-                    <span>Historical radar</span>
+                    <span id="historical-radar-kicker">Historical radar</span>
                     <span style="display:flex;align-items:center;gap:7px;">
-                        <button id="historical-radar-time-button" type="button" onclick="openHistoricalRadarPicker()" aria-label="Change historical radar start time">--</button>
+                        <button id="historical-radar-time-button" type="button" onclick="openRadarTimelineTime()" aria-label="Selected radar scan time">--</button>
                         <button id="historical-radar-play" type="button"
-                            onclick="toggleHistoricalRadarPlayback()"
-                            aria-label="Play historical radar"
-                            title="Play historical radar">&#9654;</button>
+                            onclick="toggleRadarTimelinePlayback()"
+                            aria-label="Play radar"
+                            title="Play radar">&#9654;</button>
                     </span>
                 </div>
-                <input id="historical-radar-slider" type="range" min="0" max="0" value="0" step="1"
-                    aria-label="Historical radar frame"
-                    oninput="onHistoricalRadarSliderInput(this.value)">
+                <div class="radar-timeline-wrap">
+                    <input id="historical-radar-slider" type="range" min="0" max="0" value="0" step="1"
+                        aria-label="Radar frame"
+                        oninput="onRadarSliderInput(this.value)">
+                    <span id="radar-current-marker" aria-hidden="true"></span>
+                </div>
                 <div class="historical-radar-endpoints">
                     <span id="historical-radar-start">--</span>
                     <span id="historical-radar-end">--</span>
@@ -2268,7 +2301,7 @@
                 </div>
             </div>
             <div id="reporting-map-attribution-fullscreen" aria-label="Map attribution">
-                Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM / NEXRAD</a>
+                Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">Radar: LibreWXR</a>
             </div>
 
             <!-- Layer settings panel (hidden until gear tapped) -->
@@ -2315,7 +2348,7 @@
                 <div id="reporting-map-info">
                     <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; min-height:1em;"></div>
                     <div id="reporting-map-attribution" aria-label="Map attribution">
-                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM / NEXRAD</a>
+                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">Radar: LibreWXR</a>
                     </div>
                 </div>
                 <button onclick="findMeReporting()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.72em; cursor:pointer;">&#128205; Find Me</button>
@@ -6335,8 +6368,11 @@
         var alertsLabel = document.getElementById('alerts-us-only');
         var lsrLabel = document.getElementById('lsr-us-only');
         if (radarLabel) {
-            radarLabel.innerText = '(US only)';
-            radarLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
+            // The LibreWXR composite is not limited to the U.S. The optional
+            // IEM single-site selector remains U.S.-oriented but does not
+            // change the scope of the main radar overlay.
+            radarLabel.innerText = '';
+            radarLabel.style.display = 'none';
         }
         if (alertsLabel) {
             // NWS and Environment Canada polygons are both loaded
@@ -13094,8 +13130,27 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-    let reportingRadarLayerMode = 'mosaic';
+    let reportingRadarLayerMode = 'live';
     let reportingRadarSite = null;
+    const LIBREWXR_RADAR_BASE_URL = 'https://api.librewxr.net';
+    const LIBREWXR_WEATHER_MAPS_URL = LIBREWXR_RADAR_BASE_URL + '/public/weather-maps.json';
+    const LIVE_RADAR_FRAME_MS = 650;
+    const LIVE_RADAR_CURRENT_HOLD_MS = 3200;
+    let liveRadarState = {
+        active: false,
+        frames: [],
+        pastCount: 0,
+        currentIndex: 0,
+        index: 0,
+        timestampMs: 0
+    };
+    let liveRadarPlaying = false;
+    let liveRadarPlaybackTimer = null;
+    let liveRadarSliderTimer = null;
+    let liveRadarLastPlaybackIndex = null;
+    let liveRadarRequestId = 0;
+    let liveRadarFrameRequestId = 0;
+    let liveRadarInitialLoadComplete = false;
     const HISTORICAL_RADAR_FRAME_MS = 5 * 60 * 1000;
     // IEM's older N0R composite is archived from 1 Jan 1995. N0Q begins
     // on 13 Nov 2010 at 16:25 UTC, so historical frames must switch
@@ -14220,6 +14275,7 @@
              }
              radarSingleSiteEnabled = cb ? cb.checked : !radarSingleSiteEnabled;
              if (cb) cb.checked = radarSingleSiteEnabled;
+             if (radarSingleSiteEnabled) stopLiveRadarPlayback();
              localStorage.setItem('report_radar_single_site', radarSingleSiteEnabled ? '1' : '0');
              if (!radarSingleSiteEnabled) singleSiteRadarTargetLocation = null;
              singleSiteRadarRequestId++;
@@ -15297,16 +15353,12 @@
             // radar frame is being rebuilt. The popup is the user's primary
             // context for this route, and closing it here makes it disappear
             // immediately after the alert link opens it.
-            // A deep-linked alert is the user's requested map context. Keep
-            // its popup alive while the initial archive/live-feed probe and
-            // the follow-up refresh rebuild the custom-alert layer. The
-            // second pass used to close the popup immediately after the
-            // auto-open timer ran, leaving the user with only the map.
-            const keepCustomSkyDeepLinkPopupOpen =
+            const keepHistoricalCustomAlertPopupOpen =
                 !!CUSTOM_SKY_DEEP_LINK_ID &&
-                (customSkyDeepLinkHandled || !!customSkyDeepLinkEntry);
+                historicalRadarState.active &&
+                customSkyDeepLinkHandled;
             if (reportingMap && reportingMap.closePopup &&
-                !keepCustomSkyDeepLinkPopupOpen) {
+                !keepHistoricalCustomAlertPopupOpen) {
                 reportingMap.closePopup();
             }
             customSkyAlertLayer.clearLayers();
@@ -15559,8 +15611,240 @@
     function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
         if (!el) return;
-        var radarAttribution = 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
+        var radarAttribution = reportingRadarLayerMode === 'historical' ||
+            reportingRadarLayerMode === 'single'
+            ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>'
+            : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>';
         el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+    }
+
+    function _liveRadarFrameUrl(timestampMs) {
+        return LIBREWXR_RADAR_BASE_URL + '/v2/radar/' +
+            Math.floor(Number(timestampMs) / 1000) +
+            '/256/{z}/{x}/{y}/2/1_0.png';
+    }
+
+    function _liveRadarFormatTime(timestampMs, includeDate) {
+        if (!timestampMs) return '--';
+        return new Date(timestampMs).toLocaleString([], {
+            month: includeDate ? 'short' : undefined,
+            day: includeDate ? 'numeric' : undefined,
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZoneName: includeDate ? 'short' : undefined
+        });
+    }
+
+    function _liveRadarFrameTimes(items) {
+        return (Array.isArray(items) ? items : [])
+            .map(function(item) {
+                const seconds = Number(item && item.time);
+                return isFinite(seconds) ? Math.round(seconds * 1000) : 0;
+            })
+            .filter(function(timestampMs) { return timestampMs > 0; });
+    }
+
+    function _liveRadarNearestFrameIndex(frames, timestampMs, fallback) {
+        if (!frames.length || !timestampMs) return fallback || 0;
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+        frames.forEach(function(frame, index) {
+            const distance = Math.abs(frame - timestampMs);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = index;
+            }
+        });
+        return bestIndex;
+    }
+
+    function _renderLiveRadarControls() {
+        const controls = document.getElementById('historical-radar-controls');
+        const slider = document.getElementById('historical-radar-slider');
+        const time = document.getElementById('historical-radar-time-button');
+        const start = document.getElementById('historical-radar-start');
+        const end = document.getElementById('historical-radar-end');
+        const play = document.getElementById('historical-radar-play');
+        const kicker = document.getElementById('historical-radar-kicker');
+        const marker = document.getElementById('radar-current-marker');
+        if (!controls || !slider || !time || !start || !end) return;
+
+        const frames = liveRadarState.frames || [];
+        const frameCount = frames.length;
+        const hasLiveRadar = liveRadarState.active && frameCount > 0 &&
+            reportingRadarLayerMode !== 'single';
+        controls.classList.toggle('is-visible', hasLiveRadar);
+        if (kicker) kicker.textContent = 'LIVE RADAR';
+        slider.max = String(Math.max(0, frameCount - 1));
+        slider.value = String(Math.min(liveRadarState.index, Math.max(0, frameCount - 1)));
+        slider.setAttribute('aria-label', 'Live radar frame');
+        time.textContent = frameCount
+            ? _liveRadarFormatTime(frames[liveRadarState.index], true)
+            : '--';
+        time.disabled = true;
+        time.title = 'Current live radar scan';
+        start.textContent = frameCount ? _liveRadarFormatTime(frames[0], false) : '--';
+        end.textContent = frameCount ? _liveRadarFormatTime(frames[frameCount - 1], false) : '--';
+        if (marker) {
+            const currentIndex = Math.max(0, Math.min(
+                liveRadarState.currentIndex,
+                Math.max(0, frameCount - 1)
+            ));
+            const position = frameCount > 1
+                ? (currentIndex / (frameCount - 1)) * 100
+                : 0;
+            marker.style.left = position + '%';
+            marker.style.display = hasLiveRadar ? 'block' : 'none';
+        }
+        if (play) {
+            const canPlay = hasLiveRadar && frameCount > 1 &&
+                liveRadarInitialLoadComplete;
+            play.disabled = !canPlay;
+            play.textContent = liveRadarPlaying ? '\u23f8' : '\u25b6';
+            play.setAttribute('aria-label', liveRadarPlaying ? 'Pause live radar' : 'Play live radar');
+            play.title = liveRadarPlaying ? 'Pause live radar' : 'Play live radar';
+        }
+    }
+
+    function _activateLiveRadarFrames(payload) {
+        const past = _liveRadarFrameTimes(payload && payload.radar && payload.radar.past);
+        const nowcast = _liveRadarFrameTimes(payload && payload.radar && payload.radar.nowcast);
+        const frames = past.concat(nowcast.filter(function(timestampMs, index) {
+            return past.indexOf(timestampMs) === -1 &&
+                nowcast.indexOf(timestampMs) === index;
+        }));
+        if (!frames.length) throw new Error('LibreWXR returned no radar frames');
+
+        const previousTimestamp = liveRadarState.timestampMs;
+        const wasAtCurrentScan = liveRadarState.active &&
+            liveRadarState.index === liveRadarState.currentIndex;
+        const currentIndex = past.length ? past.length - 1 : 0;
+        const nextIndex = previousTimestamp && !wasAtCurrentScan
+            ? _liveRadarNearestFrameIndex(frames, previousTimestamp, currentIndex)
+            : currentIndex;
+        liveRadarState = {
+            active: true,
+            frames: frames,
+            pastCount: past.length,
+            currentIndex: currentIndex,
+            index: nextIndex,
+            timestampMs: frames[nextIndex]
+        };
+        liveRadarInitialLoadComplete = true;
+        _renderLiveRadarControls();
+        _setHistoricalRadarStatus('');
+        _setLiveRadarFrame(nextIndex);
+    }
+
+    function _loadLiveRadarFrames() {
+        const requestId = ++liveRadarRequestId;
+        _setHistoricalRadarStatus('Loading live radar\u2026', '#9edfff');
+        return fetch(LIBREWXR_WEATHER_MAPS_URL, {
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json' }
+        }).then(function(response) {
+            if (!response.ok) throw new Error('LibreWXR radar metadata request failed');
+            return response.json();
+        }).then(function(payload) {
+            if (requestId !== liveRadarRequestId ||
+                historicalRadarState.active) return;
+            _activateLiveRadarFrames(payload);
+        }).catch(function(error) {
+            if (requestId !== liveRadarRequestId ||
+                historicalRadarState.active) return;
+            liveRadarInitialLoadComplete = false;
+            _setHistoricalRadarStatus('Live radar unavailable; retrying\u2026', '#ffb74d');
+            console.warn('[SkyMonitor] LibreWXR radar failed:', error);
+        });
+    }
+
+    function _setLiveRadarFrame(index) {
+        if (!liveRadarState.active || !liveRadarState.frames.length ||
+            reportingRadarLayerMode === 'single') return;
+        const safeIndex = Math.max(0, Math.min(
+            Number(index) || 0,
+            liveRadarState.frames.length - 1
+        ));
+        liveRadarState.index = safeIndex;
+        liveRadarState.timestampMs = liveRadarState.frames[safeIndex];
+        _renderLiveRadarControls();
+        _replaceReportingRadarLayer(
+            _liveRadarFrameUrl(liveRadarState.timestampMs),
+            'live',
+            null
+        );
+    }
+
+    function stopLiveRadarPlayback() {
+        if (liveRadarPlaybackTimer) {
+            clearTimeout(liveRadarPlaybackTimer);
+            liveRadarPlaybackTimer = null;
+        }
+        liveRadarPlaying = false;
+        liveRadarLastPlaybackIndex = null;
+        _renderLiveRadarControls();
+    }
+
+    function scheduleLiveRadarPlayback() {
+        if (!liveRadarPlaying || !liveRadarState.active) return;
+        if (liveRadarPlaybackTimer) clearTimeout(liveRadarPlaybackTimer);
+        const atCurrentAfterLoop = liveRadarLastPlaybackIndex !== null &&
+            liveRadarState.index === liveRadarState.currentIndex &&
+            liveRadarLastPlaybackIndex !== liveRadarState.currentIndex;
+        liveRadarPlaybackTimer = setTimeout(function() {
+            liveRadarPlaybackTimer = null;
+            if (!liveRadarPlaying || !liveRadarState.active) return;
+            liveRadarLastPlaybackIndex = liveRadarState.index;
+            const nextIndex = (liveRadarState.index + 1) % liveRadarState.frames.length;
+            _setLiveRadarFrame(nextIndex);
+            scheduleLiveRadarPlayback();
+        }, atCurrentAfterLoop ? LIVE_RADAR_CURRENT_HOLD_MS : LIVE_RADAR_FRAME_MS);
+    }
+
+    function toggleLiveRadarPlayback() {
+        if (!liveRadarState.active || liveRadarState.frames.length < 2 ||
+            !liveRadarInitialLoadComplete || reportingRadarLayerMode === 'single') return;
+        if (liveRadarPlaying) {
+            stopLiveRadarPlayback();
+            return;
+        }
+        liveRadarLastPlaybackIndex = liveRadarState.index;
+        liveRadarPlaying = true;
+        _renderLiveRadarControls();
+        scheduleLiveRadarPlayback();
+    }
+
+    function onLiveRadarSliderInput(value) {
+        if (!liveRadarState.active) return;
+        stopLiveRadarPlayback();
+        const nextIndex = Number(value) || 0;
+        liveRadarState.index = nextIndex;
+        _renderLiveRadarControls();
+        if (liveRadarSliderTimer) clearTimeout(liveRadarSliderTimer);
+        liveRadarSliderTimer = setTimeout(function() {
+            liveRadarSliderTimer = null;
+            _setLiveRadarFrame(nextIndex);
+        }, 90);
+    }
+
+    function onRadarSliderInput(value) {
+        if (historicalRadarState.active) {
+            onHistoricalRadarSliderInput(value);
+        } else {
+            onLiveRadarSliderInput(value);
+        }
+    }
+
+    function toggleRadarTimelinePlayback() {
+        if (historicalRadarState.active) {
+            toggleHistoricalRadarPlayback();
+        } else {
+            toggleLiveRadarPlayback();
+        }
+    }
+
+    function openRadarTimelineTime() {
+        if (historicalRadarState.active) openHistoricalRadarPicker();
     }
 
          const IEM_RADAR_AVAILABILITY_URL =
@@ -15644,7 +15928,7 @@
                  if (!products.length) {
                      singleSiteRadarProducts = [];
                      setSingleSiteRadarProductOptions([]);
-                     _ensureReportingMosaicRadarLayer();
+                     _ensureLiveRadarLayer();
                      setSingleSiteRadarStatus(_iemRadarDisplayId(site) + ' has no current products; mosaic active');
                      return;
                  }
@@ -15656,7 +15940,7 @@
                  console.warn('[SkyMonitor] IEM radar products failed:', error);
                  singleSiteRadarProducts = [];
                  setSingleSiteRadarProductOptions([]);
-                 _ensureReportingMosaicRadarLayer();
+                 _ensureLiveRadarLayer();
                  setSingleSiteRadarStatus('Products unavailable; mosaic active');
              });
          }
@@ -16044,7 +16328,9 @@
 
          const nextLayer = L_ref.tileLayer(url, {
              opacity: 0.65,
-             attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+             attribution: mode === 'single'
+                 ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>'
+                 : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
              maxZoom: 18,
              noWrap: true
          });
@@ -16056,19 +16342,21 @@
          }
          if (radarVisible) nextLayer.addTo(reportingMap);
          _updateReportingMapAttribution();
+         _renderLiveRadarControls();
     }
 
-    function _ensureReportingMosaicRadarLayer() {
-        if (!reportingMap || !window.L) return;
-        if (reportingRadarLayerMode !== 'mosaic' || !reportingRadarLayer) {
-            _replaceReportingRadarLayer(
-                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
-                'mosaic',
-                null
-            );
-        } else if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
-            reportingRadarLayer.addTo(reportingMap);
+    function _ensureLiveRadarLayer() {
+        if (!reportingMap || !window.L || historicalRadarState.active) return;
+        if (liveRadarState.active && liveRadarState.frames.length) {
+            if (reportingRadarLayerMode !== 'live' || !reportingRadarLayer) {
+                _setLiveRadarFrame(liveRadarState.index);
+            } else if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
+                reportingRadarLayer.addTo(reportingMap);
+            }
+            _renderLiveRadarControls();
+            return;
         }
+        _loadLiveRadarFrames();
     }
 
     function _historicalRadarFrameUrl(timestampMs) {
@@ -16435,24 +16723,35 @@
     }
 
     function _renderHistoricalRadarControls() {
+        if (!historicalRadarState.active && liveRadarState.active) {
+            _renderLiveRadarControls();
+            return;
+        }
         const controls = document.getElementById('historical-radar-controls');
         const slider = document.getElementById('historical-radar-slider');
         const time = document.getElementById('historical-radar-time-button');
         const start = document.getElementById('historical-radar-start');
         const end = document.getElementById('historical-radar-end');
         const play = document.getElementById('historical-radar-play');
+        const kicker = document.getElementById('historical-radar-kicker');
+        const marker = document.getElementById('radar-current-marker');
         if (!controls || !slider || !time || !start || !end) return;
 
         const frames = historicalRadarState.frames;
         const frameCount = frames.length;
         controls.classList.toggle('is-visible', historicalRadarState.active && frameCount > 0);
+        if (kicker) kicker.textContent = 'HISTORICAL RADAR';
         slider.max = String(Math.max(0, frameCount - 1));
         slider.value = String(Math.min(historicalRadarState.index, Math.max(0, frameCount - 1)));
+        slider.setAttribute('aria-label', 'Historical radar frame');
         time.textContent = frameCount
             ? _historicalRadarFormatTime(frames[historicalRadarState.index], true)
             : '--';
+        time.disabled = false;
+        time.title = 'Change historical radar start time';
         start.textContent = frameCount ? _historicalRadarFormatTime(frames[0], false) : '--';
         end.textContent = frameCount ? _historicalRadarFormatTime(frames[frameCount - 1], false) : '--';
+        if (marker) marker.style.display = 'none';
         if (play) {
             // Do not let playback start while the initial radar window is
             // still warming. Once enabled, the next frames are already in
@@ -16568,6 +16867,7 @@
         const picker = document.getElementById('historical-radar-picker');
         const timeInput = document.getElementById('historical-radar-picker-time');
         if (!picker || !timeInput) return;
+        stopLiveRadarPlayback();
         enterHistoricalRadarRoute();
         const baseMs = historicalRadarRequestedMs ||
             (historicalRadarState.active && historicalRadarState.startMs) ||
@@ -16656,6 +16956,7 @@
 
     function activateOnDemandHistoricalRadar(selectedMs) {
         if (!reportingMap || !window.L) return;
+        stopLiveRadarPlayback();
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
         if (historicalRadarViewportWarmupTimer) {
@@ -16866,6 +17167,7 @@
 
     function activateHistoricalRadarForAlert(feature) {
         if (!feature || !reportingMap || !window.L) return false;
+        stopLiveRadarPlayback();
         const windowInfo = _historicalRadarTimeWindow(feature);
         if (!windowInfo) {
             _setHistoricalRadarStatus('Historical radar unavailable: alert time window missing.', '#ffb74d');
@@ -16921,6 +17223,7 @@
     }
 
     function deactivateHistoricalRadarMode() {
+        stopLiveRadarPlayback();
         if (historicalRadarSliderTimer) {
             clearTimeout(historicalRadarSliderTimer);
             historicalRadarSliderTimer = null;
@@ -16978,7 +17281,7 @@
                 reportingMap.removeLayer(reportingRadarLayer);
             }
             reportingRadarLayer = null;
-            reportingRadarLayerMode = 'mosaic';
+            reportingRadarLayerMode = 'live';
             reportingRadarSite = null;
             setReportingRadarLayerForLocation();
         }
@@ -16996,21 +17299,21 @@
             singleSiteRadarRequestId++;
             singleSiteRadarRequestKey = '';
             singleSiteRadarLocationKey = '';
-                 singleSiteRadarProductRequestId++;
-                 reportingRadarSite = null;
-                 singleSiteRadarProducts = [];
-                 setSingleSiteRadarProductOptions([]);
-                 _clearSingleSiteRadarSites();
+            singleSiteRadarProductRequestId++;
+            reportingRadarSite = null;
+            singleSiteRadarProducts = [];
+            setSingleSiteRadarProductOptions([]);
+            _clearSingleSiteRadarSites();
             setSingleSiteRadarStatus('');
-            _ensureReportingMosaicRadarLayer();
+            _ensureLiveRadarLayer();
             updateUSOnlyLayerLabels();
             return;
         }
 
         const location = _reportingRadarLocation();
         if (!location) {
-                 _clearSingleSiteRadarSites();
-            _ensureReportingMosaicRadarLayer();
+            _clearSingleSiteRadarSites();
+            _ensureLiveRadarLayer();
             setSingleSiteRadarStatus('Location unavailable');
             updateUSOnlyLayerLabels();
             return;
@@ -17030,9 +17333,8 @@
         const requestId = ++singleSiteRadarRequestId;
         setSingleSiteRadarStatus('Finding nearest site\u2026');
         const start = new Date().toISOString().slice(0, 16) + 'Z';
-        // Omitting lat/lon asks IEM for the complete current radar inventory,
-        // not just the sites near the weather location. The local coordinates
-        // are still used to choose the initial site from that full inventory.
+        // The single-site branch remains on IEM. LibreWXR is used only for
+        // the live composite path above.
         const url = IEM_RADAR_AVAILABILITY_URL +
             '&start=' + encodeURIComponent(start);
         fetch(url, {
@@ -17046,33 +17348,33 @@
                 historicalRadarState.active ||
                 !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
             const site = _selectNearestIEMRadar(payload, location);
-                 singleSiteRadarAllSites = _iemRadarSites(payload);
-                 const sites = _limitIEMRadarSites(
-                     singleSiteRadarAllSites,
-                     site,
-                     _singleSiteRadarMarkerShareForZoom()
-                 );
-                 renderSingleSiteRadarSites(sites);
+            singleSiteRadarAllSites = _iemRadarSites(payload);
+            const sites = _limitIEMRadarSites(
+                singleSiteRadarAllSites,
+                site,
+                _singleSiteRadarMarkerShareForZoom()
+            );
+            renderSingleSiteRadarSites(sites);
             if (!site) {
                 singleSiteRadarLocationKey = '';
-                 _clearSingleSiteRadarSites();
-                _ensureReportingMosaicRadarLayer();
+                _clearSingleSiteRadarSites();
+                _ensureLiveRadarLayer();
                 setSingleSiteRadarStatus('No nearby site; mosaic active');
                 return;
             }
-                 reportingRadarSite = site;
+            reportingRadarSite = site;
             singleSiteRadarLocationKey = locationKey;
-                 singleSiteRadarRequestKey = locationKey;
-                 refreshSingleSiteRadarMarkerSelection();
-                 singleSiteRadarProducts = [];
-                 setSingleSiteRadarProductOptions([]);
-                 loadSingleSiteRadarProducts(site);
+            singleSiteRadarRequestKey = locationKey;
+            refreshSingleSiteRadarMarkerSelection();
+            singleSiteRadarProducts = [];
+            setSingleSiteRadarProductOptions([]);
+            loadSingleSiteRadarProducts(site);
         }).catch(function(error) {
             if (requestId !== singleSiteRadarRequestId) return;
             console.warn('[SkyMonitor] IEM single-site radar failed:', error);
             singleSiteRadarLocationKey = '';
-                 _clearSingleSiteRadarSites();
-            _ensureReportingMosaicRadarLayer();
+            _clearSingleSiteRadarSites();
+            _ensureLiveRadarLayer();
             setSingleSiteRadarStatus('Unavailable; mosaic active');
         });
         updateUSOnlyLayerLabels();
@@ -17149,7 +17451,13 @@
         if (active) {
             renderReportCategories();
             if (!window._radarRefreshTimer) {
-                window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
+                window._radarRefreshTimer = setInterval(function() {
+                    loadReportingMapData();
+                    if (!historicalRadarState.active &&
+                        reportingRadarLayerMode !== 'single') {
+                        _loadLiveRadarFrames();
+                    }
+                }, 120000);
             }
             setTimeout(function() {
                 if (!reportingMap) initReportingMap();
@@ -17283,11 +17591,7 @@
         ++privacySnapGeneration;
         const offset = applyPrivacyOffset(rawLat, rawLon);
         setReportPin(offset.la, offset.lo);
-        // A direct /radar?alert=... route must stay focused on the linked
-        // alert. The live-location watcher calls this function on its first
-        // fix, which previously pulled the map back to the user after the
-        // alert link had opened.
-        if (recenterMap && !CUSTOM_SKY_DEEP_LINK_ID && reportingMap) {
+        if (recenterMap && reportingMap) {
             reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
         }
     }
@@ -17298,9 +17602,7 @@
             const cb = document.getElementById('privacy-mode-cb');
             if (requestId !== privacySnapGeneration || !cb || !cb.checked) return false;
             setReportPin(center.lat, center.lon);
-            if (reportingMap && !CUSTOM_SKY_DEEP_LINK_ID) {
-                reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
-            }
+            if (reportingMap) reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
             return true;
         }).catch(function() {
             // Never fall back to raw coordinates. The existing offset pin is
@@ -17354,18 +17656,11 @@
         // GPS uses the existing privacy-adjusted report pin. Manual locations
         // center the actual map on the selected coordinates while preserving
         // the independently stored report pin.
-        // Do not reveal or briefly center on the remembered/live user
-        // location while a direct alert link is resolving. The linked
-        // polygon will provide the authoritative viewport as soon as its
-        // geometry loads; starting from a neutral view prevents the visible
-        // user-location pan that used to happen first.
-        let initialView = CUSTOM_SKY_DEEP_LINK_ID
-            ? { lat: 20, lon: 0, zoom: 2 }
-            : {
-                lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
-                lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
-                zoom: 8
-            };
+        let initialView = {
+            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
+            zoom: 8
+        };
         // Keep the reporting surface to one world copy. Without noWrap,
         // Leaflet repeats the horizontal tile grid indefinitely and every
         // marker appears again in each wrapped copy.
@@ -17398,7 +17693,7 @@
             subdomains: 'abcd', maxZoom: 19, noWrap: true
         }).addTo(reportingMap);
 
-        // Layer 2 — one consistent IEM/NEXRAD radar source.
+        // Layer 2 — LibreWXR live composite; historical mode swaps in IEM.
         setReportingRadarLayerForLocation();
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
@@ -20062,7 +20357,13 @@
                     openHistoricalRadarPicker();
                 }
             }, 80);
-            window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
+            window._radarRefreshTimer = setInterval(function() {
+                loadReportingMapData();
+                if (!historicalRadarState.active &&
+                    reportingRadarLayerMode !== 'single') {
+                    _loadLiveRadarFrames();
+                }
+            }, 120000);
             return;
         }
         var handoffHandled = consumeInfoLocationHandoff();
