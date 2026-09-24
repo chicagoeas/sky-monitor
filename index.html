@@ -15297,12 +15297,16 @@
             // radar frame is being rebuilt. The popup is the user's primary
             // context for this route, and closing it here makes it disappear
             // immediately after the alert link opens it.
-            const keepHistoricalCustomAlertPopupOpen =
+            // A deep-linked alert is the user's requested map context. Keep
+            // its popup alive while the initial archive/live-feed probe and
+            // the follow-up refresh rebuild the custom-alert layer. The
+            // second pass used to close the popup immediately after the
+            // auto-open timer ran, leaving the user with only the map.
+            const keepCustomSkyDeepLinkPopupOpen =
                 !!CUSTOM_SKY_DEEP_LINK_ID &&
-                historicalRadarState.active &&
-                customSkyDeepLinkHandled;
+                (customSkyDeepLinkHandled || !!customSkyDeepLinkEntry);
             if (reportingMap && reportingMap.closePopup &&
-                !keepHistoricalCustomAlertPopupOpen) {
+                !keepCustomSkyDeepLinkPopupOpen) {
                 reportingMap.closePopup();
             }
             customSkyAlertLayer.clearLayers();
@@ -17279,7 +17283,11 @@
         ++privacySnapGeneration;
         const offset = applyPrivacyOffset(rawLat, rawLon);
         setReportPin(offset.la, offset.lo);
-        if (recenterMap && reportingMap) {
+        // A direct /radar?alert=... route must stay focused on the linked
+        // alert. The live-location watcher calls this function on its first
+        // fix, which previously pulled the map back to the user after the
+        // alert link had opened.
+        if (recenterMap && !CUSTOM_SKY_DEEP_LINK_ID && reportingMap) {
             reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
         }
     }
@@ -17290,7 +17298,9 @@
             const cb = document.getElementById('privacy-mode-cb');
             if (requestId !== privacySnapGeneration || !cb || !cb.checked) return false;
             setReportPin(center.lat, center.lon);
-            if (reportingMap) reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            if (reportingMap && !CUSTOM_SKY_DEEP_LINK_ID) {
+                reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            }
             return true;
         }).catch(function() {
             // Never fall back to raw coordinates. The existing offset pin is
@@ -17344,11 +17354,18 @@
         // GPS uses the existing privacy-adjusted report pin. Manual locations
         // center the actual map on the selected coordinates while preserving
         // the independently stored report pin.
-        let initialView = {
-            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
-            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
-            zoom: 8
-        };
+        // Do not reveal or briefly center on the remembered/live user
+        // location while a direct alert link is resolving. The linked
+        // polygon will provide the authoritative viewport as soon as its
+        // geometry loads; starting from a neutral view prevents the visible
+        // user-location pan that used to happen first.
+        let initialView = CUSTOM_SKY_DEEP_LINK_ID
+            ? { lat: 20, lon: 0, zoom: 2 }
+            : {
+                lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+                lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
+                zoom: 8
+            };
         // Keep the reporting surface to one world copy. Without noWrap,
         // Leaflet repeats the horizontal tile grid indefinitely and every
         // marker appears again in each wrapped copy.
