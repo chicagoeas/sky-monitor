@@ -12198,8 +12198,8 @@
         } catch (e) {}
 
         if (_wpcMpdRequest) return _wpcMpdRequest;
-        _wpcMpdRequest = fetch(WEATHER_WORKER_URL + '/api/weather/mpd?lat=' +
-            encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon))
+        _wpcMpdRequest = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/mpd?lat=' +
+            encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon), undefined, 9000)
             .then(function(res) {
                 if (!res.ok) throw new Error('WPC MPD Worker ' + res.status);
                 return res.json();
@@ -20001,6 +20001,12 @@
                     var _resolveHomeData = _homeDataResolve;
                     _homeDataResolve = null;
                     _resolveHomeData();
+                    // The current observation is the splash screen's
+                    // readiness boundary. Optional enrichment continues in
+                    // the background and must never block the first paint.
+                    if (typeof window._dismissLaunch === 'function') {
+                        window._dismissLaunch();
+                    }
                 }
             }
             const _fullDataReady = (async function() {
@@ -20705,6 +20711,17 @@
         setTimeout(scrollToPrivacyContact, 0);
     });
 
+    // The launch screen is a guard against a blank first paint, not a guard
+    // against every optional weather provider. Define this before
+    // DOMContentLoaded so the primary load can dismiss it as soon as the
+    // current observation is rendered.
+    window._dismissLaunch = function() {
+        var ls = document.getElementById('launch-screen');
+        if (!ls || ls.classList.contains('hidden')) return;
+        ls.classList.add('hidden');
+        setTimeout(function() { ls.style.display = 'none'; }, 550);
+    };
+
     window.addEventListener('DOMContentLoaded', function() {
         // Load the persisted location before the Reporting Map can initialize.
         // Direct /radar loads create the map during this event, before
@@ -20752,6 +20769,14 @@
             if (window.SKYMONITOR_RADAR_PAGE) {
                 var radarNav = document.getElementById('nav-reporting');
                 if (radarNav) window.switchTab('reporting', radarNav);
+            } else {
+                var handoffHandled = consumeInfoLocationHandoff();
+                if (!handoffHandled) loadAll().then(function() {
+                    syncPushLocation();
+                    showSkyMonitorWelcomeIfNeeded();
+                    checkForGitHubRelease();
+                });
+                else window._dismissLaunch();
             }
         }
     });
@@ -20760,15 +20785,6 @@
         loadLoc();
         _updateNotificationProviderVisibility();
         SkyDB.migrate();
-        // Dismiss the launch screen only after the first complete load.
-        // A fixed four-second ceiling made phones reveal a half-painted
-        // dashboard while the weather requests were still in flight.
-        window._dismissLaunch = function() {
-            var ls = document.getElementById('launch-screen');
-            if (!ls || ls.classList.contains('hidden')) return;
-            ls.classList.add('hidden');
-            setTimeout(function() { ls.style.display = 'none'; }, 550);
-        };
         if (window.SKYMONITOR_INFO_PAGE) {
             window._dismissLaunch();
             return;
@@ -20802,14 +20818,8 @@
             }, 120000);
             return;
         }
-        var handoffHandled = consumeInfoLocationHandoff();
-        if (!handoffHandled) loadAll().then(function() {
-            syncPushLocation();
-            showSkyMonitorWelcomeIfNeeded();
-            window._dismissLaunch();
-            checkForGitHubRelease();
-        });
-        else window._dismissLaunch();
+        // Normal SkyMonitor startup begins from DOMContentLoaded so it does
+        // not wait for unrelated images or third-party page resources.
     };
 </script>
 
