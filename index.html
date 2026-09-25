@@ -2596,6 +2596,11 @@
     // lookup until the reporting map has finished loading.
     const CUSTOM_SKY_DEEP_LINK_ID =
         new URLSearchParams(window.location.search).get('alert')?.trim() || '';
+    function customSkyDeepLinkOwnsReportingViewport() {
+        return !!CUSTOM_SKY_DEEP_LINK_ID &&
+            !!window.SKYMONITOR_RADAR_PAGE &&
+            !reportingMapManualRefresh;
+    }
     // Google Form prefilled Alert ID field (entry.598068649)
     const CUSTOM_SKY_ALERT_REPORT_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfgRzOSJSsbV6faOodFd7H6ET6-6PysP51yvMNJSxuz96RGBQ/viewform?usp=pp_url&entry.598068649=';
 
@@ -4541,7 +4546,7 @@
                 if (cityBox) cityBox.value = '';
                 window._locFromGPS = true;
                 _rememberGpsLocation(lat, lon);
-                recalculateReportPinForLocation(lat, lon, true);
+                recalculateReportPinForLocation(lat, lon, true, true);
                 updateLocation();
             }, function() { alert('GPS Access Denied'); });
         }
@@ -15566,16 +15571,16 @@
             // layer in one commit. This prevents a slow archive request from
             // blanking the polygon while an older popup remains on screen.
             if (loadGeneration !== customSkyAlertLoadGeneration) return;
-            // Keep the deep-linked custom alert open while its historical
-            // radar frame is being rebuilt. The popup is the user's primary
-            // context for this route, and closing it here makes it disappear
-            // immediately after the alert link opens it.
-            const keepHistoricalCustomAlertPopupOpen =
+            // Keep the deep-linked custom alert open while the initial archive
+            // probe or later layer refresh rebuilds its polygon. The popup is
+            // independent of that layer, so closing it here makes the alert
+            // disappear just after the direct link opens it.
+            const keepDeepLinkedCustomAlertPopupOpen =
                 !!CUSTOM_SKY_DEEP_LINK_ID &&
-                historicalRadarState.active &&
+                !reportingMapManualRefresh &&
                 customSkyDeepLinkHandled;
             if (reportingMap && reportingMap.closePopup &&
-                !keepHistoricalCustomAlertPopupOpen) {
+                !keepDeepLinkedCustomAlertPopupOpen) {
                 reportingMap.closePopup();
             }
             customSkyAlertLayer.clearLayers();
@@ -17906,7 +17911,7 @@
         navigator.geolocation.getCurrentPosition(function(pos) {
             const rawLa = pos.coords.latitude;
             const rawLo = pos.coords.longitude;
-            recalculateReportPinForLocation(rawLa, rawLo, true);
+            recalculateReportPinForLocation(rawLa, rawLo, true, true);
         }, function() {
             alert('Could not get your location. Check browser permissions.');
         }, { enableHighAccuracy: true, timeout: 8000 });
@@ -17936,7 +17941,7 @@
         return { la: parseFloat((rawLat + dLat).toFixed(5)), lo: parseFloat((rawLon + dLon).toFixed(5)) };
     }
 
-    function recalculateReportPinForLocation(rawLat, rawLon, recenterMap) {
+    function recalculateReportPinForLocation(rawLat, rawLon, recenterMap, forceRecenter) {
         rawLat = parseFloat(rawLat);
         rawLon = parseFloat(rawLon);
         if (!isFinite(rawLat) || !isFinite(rawLon)) return;
@@ -17949,25 +17954,29 @@
         if (privacyMode) {
             // Privacy Mode resolves a named neighborhood/community center
             // rather than exposing the raw GPS coordinate.
-            moveReportPinToPrivacyCenter(rawLat, rawLon, false);
+            moveReportPinToPrivacyCenter(rawLat, rawLon, false, forceRecenter);
             return;
         }
 
         ++privacySnapGeneration;
         const offset = applyPrivacyOffset(rawLat, rawLon);
         setReportPin(offset.la, offset.lo);
-        if (recenterMap && reportingMap) {
+        if (recenterMap && reportingMap &&
+            (forceRecenter || !customSkyDeepLinkOwnsReportingViewport())) {
             reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
         }
     }
 
-    function moveReportPinToPrivacyCenter(rawLat, rawLon, showError) {
+    function moveReportPinToPrivacyCenter(rawLat, rawLon, showError, forceRecenter) {
         const requestId = ++privacySnapGeneration;
         return _privacyCenterFromLocation(rawLat, rawLon).then(function(center) {
             const cb = document.getElementById('privacy-mode-cb');
             if (requestId !== privacySnapGeneration || !cb || !cb.checked) return false;
             setReportPin(center.lat, center.lon);
-            if (reportingMap) reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            if (reportingMap &&
+                (forceRecenter || !customSkyDeepLinkOwnsReportingViewport())) {
+                reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            }
             return true;
         }).catch(function() {
             // Never fall back to raw coordinates. The existing offset pin is
@@ -18020,12 +18029,15 @@
 
         // GPS uses the existing privacy-adjusted report pin. Manual locations
         // center the actual map on the selected coordinates while preserving
-        // the independently stored report pin.
-        let initialView = {
-            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
-            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
-            zoom: 8
-        };
+        // the independently stored report pin. A direct alert link starts on
+        // a neutral world view, then centers on the linked polygon when ready.
+        let initialView = customSkyDeepLinkOwnsReportingViewport()
+            ? { lat: 20, lon: 0, zoom: 2 }
+            : {
+                lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+                lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
+                zoom: 8
+            };
         // Keep the reporting surface to one world copy. Without noWrap,
         // Leaflet repeats the horizontal tile grid indefinitely and every
         // marker appears again in each wrapped copy.
