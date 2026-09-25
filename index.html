@@ -803,6 +803,43 @@
             border-top: 1px solid rgba(255,255,255,0.15); padding-top: 8px;
             max-height: 360px; overflow-y: auto; overflow-x: hidden; color: rgba(255,255,255,0.9);
         }
+        .custom-skymonitor-hazard .alert-expand-btn {
+            color: inherit;
+            opacity: 0.82;
+        }
+        .custom-skymonitor-hazard .alert-expand-btn:hover { opacity: 1; }
+        .custom-skymonitor-hazard .alert-full-text {
+            color: inherit;
+            border-top-color: currentColor;
+        }
+        .custom-skymonitor-hazard .custom-alert-card-direct-link {
+            display: block;
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            border-radius: inherit;
+            color: inherit;
+            text-decoration: none;
+        }
+        .custom-skymonitor-hazard .custom-alert-card-direct-link:focus-visible {
+            outline: 3px solid currentColor;
+            outline-offset: -3px;
+        }
+        .custom-skymonitor-hazard .custom-alert-card-content {
+            position: relative;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .custom-skymonitor-hazard .custom-alert-card-content button,
+        .custom-skymonitor-hazard .custom-alert-card-content a {
+            position: relative;
+            z-index: 3;
+            pointer-events: auto;
+        }
+        .custom-skymonitor-hazard .custom-alert-card-content .alert-full-text {
+            pointer-events: auto;
+            cursor: auto;
+        }
         .alert-timing {
             display: inline-block; width: max-content; max-width: 100%; margin-right: 5px;
             vertical-align: middle;
@@ -2596,6 +2633,11 @@
     // lookup until the reporting map has finished loading.
     const CUSTOM_SKY_DEEP_LINK_ID =
         new URLSearchParams(window.location.search).get('alert')?.trim() || '';
+    function customSkyDeepLinkOwnsReportingViewport() {
+        return !!CUSTOM_SKY_DEEP_LINK_ID &&
+            !!window.SKYMONITOR_RADAR_PAGE &&
+            !reportingMapManualRefresh;
+    }
     // Google Form prefilled Alert ID field (entry.598068649)
     const CUSTOM_SKY_ALERT_REPORT_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSfgRzOSJSsbV6faOodFd7H6ET6-6PysP51yvMNJSxuz96RGBQ/viewform?usp=pp_url&entry.598068649=';
 
@@ -4541,7 +4583,7 @@
                 if (cityBox) cityBox.value = '';
                 window._locFromGPS = true;
                 _rememberGpsLocation(lat, lon);
-                recalculateReportPinForLocation(lat, lon, true);
+                recalculateReportPinForLocation(lat, lon, true, true);
                 updateLocation();
             }, function() { alert('GPS Access Denied'); });
         }
@@ -12361,7 +12403,8 @@
             const discussionNumber = formatCustomSkyDiscussionNumber(props);
             if (!discussionNumber) return;
             hasRisk = true;
-            const mdColor = customSkyAlertColor(props) || '#ce93d8';
+            const mdColor = customSkyAlertSeverityColor(props);
+            const mdTextColor = customSkyAlertTextColor(mdColor);
             const isPrecipitationDiscussion = customSkyDiscussionLabel(props) === 'Mesoscale Precipitation Discussion';
             const discussionIcon = isPrecipitationDiscussion ? '&#128167;' : '&#x26C8;&#xFE0F;';
             const discussionKind = isPrecipitationDiscussion ? 'Mesoscale Precipitation Discussion' : 'Mesoscale Discussion';
@@ -12369,7 +12412,7 @@
             riskHtml += '<div role="button" tabindex="0" aria-label="Open SkyMonitor custom ' + escapeHtml(discussionKind) + ' ' + escapeHtml(discussionNumber) + '"'
                 + ' onclick="openCustomSkyMDFromRisk(' + mdIndex + ')"'
                 + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openCustomSkyMDFromRisk(' + mdIndex + ')}"'
-                + ' style="display:inline-flex; align-items:center; box-sizing:border-box; height:31px; white-space:nowrap; line-height:1; background:' + mdColor + '; color:#07131d; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">'
+                + ' style="display:inline-flex; align-items:center; box-sizing:border-box; height:31px; white-space:nowrap; line-height:1; background:' + mdColor + '; color:' + mdTextColor + '; padding:6px 12px; border-radius:8px; font-weight:900; font-size:0.85em; text-transform:uppercase; letter-spacing:1px; cursor:pointer;">'
                  + discussionIcon + ' Custom <a href="/about-custom-alerts" class="custom-alerts-help" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a> ' + escapeHtml(discussionDisplayName) + ' #' + escapeHtml(discussionNumber)
                 + '</div>';
         });
@@ -15096,6 +15139,183 @@
         return CUSTOM_SKY_ALERT_COLOR;
     }
 
+    // NWS help-map event colors for custom-alert cards and Severe-tab
+    // indicators. Keep this separate from customSkyAlertColor(), which is
+    // intentionally purple for every custom-alert polygon on the Reporting Map.
+    const CUSTOM_SKY_NWS_CODE_COLORS = {
+        BZW: '#FF4500', CFA: '#66CDAA', CFW: '#228B22', DSW: '#FFE4C4',
+        EWW: '#FF8C00', FFA: '#2E8B57', FFW: '#8B0000', FFS: '#8B0000',
+        FLA: '#2E8B57', FLW: '#00FF00', FLS: '#00FF00',
+        HWA: '#B8860B', HWW: '#DAA520', HUA: '#FF00FF', HUW: '#DC143C',
+        HLS: '#FFE4B5', SVA: '#DB7093', SVR: '#FFA500', SVS: '#00FFFF',
+        SQW: '#C71585', SMW: '#FFA500', SPS: '#FFE4B5',
+        SSA: '#DB7FF7', SSW: '#B524F7', TOA: '#FFFF00', TOR: '#FF0000',
+        TRA: '#F08080', TRW: '#B22222', TSA: '#FF00FF', TSW: '#FD6347',
+        WSA: '#4682B4', WSW: '#FF69B4', AVA: '#F4A460', AVW: '#1E90FF',
+        BLU: '#FFFFFF', CAE: '#FFFFFF', CDW: '#FFB6C1', CEM: '#FFB6C1',
+        EQW: '#8B4513', EVI: '#7FFF00', FRW: '#A0522D', HMW: '#4B0082',
+        LEW: '#C0C0C0', LAE: '#C0C0C0', TOE: '#C0C0C0', NUW: '#4B0082',
+        RHW: '#4B0082', SPW: '#FA8072', VOW: '#2F4F4F', ADR: '#C0C0C0',
+        DMO: '#F0FFFF', RMT: '#F0FFFF', RWT: '#F0FFFF'
+    };
+
+    const CUSTOM_SKY_NWS_EVENT_COLOR_RULES = [
+        [/\bFLASH FLOOD WATCH\b/, '#2E8B57'],
+        [/\bFLASH FLOOD (?:EMERGENCY|WARNING|STATEMENT)\b/, '#8B0000'],
+        [/\bTORNADO WARNING\b/, '#FF0000'],
+        [/\bTORNADO WATCH\b/, '#FFFF00'],
+        [/\bEXTREME WIND WARNING\b/, '#FF8C00'],
+        [/\bSEVERE THUNDERSTORM WARNING\b|\bSPECIAL MARINE WARNING\b/, '#FFA500'],
+        [/\bSEVERE THUNDERSTORM WATCH\b/, '#DB7093'],
+        [/\bSEVERE WEATHER STATEMENT\b/, '#00FFFF'],
+        [/\bCOASTAL FLOOD WATCH\b|\bLAKESHORE FLOOD WATCH\b/, '#66CDAA'],
+        [/\bCOASTAL FLOOD WARNING\b|\bLAKESHORE FLOOD WARNING\b|\bHIGH SURF WARNING\b/, '#228B22'],
+        [/\bCOASTAL FLOOD STATEMENT\b|\bLAKESHORE FLOOD STATEMENT\b/, '#6B8E23'],
+        [/\bCOASTAL FLOOD ADVISORY\b|\bLAKESHORE FLOOD ADVISORY\b/, '#7CFC00'],
+        [/\bFLOOD WATCH\b/, '#2E8B57'],
+        [/\bFLOOD WARNING\b|\bFLOOD STATEMENT\b/, '#00FF00'],
+        [/\bHURRICANE FORCE WIND WARNING\b/, '#CD5C5C'],
+        [/\bHURRICANE FORCE WIND WATCH\b/, '#9932CC'],
+        [/\bHURRICANE WARNING\b|\bTYPHOON WARNING\b/, '#DC143C'],
+        [/\bHURRICANE WATCH\b|\bTYPHOON WATCH\b|\bTSUNAMI WATCH\b/, '#FF00FF'],
+        [/\bTROPICAL STORM WARNING\b/, '#B22222'],
+        [/\bTROPICAL STORM WATCH\b/, '#F08080'],
+        [/\bSTORM SURGE WARNING\b/, '#B524F7'],
+        [/\bSTORM SURGE WATCH\b/, '#DB7FF7'],
+        [/\bTROPICAL CYCLONE LOCAL STATEMENT\b|\bSTORM WATCH\b/, '#FFE4B5'],
+        [/\bSTORM WARNING\b/, '#9400D3'],
+        [/\bTSUNAMI WARNING\b/, '#FD6347'],
+        [/\bTSUNAMI ADVISORY\b/, '#D2691E'],
+        [/\bWINTER STORM WARNING\b/, '#FF69B4'],
+        [/\bWINTER STORM WATCH\b/, '#4682B4'],
+        [/\bWINTER WEATHER ADVISORY\b/, '#7B68EE'],
+        [/\bBLIZZARD WARNING\b/, '#FF4500'],
+        [/\bSNOW SQUALL WARNING\b/, '#C71585'],
+        [/\bICE STORM WARNING\b/, '#8B008B'],
+        [/\bLAKE EFFECT SNOW WARNING\b/, '#008B8B'],
+        [/\bHIGH WIND WARNING\b/, '#DAA520'],
+        [/\bHIGH WIND WATCH\b/, '#B8860B'],
+        [/\bWIND ADVISORY\b|\bLAKE WIND ADVISORY\b/, '#D2B48C'],
+        [/\bGALE WARNING\b/, '#DDA0DD'],
+        [/\bGALE WATCH\b/, '#FFC0CB'],
+        [/\bHEAVY FREEZING SPRAY WARNING\b/, '#00BFFF'],
+        [/\bHEAVY FREEZING SPRAY WATCH\b/, '#BC8F8F'],
+        [/\bFREEZING SPRAY ADVISORY\b/, '#00BFFF'],
+        [/\bHAZARDOUS SEAS WARNING\b|\bSMALL CRAFT ADVISORY\b|\bBRISK WIND ADVISORY\b/, '#D8BFD8'],
+        [/\bHAZARDOUS SEAS WATCH\b/, '#483D8B'],
+        [/\bDUST STORM WARNING\b|\bBLOWING DUST WARNING\b/, '#FFE4C4'],
+        [/\bDUST ADVISORY\b|\bBLOWING DUST ADVISORY\b/, '#BDB76B'],
+        [/\bAVALANCHE WARNING\b/, '#1E90FF'],
+        [/\bAVALANCHE WATCH\b/, '#F4A460'],
+        [/\bAVALANCHE ADVISORY\b/, '#CD853F'],
+        [/\bBLIZZARD\b/, '#FF4500'],
+        [/\bEXTREME HEAT WARNING\b/, '#C71585'],
+        [/\bEXTREME HEAT WATCH\b/, '#800000'],
+        [/\bHEAT ADVISORY\b/, '#FF7F50'],
+        [/\bEXTREME COLD WARNING\b/, '#0000FF'],
+        [/\bEXTREME COLD WATCH\b/, '#5F9EA0'],
+        [/\bCOLD WEATHER ADVISORY\b/, '#AFEEEE'],
+        [/\bFREEZE WARNING\b/, '#483D8B'],
+        [/\bFREEZE WATCH\b/, '#00FFFF'],
+        [/\bFROST ADVISORY\b/, '#6495ED'],
+        [/\bRED FLAG WARNING\b/, '#FF1493'],
+        [/\bFIRE WEATHER WATCH\b/, '#FFDEAD'],
+        [/\bEXTREME FIRE DANGER\b/, '#E9967A'],
+        [/\bFLASH FLOOD\b/, '#8B0000'],
+        [/\bFLOOD ADVISORY\b/, '#00FF7F'],
+        [/\bDENSE FOG ADVISORY\b/, '#708090'],
+        [/\bDENSE SMOKE ADVISORY\b/, '#F0E68C'],
+        [/\bFREEZING FOG ADVISORY\b/, '#008080'],
+        [/\bLOW WATER ADVISORY\b/, '#A52A2A'],
+        [/\bRIP CURRENT STATEMENT\b|\bBEACH HAZARDS STATEMENT\b/, '#40E0D0'],
+        [/\bMARINE WEATHER STATEMENT\b/, '#FFDAB9'],
+        [/\bSPECIAL WEATHER STATEMENT\b/, '#FFE4B5'],
+        [/\bHAZARDOUS WEATHER OUTLOOK\b/, '#EEE8AA'],
+        [/\bHYDROLOGIC OUTLOOK\b/, '#90EE90'],
+        [/\bSHORT TERM FORECAST\b/, '#98FB98'],
+        [/\bAIR QUALITY ALERT\b|\bAIR STAGNATION ADVISORY\b/, '#808080'],
+        [/\bHIGH SURF ADVISORY\b/, '#BA55D3'],
+        [/\bSHELTER IN PLACE WARNING\b/, '#FA8072'],
+        [/\bCIVIL DANGER WARNING\b|\bCIVIL EMERGENCY MESSAGE\b/, '#FFB6C1'],
+        [/\bNUCLEAR POWER PLANT WARNING\b|\bRADIOLOGICAL HAZARD WARNING\b|\bHAZARDOUS MATERIALS WARNING\b/, '#4B0082'],
+        [/\bFIRE WARNING\b/, '#A0522D'],
+        [/\bLAW ENFORCEMENT WARNING\b|\bLOCAL AREA EMERGENCY\b|\b911 TELEPHONE OUTAGE(?: EMERGENCY)?\b/, '#C0C0C0'],
+        [/\bEARTHQUAKE WARNING\b/, '#8B4513'],
+        [/\bVOLCANO WARNING\b/, '#2F4F4F'],
+        [/\bASHFALL WARNING\b/, '#A9A9A9'],
+        [/\bASHFALL ADVISORY\b/, '#696969'],
+        [/\bEVACUATION IMMEDIATE\b/, '#7FFF00'],
+        [/\bBLUE ALERT\b|\bCHILD ABDUCTION EMERGENCY\b/, '#FFFFFF']
+    ];
+
+    function customSkyAlertSeverityColor(props) {
+        var code = customSkyAlertCode(props);
+        if (code && Object.prototype.hasOwnProperty.call(CUSTOM_SKY_NWS_CODE_COLORS, code)) {
+            return CUSTOM_SKY_NWS_CODE_COLORS[code];
+        }
+        var eventFields = [
+            'alertClass', 'alert_class', 'alertClassCode', 'alert_class_code',
+            'class', 'severity', 'alertType', 'alert_type', 'event', 'type',
+            'category', 'hazard', 'headline', 'title', 'name', 'message'
+        ];
+        var eventSignals = [];
+        for (var fieldIndex = 0; fieldIndex < eventFields.length; fieldIndex++) {
+            var rawValue = props && props[eventFields[fieldIndex]];
+            if (rawValue == null || String(rawValue).trim() === '') continue;
+            var normalizedValue = String(rawValue).trim().toUpperCase();
+            if (Object.prototype.hasOwnProperty.call(
+                CUSTOM_SKY_NWS_CODE_COLORS,
+                normalizedValue
+            )) {
+                return CUSTOM_SKY_NWS_CODE_COLORS[normalizedValue];
+            }
+            eventSignals.push(normalizedValue);
+        }
+        var eventText = eventSignals.join(' ');
+        for (var i = 0; i < CUSTOM_SKY_NWS_EVENT_COLOR_RULES.length; i++) {
+            if (CUSTOM_SKY_NWS_EVENT_COLOR_RULES[i][0].test(eventText)) {
+                return CUSTOM_SKY_NWS_EVENT_COLOR_RULES[i][1];
+            }
+        }
+        return CUSTOM_SKY_ALERT_COLOR;
+    }
+
+    function customSkyAlertTextColor(backgroundColor) {
+        var match = String(backgroundColor || '').match(/^#?([0-9a-f]{6})$/i);
+        if (!match) return '#ffffff';
+        var hex = match[1];
+        var channels = [
+            parseInt(hex.slice(0, 2), 16),
+            parseInt(hex.slice(2, 4), 16),
+            parseInt(hex.slice(4, 6), 16)
+        ].map(function(channel) {
+            var value = channel / 255;
+            return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+        });
+        var luminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+        return luminance > 0.179 ? '#07131d' : '#ffffff';
+    }
+
+    function customSkyAlertRevisionId(feature) {
+        var props = feature && feature.properties || {};
+        return customSkyAlertValue(props, [
+            'revision_id', 'revisionId', 'alert_revision_id', 'alertRevisionId',
+            'revision_uuid', 'revisionUuid'
+        ], '') ||
+            customSkyAlertValue(props, ['id', 'uuid'], '') ||
+            (feature && feature.id != null ? String(feature.id) : '') ||
+            customSkyAlertValue(props, [
+                'alert_id', 'alertId', 'alertID', 'alertUuid', 'alert_uuid'
+            ], '');
+    }
+
+    function customSkyAlertRevisionUrl(feature) {
+        var revisionId = customSkyAlertRevisionId(feature);
+        return revisionId
+            ? 'https://skymonitor.app/radar?alert=' + encodeURIComponent(revisionId)
+            : '';
+    }
+
     function customSkyPointInRing(point, ring) {
         var inside = false;
         for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
@@ -15267,7 +15487,8 @@
             }
         } else return null;
         return {
-            family: family, score: score, label: label, color: CUSTOM_SKY_ALERT_COLOR, feature: feature,
+            family: family, score: score, label: label,
+            color: customSkyAlertSeverityColor(props), feature: feature,
             bannerScore: bannerScore,
             hazardCategory: hazardCategory,
             flags: flags,
@@ -15367,9 +15588,11 @@
                     ['headline', 'title', 'name', 'message'],
                     'SkyMonitor Alert'
                 );
-                var bannerColor = CUSTOM_SKY_ALERT_COLOR;
+                var bannerColor = bannerChoice.threat.color ||
+                    customSkyAlertSeverityColor(bannerProps);
                 banner.style.display = 'block';
                 banner.style.background = bannerColor;
+                banner.style.color = customSkyAlertTextColor(bannerColor);
                 banner.classList.remove('emergency-banner');
                 banner.innerText = bannerHeadline;
                 banner.setAttribute('data-custom-skymonitor', 'true');
@@ -15392,7 +15615,7 @@
                 if (!shortSummary) shortSummary = (actionMatch ? description.slice(0, actionMatch.index) : description).trim();
             }
             shortSummary = shortSummary.replace(/^\s*Full alert\s*:?\s*/i, '').trim();
-            var alertId = customSkyAlertValue(props, ['revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'], '') ||
+            var alertId = customSkyAlertRevisionId(feature) ||
                 (feature.id != null ? String(feature.id) : '');
             var reportUrl = alertId ? CUSTOM_SKY_ALERT_REPORT_FORM_URL + encodeURIComponent(alertId) : '';
             var summaryHtml = shortSummary ? '<div style="margin-top:8px;"><b>Short Summary</b><br>' + escapeHtml(shortSummary) + '</div>' : '';
@@ -15400,7 +15623,15 @@
             var reportHtml = reportUrl
                 ? '<a class="reporting-popup-report-link" href="' + escapeHtml(reportUrl) + '" target="_blank" rel="noopener noreferrer" title="Report alert" aria-label="Report alert" onclick="event.stopPropagation();">&#128227;</a>'
                 : '';
-             var customCardColor = CUSTOM_SKY_ALERT_COLOR;
+             var customCardColor = customSkyAlertSeverityColor(props);
+             var customCardTextColor = customSkyAlertTextColor(customCardColor);
+             var directRevisionUrl = customSkyAlertRevisionUrl(feature);
+             var directLinkHtml = directRevisionUrl
+                 ? '<a class="custom-alert-card-direct-link" href="' +
+                     escapeHtml(directRevisionUrl) +
+                     '" aria-label="' + escapeHtml(headline) +
+                     ' — open this alert revision on SkyMonitor Radar" title="Open this exact alert revision on SkyMonitor Radar"></a>'
+                 : '';
             // Keep the DOM id stable across refreshes and alert revisions so an
             // expanded card and its internal scroll position can be restored.
             var stableAlertId = customSkyAlertValue(props, [
@@ -15409,9 +15640,9 @@
             var customHazardId = 'custom-hazard-' +
                 String(stableAlertId).replace(/[^a-zA-Z0-9_-]/g, '_');
              var customTiming = expires
-                 ? '<div style="display:inline-block;font-size:0.72em;color:rgba(255,255,255,0.88);background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + escapeHtml(_fmtAlertTime(expires)) + '</div>'
+                 ? '<div style="display:inline-block;font-size:0.72em;color:' + customCardTextColor + ';background:rgba(0,0,0,0.22);border-radius:4px;padding:2px 7px;margin-top:4px;">Expires ' + escapeHtml(_fmtAlertTime(expires)) + '</div>'
                 : '';
-            var sourceLine = '<div style="font-size:0.72em;line-height:1.45;margin-top:3px;color:rgba(255,255,255,0.88);">SkyMonitor Custom Alert <a class="custom-alerts-help" href="/about-custom-alerts" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts">?</a></div>';
+            var sourceLine = '<div style="font-size:0.72em;line-height:1.45;margin-top:3px;color:' + customCardTextColor + ';opacity:0.82;">SkyMonitor Custom Alert <a class="custom-alerts-help" href="/about-custom-alerts" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts" onclick="event.stopPropagation();">?</a></div>';
              var fullDetails = '<div id="full-' + customHazardId + '" class="alert-full-text">' +
                  '<div style="margin-top:4px;"><b>' + escapeHtml(timeInfo.label) + ':</b> ' +
                  escapeHtml(timeInfo.value ? formatCustomSkyAlertTime(timeInfo.value) : '') + '</div>' +
@@ -15420,11 +15651,14 @@
                  summaryHtml + actionHtml + '</div>';
             var card = document.createElement('div');
             card.className = 'alert-card custom-skymonitor-hazard';
-            card.style.cssText = 'background:' + customCardColor + '; align-items:flex-start; cursor:default;';
-            card.innerHTML = '<img src="https://www.weather.gov/bundles/templating/images/top_news/important.png" style="width:55px;border-radius:5px;margin-top:2px;flex-shrink:0;" alt="">' +
-                '<div style="flex:1;min-width:0;"><div style="font-weight:bold;">' + escapeHtml(headline) +
+            card.style.cssText = 'background:' + customCardColor + '; color:' +
+                customCardTextColor + '; align-items:flex-start; position:relative; cursor:' +
+                (directRevisionUrl ? 'pointer' : 'default') + ';';
+            card.innerHTML = directLinkHtml +
+                '<img src="https://www.weather.gov/bundles/templating/images/top_news/important.png" style="width:55px;border-radius:5px;margin-top:2px;flex-shrink:0;" alt="">' +
+                '<div class="custom-alert-card-content" style="flex:1;min-width:0;"><div style="font-weight:bold;">' + escapeHtml(headline) +
                 '</div><div class="alert-meta-row">' + customTiming +
-                '<button class="alert-expand-btn" id="btn-' + customHazardId + '" onclick="event.stopPropagation(); toggleAlertText(\'' + customHazardId + '\')">&#9660; Show more</button>' + reportHtml + '</div>' +
+                '<button class="alert-expand-btn" id="btn-' + customHazardId + '" onclick="event.stopPropagation(); event.preventDefault(); toggleAlertText(\'' + customHazardId + '\')">&#9660; Show more</button>' + reportHtml + '</div>' +
                 sourceLine + fullDetails + '</div>';
             stack.appendChild(card);
         });
@@ -15566,16 +15800,16 @@
             // layer in one commit. This prevents a slow archive request from
             // blanking the polygon while an older popup remains on screen.
             if (loadGeneration !== customSkyAlertLoadGeneration) return;
-            // Keep the deep-linked custom alert open while its historical
-            // radar frame is being rebuilt. The popup is the user's primary
-            // context for this route, and closing it here makes it disappear
-            // immediately after the alert link opens it.
-            const keepHistoricalCustomAlertPopupOpen =
+            // Keep the deep-linked custom alert open while the initial archive
+            // probe or later layer refresh rebuilds its polygon. The popup is
+            // independent of that layer, so closing it here makes the alert
+            // disappear just after the direct link opens it.
+            const keepDeepLinkedCustomAlertPopupOpen =
                 !!CUSTOM_SKY_DEEP_LINK_ID &&
-                historicalRadarState.active &&
+                !reportingMapManualRefresh &&
                 customSkyDeepLinkHandled;
             if (reportingMap && reportingMap.closePopup &&
-                !keepHistoricalCustomAlertPopupOpen) {
+                !keepDeepLinkedCustomAlertPopupOpen) {
                 reportingMap.closePopup();
             }
             customSkyAlertLayer.clearLayers();
@@ -15897,6 +16131,9 @@
     }
 
     function _renderLiveRadarControls() {
+        // Historical mode owns this shared control; late live-layer callbacks
+        // must not replace the historical timeline during playback.
+        if (historicalRadarState.active) return;
         const controls = document.getElementById('historical-radar-controls');
         const slider = document.getElementById('historical-radar-slider');
         const time = document.getElementById('historical-radar-time-button');
@@ -17906,7 +18143,7 @@
         navigator.geolocation.getCurrentPosition(function(pos) {
             const rawLa = pos.coords.latitude;
             const rawLo = pos.coords.longitude;
-            recalculateReportPinForLocation(rawLa, rawLo, true);
+            recalculateReportPinForLocation(rawLa, rawLo, true, true);
         }, function() {
             alert('Could not get your location. Check browser permissions.');
         }, { enableHighAccuracy: true, timeout: 8000 });
@@ -17936,7 +18173,7 @@
         return { la: parseFloat((rawLat + dLat).toFixed(5)), lo: parseFloat((rawLon + dLon).toFixed(5)) };
     }
 
-    function recalculateReportPinForLocation(rawLat, rawLon, recenterMap) {
+    function recalculateReportPinForLocation(rawLat, rawLon, recenterMap, forceRecenter) {
         rawLat = parseFloat(rawLat);
         rawLon = parseFloat(rawLon);
         if (!isFinite(rawLat) || !isFinite(rawLon)) return;
@@ -17949,25 +18186,29 @@
         if (privacyMode) {
             // Privacy Mode resolves a named neighborhood/community center
             // rather than exposing the raw GPS coordinate.
-            moveReportPinToPrivacyCenter(rawLat, rawLon, false);
+            moveReportPinToPrivacyCenter(rawLat, rawLon, false, forceRecenter);
             return;
         }
 
         ++privacySnapGeneration;
         const offset = applyPrivacyOffset(rawLat, rawLon);
         setReportPin(offset.la, offset.lo);
-        if (recenterMap && reportingMap) {
+        if (recenterMap && reportingMap &&
+            (forceRecenter || !customSkyDeepLinkOwnsReportingViewport())) {
             reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
         }
     }
 
-    function moveReportPinToPrivacyCenter(rawLat, rawLon, showError) {
+    function moveReportPinToPrivacyCenter(rawLat, rawLon, showError, forceRecenter) {
         const requestId = ++privacySnapGeneration;
         return _privacyCenterFromLocation(rawLat, rawLon).then(function(center) {
             const cb = document.getElementById('privacy-mode-cb');
             if (requestId !== privacySnapGeneration || !cb || !cb.checked) return false;
             setReportPin(center.lat, center.lon);
-            if (reportingMap) reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            if (reportingMap &&
+                (forceRecenter || !customSkyDeepLinkOwnsReportingViewport())) {
+                reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
+            }
             return true;
         }).catch(function() {
             // Never fall back to raw coordinates. The existing offset pin is
@@ -18020,12 +18261,15 @@
 
         // GPS uses the existing privacy-adjusted report pin. Manual locations
         // center the actual map on the selected coordinates while preserving
-        // the independently stored report pin.
-        let initialView = {
-            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
-            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
-            zoom: 8
-        };
+        // the independently stored report pin. A direct alert link starts on
+        // a neutral world view, then centers on the linked polygon when ready.
+        let initialView = customSkyDeepLinkOwnsReportingViewport()
+            ? { lat: 20, lon: 0, zoom: 2 }
+            : {
+                lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+                lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
+                zoom: 8
+            };
         // Keep the reporting surface to one world copy. Without noWrap,
         // Leaflet repeats the horizontal tile grid indefinitely and every
         // marker appears again in each wrapped copy.
