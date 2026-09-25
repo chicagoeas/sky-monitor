@@ -1092,9 +1092,102 @@
         #historical-radar-slider {
             display: block;
             width: 100%;
-            margin: 2px 0 3px;
-            accent-color: #4fc3f7;
+            height: 24px;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            appearance: none;
+            -webkit-appearance: none;
+            background: transparent;
+            outline: none;
             cursor: pointer;
+            touch-action: pan-y;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #historical-radar-slider::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: 999px;
+            background: linear-gradient(
+                to right,
+                #4fc3f7 0,
+                #4fc3f7 var(--radar-progress, 0%),
+                rgba(255,255,255,0.26) var(--radar-progress, 0%),
+                rgba(255,255,255,0.26) 100%
+            );
+        }
+        #historical-radar-slider::-moz-range-track {
+            height: 4px;
+            border: 0;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.26);
+        }
+        #historical-radar-slider::-moz-range-progress {
+            height: 4px;
+            border-radius: 999px;
+            background: #4fc3f7;
+        }
+        #historical-radar-slider::-webkit-slider-thumb {
+            width: 14px;
+            height: 14px;
+            margin-top: -5px;
+            appearance: none;
+            -webkit-appearance: none;
+            border: 2px solid #07131d;
+            border-radius: 50%;
+            background: #eafaff;
+            box-shadow: 0 0 0 2px #4fc3f7, 0 0 9px rgba(79,195,247,0.62);
+        }
+        #historical-radar-slider::-moz-range-thumb {
+            width: 10px;
+            height: 10px;
+            border: 2px solid #07131d;
+            border-radius: 50%;
+            background: #eafaff;
+            box-shadow: 0 0 0 2px #4fc3f7, 0 0 9px rgba(79,195,247,0.62);
+        }
+        #historical-radar-slider:focus-visible::-webkit-slider-thumb {
+            box-shadow: 0 0 0 2px #07131d, 0 0 0 5px #4fc3f7;
+        }
+        #historical-radar-slider:focus-visible::-moz-range-thumb {
+            box-shadow: 0 0 0 2px #07131d, 0 0 0 5px #4fc3f7;
+        }
+        .radar-timeline-wrap {
+            position: relative;
+            padding-top: 0;
+        }
+        #radar-current-marker {
+            display: none;
+            position: absolute;
+            top: 14px;
+            left: 0%;
+            width: 2px;
+            height: 7px;
+            border-radius: 2px;
+            background: #ffffff;
+            box-shadow: 0 0 0 1px rgba(79,195,247,0.7), 0 0 7px rgba(79,195,247,0.95);
+            transform: translateX(-1px);
+            pointer-events: none;
+            z-index: 2;
+        }
+        #radar-current-marker::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: -2px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #4fc3f7;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.9);
+            transform: translateX(-50%);
+        }
+        #reporting-map .leaflet-layer.radar-frame-tile-layer {
+            transition: opacity 150ms linear;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #reporting-map .leaflet-layer.radar-frame-tile-layer {
+                transition: none;
+            }
         }
         #historical-radar-controls .historical-radar-endpoints {
             display: flex;
@@ -1686,7 +1779,7 @@
             <h2>About SkyMonitor custom alerts</h2>
 
             <h3>What are SkyMonitor custom alerts?</h3>
-            <p>SkyMonitor custom alerts are NWS-style alerts in the following categories: Severe Thunderstorm Warning, Tornado Warning, Flash Flood Warning, Flood Watch, Severe Thunderstorm Watch, Tornado Watch, Special Weather Statement, Mesoscale Discussion, and Mesoscale Precipitation Discussion, issued by trusted SkyMonitor users. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
+            <p>SkyMonitor custom alerts are issued by trusted SkyMonitor users. In addition to the built-in alert classes, issuers can select any operational three-letter NWS event code; SkyMonitor keeps that code's event category for map colors and hazard handling while allowing the public headline to be edited. Custom alerts are not official NWS products. Once issued, you can view them directly in the “LIVE REPORTING MAP” section of SkyMonitor as long as you have them enabled.</p>
 
             <h3>Can I trust SkyMonitor custom alerts?</h3>
             <p>You should NEVER completely trust a SkyMonitor custom alert. They are not issued by meteorologists or experts. However, they are useful for tracking specific storms and what they are capable of producing, even if there is too low a probability for the NWS to rely on. For example, a storm might have a probable chance of producing a tornado; however, the NWS thinks that chance is too low or even misses the chance entirely, which can happen, although rarely, and therefore a SkyMonitor custom alert could let you know of the possible danger. There are also situations where SkyMonitor custom alerts can come a few minutes or even multiple minutes BEFORE the NWS issues one; for example, a SkyMonitor custom Severe Thunderstorm Warning could come slightly before the NWS’s actual Severe Thunderstorm Warning.</p>
@@ -2215,18 +2308,21 @@
             <div id="reporting-map"></div>
             <div id="historical-radar-controls" aria-label="Historical radar timeline">
                 <div class="historical-radar-heading">
-                    <span>Historical radar</span>
+                    <span id="historical-radar-kicker">Historical radar</span>
                     <span style="display:flex;align-items:center;gap:7px;">
-                        <button id="historical-radar-time-button" type="button" onclick="openHistoricalRadarPicker()" aria-label="Change historical radar start time">--</button>
+                        <button id="historical-radar-time-button" type="button" onclick="openRadarTimelineTime()" aria-label="Selected radar scan time">--</button>
                         <button id="historical-radar-play" type="button"
-                            onclick="toggleHistoricalRadarPlayback()"
-                            aria-label="Play historical radar"
-                            title="Play historical radar">&#9654;</button>
+                            onclick="toggleRadarTimelinePlayback()"
+                            aria-label="Play radar"
+                            title="Play radar">&#9654;</button>
                     </span>
                 </div>
-                <input id="historical-radar-slider" type="range" min="0" max="0" value="0" step="1"
-                    aria-label="Historical radar frame"
-                    oninput="onHistoricalRadarSliderInput(this.value)">
+                <div class="radar-timeline-wrap">
+                    <input id="historical-radar-slider" type="range" min="0" max="0" value="0" step="1"
+                        aria-label="Radar frame"
+                        oninput="onRadarSliderInput(this.value)">
+                    <span id="radar-current-marker" aria-hidden="true"></span>
+                </div>
                 <div class="historical-radar-endpoints">
                     <span id="historical-radar-start">--</span>
                     <span id="historical-radar-end">--</span>
@@ -2268,7 +2364,7 @@
                 </div>
             </div>
             <div id="reporting-map-attribution-fullscreen" aria-label="Map attribution">
-                Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM / NEXRAD</a>
+                Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>
             </div>
 
             <!-- Layer settings panel (hidden until gear tapped) -->
@@ -2315,7 +2411,7 @@
                 <div id="reporting-map-info">
                     <div id="report-pin-coords" style="font-size:0.7em; color:#4fc3f7; min-height:1em;"></div>
                     <div id="reporting-map-attribution" aria-label="Map attribution">
-                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">Radar: IEM / NEXRAD</a>
+                        Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>
                     </div>
                 </div>
                 <button onclick="findMeReporting()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.72em; cursor:pointer;">&#128205; Find Me</button>
@@ -6335,8 +6431,11 @@
         var alertsLabel = document.getElementById('alerts-us-only');
         var lsrLabel = document.getElementById('lsr-us-only');
         if (radarLabel) {
-            radarLabel.innerText = '(US only)';
-            radarLabel.style.display = window.isOutsideUS ? 'inline' : 'none';
+            // The LibreWXR composite is not limited to the U.S. The optional
+            // IEM single-site selector remains U.S.-oriented but does not
+            // change the scope of the main radar overlay.
+            radarLabel.innerText = '';
+            radarLabel.style.display = 'none';
         }
         if (alertsLabel) {
             // NWS and Environment Canada polygons are both loaded
@@ -11544,7 +11643,13 @@
         // strength, not two independent tornado scores).
         var customThreatFlags = { tornado: false, tornadoObserved: false, tornadoPDS: false,
             tornadoEmergency: false, svrDestructive: false, ffConsiderable: false,
-            ffCatastrophic: false, ffEmergency: false };
+            ffCatastrophic: false, ffEmergency: false, hurricaneWarning: false,
+            typhoonWarning: false, tsunamiWarning: false, stormSurgeWarning: false,
+            extremeWindWarning: false, highWindWarning: false, blizzardWarning: false,
+            iceStormWarning: false, winterStormWarning: false, snowSquallWarning: false,
+            dustStormWarning: false, floodWarning: false, coastalFloodWarning: false,
+            lakeshoreFloodWarning: false, floodAdvisory: false, tornadoWatch: false,
+            svrWatch: false };
         var nwsFamilyScores = {};
         if (window.activeTornadoWarning) {
             nwsFamilyScores.tornado = window.activeTornadoEmergency ? 20 :
@@ -11557,6 +11662,30 @@
                 ((window.alertHasConsiderableFlood || window.alertHasCatastrophicFlood) ? 9 : 6);
         }
         if (_threatAlertEvents.some(function(e) { return e.toLowerCase().includes('special weather statement'); })) nwsFamilyScores.sps = 1;
+        // Extend the same duplicate-suppression rule to the NWS families
+        // represented by custom operational codes. A real NWS Hurricane
+        // Warning and a SkyMonitor HUW covering the same location should not
+        // count as two separate hurricane warnings.
+        [
+            ['tropical', 'hurricane warning', 9],
+            ['tropical', 'tropical storm warning', 6],
+            ['stormSurge', 'storm surge warning', 8],
+            ['tsunami', 'tsunami warning', 9],
+            ['extremeWind', 'extreme wind warning', 8],
+            ['highWind', 'high wind warning', 5],
+            ['blizzard', 'blizzard warning', 6],
+            ['winterStorm', 'winter storm warning', 5],
+            ['snowSquall', 'snow squall warning', 5],
+            ['dustStorm', 'dust storm warning', 5],
+            ['coastalFlood', 'coastal flood warning', 2],
+            ['floodWarning', 'flood warning', 2]
+        ].forEach(function(mapping) {
+            if (_threatAlertEvents.some(function(eventName) {
+                return eventName.toLowerCase().includes(mapping[1]);
+            })) {
+                nwsFamilyScores[mapping[0]] = mapping[2];
+            }
+        });
         (window.customSkyThreatAlerts || []).forEach(function(custom) {
             var existing = nwsFamilyScores[custom.family] || 0;
             var increment = Math.max(0, custom.score - existing);
@@ -11565,6 +11694,14 @@
                 factorList.push({ label: custom.label, color: custom.color });
                 nwsFamilyScores[custom.family] = custom.score;
             }
+            if (custom.hazardCategory) {
+                hazardCats[custom.hazardCategory] = (hazardCats[custom.hazardCategory] || 0) + 1;
+            }
+            Object.keys(custom.flags || {}).forEach(function(flagName) {
+                if (custom.flags[flagName] && Object.prototype.hasOwnProperty.call(customThreatFlags, flagName)) {
+                    customThreatFlags[flagName] = true;
+                }
+            });
             if (custom.family === 'tornado') {
                 customThreatFlags.tornado = true;
                 if (custom.score >= 11) customThreatFlags.tornadoObserved = true;
@@ -11638,10 +11775,14 @@
         // LIFE THREATENING, CRITICAL, and DANGEROUS are strictly flag-driven.
         // No score, no matter how high, can reach these tiers — only specific alert types can.
         const _tierEvtsLower = _threatAlertEvents.map(function(e) { return e.toLowerCase(); });
-        const _hasExtremeWindWarning = _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
-        const _hasTyphoonWarning     = _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
-        const _hasHurricaneWarningNow = _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
-        const _hasTsunamiWarning     = _tierEvtsLower.some(function(e) { return e.includes('tsunami warning'); });
+        const _hasExtremeWindWarning = customThreatFlags.extremeWindWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('extreme wind warning'); });
+        const _hasTyphoonWarning     = customThreatFlags.typhoonWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('typhoon warning'); });
+        const _hasHurricaneWarningNow = customThreatFlags.hurricaneWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('hurricane warning'); });
+        const _hasTsunamiWarning     = customThreatFlags.tsunamiWarning ||
+            _tierEvtsLower.some(function(e) { return e.includes('tsunami warning'); });
 
         // LIFE THREATENING: Tornado Emergency, PDS Tornado Warning, Flash Flood Emergency,
         // Extreme Wind Warning, and Typhoon/Hurricane/Tsunami Warning — these are all
@@ -11667,6 +11808,10 @@
         const _SHORT_FUSED = ['tornado warning','severe thunderstorm warning','flash flood warning','snow squall warning','extreme wind warning','dust storm warning'];
         const _hasDangerousWarning = !_isLifeThreatening && !_isCritical && (
             customThreatFlags.tornado ||
+            customThreatFlags.extremeWindWarning ||
+            customThreatFlags.snowSquallWarning ||
+            customThreatFlags.dustStormWarning ||
+            customThreatFlags.floodWarning ||
             _threatAlertEvents.some(function(e) {
             var el = e.toLowerCase();
             return _SHORT_FUSED.some(function(w) { return el.includes(w); });
@@ -11707,35 +11852,35 @@
             extremeHeatWarning: _activeNow('extreme heat warning'),
             heatAdvisory:       _activeNow('heat advisory') && !_activeNow('extreme heat warning'),
             // Winter — specific before generic
-            blizzardWarning:    _activeNow('blizzard warning'),
-            iceStormWarning:    _activeNow('ice storm warning'),
-            winterStormWarning: _activeNow('winter storm warning') && !_activeNow('blizzard warning') && !_activeNow('ice storm warning'),
+            blizzardWarning:    customThreatFlags.blizzardWarning || _activeNow('blizzard warning'),
+            iceStormWarning:    customThreatFlags.iceStormWarning || _activeNow('ice storm warning'),
+            winterStormWarning: customThreatFlags.winterStormWarning || (_activeNow('winter storm warning') && !_activeNow('blizzard warning') && !_activeNow('ice storm warning')),
             windChillWarning:   _activeNow('wind chill warning'),
-            snowSquallWarning:  _activeNow('snow squall warning'),
+            snowSquallWarning:  customThreatFlags.snowSquallWarning || _activeNow('snow squall warning'),
             // Wind
-            extremeWindWarning: _activeNow('extreme wind warning'),
-            highWindWarning:    _activeNow('high wind warning') && !_activeNow('extreme wind warning'),
+            extremeWindWarning: customThreatFlags.extremeWindWarning || _activeNow('extreme wind warning'),
+            highWindWarning:    customThreatFlags.highWindWarning || (_activeNow('high wind warning') && !_activeNow('extreme wind warning')),
             windWarningLabel:   (window.activeAlertEvents || []).some(function(e) {
                 return e.toLowerCase() === 'wind warning';
             }),
             // Watches
-            tornadoWatch:       _activeNow('tornado watch'),
-            svrWatch:           _activeNow('severe thunderstorm watch') && !_activeNow('tornado watch'),
+            tornadoWatch:       customThreatFlags.tornadoWatch || _activeNow('tornado watch'),
+            svrWatch:           customThreatFlags.svrWatch || (_activeNow('severe thunderstorm watch') && !_activeNow('tornado watch')),
             // Flood — specific before generic (coastal > river > flash > advisory)
             highSurfWarning:      _activeNow('high surf warning'),
             highSurfAdvisory:     _activeNow('high surf advisory') && !_activeNow('high surf warning'),
-            coastalFloodWarning:  _activeNow('coastal flood warning'),
+            coastalFloodWarning:  customThreatFlags.coastalFloodWarning || _activeNow('coastal flood warning'),
             coastalFloodAdvisory: _activeNow('coastal flood advisory') && !_activeNow('coastal flood warning'),
-            lakeshoreFloodWarning: _activeNow('lakeshore flood warning'),
-            floodWarning:         _activeNow('flood warning') && !_activeNow('flash flood warning') && !_activeNow('coastal flood warning') && !_activeNow('lakeshore flood warning'),
-            floodAdvisory:        _activeNow('flood advisory') && !_activeNow('flood warning') && !_activeNow('flash flood warning'),
+            lakeshoreFloodWarning: customThreatFlags.lakeshoreFloodWarning || _activeNow('lakeshore flood warning'),
+            floodWarning:         customThreatFlags.floodWarning || (_activeNow('flood warning') && !_activeNow('flash flood warning') && !_activeNow('coastal flood warning') && !_activeNow('lakeshore flood warning')),
+            floodAdvisory:        customThreatFlags.floodAdvisory || (_activeNow('flood advisory') && !_activeNow('flood warning') && !_activeNow('flash flood warning')),
             // Other
-            dustStormWarning:   _activeNow('dust storm warning'),
+            dustStormWarning:   customThreatFlags.dustStormWarning || _activeNow('dust storm warning'),
             denseFogAdvisory:   _activeNow('dense fog advisory'),
-            hurricaneWarning:   _activeNow('hurricane warning') || _activeNow('hurricane local statement'),
-            typhoonWarning:     _activeNow('typhoon warning'),
-            tsunamiWarning:     _activeNow('tsunami warning'),
-            stormSurgeWarning:  _activeNow('storm surge warning'),
+            hurricaneWarning:   customThreatFlags.hurricaneWarning || _activeNow('hurricane warning') || _activeNow('hurricane local statement'),
+            typhoonWarning:     customThreatFlags.typhoonWarning || _activeNow('typhoon warning'),
+            tsunamiWarning:     customThreatFlags.tsunamiWarning || _activeNow('tsunami warning'),
+            stormSurgeWarning:  customThreatFlags.stormSurgeWarning || _activeNow('storm surge warning'),
             internationalAlerts: _intlAlertCount > 0,
             internationalSeverity: _intlMaxSeverity,
         };
@@ -12053,8 +12198,8 @@
         } catch (e) {}
 
         if (_wpcMpdRequest) return _wpcMpdRequest;
-        _wpcMpdRequest = fetch(WEATHER_WORKER_URL + '/api/weather/mpd?lat=' +
-            encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon))
+        _wpcMpdRequest = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/mpd?lat=' +
+            encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon), undefined, 9000)
             .then(function(res) {
                 if (!res.ok) throw new Error('WPC MPD Worker ' + res.status);
                 return res.json();
@@ -13094,8 +13239,31 @@
     let customSkyAlertLayer = null;
     let userReportLayer = null;
     let reportingRadarLayer = null;
-    let reportingRadarLayerMode = 'mosaic';
+    let reportingRadarLayerMode = 'live';
     let reportingRadarSite = null;
+    const LIBREWXR_RADAR_BASE_URL = 'https://api.librewxr.net';
+    const LIBREWXR_WEATHER_MAPS_URL = LIBREWXR_RADAR_BASE_URL + '/public/weather-maps.json';
+    const LIVE_RADAR_FRAME_MS = 650;
+    const LIVE_RADAR_CURRENT_HOLD_MS = 3200;
+    const LIVE_RADAR_TRANSITION_TIMEOUT_MS = 2400;
+    const LIVE_RADAR_CROSSFADE_MS = 160;
+    let liveRadarState = {
+        active: false,
+        frames: [],
+        pastCount: 0,
+        currentIndex: 0,
+        index: 0,
+        timestampMs: 0
+    };
+    let liveRadarPlaying = false;
+    let liveRadarPlaybackTimer = null;
+    let liveRadarSliderTimer = null;
+    let liveRadarLastPlaybackIndex = null;
+    let liveRadarRequestId = 0;
+    let liveRadarFrameRequestId = 0;
+    let liveRadarInitialLoadComplete = false;
+    let liveRadarLayerTransition = null;
+    let liveRadarLayerRequestId = 0;
     const HISTORICAL_RADAR_FRAME_MS = 5 * 60 * 1000;
     // IEM's older N0R composite is archived from 1 Jan 1995. N0Q begins
     // on 13 Nov 2010 at 16:25 UTC, so historical frames must switch
@@ -14220,15 +14388,15 @@
              }
              radarSingleSiteEnabled = cb ? cb.checked : !radarSingleSiteEnabled;
              if (cb) cb.checked = radarSingleSiteEnabled;
+             if (radarSingleSiteEnabled) stopLiveRadarPlayback();
              localStorage.setItem('report_radar_single_site', radarSingleSiteEnabled ? '1' : '0');
              if (!radarSingleSiteEnabled) singleSiteRadarTargetLocation = null;
              singleSiteRadarRequestId++;
+             singleSiteRadarProductRequestId++;
              singleSiteRadarRequestKey = '';
              singleSiteRadarLocationKey = '';
-             if (radarSingleSiteEnabled) {
-                 singleSiteRadarProducts = [];
-                 setSingleSiteRadarProductOptions([]);
-             }
+             singleSiteRadarProducts = [];
+             setSingleSiteRadarProductOptions([]);
              updateSingleSiteRadarControl();
              setSingleSiteRadarStatus(radarSingleSiteEnabled ? 'Finding nearest site\u2026' : '');
              syncReportingRadarActionVisibility();
@@ -14881,20 +15049,52 @@
         return formatReportTime(value);
     }
 
-    function customSkyAlertColor(props) {
-        const value = customSkyAlertValue(props, ['severity', 'level', 'priority', 'alertType', 'event', 'type'], '').toLowerCase();
-        if (value.includes('tow') || value.includes('tornado') || value.includes('extreme') || value.includes('critical')) return '#ff1744';
-        if (value.includes('svr') || value.includes('svw') || value.includes('severe') || value.includes('warning') || value.includes('high')) return '#ff9100';
-        if (value.includes('mpd') || value.includes('precipitation discussion')) return '#4dd0e1';
-        if (value.includes('ffw') || value.includes('flw') || value.includes('flood') || value.includes('rain')) return '#00c853';
-        if (value.includes('winter') || value.includes('snow') || value.includes('ice')) return '#81d4fa';
-        if (value.includes('wind')) return '#ffd54f';
-        return '#ce93d8';
+    // NWS operational NWR-SAME event codes. The editor and API Worker use the
+    // same official list so custom alerts retain their actual event identity.
+    const CUSTOM_SKY_NWS_CODE_LABELS = {
+        BZW: 'Blizzard Warning', CFA: 'Coastal Flood Watch',
+        CFW: 'Coastal Flood Warning', DSW: 'Dust Storm Warning',
+        EWW: 'Extreme Wind Warning', FFA: 'Flash Flood Watch',
+        FFW: 'Flash Flood Warning', FFS: 'Flash Flood Statement',
+        FLA: 'Flood Watch', FLW: 'Flood Warning',
+        FLS: 'Flood Statement', HWA: 'High Wind Watch',
+        HWW: 'High Wind Warning', HUA: 'Hurricane Watch',
+        HUW: 'Hurricane Warning', HLS: 'Hurricane Statement',
+        SVA: 'Severe Thunderstorm Watch', SVR: 'Severe Thunderstorm Warning',
+        SVS: 'Severe Weather Statement', SQW: 'Snow Squall Warning',
+        SMW: 'Special Marine Warning', SPS: 'Special Weather Statement',
+        SSA: 'Storm Surge Watch', SSW: 'Storm Surge Warning',
+        TOA: 'Tornado Watch', TOR: 'Tornado Warning',
+        TRA: 'Tropical Storm Watch', TRW: 'Tropical Storm Warning',
+        TSA: 'Tsunami Watch', TSW: 'Tsunami Warning',
+        WSA: 'Winter Storm Watch', WSW: 'Winter Storm Warning',
+        AVA: 'Avalanche Watch', AVW: 'Avalanche Warning',
+        BLU: 'Blue Alert', CAE: 'Child Abduction Emergency',
+        CDW: 'Civil Danger Warning', CEM: 'Civil Emergency Message',
+        EQW: 'Earthquake Warning', EVI: 'Evacuation Immediate',
+        FRW: 'Fire Warning', HMW: 'Hazardous Materials Warning',
+        LEW: 'Law Enforcement Warning', LAE: 'Local Area Emergency',
+        TOE: '911 Telephone Outage Emergency',
+        NUW: 'Nuclear Power Plant Warning', RHW: 'Radiological Hazard Warning',
+        SPW: 'Shelter in Place Warning', VOW: 'Volcano Warning',
+        ADR: 'Administrative Message', DMO: 'Practice/Demo Warning',
+        RMT: 'Required Monthly Test', RWT: 'Required Weekly Test'
+    };
+    const CUSTOM_SKY_ALERT_COLOR = '#ce93d8';
+
+    function customSkyAlertCode(props) {
+        const value = customSkyAlertValue(props, [
+            'alertClass', 'alert_class', 'alertClassCode', 'alert_class_code',
+            'severity', 'alertType', 'alert_type', 'event', 'type'
+        ], '').trim().toUpperCase();
+        return Object.prototype.hasOwnProperty.call(CUSTOM_SKY_NWS_CODE_LABELS, value)
+            ? value
+            : '';
     }
 
-    // Custom alert polygons use one consistent map-specific color regardless
-    // of alert type. Home/severe cards intentionally keep their own colors.
-    const CUSTOM_SKY_MAP_ALERT_COLOR = '#ce93d8';
+    function customSkyAlertColor(props) {
+        return CUSTOM_SKY_ALERT_COLOR;
+    }
 
     function customSkyPointInRing(point, ring) {
         var inside = false;
@@ -14939,40 +15139,138 @@
         var qualifiers = customSkyAlertQualifiers(props).toUpperCase();
         // Qualifiers are the authoritative severity signal. Do not infer
         // severity from issuer-editable headlines or descriptions.
-        var classSignals = classText;
-        var family = '', score = 0, label = '', color = '#ff9100';
+        var nwsCode = customSkyAlertCode(props);
+        var nwsEventLabel = CUSTOM_SKY_NWS_CODE_LABELS[nwsCode] || '';
+        // Include the official event label so custom codes follow the same
+        // event-family rules as the corresponding NWS product.
+        var classSignals = (classText + ' ' + nwsEventLabel).toUpperCase();
+        var family = '', score = 0, label = '', color = '#ff9100', bannerScore = 0;
+        var hazardCategory = 'other';
+        var flags = {};
         // SkyMonitor MDs intentionally never enter threat-level scoring.
         if (isCustomSkyMesoscaleDiscussion(props) || /\bMD\b|MESOSCALE DISCUSSION/.test(classText)) return null;
-        if (/\bTOW\b|TORNADO WATCH/.test(classSignals)) {
+        if (/\bTOA\b|\bTOW\b|TORNADO WATCH/.test(classSignals)) {
             family = 'tornadoWatch'; score = 4; label = 'SkyMonitor Tornado Watch'; color = '#e53935';
-        } else if (/\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
+            hazardCategory = 'convective'; bannerScore = 4500; flags.tornadoWatch = true;
+        } else if (/\bSVA\b|\bSVW\b|SEVERE THUNDERSTORM WATCH/.test(classSignals)) {
             family = 'svrWatch'; score = 3; label = 'SkyMonitor Severe Thunderstorm Watch'; color = '#ffb300';
-        } else if (/\bFLW\b|FLOOD WATCH/.test(classSignals)) {
-            family = 'floodWatch'; score = 2; label = 'SkyMonitor Flood Watch'; color = '#00c853';
-        } else if (/\bTOR\b|TORNADO/.test(classSignals)) {
-            family = 'tornado'; score = 8; label = 'SkyMonitor Tornado Warning'; color = '#ff1744';
-            if (/TORNADO EMERGENCY/.test(qualifiers)) {
-                score = 20; label = 'SkyMonitor Tornado Emergency'; color = '#e040fb';
-            } else if (/PDS|PARTICULARLY DANGEROUS/.test(qualifiers)) {
-                score = 15; label = 'SkyMonitor PDS Tornado Warning'; color = '#e040fb';
-            } else if (/OBSERVED|CONFIRMED|SPOTTER|LAW ENFORCEMENT|PUBLIC CONFIRMED|SURFACE OBSERV/.test(qualifiers)) {
-                score = 11; label = 'SkyMonitor Confirmed Tornado'; color = '#ff1744';
-            }
-        } else if (/\bSVR\b|SEVERE THUNDERSTORM/.test(classSignals)) {
-            family = 'svr'; score = 6; label = 'SkyMonitor SVR Warning'; color = '#ff9100';
-            if (/DESTRUCTIVE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Destructive SVR'; color = '#ff5722'; }
-            else if (/CONSIDERABLE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Considerable SVR'; color = '#ff7043'; }
-            if (/TORNADO POSSIBLE/.test(qualifiers)) score += 1;
+            hazardCategory = 'convective'; bannerScore = 4300; flags.svrWatch = true;
+        } else if (/\bHUA\b|HURRICANE WATCH/.test(classSignals)) {
+            family = 'tropical'; score = 6; label = 'SkyMonitor Hurricane Watch'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.hurricaneWatch = true;
+        } else if (/\bHUW\b|HURRICANE WARNING/.test(classSignals)) {
+            family = 'tropical'; score = 9; label = 'SkyMonitor Hurricane Warning'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 12500; flags.hurricaneWarning = true;
+        } else if (/\bTRA\b|TROPICAL STORM WATCH/.test(classSignals)) {
+            family = 'tropical'; score = 4; label = 'SkyMonitor Tropical Storm Watch'; color = '#ffb300';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.tropicalStormWatch = true;
+        } else if (/\bTRW\b|TROPICAL STORM WARNING/.test(classSignals)) {
+            family = 'tropical'; score = 6; label = 'SkyMonitor Tropical Storm Warning'; color = '#ff9100';
+            hazardCategory = 'tropical'; bannerScore = 7030; flags.tropicalStormWarning = true;
+        } else if (/\bSSA\b|STORM SURGE WATCH/.test(classSignals)) {
+            family = 'stormSurge'; score = 5; label = 'SkyMonitor Storm Surge Watch'; color = '#ffb300';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.stormSurgeWatch = true;
+        } else if (/\bSSW\b|STORM SURGE WARNING/.test(classSignals)) {
+            family = 'stormSurge'; score = 8; label = 'SkyMonitor Storm Surge Warning'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 7030; flags.stormSurgeWarning = true;
+        } else if (/\bTSA\b|TSUNAMI WATCH/.test(classSignals)) {
+            family = 'tsunami'; score = 4; label = 'SkyMonitor Tsunami Watch'; color = '#ffb300';
+            hazardCategory = 'tropical'; bannerScore = 4000; flags.tsunamiWatch = true;
+        } else if (/\bTSW\b|TSUNAMI WARNING/.test(classSignals)) {
+            family = 'tsunami'; score = 9; label = 'SkyMonitor Tsunami Warning'; color = '#ff1744';
+            hazardCategory = 'tropical'; bannerScore = 12500; flags.tsunamiWarning = true;
+        } else if (/\bFFA\b|\bFLA\b|\bCFA\b|\bSSA\b|FLOOD WATCH/.test(classSignals)) {
+            family = 'floodWatch'; score = 2; label = 'SkyMonitor ' + (nwsEventLabel || 'Flood Watch'); color = '#00c853';
+            hazardCategory = 'flood'; bannerScore = 4000; flags.floodWatch = true;
+        } else if (/\bCFW\b|COASTAL FLOOD WARNING/.test(classSignals)) {
+            family = 'coastalFlood'; score = 2; label = 'SkyMonitor Coastal Flood Warning'; color = '#00c853';
+            hazardCategory = 'flood'; bannerScore = 7030; flags.coastalFloodWarning = true;
         } else if (/\bFFW\b|FLASH FLOOD WARNING/.test(classSignals)) {
             family = 'flashFlood'; score = 6; label = 'SkyMonitor Flash Flood Warning'; color = '#00bcd4';
-            if (/FLASH FLOOD EMERGENCY|CATASTROPHIC/.test(qualifiers)) { score = 16; label = 'SkyMonitor Flash Flood Emergency'; color = '#e040fb'; }
-            else if (/CONSIDERABLE/.test(qualifiers)) { score = 9; label = 'SkyMonitor Considerable Flash Flood Warning'; }
+            hazardCategory = 'flood'; bannerScore = 8000; flags.flashFloodWarning = true;
+            if (/FLASH FLOOD EMERGENCY|CATASTROPHIC/.test(qualifiers)) { score = 16; label = 'SkyMonitor Flash Flood Emergency'; color = '#e040fb'; bannerScore = 14000; flags.flashFloodEmergency = true; }
+            else if (/CONSIDERABLE/.test(qualifiers)) { score = 9; label = 'SkyMonitor Considerable Flash Flood Warning'; flags.flashFloodConsiderable = true; }
+        } else if (/\bFLW\b|FLOOD WARNING/.test(classSignals)) {
+            family = 'floodWarning'; score = 2; label = 'SkyMonitor Flood Warning'; color = '#00c853';
+            hazardCategory = 'flood'; bannerScore = 7030; flags.floodWarning = true;
+        } else if (/\bTOR\b|TORNADO/.test(classSignals)) {
+            family = 'tornado'; score = 8; label = 'SkyMonitor Tornado Warning'; color = '#ff1744';
+            hazardCategory = 'convective'; bannerScore = 11000; flags.tornadoWarning = true;
+            if (/TORNADO EMERGENCY/.test(qualifiers)) {
+                score = 20; label = 'SkyMonitor Tornado Emergency'; color = '#e040fb';
+                bannerScore = 15000; flags.tornadoEmergency = true;
+            } else if (/PDS|PARTICULARLY DANGEROUS/.test(qualifiers)) {
+                score = 15; label = 'SkyMonitor PDS Tornado Warning'; color = '#e040fb';
+                bannerScore = 13000; flags.tornadoPDS = true;
+            } else if (/OBSERVED|CONFIRMED|SPOTTER|LAW ENFORCEMENT|PUBLIC CONFIRMED|SURFACE OBSERV/.test(qualifiers)) {
+                score = 11; label = 'SkyMonitor Confirmed Tornado'; color = '#ff1744';
+                bannerScore = 12000; flags.tornadoObserved = true;
+            }
+        } else if (/\bSVR\b|\bSVS\b|SEVERE THUNDERSTORM|SEVERE WEATHER STATEMENT/.test(classSignals)) {
+            family = 'svr'; score = 6; label = 'SkyMonitor SVR Warning'; color = '#ff9100';
+            hazardCategory = 'convective'; bannerScore = 8500; flags.svrWarning = true;
+            if (/\bSVS\b|SEVERE WEATHER STATEMENT/.test(classSignals)) {
+                score = 2; label = 'SkyMonitor Severe Weather Statement'; bannerScore = 2000;
+            }
+            if (/DESTRUCTIVE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Destructive SVR'; color = '#ff5722'; bannerScore = 10000; flags.svrDestructive = true; }
+            else if (/CONSIDERABLE/.test(qualifiers)) { score = 7; label = 'SkyMonitor Considerable SVR'; color = '#ff7043'; flags.svrConsiderable = true; }
+            if (/TORNADO POSSIBLE/.test(qualifiers)) score += 1;
+        } else if (/\bFFS\b|FLASH FLOOD STATEMENT/.test(classSignals)) {
+            family = 'flashFlood'; score = 2; label = 'SkyMonitor Flash Flood Statement'; color = '#00bcd4';
+            hazardCategory = 'flood'; bannerScore = 2000; flags.flashFloodStatement = true;
         } else if (/\bSPS\b|SPECIAL WEATHER STATEMENT/.test(classSignals)) {
             family = 'sps'; score = 1; label = 'SkyMonitor Special Weather Statement'; color = '#ffeb3b';
+            hazardCategory = 'other'; bannerScore = 2000; flags.specialWeatherStatement = true;
             if (/DEVELOPING STORM|STRONG WIND|SMALL HAIL|SNOW SQUALL/.test(qualifiers)) score += 1;
+        } else if (/\bEWW\b|EXTREME WIND WARNING/.test(classSignals)) {
+            family = 'extremeWind'; score = 8; label = 'SkyMonitor Extreme Wind Warning'; color = '#ff9100';
+            hazardCategory = 'wind'; bannerScore = 20000; flags.extremeWindWarning = true;
+        } else if (/\bHWW\b|HIGH WIND WARNING/.test(classSignals)) {
+            family = 'highWind'; score = 5; label = 'SkyMonitor High Wind Warning'; color = '#ffb300';
+            hazardCategory = 'wind'; bannerScore = 7030; flags.highWindWarning = true;
+        } else if (/\bHWA\b|HIGH WIND WATCH/.test(classSignals)) {
+            family = 'highWind'; score = 3; label = 'SkyMonitor High Wind Watch'; color = '#ffb300';
+            hazardCategory = 'wind'; bannerScore = 4000; flags.highWindWatch = true;
+        } else if (/\bDSW\b|DUST STORM WARNING/.test(classSignals)) {
+            family = 'dustStorm'; score = 5; label = 'SkyMonitor Dust Storm Warning'; color = '#a1887f';
+            hazardCategory = 'wind'; bannerScore = 7030; flags.dustStormWarning = true;
+        } else if (/\bBZW\b|BLIZZARD WARNING/.test(classSignals)) {
+            family = 'blizzard'; score = 6; label = 'SkyMonitor Blizzard Warning'; color = '#64b5f6';
+            hazardCategory = 'winter'; bannerScore = 7030; flags.blizzardWarning = true;
+        } else if (/\bWSW\b|WINTER STORM WARNING/.test(classSignals)) {
+            family = 'winterStorm'; score = 5; label = 'SkyMonitor Winter Storm Warning'; color = '#90caf9';
+            hazardCategory = 'winter'; bannerScore = 7030; flags.winterStormWarning = true;
+        } else if (/\bSQW\b|SNOW SQUALL WARNING/.test(classSignals)) {
+            family = 'snowSquall'; score = 5; label = 'SkyMonitor Snow Squall Warning'; color = '#90caf9';
+            hazardCategory = 'winter'; bannerScore = 7030; flags.snowSquallWarning = true;
+        } else if (/\bWSA\b|WINTER STORM WATCH/.test(classSignals)) {
+            family = 'winterStorm'; score = 3; label = 'SkyMonitor Winter Storm Watch'; color = '#90caf9';
+            hazardCategory = 'winter'; bannerScore = 4000; flags.winterStormWatch = true;
+        } else if (nwsCode) {
+            // Preserve the full NWS event identity for every remaining
+            // operational code. Generic products use the same catch-all
+            // scoring bands as their NWS counterparts.
+            family = 'other';
+            var nwsEventLower = nwsEventLabel.toLowerCase();
+            label = 'SkyMonitor ' + nwsEventLabel;
+            color = customSkyAlertColor(props);
+            if (/WARNING|EMERGENCY/.test(nwsEventLabel.toUpperCase())) {
+                score = 3; bannerScore = 7030;
+            } else if (nwsEventLower.includes('watch')) {
+                score = 2; bannerScore = 4000;
+            } else if (nwsEventLower.includes('advisory')) {
+                score = 1; bannerScore = 3000;
+            } else if (nwsEventLower.includes('statement')) {
+                score = 1; bannerScore = 2000;
+            } else if (['ADR', 'RMT', 'RWT'].indexOf(nwsCode) === -1) {
+                bannerScore = 1500;
+            }
         } else return null;
         return {
-            family: family, score: score, label: label, color: color, feature: feature,
+            family: family, score: score, label: label, color: CUSTOM_SKY_ALERT_COLOR, feature: feature,
+            bannerScore: bannerScore,
+            hazardCategory: hazardCategory,
+            flags: flags,
             isDestructive: family === 'svr' && /DESTRUCTIVE/.test(qualifiers)
         };
     }
@@ -15019,6 +15317,7 @@
 
     function customSkyBannerScore(threatInfo) {
         if (!threatInfo) return 0;
+        if (Number(threatInfo.bannerScore) > 0) return Number(threatInfo.bannerScore);
         if (threatInfo.family === 'tornado') {
             if (threatInfo.score >= 20) return 15000;
             if (threatInfo.score >= 15) return 13000;
@@ -15030,7 +15329,9 @@
         if (threatInfo.family === 'svrWatch') return 6000;
         if (threatInfo.family === 'flashFlood') return threatInfo.score >= 16 ? 14000 : 8000;
         if (threatInfo.family === 'floodWatch') return 5000;
+        if (threatInfo.family === 'floodWarning') return 7500;
         if (threatInfo.family === 'sps') return 2000;
+        if (threatInfo.family === 'other') return Number(threatInfo.bannerScore) || 0;
         return 0;
     }
 
@@ -15066,21 +15367,7 @@
                     ['headline', 'title', 'name', 'message'],
                     'SkyMonitor Alert'
                 );
-                var bannerThreat = bannerChoice.threat;
-                var bannerColor = '#ff9100';
-                if (bannerThreat.family === 'tornado') {
-                    bannerColor = bannerThreat.score >= 20
-                        ? '#4a148c'
-                        : (bannerThreat.score >= 15 ? '#880e4f' : '#7f0000');
-                } else if (bannerThreat.family === 'tornadoWatch') {
-                    bannerColor = '#c62828';
-                } else if (bannerThreat.family === 'flashFlood') {
-                    bannerColor = '#00838f';
-                } else if (bannerThreat.family === 'floodWatch') {
-                    bannerColor = '#2e7d32';
-                } else if (bannerThreat.family === 'svrWatch') {
-                    bannerColor = '#f9a825';
-                }
+                var bannerColor = CUSTOM_SKY_ALERT_COLOR;
                 banner.style.display = 'block';
                 banner.style.background = bannerColor;
                 banner.classList.remove('emergency-banner');
@@ -15090,7 +15377,6 @@
         }
         features.forEach(function(feature, index) {
             var props = feature.properties || {};
-            var threatInfo = customSkyThreatInfo(feature);
             var alertClass = customSkyAlertValue(props, ['alertClass', 'alert_class', 'alertClassCode', 'alert_class_code', 'class', 'severity', 'alertType', 'alert_type', 'event', 'type'], 'Custom Alert');
             var headline = customSkyAlertValue(props, ['headline', 'title', 'name', 'message'], alertClass);
             var issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
@@ -15114,20 +15400,7 @@
             var reportHtml = reportUrl
                 ? '<a class="reporting-popup-report-link" href="' + escapeHtml(reportUrl) + '" target="_blank" rel="noopener noreferrer" title="Report alert" aria-label="Report alert" onclick="event.stopPropagation();">&#128227;</a>'
                 : '';
-             var customCardColor = '#e65100';
-             if (threatInfo && threatInfo.family === 'tornado') {
-                 customCardColor = threatInfo.score >= 20
-                     ? '#4a148c'
-                     : (threatInfo.score >= 15 ? '#880e4f' : '#7f0000');
-             } else if (threatInfo && threatInfo.family === 'tornadoWatch') {
-                 customCardColor = '#c62828';
-             } else if (threatInfo && threatInfo.family === 'flashFlood') {
-                 customCardColor = '#00838f';
-             } else if (threatInfo && threatInfo.family === 'floodWatch') {
-                 customCardColor = '#2e7d32';
-             } else if (threatInfo && threatInfo.family === 'svrWatch') {
-                 customCardColor = '#f9a825';
-             }
+             var customCardColor = CUSTOM_SKY_ALERT_COLOR;
             // Keep the DOM id stable across refreshes and alert revisions so an
             // expanded card and its internal scroll position can be restored.
             var stableAlertId = customSkyAlertValue(props, [
@@ -15297,16 +15570,12 @@
             // radar frame is being rebuilt. The popup is the user's primary
             // context for this route, and closing it here makes it disappear
             // immediately after the alert link opens it.
-            // A deep-linked alert is the user's requested map context. Keep
-            // its popup alive while the initial archive/live-feed probe and
-            // the follow-up refresh rebuild the custom-alert layer. The
-            // second pass used to close the popup immediately after the
-            // auto-open timer ran, leaving the user with only the map.
-            const keepCustomSkyDeepLinkPopupOpen =
+            const keepHistoricalCustomAlertPopupOpen =
                 !!CUSTOM_SKY_DEEP_LINK_ID &&
-                (customSkyDeepLinkHandled || !!customSkyDeepLinkEntry);
+                historicalRadarState.active &&
+                customSkyDeepLinkHandled;
             if (reportingMap && reportingMap.closePopup &&
-                !keepCustomSkyDeepLinkPopupOpen) {
+                !keepHistoricalCustomAlertPopupOpen) {
                 reportingMap.closePopup();
             }
             customSkyAlertLayer.clearLayers();
@@ -15325,7 +15594,13 @@
                     : rawHeadline;
                 const isArchived = props._skymonitorArchived === true ||
                     !isCustomAlertCurrentlyActive(props);
-                const alertType = isMd ? customSkyDiscussionLabel(props) : 'Custom alert';
+                const alertTypeCode = customSkyAlertValue(props, [
+                    'alertClass', 'alert_class', 'alertClassCode', 'alert_class_code',
+                    'severity', 'alertType', 'alert_type', 'event', 'type'
+                ], '').trim().toUpperCase();
+                const alertType = isMd
+                    ? customSkyDiscussionLabel(props)
+                    : (alertTypeCode ? alertTypeCode + ' \u00B7 Custom alert' : 'Custom alert');
                 const issuer = customSkyAlertValue(props, ['issuer', 'issuerName', 'issuedBy', 'discordUsername', 'discord_username', 'uploadedBy', 'uploaded_by', 'uploader', 'publisher', 'author', 'username', 'source', 'wfo', 'office'], 'SkyMonitor');
                 const description = customSkyAlertValue(props, ['description', 'details', 'body'], '');
                 let shortSummary = customSkyAlertValue(props, ['shortSummary', 'short_summary', 'shortDescription', 'short_description', 'summary'], '');
@@ -15339,9 +15614,9 @@
                 }
                 const timeInfo = reportingAlertTimeInfo(props);
                 const expires = customSkyAlertValue(props, ['expires', 'expiresAt', 'expires_at', 'expiration', 'expirationTime', 'expiration_time', 'ends', 'endTime'], '');
-                // The map has one consistent purple custom-alert treatment.
-                // customSkyAlertColor remains available to home/severe cards.
-                const color = CUSTOM_SKY_MAP_ALERT_COLOR;
+                // Reflect the NWS event type on the map; the editable headline
+                // remains independent from the alert's underlying event code.
+                const color = customSkyAlertColor(props);
                 const alertIdentifiers = customSkyAlertIdentifiers(feature);
                  const isDeepLinked = Boolean(
                      props._skymonitorDeepLinkRevision === true ||
@@ -15412,7 +15687,7 @@
                     isPolygon: true,
                      customAlertKey: isMd ? customSkyMDKey(feature) : alertId,
                      customAlertIds: alertIdentifiers,
-                    color: color,
+            color: CUSTOM_SKY_ALERT_COLOR,
                     title: escapeHtml(headline),
                        meta: expiredAge
                           ? '<span style="color:#ff5252;font-weight:800;">Expired</span> ' + escapeHtml(expiredAge)
@@ -15558,9 +15833,258 @@
 
     function _updateReportingMapAttribution() {
         var el = document.getElementById('reporting-map-attribution');
-        if (!el) return;
-        var radarAttribution = 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>';
-        el.innerHTML = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+        var fullscreen = document.getElementById('reporting-map-attribution-fullscreen');
+        var usesIEM = reportingRadarLayerMode === 'historical' ||
+            reportingRadarLayerMode === 'single';
+        var radarAttribution = usesIEM
+            ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>'
+            : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>';
+        var attribution = 'Leaflet | &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>, ' + radarAttribution;
+        if (el) el.innerHTML = attribution;
+        if (fullscreen) fullscreen.innerHTML = attribution;
+    }
+
+    function _liveRadarFrameUrl(timestampMs) {
+        // LibreWXR scheme 10 is the Viper HD reflectivity palette.
+        return LIBREWXR_RADAR_BASE_URL + '/v2/radar/' +
+            Math.floor(Number(timestampMs) / 1000) +
+            '/256/{z}/{x}/{y}/10/1_0.png';
+    }
+
+    function _liveRadarFormatTime(timestampMs, includeDate) {
+        if (!timestampMs) return '--';
+        return new Date(timestampMs).toLocaleString([], {
+            month: includeDate ? 'short' : undefined,
+            day: includeDate ? 'numeric' : undefined,
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZoneName: includeDate ? 'short' : undefined
+        });
+    }
+
+    function _liveRadarFrameTimes(items) {
+        return (Array.isArray(items) ? items : [])
+            .map(function(item) {
+                const seconds = Number(item && item.time);
+                return isFinite(seconds) ? Math.round(seconds * 1000) : 0;
+            })
+            .filter(function(timestampMs) { return timestampMs > 0; });
+    }
+
+    function _liveRadarNearestFrameIndex(frames, timestampMs, fallback) {
+        if (!frames.length || !timestampMs) return fallback || 0;
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+        frames.forEach(function(frame, index) {
+            const distance = Math.abs(frame - timestampMs);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestIndex = index;
+            }
+        });
+        return bestIndex;
+    }
+
+    function _updateRadarSliderProgress(slider) {
+        if (!slider) return;
+        const min = Number(slider.min) || 0;
+        const max = Number(slider.max) || 0;
+        const value = Number(slider.value) || 0;
+        const progress = max > min
+            ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100))
+            : 0;
+        slider.style.setProperty('--radar-progress', progress + '%');
+    }
+
+    function _renderLiveRadarControls() {
+        const controls = document.getElementById('historical-radar-controls');
+        const slider = document.getElementById('historical-radar-slider');
+        const time = document.getElementById('historical-radar-time-button');
+        const start = document.getElementById('historical-radar-start');
+        const end = document.getElementById('historical-radar-end');
+        const play = document.getElementById('historical-radar-play');
+        const kicker = document.getElementById('historical-radar-kicker');
+        const marker = document.getElementById('radar-current-marker');
+        if (!controls || !slider || !time || !start || !end) return;
+
+        const frames = liveRadarState.frames || [];
+        const frameCount = frames.length;
+        const hasLiveRadar = liveRadarState.active && frameCount > 0 &&
+            reportingRadarLayerMode !== 'single';
+        controls.classList.toggle('is-visible', hasLiveRadar);
+        if (kicker) kicker.textContent = 'LIVE RADAR';
+        slider.max = String(Math.max(0, frameCount - 1));
+        slider.value = String(Math.min(liveRadarState.index, Math.max(0, frameCount - 1)));
+        _updateRadarSliderProgress(slider);
+        slider.setAttribute('aria-label', 'Live radar frame');
+        time.textContent = frameCount
+            ? _liveRadarFormatTime(frames[liveRadarState.index], true)
+            : '--';
+        time.disabled = true;
+        time.title = 'Current live radar scan';
+        start.textContent = frameCount ? _liveRadarFormatTime(frames[0], false) : '--';
+        end.textContent = frameCount ? _liveRadarFormatTime(frames[frameCount - 1], false) : '--';
+        if (marker) {
+            const currentIndex = Math.max(0, Math.min(
+                liveRadarState.currentIndex,
+                Math.max(0, frameCount - 1)
+            ));
+            const position = frameCount > 1
+                ? (currentIndex / (frameCount - 1)) * 100
+                : 0;
+            marker.style.left = position + '%';
+            marker.style.display = hasLiveRadar ? 'block' : 'none';
+        }
+        if (play) {
+            const canPlay = hasLiveRadar && frameCount > 1 &&
+                liveRadarInitialLoadComplete;
+            play.disabled = !canPlay;
+            play.textContent = liveRadarPlaying ? '\u23f8' : '\u25b6';
+            play.setAttribute('aria-label', liveRadarPlaying ? 'Pause live radar' : 'Play live radar');
+            play.title = liveRadarPlaying ? 'Pause live radar' : 'Play live radar';
+        }
+    }
+
+    function _activateLiveRadarFrames(payload) {
+        const past = _liveRadarFrameTimes(payload && payload.radar && payload.radar.past);
+        const nowcast = _liveRadarFrameTimes(payload && payload.radar && payload.radar.nowcast);
+        const frames = past.concat(nowcast.filter(function(timestampMs, index) {
+            return past.indexOf(timestampMs) === -1 &&
+                nowcast.indexOf(timestampMs) === index;
+        }));
+        if (!frames.length) throw new Error('LibreWXR returned no radar frames');
+
+        const previousTimestamp = liveRadarState.timestampMs;
+        const wasAtCurrentScan = liveRadarState.active &&
+            liveRadarState.index === liveRadarState.currentIndex;
+        const currentIndex = past.length ? past.length - 1 : 0;
+        const nextIndex = previousTimestamp && !wasAtCurrentScan
+            ? _liveRadarNearestFrameIndex(frames, previousTimestamp, currentIndex)
+            : currentIndex;
+        liveRadarState = {
+            active: true,
+            frames: frames,
+            pastCount: past.length,
+            currentIndex: currentIndex,
+            index: nextIndex,
+            timestampMs: frames[nextIndex]
+        };
+        liveRadarInitialLoadComplete = true;
+        _renderLiveRadarControls();
+        _setHistoricalRadarStatus('');
+        _setLiveRadarFrame(nextIndex);
+    }
+
+    function _loadLiveRadarFrames() {
+        const requestId = ++liveRadarRequestId;
+        _setHistoricalRadarStatus('Loading live radar\u2026', '#9edfff');
+        return fetch(LIBREWXR_WEATHER_MAPS_URL, {
+            cache: 'no-store',
+            headers: { 'Accept': 'application/json' }
+        }).then(function(response) {
+            if (!response.ok) throw new Error('LibreWXR radar metadata request failed');
+            return response.json();
+        }).then(function(payload) {
+            if (requestId !== liveRadarRequestId ||
+                historicalRadarState.active) return;
+            _activateLiveRadarFrames(payload);
+        }).catch(function(error) {
+            if (requestId !== liveRadarRequestId ||
+                historicalRadarState.active) return;
+            liveRadarInitialLoadComplete = false;
+            _setHistoricalRadarStatus('Live radar unavailable; retrying\u2026', '#ffb74d');
+            console.warn('[SkyMonitor] LibreWXR radar failed:', error);
+        });
+    }
+
+    function _setLiveRadarFrame(index) {
+        if (!liveRadarState.active || !liveRadarState.frames.length ||
+            reportingRadarLayerMode === 'single') return;
+        const safeIndex = Math.max(0, Math.min(
+            Number(index) || 0,
+            liveRadarState.frames.length - 1
+        ));
+        liveRadarState.index = safeIndex;
+        liveRadarState.timestampMs = liveRadarState.frames[safeIndex];
+        _renderLiveRadarControls();
+        _replaceReportingRadarLayer(
+            _liveRadarFrameUrl(liveRadarState.timestampMs),
+            'live',
+            null
+        );
+    }
+
+    function stopLiveRadarPlayback() {
+        if (liveRadarPlaybackTimer) {
+            clearTimeout(liveRadarPlaybackTimer);
+            liveRadarPlaybackTimer = null;
+        }
+        liveRadarPlaying = false;
+        liveRadarLastPlaybackIndex = null;
+        _renderLiveRadarControls();
+    }
+
+    function scheduleLiveRadarPlayback() {
+        if (!liveRadarPlaying || !liveRadarState.active ||
+            liveRadarLayerTransition) return;
+        if (liveRadarPlaybackTimer) clearTimeout(liveRadarPlaybackTimer);
+        const atCurrentAfterLoop = liveRadarLastPlaybackIndex !== null &&
+            liveRadarState.index === liveRadarState.currentIndex &&
+            liveRadarLastPlaybackIndex !== liveRadarState.currentIndex;
+        liveRadarPlaybackTimer = setTimeout(function() {
+            liveRadarPlaybackTimer = null;
+            if (!liveRadarPlaying || !liveRadarState.active) return;
+            liveRadarLastPlaybackIndex = liveRadarState.index;
+            const nextIndex = (liveRadarState.index + 1) % liveRadarState.frames.length;
+            _setLiveRadarFrame(nextIndex);
+            if (!liveRadarLayerTransition) scheduleLiveRadarPlayback();
+        }, atCurrentAfterLoop ? LIVE_RADAR_CURRENT_HOLD_MS : LIVE_RADAR_FRAME_MS);
+    }
+
+    function toggleLiveRadarPlayback() {
+        if (!liveRadarState.active || liveRadarState.frames.length < 2 ||
+            !liveRadarInitialLoadComplete || reportingRadarLayerMode === 'single') return;
+        if (liveRadarPlaying) {
+            stopLiveRadarPlayback();
+            return;
+        }
+        liveRadarLastPlaybackIndex = liveRadarState.index;
+        liveRadarPlaying = true;
+        _renderLiveRadarControls();
+        scheduleLiveRadarPlayback();
+    }
+
+    function onLiveRadarSliderInput(value) {
+        if (!liveRadarState.active) return;
+        stopLiveRadarPlayback();
+        const nextIndex = Number(value) || 0;
+        liveRadarState.index = nextIndex;
+        _renderLiveRadarControls();
+        if (liveRadarSliderTimer) clearTimeout(liveRadarSliderTimer);
+        liveRadarSliderTimer = setTimeout(function() {
+            liveRadarSliderTimer = null;
+            _setLiveRadarFrame(nextIndex);
+        }, 90);
+    }
+
+    function onRadarSliderInput(value) {
+        if (historicalRadarState.active) {
+            onHistoricalRadarSliderInput(value);
+        } else {
+            onLiveRadarSliderInput(value);
+        }
+    }
+
+    function toggleRadarTimelinePlayback() {
+        if (historicalRadarState.active) {
+            toggleHistoricalRadarPlayback();
+        } else {
+            toggleLiveRadarPlayback();
+        }
+    }
+
+    function openRadarTimelineTime() {
+        if (historicalRadarState.active) openHistoricalRadarPicker();
     }
 
          const IEM_RADAR_AVAILABILITY_URL =
@@ -15644,7 +16168,7 @@
                  if (!products.length) {
                      singleSiteRadarProducts = [];
                      setSingleSiteRadarProductOptions([]);
-                     _ensureReportingMosaicRadarLayer();
+                     _ensureLiveRadarLayer();
                      setSingleSiteRadarStatus(_iemRadarDisplayId(site) + ' has no current products; mosaic active');
                      return;
                  }
@@ -15656,7 +16180,7 @@
                  console.warn('[SkyMonitor] IEM radar products failed:', error);
                  singleSiteRadarProducts = [];
                  setSingleSiteRadarProductOptions([]);
-                 _ensureReportingMosaicRadarLayer();
+                 _ensureLiveRadarLayer();
                  setSingleSiteRadarStatus('Products unavailable; mosaic active');
              });
          }
@@ -15664,7 +16188,7 @@
     function _historicalRadarTileLayer(url, opacity, isPrefetch) {
         return window.L.tileLayer(url, {
             opacity: opacity,
-            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+            attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>',
             maxZoom: 18,
             noWrap: true,
             // Keep several tile rows/columns outside the viewport so modest
@@ -15866,11 +16390,35 @@
         historicalRadarLayerTransition = null;
     }
 
+    function _cancelLiveRadarLayerTransition() {
+        liveRadarLayerRequestId++;
+        const pending = liveRadarLayerTransition;
+        if (pending && pending.timeoutId) {
+            clearTimeout(pending.timeoutId);
+            pending.timeoutId = null;
+        }
+        if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
+            reportingMap && reportingMap.hasLayer(pending.layer)) {
+            reportingMap.removeLayer(pending.layer);
+        }
+        liveRadarLayerTransition = null;
+    }
+
+    function _liveRadarLayerHasTile(layer) {
+        if (!layer || !layer._tiles) return false;
+        return Object.keys(layer._tiles).some(function(key) {
+            const tile = layer._tiles[key];
+            return !!(tile && tile.el && tile.el.complete && tile.el.naturalWidth > 0);
+        });
+    }
+
     function _replaceReportingRadarLayer(url, mode, site, retryAttempt) {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
          const oldLayer = reportingRadarLayer;
          const currentRetryAttempt = Number(retryAttempt) || 0;
+
+         if (mode !== 'live') _cancelLiveRadarLayerTransition();
 
          if (mode === 'historical') {
              // Keep the visible frame in place while the requested frame
@@ -16042,9 +16590,101 @@
              return;
          }
 
+         if (mode === 'live') {
+             // Load the replacement above the committed scan, but keep it
+             // invisible until the new viewport has real radar tiles. This
+             // prevents the map from flashing its basemap between frames.
+             _cancelLiveRadarLayerTransition();
+             const requestId = ++liveRadarLayerRequestId;
+             const nextLayer = L_ref.tileLayer(url, {
+                 opacity: 0,
+                 attribution: 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
+                 maxZoom: 18,
+                 noWrap: true,
+                 className: 'radar-frame-tile-layer'
+             });
+             let nextLayerHasTile = false;
+             let committed = false;
+             const finish = function() {
+                 if (committed || requestId !== liveRadarLayerRequestId) return;
+                 committed = true;
+                 if (liveRadarLayerTransition &&
+                     liveRadarLayerTransition.requestId === requestId) {
+                     if (liveRadarLayerTransition.timeoutId) {
+                         clearTimeout(liveRadarLayerTransition.timeoutId);
+                     }
+                     liveRadarLayerTransition = null;
+                 }
+                 const previousLayer = reportingRadarLayer;
+                 reportingRadarLayer = nextLayer;
+                 reportingRadarLayerMode = 'live';
+                 reportingRadarSite = null;
+                 if (nextLayer.setOpacity) nextLayer.setOpacity(0.65);
+                 if (previousLayer && previousLayer !== nextLayer &&
+                     reportingMap.hasLayer(previousLayer)) {
+                     if (previousLayer.setOpacity) previousLayer.setOpacity(0);
+                     setTimeout(function() {
+                         if (reportingMap && previousLayer !== reportingRadarLayer &&
+                             reportingMap.hasLayer(previousLayer)) {
+                             reportingMap.removeLayer(previousLayer);
+                         }
+                     }, LIVE_RADAR_CROSSFADE_MS);
+                 }
+                 if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
+                     reportingMap.removeLayer(nextLayer);
+                 }
+                 _updateReportingMapAttribution();
+                 _renderLiveRadarControls();
+                 if (liveRadarPlaying) scheduleLiveRadarPlayback();
+             };
+             const fail = function() {
+                 if (committed || requestId !== liveRadarLayerRequestId) return;
+                 if (liveRadarLayerTransition &&
+                     liveRadarLayerTransition.requestId === requestId) {
+                     if (liveRadarLayerTransition.timeoutId) {
+                         clearTimeout(liveRadarLayerTransition.timeoutId);
+                     }
+                     liveRadarLayerTransition = null;
+                 }
+                 if (reportingMap.hasLayer(nextLayer)) {
+                     reportingMap.removeLayer(nextLayer);
+                 }
+                 if (liveRadarPlaying) scheduleLiveRadarPlayback();
+             };
+             nextLayer.on('tileload', function() {
+                 nextLayerHasTile = true;
+             });
+             nextLayer.once('load', function() {
+                 nextLayerHasTile = nextLayerHasTile ||
+                     _liveRadarLayerHasTile(nextLayer);
+                 if (nextLayerHasTile) finish();
+                 else fail();
+             });
+             liveRadarLayerTransition = {
+                 requestId: requestId,
+                 layer: nextLayer,
+                 timeoutId: null
+             };
+             liveRadarLayerTransition.timeoutId = setTimeout(function() {
+                 if (requestId !== liveRadarLayerRequestId || committed) return;
+                 nextLayerHasTile = nextLayerHasTile ||
+                     _liveRadarLayerHasTile(nextLayer);
+                 if (nextLayerHasTile) finish();
+                 else fail();
+             }, LIVE_RADAR_TRANSITION_TIMEOUT_MS);
+             if (radarVisible) {
+                 nextLayer.addTo(reportingMap);
+             } else {
+                 finish();
+             }
+             return;
+         }
+
          const nextLayer = L_ref.tileLayer(url, {
              opacity: 0.65,
-             attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM / NEXRAD</a>',
+             attribution: mode === 'single'
+                 ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>'
+                 : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
              maxZoom: 18,
              noWrap: true
          });
@@ -16056,19 +16696,21 @@
          }
          if (radarVisible) nextLayer.addTo(reportingMap);
          _updateReportingMapAttribution();
+         _renderLiveRadarControls();
     }
 
-    function _ensureReportingMosaicRadarLayer() {
-        if (!reportingMap || !window.L) return;
-        if (reportingRadarLayerMode !== 'mosaic' || !reportingRadarLayer) {
-            _replaceReportingRadarLayer(
-                'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png',
-                'mosaic',
-                null
-            );
-        } else if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
-            reportingRadarLayer.addTo(reportingMap);
+    function _ensureLiveRadarLayer() {
+        if (!reportingMap || !window.L || historicalRadarState.active) return;
+        if (liveRadarState.active && liveRadarState.frames.length) {
+            if (reportingRadarLayerMode !== 'live' || !reportingRadarLayer) {
+                _setLiveRadarFrame(liveRadarState.index);
+            } else if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
+                reportingRadarLayer.addTo(reportingMap);
+            }
+            _renderLiveRadarControls();
+            return;
         }
+        _loadLiveRadarFrames();
     }
 
     function _historicalRadarFrameUrl(timestampMs) {
@@ -16435,24 +17077,36 @@
     }
 
     function _renderHistoricalRadarControls() {
+        if (!historicalRadarState.active && liveRadarState.active) {
+            _renderLiveRadarControls();
+            return;
+        }
         const controls = document.getElementById('historical-radar-controls');
         const slider = document.getElementById('historical-radar-slider');
         const time = document.getElementById('historical-radar-time-button');
         const start = document.getElementById('historical-radar-start');
         const end = document.getElementById('historical-radar-end');
         const play = document.getElementById('historical-radar-play');
+        const kicker = document.getElementById('historical-radar-kicker');
+        const marker = document.getElementById('radar-current-marker');
         if (!controls || !slider || !time || !start || !end) return;
 
         const frames = historicalRadarState.frames;
         const frameCount = frames.length;
         controls.classList.toggle('is-visible', historicalRadarState.active && frameCount > 0);
+        if (kicker) kicker.textContent = 'HISTORICAL RADAR';
         slider.max = String(Math.max(0, frameCount - 1));
         slider.value = String(Math.min(historicalRadarState.index, Math.max(0, frameCount - 1)));
+        _updateRadarSliderProgress(slider);
+        slider.setAttribute('aria-label', 'Historical radar frame');
         time.textContent = frameCount
             ? _historicalRadarFormatTime(frames[historicalRadarState.index], true)
             : '--';
+        time.disabled = false;
+        time.title = 'Change historical radar start time';
         start.textContent = frameCount ? _historicalRadarFormatTime(frames[0], false) : '--';
         end.textContent = frameCount ? _historicalRadarFormatTime(frames[frameCount - 1], false) : '--';
+        if (marker) marker.style.display = 'none';
         if (play) {
             // Do not let playback start while the initial radar window is
             // still warming. Once enabled, the next frames are already in
@@ -16568,6 +17222,7 @@
         const picker = document.getElementById('historical-radar-picker');
         const timeInput = document.getElementById('historical-radar-picker-time');
         if (!picker || !timeInput) return;
+        stopLiveRadarPlayback();
         enterHistoricalRadarRoute();
         const baseMs = historicalRadarRequestedMs ||
             (historicalRadarState.active && historicalRadarState.startMs) ||
@@ -16656,6 +17311,7 @@
 
     function activateOnDemandHistoricalRadar(selectedMs) {
         if (!reportingMap || !window.L) return;
+        stopLiveRadarPlayback();
         stopHistoricalRadarPlayback();
         clearHistoricalRadarPrefetch();
         if (historicalRadarViewportWarmupTimer) {
@@ -16866,6 +17522,7 @@
 
     function activateHistoricalRadarForAlert(feature) {
         if (!feature || !reportingMap || !window.L) return false;
+        stopLiveRadarPlayback();
         const windowInfo = _historicalRadarTimeWindow(feature);
         if (!windowInfo) {
             _setHistoricalRadarStatus('Historical radar unavailable: alert time window missing.', '#ffb74d');
@@ -16921,6 +17578,7 @@
     }
 
     function deactivateHistoricalRadarMode() {
+        stopLiveRadarPlayback();
         if (historicalRadarSliderTimer) {
             clearTimeout(historicalRadarSliderTimer);
             historicalRadarSliderTimer = null;
@@ -16978,7 +17636,7 @@
                 reportingMap.removeLayer(reportingRadarLayer);
             }
             reportingRadarLayer = null;
-            reportingRadarLayerMode = 'mosaic';
+            reportingRadarLayerMode = 'live';
             reportingRadarSite = null;
             setReportingRadarLayerForLocation();
         }
@@ -16996,21 +17654,30 @@
             singleSiteRadarRequestId++;
             singleSiteRadarRequestKey = '';
             singleSiteRadarLocationKey = '';
-                 singleSiteRadarProductRequestId++;
-                 reportingRadarSite = null;
-                 singleSiteRadarProducts = [];
-                 setSingleSiteRadarProductOptions([]);
-                 _clearSingleSiteRadarSites();
+            singleSiteRadarProductRequestId++;
+            if (reportingRadarLayerMode === 'single') {
+                if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
+                    reportingMap.removeLayer(reportingRadarLayer);
+                }
+                reportingRadarLayer = null;
+                reportingRadarLayerMode = 'live';
+                reportingRadarSite = null;
+                _updateReportingMapAttribution();
+            }
+            reportingRadarSite = null;
+            singleSiteRadarProducts = [];
+            setSingleSiteRadarProductOptions([]);
+            _clearSingleSiteRadarSites();
             setSingleSiteRadarStatus('');
-            _ensureReportingMosaicRadarLayer();
+            _ensureLiveRadarLayer();
             updateUSOnlyLayerLabels();
             return;
         }
 
         const location = _reportingRadarLocation();
         if (!location) {
-                 _clearSingleSiteRadarSites();
-            _ensureReportingMosaicRadarLayer();
+            _clearSingleSiteRadarSites();
+            _ensureLiveRadarLayer();
             setSingleSiteRadarStatus('Location unavailable');
             updateUSOnlyLayerLabels();
             return;
@@ -17030,9 +17697,8 @@
         const requestId = ++singleSiteRadarRequestId;
         setSingleSiteRadarStatus('Finding nearest site\u2026');
         const start = new Date().toISOString().slice(0, 16) + 'Z';
-        // Omitting lat/lon asks IEM for the complete current radar inventory,
-        // not just the sites near the weather location. The local coordinates
-        // are still used to choose the initial site from that full inventory.
+        // The single-site branch remains on IEM. LibreWXR is used only for
+        // the live composite path above.
         const url = IEM_RADAR_AVAILABILITY_URL +
             '&start=' + encodeURIComponent(start);
         fetch(url, {
@@ -17046,33 +17712,33 @@
                 historicalRadarState.active ||
                 !radarSingleSiteEnabled || !isAdvancedDataComplexity()) return;
             const site = _selectNearestIEMRadar(payload, location);
-                 singleSiteRadarAllSites = _iemRadarSites(payload);
-                 const sites = _limitIEMRadarSites(
-                     singleSiteRadarAllSites,
-                     site,
-                     _singleSiteRadarMarkerShareForZoom()
-                 );
-                 renderSingleSiteRadarSites(sites);
+            singleSiteRadarAllSites = _iemRadarSites(payload);
+            const sites = _limitIEMRadarSites(
+                singleSiteRadarAllSites,
+                site,
+                _singleSiteRadarMarkerShareForZoom()
+            );
+            renderSingleSiteRadarSites(sites);
             if (!site) {
                 singleSiteRadarLocationKey = '';
-                 _clearSingleSiteRadarSites();
-                _ensureReportingMosaicRadarLayer();
+                _clearSingleSiteRadarSites();
+                _ensureLiveRadarLayer();
                 setSingleSiteRadarStatus('No nearby site; mosaic active');
                 return;
             }
-                 reportingRadarSite = site;
+            reportingRadarSite = site;
             singleSiteRadarLocationKey = locationKey;
-                 singleSiteRadarRequestKey = locationKey;
-                 refreshSingleSiteRadarMarkerSelection();
-                 singleSiteRadarProducts = [];
-                 setSingleSiteRadarProductOptions([]);
-                 loadSingleSiteRadarProducts(site);
+            singleSiteRadarRequestKey = locationKey;
+            refreshSingleSiteRadarMarkerSelection();
+            singleSiteRadarProducts = [];
+            setSingleSiteRadarProductOptions([]);
+            loadSingleSiteRadarProducts(site);
         }).catch(function(error) {
             if (requestId !== singleSiteRadarRequestId) return;
             console.warn('[SkyMonitor] IEM single-site radar failed:', error);
             singleSiteRadarLocationKey = '';
-                 _clearSingleSiteRadarSites();
-            _ensureReportingMosaicRadarLayer();
+            _clearSingleSiteRadarSites();
+            _ensureLiveRadarLayer();
             setSingleSiteRadarStatus('Unavailable; mosaic active');
         });
         updateUSOnlyLayerLabels();
@@ -17083,6 +17749,7 @@
         radarVisible = cb ? cb.checked : !radarVisible;
         if (cb) cb.checked = radarVisible;
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
+        if (!radarVisible) _cancelLiveRadarLayerTransition();
         if (reportingRadarLayer && reportingMap) {
             if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
             else { reportingMap.removeLayer(reportingRadarLayer); }
@@ -17149,7 +17816,13 @@
         if (active) {
             renderReportCategories();
             if (!window._radarRefreshTimer) {
-                window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
+                window._radarRefreshTimer = setInterval(function() {
+                    loadReportingMapData();
+                    if (!historicalRadarState.active &&
+                        reportingRadarLayerMode !== 'single') {
+                        _loadLiveRadarFrames();
+                    }
+                }, 120000);
             }
             setTimeout(function() {
                 if (!reportingMap) initReportingMap();
@@ -17283,11 +17956,7 @@
         ++privacySnapGeneration;
         const offset = applyPrivacyOffset(rawLat, rawLon);
         setReportPin(offset.la, offset.lo);
-        // A direct /radar?alert=... route must stay focused on the linked
-        // alert. The live-location watcher calls this function on its first
-        // fix, which previously pulled the map back to the user after the
-        // alert link had opened.
-        if (recenterMap && !CUSTOM_SKY_DEEP_LINK_ID && reportingMap) {
+        if (recenterMap && reportingMap) {
             reportingMap.setView([offset.la, offset.lo], reportingMap.getZoom(), { animate: false });
         }
     }
@@ -17298,9 +17967,7 @@
             const cb = document.getElementById('privacy-mode-cb');
             if (requestId !== privacySnapGeneration || !cb || !cb.checked) return false;
             setReportPin(center.lat, center.lon);
-            if (reportingMap && !CUSTOM_SKY_DEEP_LINK_ID) {
-                reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
-            }
+            if (reportingMap) reportingMap.setView([center.lat, center.lon], reportingMap.getZoom());
             return true;
         }).catch(function() {
             // Never fall back to raw coordinates. The existing offset pin is
@@ -17354,18 +18021,11 @@
         // GPS uses the existing privacy-adjusted report pin. Manual locations
         // center the actual map on the selected coordinates while preserving
         // the independently stored report pin.
-        // Do not reveal or briefly center on the remembered/live user
-        // location while a direct alert link is resolving. The linked
-        // polygon will provide the authoritative viewport as soon as its
-        // geometry loads; starting from a neutral view prevents the visible
-        // user-location pan that used to happen first.
-        let initialView = CUSTOM_SKY_DEEP_LINK_ID
-            ? { lat: 20, lon: 0, zoom: 2 }
-            : {
-                lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
-                lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
-                zoom: 8
-            };
+        let initialView = {
+            lat: gpsSourcedAtInit && reportLat != null ? reportLat : rawLat,
+            lon: gpsSourcedAtInit && reportLon != null ? reportLon : rawLon,
+            zoom: 8
+        };
         // Keep the reporting surface to one world copy. Without noWrap,
         // Leaflet repeats the horizontal tile grid indefinitely and every
         // marker appears again in each wrapped copy.
@@ -17385,6 +18045,11 @@
         window.reportingMap = reportingMap;
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
+        // IEM Local Storm Reports are SVG circle markers. Keep them above
+        // alert polygons so a report remains directly clickable when it is
+        // covered by both an NWS alert and a SkyMonitor custom alert.
+        const lsrReportPane = reportingMap.createPane('lsr-reports');
+        lsrReportPane.style.zIndex = 620;
         reportingMap.on('movestart zoomstart', _invalidateHistoricalRadarViewport);
         reportingMap.on('moveend zoomend', function() {
             saveReportingMapView();
@@ -17398,7 +18063,7 @@
             subdomains: 'abcd', maxZoom: 19, noWrap: true
         }).addTo(reportingMap);
 
-        // Layer 2 — one consistent IEM/NEXRAD radar source.
+        // Layer 2 — LibreWXR live composite; historical mode swaps in IEM.
         setReportingRadarLayerForLocation();
 
         // Layer 3 — roads + labels only (transparent background), floats above overlays
@@ -18077,7 +18742,7 @@
                         : magnitudeText;
                      const displayMagnitude = normalizeIemLsrMagnitude(magnitudeWithUnit);
                       const mag = displayMagnitude ? ' \u2014 ' + displayMagnitude : '';
-                    const marker = L_ref.circleMarker([la, lo], { radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
+                    const marker = L_ref.circleMarker([la, lo], { pane: 'lsr-reports', radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
                         .addTo(lsrLayer);
                     registerReportingPopup(marker, {
                         source: 'iem-lsr',
@@ -19270,6 +19935,12 @@
                     var _resolveHomeData = _homeDataResolve;
                     _homeDataResolve = null;
                     _resolveHomeData();
+                    // The current observation is the splash screen's
+                    // readiness boundary. Optional enrichment continues in
+                    // the background and must never block the first paint.
+                    if (typeof window._dismissLaunch === 'function') {
+                        window._dismissLaunch();
+                    }
                 }
             }
             const _fullDataReady = (async function() {
@@ -19974,6 +20645,17 @@
         setTimeout(scrollToPrivacyContact, 0);
     });
 
+    // The launch screen is a guard against a blank first paint, not a guard
+    // against every optional weather provider. Define this before
+    // DOMContentLoaded so the primary load can dismiss it as soon as the
+    // current observation is rendered.
+    window._dismissLaunch = function() {
+        var ls = document.getElementById('launch-screen');
+        if (!ls || ls.classList.contains('hidden')) return;
+        ls.classList.add('hidden');
+        setTimeout(function() { ls.style.display = 'none'; }, 550);
+    };
+
     window.addEventListener('DOMContentLoaded', function() {
         // Load the persisted location before the Reporting Map can initialize.
         // Direct /radar loads create the map during this event, before
@@ -20021,6 +20703,14 @@
             if (window.SKYMONITOR_RADAR_PAGE) {
                 var radarNav = document.getElementById('nav-reporting');
                 if (radarNav) window.switchTab('reporting', radarNav);
+            } else {
+                var handoffHandled = consumeInfoLocationHandoff();
+                if (!handoffHandled) loadAll().then(function() {
+                    syncPushLocation();
+                    showSkyMonitorWelcomeIfNeeded();
+                    checkForGitHubRelease();
+                });
+                else window._dismissLaunch();
             }
         }
     });
@@ -20029,15 +20719,6 @@
         loadLoc();
         _updateNotificationProviderVisibility();
         SkyDB.migrate();
-        // Dismiss the launch screen only after the first complete load.
-        // A fixed four-second ceiling made phones reveal a half-painted
-        // dashboard while the weather requests were still in flight.
-        window._dismissLaunch = function() {
-            var ls = document.getElementById('launch-screen');
-            if (!ls || ls.classList.contains('hidden')) return;
-            ls.classList.add('hidden');
-            setTimeout(function() { ls.style.display = 'none'; }, 550);
-        };
         if (window.SKYMONITOR_INFO_PAGE) {
             window._dismissLaunch();
             return;
@@ -20062,17 +20743,17 @@
                     openHistoricalRadarPicker();
                 }
             }, 80);
-            window._radarRefreshTimer = setInterval(loadReportingMapData, 120000);
+            window._radarRefreshTimer = setInterval(function() {
+                loadReportingMapData();
+                if (!historicalRadarState.active &&
+                    reportingRadarLayerMode !== 'single') {
+                    _loadLiveRadarFrames();
+                }
+            }, 120000);
             return;
         }
-        var handoffHandled = consumeInfoLocationHandoff();
-        if (!handoffHandled) loadAll().then(function() {
-            syncPushLocation();
-            showSkyMonitorWelcomeIfNeeded();
-            window._dismissLaunch();
-            checkForGitHubRelease();
-        });
-        else window._dismissLaunch();
+        // Normal SkyMonitor startup begins from DOMContentLoaded so it does
+        // not wait for unrelated images or third-party page resources.
     };
 </script>
 
