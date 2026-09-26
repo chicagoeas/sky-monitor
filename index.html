@@ -20030,18 +20030,62 @@
 
     function _tropicalForecastTime(text) {
         if (!text) return '';
-        var parsed = new Date(String(text).trim());
-        return isNaN(parsed.getTime()) ? String(text).trim() : parsed.toISOString();
+        var parsed = _tropicalForecastDate(text);
+        return parsed ? parsed.toISOString() : String(text).trim();
+    }
+
+    function _tropicalForecastDate(value) {
+        if (value == null || value === '') return null;
+        if (value instanceof Date) {
+            return isNaN(value.getTime()) ? null : value;
+        }
+        if (typeof value === 'object') {
+            value = value.value ?? value.timestamp ?? value.date ?? value.$date ?? '';
+        }
+        if (typeof value === 'number' && isFinite(value)) {
+            var numericDate = new Date(Math.abs(value) < 1e12 ? value * 1000 : value);
+            return isNaN(numericDate.getTime()) ? null : numericDate;
+        }
+        var raw = String(value).trim();
+        if (!raw) return null;
+
+        // First accept normal ISO/RFC3339 and Unix timestamps.
+        var parsed = typeof parseReportDate === 'function'
+            ? parseReportDate(raw)
+            : null;
+        if (parsed) return parsed;
+
+        // The NHC forecast feed commonly returns display timestamps such as
+        // "5:00 AM HST September 26, 2026". Those are valid NHC timestamps,
+        // but Chromium does not parse the timezone abbreviation in that
+        // position. Convert the abbreviation explicitly before formatting.
+        var match = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)\s+([A-Z]{2,5})\s+([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/i);
+        if (!match) return null;
+        var months = {
+            january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+            july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+        };
+        var month = months[match[5].toLowerCase()];
+        var zoneOffsets = {
+            UTC: 0, GMT: 0, CVT: -1,
+            AST: -4, ADT: -3,
+            EST: -5, EDT: -4,
+            CST: -6, CDT: -5,
+            MST: -7, MDT: -6,
+            PST: -8, PDT: -7,
+            AKST: -9, AKDT: -8,
+            HST: -10
+        };
+        var offset = zoneOffsets[match[4].toUpperCase()];
+        if (month == null || offset == null) return null;
+        var hour = Number(match[1]) % 12 + (match[3].toUpperCase() === 'PM' ? 12 : 0);
+        var utcMs = Date.UTC(Number(match[7]), month, Number(match[6]), hour, Number(match[2]));
+        var forecastDate = new Date(utcMs - offset * 60 * 60 * 1000);
+        return isNaN(forecastDate.getTime()) ? null : forecastDate;
     }
 
     function _tropicalForecastDisplayTime(value) {
-        // Forecast feeds are not perfectly consistent: most points contain
-        // ISO/RFC3339 timestamps, but an occasional storm can carry a
-        // malformed or provider-specific value. Never expose JavaScript's
-        // "Invalid Date" string in an official forecast popup.
-        var parsed = typeof parseReportDate === 'function'
-            ? parseReportDate(value)
-            : null;
+        var parsed = _tropicalForecastDate(value);
         return parsed
             ? parsed.toLocaleString([], {
                 month: 'short',
