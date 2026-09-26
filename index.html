@@ -20034,11 +20034,28 @@
         return isNaN(parsed.getTime()) ? String(text).trim() : parsed.toISOString();
     }
 
+    function _tropicalForecastDisplayTime(value) {
+        // Forecast feeds are not perfectly consistent: most points contain
+        // ISO/RFC3339 timestamps, but an occasional storm can carry a
+        // malformed or provider-specific value. Never expose JavaScript's
+        // "Invalid Date" string in an official forecast popup.
+        var parsed = typeof parseReportDate === 'function'
+            ? parseReportDate(value)
+            : null;
+        return parsed
+            ? parsed.toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZoneName: 'short'
+            })
+            : 'Official forecast position';
+    }
+
     function _tropicalForecastPopupHtml(storm, point) {
         var name = _tropicalClassification(storm, point.wind) + ' ' + (storm.name || 'system');
-        var time = point.time ? new Date(point.time).toLocaleString([], {
-            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
-        }) : 'Official forecast position';
+        var time = _tropicalForecastDisplayTime(point.time);
         var lead = Number(point.forecastHour) === 0
             ? 'CURRENT FORECAST'
             : point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
