@@ -572,6 +572,12 @@
             font-size: 9px;
         }
         #tropical-route-map .leaflet-control-attribution a { color: #7dd3fc; }
+        #tropical-route-map .tropical-satellite-tile {
+            width: 256px !important;
+            height: 256px !important;
+            filter: saturate(1.12) contrast(1.06);
+            mix-blend-mode: screen;
+        }
         #tropical-route-toolbar {
             position: absolute;
             z-index: 900;
@@ -1999,7 +2005,7 @@
                 <button id="tropical-route-map-mode" class="tropical-route-mode-btn is-active" type="button"
                         onclick="setTropicalMapMode('map')">&#9673; DARK MAP</button>
                 <button id="tropical-route-satellite-mode" class="tropical-route-mode-btn" type="button"
-                        onclick="setTropicalMapMode('satellite')">&#9729; SATELLITE</button>
+                        onclick="setTropicalMapMode('satellite')">&#9729; SATELLITE OVERLAY</button>
                 <button id="tropical-route-storms-btn" class="tropical-route-mode-btn" type="button"
                         onclick="toggleTropicalStormPicker()">STORMS</button>
             </div>
@@ -13712,6 +13718,7 @@
     let reportingMap = null;
     let tropicalRouteMap = null;
     let tropicalRouteBaseLayer = null;
+    let tropicalRouteLabelsLayer = null;
     let tropicalRouteStormLayer = null;
     let tropicalRouteUserLayer = null;
     let tropicalRouteSatelliteTileLayer = null;
@@ -20025,6 +20032,32 @@
             '</div>';
     }
 
+    async function _fetchTropicalNHC(forceRefresh) {
+        var url = WEATHER_WORKER_URL + '/api/weather/nhc' +
+            (forceRefresh ? '?refresh=' + Date.now() : '');
+        var lastError = null;
+        for (var attempt = 0; attempt < 3; attempt++) {
+            try {
+                var response = await _weatherFetch(url, {
+                    cache: 'no-store',
+                    headers: { Accept: 'application/json' }
+                }, 15000);
+                if (response.ok) return response;
+                lastError = new Error('NHC feed returned ' + response.status);
+                if (![502, 503, 504].includes(response.status) || attempt === 2) {
+                    throw lastError;
+                }
+            } catch (error) {
+                lastError = error;
+                if (attempt === 2) throw error;
+            }
+            await new Promise(function(resolve) {
+                setTimeout(resolve, 500 * Math.pow(2, attempt));
+            });
+        }
+        throw lastError || new Error('NHC feed unavailable');
+    }
+
     async function _loadTropicalForecastPoints(storm) {
         if (!storm || storm._forecastPointsLoaded || storm._forecastPointsPromise) {
             return storm && storm._forecastPointsPromise ? storm._forecastPointsPromise : (storm ? storm._forecastPoints || [] : []);
@@ -20112,11 +20145,14 @@
             tropicalRouteSatelliteTimestamp = Number(latest.time);
             tropicalRouteSatelliteTileLayer = L.tileLayer(
                 LIBREWXR_RADAR_BASE_URL + '/v2/satellite/' + tropicalRouteSatelliteTimestamp +
-                '/256/{z}/{x}/{y}/0/0_0.png',
+                '/' + (window.devicePixelRatio >= 1.5 ? '512' : '256') + '/{z}/{x}/{y}/0/0_0.png',
                 {
                     maxZoom: 10,
                     maxNativeZoom: 8,
-                    opacity: 0.97,
+                    tileSize: 256,
+                    opacity: 0.76,
+                    className: 'tropical-satellite-tile',
+                    pane: 'tropical-satellite-pane',
                     noWrap: true,
                     attribution: '<a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a> satellite · NOAA GMGSI'
                 }
@@ -20141,8 +20177,11 @@
     function _tropicalMapLayersForMode() {
         if (!tropicalRouteMap) return;
         if (tropicalRouteMapMode === 'satellite') {
-            if (tropicalRouteBaseLayer && tropicalRouteMap.hasLayer(tropicalRouteBaseLayer)) {
-                tropicalRouteMap.removeLayer(tropicalRouteBaseLayer);
+            // Satellite is an overlay, not a replacement basemap. Keeping the
+            // dark map underneath makes coastlines and geography readable
+            // through the satellite's transparent/low-luminance pixels.
+            if (tropicalRouteBaseLayer && !tropicalRouteMap.hasLayer(tropicalRouteBaseLayer)) {
+                tropicalRouteBaseLayer.addTo(tropicalRouteMap);
             }
             if (tropicalRouteSatelliteTileLayer && !tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
                 tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
@@ -20334,11 +20373,7 @@
         var status = document.getElementById('tropical-route-status');
         if (status) status.textContent = forceRefresh ? 'Refreshing official tropical data…' : 'Loading official tropical data…';
         try {
-            var response = await fetch(WEATHER_WORKER_URL + '/api/weather/nhc' + (forceRefresh ? '?refresh=' + Date.now() : ''), {
-                cache: 'no-store',
-                headers: { Accept: 'application/json' }
-            });
-            if (!response.ok) throw new Error('NHC feed returned ' + response.status);
+            var response = await _fetchTropicalNHC(forceRefresh);
             var payload = await response.json();
             if (token !== tropicalRouteLoadToken) return;
             var raw = payload.activeStorms || payload.cycloneMessages || (Array.isArray(payload) ? payload : []);
@@ -20385,11 +20420,24 @@
                 fadeAnimation: false,
                 attributionControl: true
             }).setView([20, -60], 3);
+            tropicalRouteMap.createPane('tropical-satellite-pane');
+            tropicalRouteMap.getPane('tropical-satellite-pane').style.zIndex = 250;
+            tropicalRouteMap.getPane('tropical-satellite-pane').style.pointerEvents = 'none';
+            tropicalRouteMap.createPane('tropical-labels-pane');
+            tropicalRouteMap.getPane('tropical-labels-pane').style.zIndex = 390;
+            tropicalRouteMap.getPane('tropical-labels-pane').style.pointerEvents = 'none';
             tropicalRouteBaseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
                 subdomains: 'abcd',
                 maxZoom: 19,
                 noWrap: true,
                 attribution: '&copy; <a href="https://openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>'
+            }).addTo(tropicalRouteMap);
+            tropicalRouteLabelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
+                subdomains: 'abcd',
+                maxZoom: 19,
+                noWrap: true,
+                pane: 'tropical-labels-pane',
+                attribution: '&copy; CARTO labels'
             }).addTo(tropicalRouteMap);
             tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
