@@ -13744,7 +13744,10 @@
     let tropicalRouteSatelliteLoadPromise = null;
     let tropicalRouteStorms = [];
     let tropicalRouteSelectedIndex = 0;
-    let tropicalRouteMapMode = 'map';
+    const TROPICAL_SATELLITE_PREF_KEY = 'skymonitor_tropical_satellite_overlay';
+    let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
+        ? 'satellite'
+        : 'map';
     let tropicalRouteLoadToken = 0;
     let tropicalRouteRefreshTimer = null;
     let lsrLayer = null;
@@ -20477,6 +20480,12 @@
 
     function setTropicalMapMode(mode) {
         tropicalRouteMapMode = mode === 'satellite' ? 'satellite' : 'map';
+        try {
+            localStorage.setItem(
+                TROPICAL_SATELLITE_PREF_KEY,
+                tropicalRouteMapMode === 'satellite' ? '1' : '0'
+            );
+        } catch (error) {}
         var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
         if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
         _tropicalMapLayersForMode();
@@ -20531,6 +20540,8 @@
     function initTropicalRoute() {
         if (!document.documentElement.classList.contains('tropical-route')) return;
         if (!window.L) { setTimeout(initTropicalRoute, 300); return; }
+        var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
+        if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
         if (!tropicalRouteMap) {
             tropicalRouteMap = L.map('tropical-route-map', {
                 zoomControl: false,
