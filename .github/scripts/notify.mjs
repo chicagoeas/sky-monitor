@@ -1109,7 +1109,8 @@ const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 const { results: rows } = await d1Query("SELECT * FROM push_subscriptions");
 console.log(`[SkyMonitor] ${rows.length} subscriber(s)`);
 
-for (const row of rows) {
+for (const [subscriberIndex, row] of rows.entries()) {
+  const subscriberLabel = `Subscriber #${subscriberIndex + 1}`;
   const knownIds = JSON.parse(row.known_alert_ids || "[]");
   const prefs    = parsePushPreferences(row.prefs);
 
@@ -1131,7 +1132,7 @@ for (const row of rows) {
         `https://api.weather.gov/alerts/active?point=${row.lat},${row.lon}`,
         { headers: { "User-Agent": "SkyMonitor/1.1" }, signal: AbortSignal.timeout(8000) }
       );
-      console.log(`[SkyMonitor] NWS API → HTTP ${nwsRes.status} for (${row.lat},${row.lon})`);
+      console.log(`[SkyMonitor] NWS API → HTTP ${nwsRes.status} for ${subscriberLabel}`);
       if (nwsRes.ok) {
         nwsPointQuerySucceeded = true;
         alerts = (await nwsRes.json()).features ?? [];
