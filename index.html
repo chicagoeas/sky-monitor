@@ -19862,7 +19862,13 @@
             var a = _tropicalFinite(value[0]);
             var b = _tropicalFinite(value[1]);
             if (a == null || b == null) return null;
-            return { lon: a, lat: b, wind: _tropicalFinite(value[2]), time: value[3] || '' };
+            return {
+                lon: a,
+                lat: b,
+                wind: _tropicalFinite(value[2]),
+                time: value[3] || '',
+                forecastHour: value[4] != null ? _tropicalFinite(value[4]) : null
+            };
         }
         if (typeof value !== 'object') return null;
         var latValue = value.lat ?? value.latitude ?? value.latitudeNumeric ??
@@ -19891,7 +19897,11 @@
             lon: lonNumber,
             lat: latNumber,
             wind: windNumber,
-            time: value.time ?? value.validTime ?? value.forecastTime ?? value.timestamp ?? ''
+            time: value.time ?? value.validTime ?? value.forecastTime ?? value.timestamp ?? '',
+            forecastHour: value.forecastHour != null
+                ? _tropicalFinite(value.forecastHour)
+                : null,
+            kind: value.kind || ''
         };
     }
 
@@ -20019,64 +20029,28 @@
         if (!storm || storm._forecastPointsLoaded || storm._forecastPointsPromise) {
             return storm && storm._forecastPointsPromise ? storm._forecastPointsPromise : (storm ? storm._forecastPoints || [] : []);
         }
-        var forecastTrack = storm.forecastTrack || {};
-        var url = forecastTrack.kmzFile || forecastTrack.kmzUrl || storm.forecastKmz;
-        if (!url || !window.JSZip) {
-            storm._forecastPointsLoaded = true;
-            storm._forecastPoints = [];
-            return [];
-        }
-        storm._forecastPointsPromise = fetch(url, {
-            cache: 'no-store',
-            mode: 'cors',
-            headers: { Accept: 'application/vnd.google-earth.kmz, application/zip, */*' }
-        }).then(function(response) {
-            if (!response.ok) throw new Error('NHC forecast track returned ' + response.status);
-            return response.arrayBuffer();
-        }).then(function(buffer) {
-            return JSZip.loadAsync(buffer);
-        }).then(function(zip) {
-            var kmlName = Object.keys(zip.files).find(function(name) { return /\.kml$/i.test(name); });
-            if (!kmlName) throw new Error('NHC forecast track has no KML');
-            return zip.files[kmlName].async('string');
-        }).then(function(kmlText) {
-            var xml = new DOMParser().parseFromString(kmlText, 'application/xml');
-            var points = Array.prototype.slice.call(xml.getElementsByTagNameNS('*', 'Placemark')).map(function(place) {
-                var pointNode = place.getElementsByTagNameNS('*', 'Point')[0];
-                var coordNode = pointNode && pointNode.getElementsByTagNameNS('*', 'coordinates')[0];
-                if (!coordNode) return null;
-                var pair = String(coordNode.textContent || '').trim().split(/\s+/)[0].split(',');
-                var lonValue = _tropicalFinite(pair[0]), latValue = _tropicalFinite(pair[1]);
-                if (latValue == null || lonValue == null) return null;
-                var text = String(place.textContent || '').replace(/\s+/g, ' ').trim();
-                var windMatch = text.match(/Maximum Wind:\s*([\d.]+)\s*knots?\s*\(([\d.]+)\s*mph/i);
-                var hourMatch = text.match(/(\d+)\s*hr Forecast/i);
-                var validMatch = text.match(/Valid at:\s*(.*?)(?:\s+Location:|$)/i);
-                var wind = windMatch ? _tropicalFinite(windMatch[2]) : null;
-                return {
-                    lat: latValue,
-                    lon: lonValue,
-                    wind: wind,
-                    time: _tropicalForecastTime(validMatch && validMatch[1]),
-                    forecastHour: hourMatch ? Number(hourMatch[1]) : 0,
-                    kind: hourMatch ? 'forecast' : 'initial'
-                };
-            }).filter(function(point) {
-                return point && point.wind != null && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;
+        // Forecast KMZ files are fetched and parsed by worker.js. NOAA does not
+        // expose the KMZ endpoint with browser CORS headers, so never fetch the
+        // storm's forecastTrack.kmzFile from this page.
+        var candidates = [
+            storm.forecastTrackPoints,
+            storm.forecastPoints,
+            storm.forecastPositions
+        ];
+        var points = [];
+        for (var i = 0; i < candidates.length; i++) {
+            points = _tropicalPointsFrom(candidates[i]).filter(function(point) {
+                return point.wind != null;
             });
-            points.sort(function(a, b) { return a.forecastHour - b.forecastHour; });
-            storm._forecastPointsLoaded = true;
-            storm._forecastPoints = points;
-            return points;
-        }).catch(function(error) {
-            console.warn('[SkyMonitor tropical tracker] NHC forecast points failed:', error);
-            storm._forecastPointsLoaded = true;
-            storm._forecastPoints = [];
-            return [];
-        }).finally(function() {
-            storm._forecastPointsPromise = null;
+            if (points.length) break;
+        }
+        points.sort(function(a, b) {
+            return (a.forecastHour == null ? 0 : a.forecastHour) -
+                (b.forecastHour == null ? 0 : b.forecastHour);
         });
-        return storm._forecastPointsPromise;
+        storm._forecastPointsLoaded = true;
+        storm._forecastPoints = points;
+        return points;
     }
 
     function _tropicalForecastAtLocation(storm, userLat, userLon) {
