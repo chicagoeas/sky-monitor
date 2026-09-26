@@ -477,21 +477,94 @@
             background: #02080e;
         }
         #tropical-route-map .leaflet-control-zoom {
-            margin-top: 14px;
-            margin-right: 14px;
-            border: 1px solid rgba(255,255,255,0.22);
-            box-shadow: 0 4px 16px rgba(0,0,0,0.38);
+            display: none;
         }
-        #tropical-route-map .leaflet-control-zoom a {
+        #tropical-route-zoom-controls {
+            position: absolute;
+            z-index: 950;
+            top: 58px;
+            left: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            transition: top 0.16s ease;
+        }
+        #tropical-route-zoom-controls button {
             width: 34px;
             height: 34px;
-            line-height: 32px;
+            padding: 0;
+            border: 1px solid rgba(255,255,255,0.22);
+            border-radius: 7px;
             color: #eaf4fb;
             background: rgba(5,16,26,0.9);
-            border-color: rgba(255,255,255,0.16);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.38);
+            cursor: pointer;
+            font: 700 1.25rem/1 system-ui, sans-serif;
         }
-        #tropical-route-map .leaflet-control-zoom a:hover {
+        #tropical-route-zoom-controls button:hover,
+        #tropical-route-zoom-controls button:focus-visible {
+            outline: none;
             background: #123044;
+            border-color: #4fc3f7;
+        }
+        #tropical-route-map .leaflet-popup-content-wrapper,
+        #tropical-route-map .leaflet-popup-tip {
+            color: #edf7fc;
+            background: #07131d;
+            border: 1px solid rgba(79,195,247,0.45);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        #tropical-route-map .leaflet-popup-content {
+            margin: 12px 14px;
+            min-width: 170px;
+            font-size: 0.78rem;
+            line-height: 1.4;
+        }
+        .tropical-forecast-popup-kicker {
+            color: #9ab0bf;
+            font-size: 0.65rem;
+            font-weight: 900;
+            letter-spacing: 0.9px;
+            text-transform: uppercase;
+        }
+        .tropical-forecast-popup-title {
+            margin: 2px 0 8px;
+            color: #f8d66d;
+            font-size: 0.98rem;
+            font-weight: 900;
+        }
+        .tropical-forecast-popup-wind {
+            color: #7dd3fc;
+            font-size: 1.08rem;
+            font-weight: 900;
+        }
+        .tropical-forecast-popup-meta {
+            margin-top: 5px;
+            color: #c5d3dc;
+        }
+        .tropical-forecast-popup-note {
+            margin-top: 8px;
+            color: #8298a8;
+            font-size: 0.84em;
+        }
+        .tropical-forecast-icon-wrap {
+            background: transparent;
+            border: 0;
+        }
+        .tropical-forecast-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 24px;
+            box-sizing: border-box;
+            border: 2px solid #07131d;
+            border-radius: 999px;
+            color: #07131d;
+            background: var(--forecast-color, #81c784);
+            box-shadow: 0 2px 7px rgba(0,0,0,0.55);
+            font: 900 0.62rem/1 system-ui, sans-serif;
+            letter-spacing: -0.15px;
         }
         #tropical-route-map .leaflet-control-attribution {
             color: #b4c2cc;
@@ -677,6 +750,7 @@
             #tropical-route-header { gap: 6px; padding-left: 8px; padding-right: 8px; }
             #tropical-route-header .tropical-route-icon-btn { padding: 7px 8px; }
             #tropical-route-toolbar { top: 10px; left: 10px; }
+            #tropical-route-zoom-controls { left: 10px; }
             #tropical-route-storm-picker { top: 53px; left: 10px; }
             #tropical-route-status { left: 10px; top: 97px; }
             #tropical-route-details { left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); max-height: 39vh; }
@@ -1889,6 +1963,7 @@
     <!-- Leaflet JS (v1.0.4 NEW) -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <!-- Cloudflare Turnstile -->
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
     <!-- Cloudflare Web Analytics -->
@@ -1929,6 +2004,10 @@
                         onclick="toggleTropicalStormPicker()">STORMS</button>
             </div>
             <div id="tropical-route-storm-picker" aria-label="Active tropical systems"></div>
+            <div id="tropical-route-zoom-controls" aria-label="Map zoom controls">
+                <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomIn()" aria-label="Zoom in">+</button>
+                <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomOut()" aria-label="Zoom out">−</button>
+            </div>
             <div id="tropical-route-status" role="status" aria-live="polite">Loading tropical systems…</div>
             <div id="tropical-route-details" hidden>
                 <div class="tropical-route-detail-kicker">SELECTED SYSTEM</div>
@@ -13633,9 +13712,11 @@
     let reportingMap = null;
     let tropicalRouteMap = null;
     let tropicalRouteBaseLayer = null;
-    let tropicalRouteSatelliteLayer = null;
     let tropicalRouteStormLayer = null;
     let tropicalRouteUserLayer = null;
+    let tropicalRouteSatelliteTileLayer = null;
+    let tropicalRouteSatelliteTimestamp = 0;
+    let tropicalRouteSatelliteLoadPromise = null;
     let tropicalRouteStorms = [];
     let tropicalRouteSelectedIndex = 0;
     let tropicalRouteMapMode = 'map';
@@ -19894,11 +19975,115 @@
         return wind == null ? '—' : Math.round(wind) + ' mph';
     }
 
+    function _tropicalCategory(wind) {
+        if (wind == null) return 'Unknown';
+        if (wind >= 157) return 'Category 5 hurricane';
+        if (wind >= 130) return 'Category 4 hurricane';
+        if (wind >= 111) return 'Category 3 hurricane';
+        if (wind >= 96) return 'Category 2 hurricane';
+        if (wind >= 74) return 'Category 1 hurricane';
+        if (wind >= 39) return 'Tropical storm';
+        return 'Tropical depression';
+    }
+
+    function _tropicalMarkerLabel(wind) {
+        if (wind == null) return '•';
+        if (wind >= 74) return 'H' + (wind >= 157 ? '5' : wind >= 130 ? '4' : wind >= 111 ? '3' : wind >= 96 ? '2' : '1');
+        if (wind >= 39) return 'TS';
+        return 'TD';
+    }
+
+    function _tropicalForecastTime(text) {
+        if (!text) return '';
+        var parsed = new Date(String(text).trim());
+        return isNaN(parsed.getTime()) ? String(text).trim() : parsed.toISOString();
+    }
+
+    function _tropicalForecastPopupHtml(storm, point) {
+        var name = _tropicalClassification(storm, point.wind) + ' ' + (storm.name || 'system');
+        var time = point.time ? new Date(point.time).toLocaleString([], {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+        }) : 'Official forecast position';
+        var lead = point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
+        return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
+            '<div class="tropical-forecast-popup-title">' + escapeHtml(name) + '</div>' +
+            '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
+            '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(point.wind)) +
+            '</b><br>' + escapeHtml(time) + '<br>Maximum sustained wind</div>' +
+            '<div class="tropical-forecast-popup-note">NHC official forecast point · ' +
+            escapeHtml(point.lat.toFixed(1) + '°, ' + Math.abs(point.lon).toFixed(1) + '°' + (point.lon < 0 ? 'W' : 'E')) +
+            '</div>';
+    }
+
+    async function _loadTropicalForecastPoints(storm) {
+        if (!storm || storm._forecastPointsLoaded || storm._forecastPointsPromise) {
+            return storm && storm._forecastPointsPromise ? storm._forecastPointsPromise : (storm ? storm._forecastPoints || [] : []);
+        }
+        var forecastTrack = storm.forecastTrack || {};
+        var url = forecastTrack.kmzFile || forecastTrack.kmzUrl || storm.forecastKmz;
+        if (!url || !window.JSZip) {
+            storm._forecastPointsLoaded = true;
+            storm._forecastPoints = [];
+            return [];
+        }
+        storm._forecastPointsPromise = fetch(url, {
+            cache: 'no-store',
+            mode: 'cors',
+            headers: { Accept: 'application/vnd.google-earth.kmz, application/zip, */*' }
+        }).then(function(response) {
+            if (!response.ok) throw new Error('NHC forecast track returned ' + response.status);
+            return response.arrayBuffer();
+        }).then(function(buffer) {
+            return JSZip.loadAsync(buffer);
+        }).then(function(zip) {
+            var kmlName = Object.keys(zip.files).find(function(name) { return /\.kml$/i.test(name); });
+            if (!kmlName) throw new Error('NHC forecast track has no KML');
+            return zip.files[kmlName].async('string');
+        }).then(function(kmlText) {
+            var xml = new DOMParser().parseFromString(kmlText, 'application/xml');
+            var points = Array.prototype.slice.call(xml.getElementsByTagNameNS('*', 'Placemark')).map(function(place) {
+                var pointNode = place.getElementsByTagNameNS('*', 'Point')[0];
+                var coordNode = pointNode && pointNode.getElementsByTagNameNS('*', 'coordinates')[0];
+                if (!coordNode) return null;
+                var pair = String(coordNode.textContent || '').trim().split(/\s+/)[0].split(',');
+                var lonValue = _tropicalFinite(pair[0]), latValue = _tropicalFinite(pair[1]);
+                if (latValue == null || lonValue == null) return null;
+                var text = String(place.textContent || '').replace(/\s+/g, ' ').trim();
+                var windMatch = text.match(/Maximum Wind:\s*([\d.]+)\s*knots?\s*\(([\d.]+)\s*mph/i);
+                var hourMatch = text.match(/(\d+)\s*hr Forecast/i);
+                var validMatch = text.match(/Valid at:\s*(.*?)(?:\s+Location:|$)/i);
+                var wind = windMatch ? _tropicalFinite(windMatch[2]) : null;
+                return {
+                    lat: latValue,
+                    lon: lonValue,
+                    wind: wind,
+                    time: _tropicalForecastTime(validMatch && validMatch[1]),
+                    forecastHour: hourMatch ? Number(hourMatch[1]) : 0,
+                    kind: hourMatch ? 'forecast' : 'initial'
+                };
+            }).filter(function(point) {
+                return point && point.wind != null && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;
+            });
+            points.sort(function(a, b) { return a.forecastHour - b.forecastHour; });
+            storm._forecastPointsLoaded = true;
+            storm._forecastPoints = points;
+            return points;
+        }).catch(function(error) {
+            console.warn('[SkyMonitor tropical tracker] NHC forecast points failed:', error);
+            storm._forecastPointsLoaded = true;
+            storm._forecastPoints = [];
+            return [];
+        }).finally(function() {
+            storm._forecastPointsPromise = null;
+        });
+        return storm._forecastPointsPromise;
+    }
+
     function _tropicalForecastAtLocation(storm, userLat, userLon) {
-        var points = _tropicalTrackPoints(storm).filter(function(point) { return point.wind != null; });
+        var points = (storm._forecastPoints || _tropicalTrackPoints(storm)).filter(function(point) { return point.wind != null; });
         if (!points.length) {
             return {
-                html: '<strong>Intensity at your location:</strong> Point-level forecast wind data is not included in the current NHC feed. The published track and forecast cone are shown above.',
+                html: '<strong>Forecast intensity at your location:</strong> Loading the official NHC forecast-point winds…',
                 hasForecast: false
             };
         }
@@ -19912,29 +20097,71 @@
             : 'The nearest published forecast position is ' + Math.round(nearest.distance).toLocaleString() + ' miles away';
         return {
             html: '<strong>Forecast intensity at your location:</strong> ' + qualifier +
-                when + ': <strong>' + _tropicalFormatWind(nearest.point.wind) + '</strong> maximum sustained wind.',
+                when + ': <strong>' + _tropicalFormatWind(nearest.point.wind) + '</strong> maximum sustained wind (' +
+                escapeHtml(_tropicalCategory(nearest.point.wind)) + ').',
             hasForecast: true
         };
     }
 
-    function _tropicalSatelliteConfig(storm) {
-        var point = _tropicalCurrentPoint(storm) || { lon: -75 };
-        // NHC storms are covered by the two NOAA GOES satellites. Selecting
-        // by longitude keeps the imagery high-resolution near the storm.
-        if (point.lon < -112) {
-            return {
-                name: 'NOAA GOES-West',
-                url: 'https://cdn.star.nesdis.noaa.gov/GOES18/ABI/FD/GEOCOLOR/1808x1808.jpg',
-                bounds: [[-60, -180], [60, -15]],
-                source: 'https://www.star.nesdis.noaa.gov/GOES/'
-            };
-        }
+    function _tropicalSatelliteConfig() {
         return {
-            name: 'NOAA GOES-East',
-            url: 'https://cdn.star.nesdis.noaa.gov/GOES16/ABI/FD/GEOCOLOR/1808x1808.jpg',
-            bounds: [[-60, -160], [60, 20]],
-            source: 'https://www.star.nesdis.noaa.gov/GOES/'
+            name: 'LibreWXR NOAA GMGSI satellite',
+            source: 'https://librewxr.net/',
+            timestamp: tropicalRouteSatelliteTimestamp
         };
+    }
+
+    async function _ensureTropicalSatelliteLayer() {
+        if (!tropicalRouteMap || !window.L) return;
+        if (tropicalRouteSatelliteTileLayer && tropicalRouteSatelliteTimestamp) {
+            if (!tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer) &&
+                tropicalRouteMapMode === 'satellite') {
+                tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
+            }
+            return;
+        }
+        if (tropicalRouteSatelliteLoadPromise) return tropicalRouteSatelliteLoadPromise;
+        tropicalRouteSatelliteLoadPromise = fetch(
+            LIBREWXR_RADAR_BASE_URL + '/public/weather-maps.json?source=tropical',
+            { cache: 'no-store', headers: { Accept: 'application/json' } }
+        ).then(function(response) {
+            if (!response.ok) throw new Error('LibreWXR satellite metadata returned ' + response.status);
+            return response.json();
+        }).then(function(metadata) {
+            var frames = metadata && metadata.satellite && metadata.satellite.infrared;
+            if (!Array.isArray(frames) || !frames.length) {
+                throw new Error('LibreWXR satellite metadata has no infrared frames');
+            }
+            var latest = frames.reduce(function(best, frame) {
+                return !best || Number(frame.time) > Number(best.time) ? frame : best;
+            }, null);
+            tropicalRouteSatelliteTimestamp = Number(latest.time);
+            tropicalRouteSatelliteTileLayer = L.tileLayer(
+                LIBREWXR_RADAR_BASE_URL + '/v2/satellite/' + tropicalRouteSatelliteTimestamp +
+                '/256/{z}/{x}/{y}/0/0_0.png',
+                {
+                    maxZoom: 10,
+                    maxNativeZoom: 8,
+                    opacity: 0.97,
+                    noWrap: true,
+                    attribution: '<a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a> satellite · NOAA GMGSI'
+                }
+            );
+            if (tropicalRouteMapMode === 'satellite') {
+                tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
+            }
+            var status = document.getElementById('tropical-route-status');
+            if (status && tropicalRouteMapMode === 'satellite') status.textContent = '';
+        }).catch(function(error) {
+            console.warn('[SkyMonitor tropical tracker] LibreWXR satellite failed:', error);
+            var status = document.getElementById('tropical-route-status');
+            if (status && tropicalRouteMapMode === 'satellite') {
+                status.textContent = 'LibreWXR satellite imagery is temporarily unavailable.';
+            }
+        }).finally(function() {
+            tropicalRouteSatelliteLoadPromise = null;
+        });
+        return tropicalRouteSatelliteLoadPromise;
     }
 
     function _tropicalMapLayersForMode() {
@@ -19943,12 +20170,12 @@
             if (tropicalRouteBaseLayer && tropicalRouteMap.hasLayer(tropicalRouteBaseLayer)) {
                 tropicalRouteMap.removeLayer(tropicalRouteBaseLayer);
             }
-            if (tropicalRouteSatelliteLayer && !tropicalRouteMap.hasLayer(tropicalRouteSatelliteLayer)) {
-                tropicalRouteSatelliteLayer.addTo(tropicalRouteMap);
-            }
+            if (tropicalRouteSatelliteTileLayer && !tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
+                tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
+            } else if (!tropicalRouteSatelliteTileLayer) _ensureTropicalSatelliteLayer();
         } else {
-            if (tropicalRouteSatelliteLayer && tropicalRouteMap.hasLayer(tropicalRouteSatelliteLayer)) {
-                tropicalRouteMap.removeLayer(tropicalRouteSatelliteLayer);
+            if (tropicalRouteSatelliteTileLayer && tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
+                tropicalRouteMap.removeLayer(tropicalRouteSatelliteTileLayer);
             }
             if (tropicalRouteBaseLayer && !tropicalRouteMap.hasLayer(tropicalRouteBaseLayer)) {
                 tropicalRouteBaseLayer.addTo(tropicalRouteMap);
@@ -19983,7 +20210,7 @@
         var satellite = _tropicalSatelliteConfig(storm);
         document.getElementById('tropical-route-source').innerHTML =
             'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ' +
-            'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + ' GeoColor</a>.';
+            'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + '</a>.';
         details.hidden = false;
     }
 
@@ -20005,11 +20232,9 @@
         if (!tropicalRouteMap || !window.L || !storm) return;
         if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
         else tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
-        if (tropicalRouteSatelliteLayer && tropicalRouteMap.hasLayer(tropicalRouteSatelliteLayer)) {
-            tropicalRouteMap.removeLayer(tropicalRouteSatelliteLayer);
-        }
         var current = _tropicalCurrentPoint(storm);
-        var track = _tropicalTrackPoints(storm);
+        var forecastPoints = storm._forecastPoints || [];
+        var track = forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm);
         var points = track.length >= 2 ? track : _tropicalPointsFrom(storm.trackPts);
         var bounds = L.latLngBounds([]);
         var color = _tropicalColor(storm);
@@ -20026,18 +20251,27 @@
                 color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: false
             }).addTo(tropicalRouteStormLayer);
             bounds.extend(line.getBounds());
-            points.forEach(function(point) {
-                if (point.wind != null) {
-                    L.circleMarker([point.lat, point.lon], {
-                        radius: 4, color: '#07131d', fillColor: _tropicalColor({ intensity: point.wind }),
-                        fillOpacity: 1, weight: 1.5, interactive: false
-                    }).bindTooltip(_tropicalFormatWind(point.wind), { direction: 'top', opacity: 0.9 }).addTo(tropicalRouteStormLayer);
-                }
+        }
+        if (forecastPoints.length) {
+            forecastPoints.forEach(function(point) {
+                var icon = L.divIcon({
+                    className: 'tropical-forecast-icon-wrap',
+                    html: '<span class="tropical-forecast-icon" style="--forecast-color:' +
+                        _tropicalColor({ intensity: point.wind }) + '">' +
+                        escapeHtml(_tropicalMarkerLabel(point.wind)) + '</span>',
+                    iconSize: [34, 26],
+                    iconAnchor: [17, 13],
+                    popupAnchor: [0, -12]
+                });
+                L.marker([point.lat, point.lon], { icon: icon, keyboard: true, zIndexOffset: 300 })
+                    .bindPopup(_tropicalForecastPopupHtml(storm, point), { closeButton: true })
+                    .addTo(tropicalRouteStormLayer);
+                bounds.extend([point.lat, point.lon]);
             });
         }
         if (current) {
             var currentMarker = L.circleMarker([current.lat, current.lon], {
-                radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5, interactive: false
+                radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5
             }).bindTooltip((_tropicalClassification(storm, _tropicalWindMph(storm)) + ' ' + (storm.name || '')).trim(), {
                 direction: 'top', opacity: 0.95
             }).addTo(tropicalRouteStormLayer);
@@ -20047,18 +20281,25 @@
         else tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
         var userLat = parseFloat(lat), userLon = parseFloat(lon);
         if (isFinite(userLat) && isFinite(userLon)) {
+            L.circle([userLat, userLon], {
+                radius: 115000, color: '#7dd3fc', fillColor: '#7dd3fc',
+                fillOpacity: 0.08, weight: 1.5, opacity: 0.7, interactive: false
+            }).addTo(tropicalRouteUserLayer);
             L.circleMarker([userLat, userLon], {
                 radius: 7, color: '#ffffff', fillColor: '#7dd3fc', fillOpacity: 1, weight: 2, interactive: false
-            }).bindTooltip('Your location', { direction: 'top', opacity: 0.95 }).addTo(tropicalRouteUserLayer);
+            }).bindTooltip('Your selected location', { direction: 'top', opacity: 0.95 }).addTo(tropicalRouteUserLayer);
         }
         _renderTropicalRouteDetails(storm);
-        var satellite = _tropicalSatelliteConfig(storm);
-        tropicalRouteSatelliteLayer = L.imageOverlay(satellite.url + '?v=' + Date.now(), satellite.bounds, {
-            opacity: 0.96, interactive: false, attribution: satellite.name + ' GeoColor'
-        });
         _tropicalMapLayersForMode();
         if (shouldFit && bounds.isValid()) {
             tropicalRouteMap.fitBounds(bounds, { paddingTopLeft: [30, 130], paddingBottomRight: [30, 120], maxZoom: 6, animate: false });
+        }
+        if (!storm._forecastPointsLoaded && !storm._forecastPointsPromise) {
+            _loadTropicalForecastPoints(storm).then(function() {
+                if (tropicalRouteStorms[tropicalRouteSelectedIndex] === storm) {
+                    _drawTropicalRouteStorm(storm, false);
+                }
+            });
         }
     }
 
@@ -20073,12 +20314,28 @@
         _drawTropicalRouteStorm(tropicalRouteStorms[index], true);
         var picker = document.getElementById('tropical-route-storm-picker');
         if (picker) picker.classList.remove('is-visible');
+        _positionTropicalZoomControls();
+    }
+
+    function _positionTropicalZoomControls() {
+        var toolbar = document.getElementById('tropical-route-toolbar');
+        var picker = document.getElementById('tropical-route-storm-picker');
+        var zoom = document.getElementById('tropical-route-zoom-controls');
+        if (!toolbar || !zoom) return;
+        var pickerTop = toolbar.offsetTop + toolbar.offsetHeight + 8;
+        if (picker) picker.style.top = pickerTop + 'px';
+        var top = pickerTop;
+        if (picker && picker.classList.contains('is-visible')) {
+            top = picker.offsetTop + picker.offsetHeight + 8;
+        }
+        zoom.style.top = Math.max(14, top) + 'px';
     }
 
     function toggleTropicalStormPicker() {
         var picker = document.getElementById('tropical-route-storm-picker');
         if (!picker) return;
         picker.classList.toggle('is-visible');
+        _positionTropicalZoomControls();
     }
 
     function setTropicalMapMode(mode) {
@@ -20132,7 +20389,7 @@
                 if (tropicalRouteMap) tropicalRouteMap.setView([20, -60], 3, { animate: false });
                 return;
             }
-            if (status) status.textContent = tropicalRouteStorms.length + ' active system' + (tropicalRouteStorms.length === 1 ? '' : 's') + ' · Click STORMS to switch systems';
+            if (status) status.textContent = '';
             _drawTropicalRouteStorm(tropicalRouteStorms[tropicalRouteSelectedIndex], !forceRefresh);
         } catch (error) {
             console.warn('[SkyMonitor tropical tracker] load failed:', error);
@@ -20145,7 +20402,7 @@
         if (!window.L) { setTimeout(initTropicalRoute, 300); return; }
         if (!tropicalRouteMap) {
             tropicalRouteMap = L.map('tropical-route-map', {
-                zoomControl: true,
+                zoomControl: false,
                 minZoom: 2,
                 maxZoom: 10,
                 worldCopyJump: false,
@@ -20164,6 +20421,7 @@
             tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
         }
         tropicalRouteMap.invalidateSize({ pan: false, animate: false });
+        _positionTropicalZoomControls();
         if (!tropicalRouteRefreshTimer) {
             tropicalRouteRefreshTimer = setInterval(function() { loadTropicalRouteData(true); }, 300000);
         }
