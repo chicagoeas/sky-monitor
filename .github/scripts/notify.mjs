@@ -1110,6 +1110,7 @@ const { results: rows } = await d1Query("SELECT * FROM push_subscriptions");
 console.log(`[SkyMonitor] ${rows.length} subscriber(s)`);
 
 for (const row of rows) {
+  const subscriberLabel = `Subscriber #${row.id}`;
   const knownIds = JSON.parse(row.known_alert_ids || "[]");
   const prefs    = parsePushPreferences(row.prefs);
 
@@ -1118,7 +1119,7 @@ for (const row of rows) {
     const sub = JSON.parse(row.subscription);
     const p256 = (sub?.keys?.p256dh || "").slice(-12);
     const auth = (sub?.keys?.auth   || "").slice(-8);
-    console.log(`[SkyMonitor] subscriber endpoint=...${row.endpoint.slice(-30)}  p256dh=...${p256}  auth=...${auth}`);
+    console.log(`[SkyMonitor] ${subscriberLabel} endpoint=...${row.endpoint.slice(-30)}  p256dh=...${p256}  auth=...${auth}`);
   } catch {}
 
   // ── NWS alerts ────────────────────────────────────────────
@@ -1131,7 +1132,7 @@ for (const row of rows) {
         `https://api.weather.gov/alerts/active?point=${row.lat},${row.lon}`,
         { headers: { "User-Agent": "SkyMonitor/1.1" }, signal: AbortSignal.timeout(8000) }
       );
-      console.log(`[SkyMonitor] NWS API → HTTP ${nwsRes.status} for (${row.lat},${row.lon})`);
+      console.log(`[SkyMonitor] NWS API → HTTP ${nwsRes.status} for ${subscriberLabel}`);
       if (nwsRes.ok) {
         nwsPointQuerySucceeded = true;
         alerts = (await nwsRes.json()).features ?? [];

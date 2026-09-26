@@ -13645,6 +13645,122 @@
     // for every layer.
     let reportingPopupEntries = [];
     let reportingPopupEntryId = 0;
+    let reportingPopupRestoreState = null;
+    let reportingPopupCloseSuppressed = false;
+
+    function reportingPopupEntryKey(entry) {
+        if (!entry) return '';
+        return String(entry.source || '') + '|' +
+            String(entry.popupKey || entry.customAlertKey || entry.title || '');
+    }
+
+    function captureReportingPopupState() {
+        if (!reportingMap || !reportingMap._popup ||
+            !reportingMap._popup.isOpen || !reportingMap._popup.isOpen()) {
+            return null;
+        }
+        const popup = reportingMap._popup;
+        const latlng = popup.getLatLng && popup.getLatLng();
+        if (!latlng || !isFinite(Number(latlng.lat)) || !isFinite(Number(latlng.lng))) {
+            return null;
+        }
+        const container = popup._container || document;
+        const cards = Array.from(container.querySelectorAll('.reporting-popup-card'));
+        const cardEntries = cards.map(function(card) {
+            const entry = reportingPopupEntries.find(function(item) {
+                return reportingPopupEntryIdFor(item) === card.id;
+            });
+            return { card: card, entry: entry };
+        }).filter(function(item) {
+            return !!item.entry;
+        });
+        const entries = cardEntries.map(function(item) {
+            return item.entry;
+        });
+        if (!entries.length) return null;
+        const scroll = container.querySelector('.reporting-popup-scroll');
+        return {
+            lat: Number(latlng.lat),
+            lon: Number(latlng.lng),
+            content: popup.getContent ? popup.getContent() : '',
+            entryKeys: entries.map(reportingPopupEntryKey),
+            openKeys: cardEntries.filter(function(item) {
+                return item.card.classList.contains('is-open');
+            }).map(function(item) {
+                return reportingPopupEntryKey(item.entry);
+            }),
+            scrollTop: scroll ? scroll.scrollTop : 0
+        };
+    }
+
+    function preserveReportingPopupForRefresh() {
+        if (reportingPopupRestoreState || !reportingMap) return;
+        const state = captureReportingPopupState();
+        if (!state) return;
+        reportingPopupRestoreState = state;
+        if (reportingMap.closePopup) {
+            reportingPopupCloseSuppressed = true;
+            reportingMap.closePopup();
+            reportingPopupCloseSuppressed = false;
+        }
+    }
+
+    function restoreReportingPopupState() {
+        const state = reportingPopupRestoreState;
+        reportingPopupRestoreState = null;
+        if (!state || !reportingMap || !window.L) return;
+
+        const matchingEntries = reportingPopupEntries.filter(function(entry) {
+            return state.entryKeys.indexOf(reportingPopupEntryKey(entry)) !== -1;
+        });
+        if (!matchingEntries.length) {
+            // A transient feed failure can leave the rebuilt entry list empty.
+            // Keep the already-visible content readable rather than turning a
+            // refresh into an unexpected dismissal.
+            if (!state.content) return;
+            window.L.popup({
+                className: 'reporting-map-popup',
+                maxWidth: 340,
+                minWidth: 190,
+                closeButton: true,
+                autoPan: true,
+                keepInView: false,
+                autoPanPadding: [48, 42],
+                autoPanPaddingTopLeft: [54, 54],
+                autoPanPaddingBottomRight: [14, 42]
+            }).setLatLng(window.L.latLng(state.lat, state.lon))
+                .setContent(state.content)
+                .openOn(reportingMap);
+            setTimeout(function() {
+                const scroll = document.querySelector(
+                    '.reporting-map-popup .reporting-popup-scroll'
+                );
+                if (scroll) scroll.scrollTop = state.scrollTop || 0;
+            }, 0);
+            return;
+        }
+
+        const sourceEntry = matchingEntries[0];
+        const latlng = window.L.latLng(state.lat, state.lon);
+        openReportingPopup(sourceEntry, latlng);
+
+        setTimeout(function() {
+            state.openKeys.forEach(function(key) {
+                const entry = reportingPopupEntries.find(function(item) {
+                    return reportingPopupEntryKey(item) === key;
+                });
+                if (!entry) return;
+                const card = document.getElementById(reportingPopupEntryIdFor(entry));
+                if (card && !card.classList.contains('is-open')) {
+                    toggleReportingPopupCard(card.id);
+                }
+            });
+            const scroll = document.querySelector(
+                '.reporting-map-popup .reporting-popup-scroll'
+            );
+            if (scroll) scroll.scrollTop = state.scrollTop || 0;
+        }, 0);
+    }
 
     function removeReportingPopupEntries(source) {
         reportingPopupEntries = source
@@ -14126,6 +14242,8 @@
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
                   ['Issued by', formatNwsIssuedBy(alert.senderName, wfo)],
+                  ['Valid through', reportingAlertExpiryValue(alert)
+                      ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(alert)) : ''],
                   ['Alert text', parsedAlertText.description || alert.description],
                   ['Instructions', parsedAlertText.instructions || alert.instruction]
              ];
@@ -14897,6 +15015,23 @@
             value: hasBeenUpdated ? updateValue : (issued || updated),
             actorLabel: hasBeenUpdated ? 'Updated by' : 'Issued by'
         };
+    }
+
+    function reportingAlertExpiryValue(props) {
+        return customSkyAlertValue(props, [
+            'expires',
+            'expiresAt',
+            'expires_at',
+            'expiration',
+            'expirationTime',
+            'expiration_time',
+            'ends',
+            'endTime',
+            'expire',
+            'expire_utc',
+            'polygon_end',
+            'polygonEnd'
+        ], '');
     }
 
     function formatCustomSkyDiscussionNumber(props) {
@@ -15698,6 +15833,7 @@
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
              let historicalDeepLinkFeature = null;
+            const deepLinkIsRevisionSpecific = /-R\d+$/i.test(CUSTOM_SKY_DEEP_LINK_ID);
             if (CUSTOM_SKY_DEEP_LINK_ID && !reportingMapManualRefresh && !features.some(function(item) {
                 return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
                     CUSTOM_SKY_DEEP_LINK_ID
@@ -15746,11 +15882,18 @@
                         const normalizedFallbackFeature = toCustomSkyAlertFeature(
                             fallbackArchivedFeature
                         );
-                        const archiveFeatures = normalizedArchiveFeatures.length
-                            ? normalizedArchiveFeatures
+                        // A bare parent alert link means "show the latest
+                        // revision", including after the alert expires.
+                        // Explicit -R# links retain their historical behavior
+                        // and continue to identify one exact revision.
+                        const archiveFeatures = !deepLinkIsRevisionSpecific &&
+                            normalizedFallbackFeature && normalizedFallbackFeature.geometry
+                            ? [normalizedFallbackFeature]
+                            : (normalizedArchiveFeatures.length
+                                ? normalizedArchiveFeatures
                             : (normalizedFallbackFeature && normalizedFallbackFeature.geometry
                                 ? [normalizedFallbackFeature]
-                                : []);
+                                : []));
                         if (archiveFeatures.length) {
                             features = features.concat(archiveFeatures.map(function(feature, index) {
                                 const isLinkedRevision =
@@ -15799,18 +15942,10 @@
             // layer in one commit. This prevents a slow archive request from
             // blanking the polygon while an older popup remains on screen.
             if (loadGeneration !== customSkyAlertLoadGeneration) return;
-            // Keep the deep-linked custom alert open while the initial archive
-            // probe or later layer refresh rebuilds its polygon. The popup is
-            // independent of that layer, so closing it here makes the alert
-            // disappear just after the direct link opens it.
-            const keepDeepLinkedCustomAlertPopupOpen =
-                !!CUSTOM_SKY_DEEP_LINK_ID &&
-                !reportingMapManualRefresh &&
-                customSkyDeepLinkHandled;
-            if (reportingMap && reportingMap.closePopup &&
-                !keepDeepLinkedCustomAlertPopupOpen) {
-                reportingMap.closePopup();
-            }
+            // Preserve any open alert/report popup while this layer is rebuilt.
+            // The outer map-data load also captures this state, so this is
+            // intentionally a no-op when a refresh is already preserving it.
+            preserveReportingPopupForRefresh();
             customSkyAlertLayer.clearLayers();
             removeReportingPopupEntries('custom-skymonitor');
             let renderedCount = 0;
@@ -15907,7 +16042,8 @@
                      : '';
                  const customDetail = reportingPopupDetailRows([
                      [timeInfo.label, timeInfo.value ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                     [timeInfo.actorLabel, issuer]
+                     [timeInfo.actorLabel, issuer],
+                     ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : '']
                  ]) + (isMd ? mdContent : summaryLine + actionLine);
                   const alertId = customSkyAlertValue(props, [
                       'revision_id', 'revisionId', 'alertId', 'alertID', 'id', 'uuid', 'alertUuid', 'alert_uuid'
@@ -15918,6 +16054,8 @@
                 registerReportingPopup(polygon, {
                     source: 'custom-skymonitor',
                     isPolygon: true,
+                     popupKey: alertId || (isMd ? customSkyMDKey(feature) : '') ||
+                         alertIdentifiers.join('|'),
                      customAlertKey: isMd ? customSkyMDKey(feature) : alertId,
                      customAlertIds: alertIdentifiers,
             color: CUSTOM_SKY_ALERT_COLOR,
@@ -15966,7 +16104,7 @@
     }
 
     function clearReportingMapDataLayers() {
-        if (reportingMap && reportingMap.closePopup) reportingMap.closePopup();
+        preserveReportingPopupForRefresh();
         [alertPolygonLayer, customSkyAlertLayer, lsrLayer].forEach(function(layer) {
             if (layer && layer.clearLayers) layer.clearLayers();
         });
@@ -18288,6 +18426,11 @@
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
+        reportingMap.on('popupclose', function() {
+            if (!reportingPopupCloseSuppressed) {
+                reportingPopupRestoreState = null;
+            }
+        });
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
         // IEM Local Storm Reports are SVG circle markers. Keep them above
@@ -18522,6 +18665,8 @@
         const fallback = reportingPopupDetailRows([
             ['Issued', props.issue ? formatReportTime(props.issue) : ''],
             ['Issued by', formatNwsIssuedBy('', props.wfo)],
+            ['Valid through', reportingAlertExpiryValue(props)
+                ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(props)) : ''],
             ['Alert text', 'The archived NWS text product is temporarily unavailable.']
         ]);
         const promise = (async function() {
@@ -18571,12 +18716,16 @@
 
                 const sections = _historicalNwsTextSections(matchingProduct.text);
                 const issued = matchingProduct.valid || props.issue;
-                const rows = [
-                    ['Issued', issued ? formatReportTime(issued) : ''],
-                    ['Issued by', formatNwsIssuedBy(sections.issuer, wfo)],
-                    ['Alert text', sections.description],
-                    ['Instructions', sections.instructions]
-                ];
+                 const validThrough = reportingAlertExpiryValue(matchingProduct) ||
+                     reportingAlertExpiryValue(props);
+                 const rows = [
+                     ['Issued', issued ? formatReportTime(issued) : ''],
+                     ['Issued by', formatNwsIssuedBy(sections.issuer, wfo)],
+                     ['Valid through', validThrough
+                         ? formatReportingDateTimeNoSeconds(validThrough) : ''],
+                     ['Alert text', sections.description],
+                     ['Instructions', sections.instructions]
+                 ];
                 return reportingPopupDetailRows(rows) || fallback;
             } catch (error) {
                 return fallback;
@@ -18650,6 +18799,8 @@
                     source: 'nws',
                     isPolygon: true,
                     color: color,
+                     popupKey: String(props.product_id || props.href ||
+                         [phenomena, props.wfo, props.eventid, props.polygon_begin].join('|')),
                     title: escapeHtml(eventName),
                     meta: escapeHtml(props.wfo || 'NWS') +
                         (expires ? ' \u00B7 ' + escapeHtml(formatReportingExpiry(expires)) : ''),
@@ -18695,6 +18846,7 @@
     }
 
     async function loadReportingMapData() {
+        preserveReportingPopupForRefresh();
         if (reportingDataLoadInFlight) {
             reportingDataRefreshQueued = true;
             return;
@@ -18704,6 +18856,7 @@
             await loadReportingMapDataNow();
         } finally {
             reportingDataLoadInFlight = false;
+            restoreReportingPopupState();
             if (reportingDataRefreshQueued) {
                 reportingDataRefreshQueued = false;
                 setTimeout(loadReportingMapData, 0);
@@ -18790,16 +18943,21 @@
                                 fillOpacity: 0.2
                             }
                         });
-                        registerReportingPopup(polygon, {
+                         registerReportingPopup(polygon, {
                             source: 'environment-canada',
                             isPolygon: true,
                             color: color,
+                             popupKey: normalized.id || [
+                                 normalized.title,
+                                 normalized.areaDesc,
+                                 normalized.issuedAt,
+                                 normalized.expires
+                             ].join('|'),
                             title: escapeHtml(normalized.title),
                             meta: 'EC' +
                                 (normalized.expires ? ' \u00B7 Expires in ' +
                                     escapeHtml(formatReportingMinutesUntil(normalized.expires)) : ''),
                             detail: reportingPopupDetailRows([
-                                ['Area', normalized.areaDesc],
                                 [issuedLabel, normalized.issuedAt ? formatReportingDateTimeNoSeconds(normalized.issuedAt) : ''],
                                 ['Issued by', 'Environment Canada'],
                                 ['Valid through', normalized.expires ? formatReportingDateTimeNoSeconds(normalized.expires) : ''],
@@ -18835,10 +18993,17 @@
                         const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
                         const expiresText = f.properties.expire || f.properties.polygon_end;
                         const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
-                        registerReportingPopup(_poly, {
+                         registerReportingPopup(_poly, {
                             source: 'nws',
                             isPolygon: true,
                             color: color,
+                             popupKey: [
+                                 f.properties.product_identifier || f.properties.id ||
+                                     f.properties.href || '',
+                                 f.properties.wfo || '',
+                                 nwsEvent,
+                                 expiresText || ''
+                             ].join('|'),
                             title: escapeHtml(nwsEvent),
                             meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
                             detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
@@ -18937,7 +19102,7 @@
                 });
             if (lsrData) {
                     const LSR_ICON_TYPES = { tornado:'Tornado / Funnel Cloud', funnel:'Tornado / Funnel Cloud', hail:'Hail', wind:'Wind Damage', wnd:'Wind Damage', tstm:'Thunderstorm', flood:'Flooding', snow:'Heavy Snow', rain:'Rain', ice:'Ice / Freezing Rain', lightning:'Lightning Strike', fire:'Fire', dust:'Dust Storm', fog:'Fog' };
-                 const LSR_COLORS = { tornado:'#ff1744', funnel:'#90a4ae', hail:'#e0f7fa', wind:'#ff9100', wnd:'#ff9100', tstm:'#ffeb3b', flood:'#00e676', snow:'#b0bec5', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa', lightning:'#90a4ae', dust:'#c8a800' };
+                 const LSR_COLORS = { tornado:'#ff1744', funnel:'#90a4ae', hail:'#e0f7fa', wind:'#ff9100', wnd:'#ff9100', tstm:'#ffeb3b', flood:'#00e676', snow:'#b0bec5', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa', lightning:'#90a4ae', dust:'#c8a800', fog:'#90a4ae' };
                 // IEM uses several abbreviated storm-report type names. Resolve
                 // the wind reports explicitly before the broad fallback matching
                 // below so WND/TSTM substrings cannot assign the wrong icon/color.
@@ -18992,6 +19157,12 @@
                     registerReportingPopup(marker, {
                         source: 'iem-lsr',
                         color: dotColor,
+                         popupKey: [
+                             props.id || props.valid || '',
+                             la,
+                             lo,
+                             rawLsrType
+                         ].join('|'),
                          title: lsrIcon + escapeHtml(lsrTypeLabel) + escapeHtml(mag),
                         meta: escapeHtml(props.city || 'Unknown location') + (validStr ? ' \u00B7 ' + escapeHtml(validStr) : ''),
                          detail: reportingPopupDetailRows([
@@ -19039,6 +19210,12 @@
                     registerReportingPopup(marker, {
                         source: 'skymonitor-reports',
                         color: '#00e676',
+                         popupKey: String(r.id || r.reportId || [
+                             r.time,
+                             r.lat,
+                             r.lon,
+                             r.type
+                         ].join('|')),
                         title: reportIconMarkup(r.type, 'reporting-popup-icon') + escapeHtml(r.type || 'User Report'),
                         meta: escapeHtml(timeStr) + (r.location || r.city ? ' \u00B7 ' + escapeHtml(r.location || r.city) : ''),
                         detail: reportingPopupDetailRows([
