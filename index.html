@@ -482,7 +482,7 @@
         #tropical-route-zoom-controls {
             position: absolute;
             z-index: 950;
-            top: 58px;
+            top: 14px;
             left: 14px;
             display: flex;
             flex-direction: column;
@@ -597,6 +597,21 @@
             border-color: #f8d66d;
             background: #f8d66d;
         }
+        #tropical-route-settings-panel {
+            position: absolute;
+            top: 56px;
+            left: 12px;
+            z-index: 1100;
+            width: min(330px, calc(100vw - 24px));
+            box-sizing: border-box;
+            padding: 12px 14px;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            background: rgba(5,18,30,0.94);
+            backdrop-filter: blur(14px);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+        }
+        #tropical-route-settings-panel[hidden] { display: none; }
         #tropical-route-storm-picker {
             position: absolute;
             z-index: 900;
@@ -756,9 +771,10 @@
             #tropical-route-header { gap: 6px; padding-left: 8px; padding-right: 8px; }
             #tropical-route-header .tropical-route-icon-btn { padding: 7px 8px; }
             #tropical-route-toolbar { top: 10px; left: 10px; }
-            #tropical-route-zoom-controls { left: 10px; }
+            #tropical-route-zoom-controls { top: 10px; left: 10px; }
+            #tropical-route-settings-panel { top: 52px; left: 10px; width: calc(100vw - 20px); }
             #tropical-route-storm-picker { top: 53px; left: 10px; }
-            #tropical-route-status { left: 10px; top: 97px; }
+            #tropical-route-status { left: 10px; top: 57px; }
             #tropical-route-details { left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); max-height: 39vh; }
         }
         html.info-route #launch-screen,
@@ -1994,22 +2010,24 @@
                 <div class="tropical-route-subtitle">Forecast track, cone, location intensity, and satellite imagery</div>
             </div>
             <span id="tropical-route-header-spacer"></span>
-            <button id="tropical-route-location-btn" class="tropical-route-icon-btn" type="button"
-                    onclick="centerTropicalOnLocation()" title="Center on your location" aria-label="Center on your location">&#128205;</button>
             <button id="tropical-route-refresh" class="tropical-route-icon-btn" type="button"
-                    onclick="loadTropicalRouteData(true)" title="Refresh tropical data" aria-label="Refresh tropical data">&#8635;</button>
+                    onclick="loadTropicalRouteData(true)" title="Refresh" aria-label="Refresh"
+                    style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;">&#8635;</button>
+            <button id="tropical-route-settings-btn" class="tropical-route-icon-btn" type="button"
+                    onclick="toggleTropicalSettings()" title="Map layers" aria-label="Map layers" aria-expanded="false"
+                    style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;">&#9881;&#65039;</button>
         </header>
         <div id="tropical-route-map-wrap">
             <div id="tropical-route-map" aria-label="Interactive tropical storm map"></div>
-            <div id="tropical-route-toolbar" role="toolbar" aria-label="Tropical map views">
-                <button id="tropical-route-map-mode" class="tropical-route-mode-btn is-active" type="button"
-                        onclick="setTropicalMapMode('map')">&#9673; DARK MAP</button>
-                <button id="tropical-route-satellite-mode" class="tropical-route-mode-btn" type="button"
-                        onclick="setTropicalMapMode('satellite')">&#9729; SATELLITE OVERLAY</button>
-                <button id="tropical-route-storms-btn" class="tropical-route-mode-btn" type="button"
-                        onclick="toggleTropicalStormPicker()">STORMS</button>
+            <div id="tropical-route-settings-panel" hidden>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite Overlay</span>
+                    <label class="ios-toggle">
+                        <input type="checkbox" id="tropical-satellite-toggle-cb" onchange="toggleTropicalSatellite()">
+                        <span class="ios-toggle-track"></span>
+                    </label>
+                </div>
             </div>
-            <div id="tropical-route-storm-picker" aria-label="Active tropical systems"></div>
             <div id="tropical-route-zoom-controls" aria-label="Map zoom controls">
                 <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomIn()" aria-label="Zoom in">+</button>
                 <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomOut()" aria-label="Zoom out">−</button>
@@ -20351,12 +20369,29 @@
         _positionTropicalZoomControls();
     }
 
+    function toggleTropicalSettings() {
+        var panel = document.getElementById('tropical-route-settings-panel');
+        var button = document.getElementById('tropical-route-settings-btn');
+        if (!panel) return;
+        var open = panel.hidden;
+        panel.hidden = !open;
+        if (button) {
+            button.style.background = open
+                ? 'rgba(79,195,247,0.35)'
+                : 'rgba(79,195,247,0.15)';
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+    }
+
+    function toggleTropicalSatellite() {
+        var toggle = document.getElementById('tropical-satellite-toggle-cb');
+        setTropicalMapMode(toggle && toggle.checked ? 'satellite' : 'map');
+    }
+
     function setTropicalMapMode(mode) {
         tropicalRouteMapMode = mode === 'satellite' ? 'satellite' : 'map';
-        var mapButton = document.getElementById('tropical-route-map-mode');
-        var satelliteButton = document.getElementById('tropical-route-satellite-mode');
-        if (mapButton) mapButton.classList.toggle('is-active', tropicalRouteMapMode === 'map');
-        if (satelliteButton) satelliteButton.classList.toggle('is-active', tropicalRouteMapMode === 'satellite');
+        var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
+        if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
         _tropicalMapLayersForMode();
     }
 
