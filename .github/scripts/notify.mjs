@@ -1109,8 +1109,8 @@ const vapid = await importVapidKeys(VAPID_PUB, VAPID_PRIV);
 const { results: rows } = await d1Query("SELECT * FROM push_subscriptions");
 console.log(`[SkyMonitor] ${rows.length} subscriber(s)`);
 
-for (const [subscriberIndex, row] of rows.entries()) {
-  const subscriberLabel = `Subscriber #${subscriberIndex + 1}`;
+for (const row of rows) {
+  const subscriberLabel = `Subscriber #${row.id}`;
   const knownIds = JSON.parse(row.known_alert_ids || "[]");
   const prefs    = parsePushPreferences(row.prefs);
 
@@ -1119,7 +1119,7 @@ for (const [subscriberIndex, row] of rows.entries()) {
     const sub = JSON.parse(row.subscription);
     const p256 = (sub?.keys?.p256dh || "").slice(-12);
     const auth = (sub?.keys?.auth   || "").slice(-8);
-    console.log(`[SkyMonitor] subscriber endpoint=...${row.endpoint.slice(-30)}  p256dh=...${p256}  auth=...${auth}`);
+    console.log(`[SkyMonitor] ${subscriberLabel} endpoint=...${row.endpoint.slice(-30)}  p256dh=...${p256}  auth=...${auth}`);
   } catch {}
 
   // ── NWS alerts ────────────────────────────────────────────
