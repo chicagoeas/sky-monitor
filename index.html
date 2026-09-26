@@ -15833,6 +15833,7 @@
             let features = getCustomSkyAlertFeatures(payload);
             let archivedDeepLink = false;
              let historicalDeepLinkFeature = null;
+            const deepLinkIsRevisionSpecific = /-R\d+$/i.test(CUSTOM_SKY_DEEP_LINK_ID);
             if (CUSTOM_SKY_DEEP_LINK_ID && !reportingMapManualRefresh && !features.some(function(item) {
                 return customSkyAlertIdentifiers(toCustomSkyAlertFeature(item)).indexOf(
                     CUSTOM_SKY_DEEP_LINK_ID
@@ -15881,11 +15882,18 @@
                         const normalizedFallbackFeature = toCustomSkyAlertFeature(
                             fallbackArchivedFeature
                         );
-                        const archiveFeatures = normalizedArchiveFeatures.length
-                            ? normalizedArchiveFeatures
+                        // A bare parent alert link means "show the latest
+                        // revision", including after the alert expires.
+                        // Explicit -R# links retain their historical behavior
+                        // and continue to identify one exact revision.
+                        const archiveFeatures = !deepLinkIsRevisionSpecific &&
+                            normalizedFallbackFeature && normalizedFallbackFeature.geometry
+                            ? [normalizedFallbackFeature]
+                            : (normalizedArchiveFeatures.length
+                                ? normalizedArchiveFeatures
                             : (normalizedFallbackFeature && normalizedFallbackFeature.geometry
                                 ? [normalizedFallbackFeature]
-                                : []);
+                                : []));
                         if (archiveFeatures.length) {
                             features = features.concat(archiveFeatures.map(function(feature, index) {
                                 const isLinkedRevision =
