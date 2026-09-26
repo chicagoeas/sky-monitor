@@ -20039,7 +20039,9 @@
         var time = point.time ? new Date(point.time).toLocaleString([], {
             month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
         }) : 'Official forecast position';
-        var lead = point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
+        var lead = Number(point.forecastHour) === 0
+            ? 'CURRENT FORECAST'
+            : point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
         return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
             '<div class="tropical-forecast-popup-title">' + escapeHtml(name) + '</div>' +
             '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
@@ -20547,6 +20549,8 @@
     async function fetchTropicalStorms() {
         const widget = document.getElementById('tropical-widget');
         if (!widget) return;
+        const tropicalFetchGeneration = (window._tropicalFetchGeneration || 0) + 1;
+        window._tropicalFetchGeneration = tropicalFetchGeneration;
         const userLat = parseFloat(lat), userLon = parseFloat(lon);
         if (isNaN(userLat) || isNaN(userLon)) return;
 
@@ -20606,11 +20610,33 @@
             return h;
         }
 
+        function _clearTropicalMiniMap(mapEl) {
+            if (window._tropMapInitTimer) {
+                clearTimeout(window._tropMapInitTimer);
+                window._tropMapInitTimer = null;
+            }
+            if (window._tropMap) {
+                try { window._tropMap.off(); } catch (_) {}
+                try { window._tropMap.remove(); } catch (_) {}
+                window._tropMap = null;
+            }
+            if (mapEl) {
+                mapEl.replaceChildren();
+                mapEl.style.background = '#02080e';
+            }
+        }
+
         // ——— Cloudflare Worker → NHC CurrentStorms.json (CORS-safe, 5-min edge cache) ———
         try {
             const res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000);
-            if (!res.ok) { widget.style.display='none'; return; }
+            if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
+            if (!res.ok) {
+                _clearTropicalMiniMap(document.getElementById('tropical-map'));
+                widget.style.display='none';
+                return;
+            }
             const nhcData = await res.json();
+            if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
             const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
             // Ray-casting point-in-polygon. GeoJSON coords are [lon, lat].
             function _pip(lat, lon, pgn) {
@@ -20642,19 +20668,30 @@
                 // ——— Leaflet mini-map (non-interactive, dark tiles, cone + track + markers) ———
                 const mapEl=document.getElementById('tropical-map');
                 if(mapEl){
+                    _clearTropicalMiniMap(mapEl);
                     mapEl.style.display='block';
-                    if(window._tropMap){try{window._tropMap.remove();}catch(_){}window._tropMap=null;}
-                    mapEl.innerHTML='';
+                    mapEl.style.background='#02080e';
                     const s0=storms[0];
                     const sLat0=s0.latitudeNumeric??_pc(s0.latitude??null);
                     const sLon0=s0.longitudeNumeric??_pc(s0.longitude??null);
                     const mph0=Math.round((parseInt(s0.intensity)||0)*1.15078);
                     const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
-                    setTimeout(()=>{
+                    const miniMapGeneration=tropicalFetchGeneration;
+                    let mountAttempts=0;
+                    const mountMiniMap=()=>{
+                        if(miniMapGeneration!==window._tropicalFetchGeneration || !mapEl.isConnected) return;
+                        const mapSize=mapEl.getBoundingClientRect();
+                        if(mapSize.width<4 || mapSize.height<4){
+                            if(mountAttempts++<12){
+                                window._tropMapInitTimer=setTimeout(mountMiniMap,50);
+                            }
+                            return;
+                        }
+                        window._tropMapInitTimer=null;
                         const map=L.map(mapEl,{dragging:false,touchZoom:false,scrollWheelZoom:false,doubleClickZoom:false,keyboard:false,zoomControl:false,attributionControl:false});
                         window._tropMap=map;
                         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11',{subdomains:'abcd',maxZoom:19}).addTo(map);
-                         map.on('click', function(){ openTropicalRoute(); });
+                        map.on('click', function(){ openTropicalRoute(); });
                         let bounds=null;
                         if(s0.conePgn?.coordinates){
                             const ring=s0.conePgn.coordinates[0].map(c=>[c[1],c[0]]);
@@ -20668,17 +20705,29 @@
                             L.circleMarker([sLat0,sLon0],{radius:8,color:'#fff',fillColor:cc,fillOpacity:1,weight:2,interactive:false}).addTo(map);
                         }
                         L.circleMarker([userLat,userLon],{radius:5,color:'#fff',fillColor:'#7dd3fc',fillOpacity:0.9,weight:1.5,interactive:false}).addTo(map);
-                        if(bounds){map.fitBounds(bounds,{padding:[12,12]});}else if(!isNaN(sLat0)&&!isNaN(sLon0)){map.setView([sLat0,sLon0],6);}
-                        map.invalidateSize();
-                    },60);
+                        const stabilizeMiniMap=()=>{
+                            if(window._tropMap!==map || miniMapGeneration!==window._tropicalFetchGeneration) return;
+                            map.invalidateSize({pan:false,animate:false});
+                            if(bounds){map.fitBounds(bounds,{padding:[12,12],animate:false});}
+                            else if(!isNaN(sLat0)&&!isNaN(sLon0)){map.setView([sLat0,sLon0],6,{animate:false});}
+                        };
+                        stabilizeMiniMap();
+                        [80,250,600].forEach(delay=>setTimeout(stabilizeMiniMap,delay));
+                    };
+                    window._tropMapInitTimer=setTimeout(mountMiniMap,0);
                 }
             } else {
                 widget.style.display='none';
-                if(window._tropMap){try{window._tropMap.remove();}catch(_){}window._tropMap=null;}
                 const mapEl=document.getElementById('tropical-map');
+                _clearTropicalMiniMap(mapEl);
                 if(mapEl)mapEl.style.display='none';
             }
-        } catch(e){ console.warn('[SkyMonitor tropical] fetch/parse error:', e); widget.style.display='none'; }
+        } catch(e){
+            console.warn('[SkyMonitor tropical] fetch/parse error:', e);
+            if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
+            _clearTropicalMiniMap(document.getElementById('tropical-map'));
+            widget.style.display='none';
+        }
 
     }
 
