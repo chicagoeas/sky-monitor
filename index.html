@@ -20265,28 +20265,31 @@
         }).join('');
     }
 
-    function _drawTropicalRouteStorm(storm, shouldFit) {
+    function _drawTropicalRouteStorm(storm, stormIndex, bounds) {
         if (!tropicalRouteMap || !window.L || !storm) return;
-        if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
-        else tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
         var current = _tropicalCurrentPoint(storm);
         var forecastPoints = storm._forecastPoints || [];
         var track = forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm);
         var points = track.length >= 2 ? track : _tropicalPointsFrom(storm.trackPts);
-        var bounds = L.latLngBounds([]);
         var color = _tropicalColor(storm);
+        var selectStormOnClick = function(layer) {
+            layer.on('click', function() {
+                selectTropicalRouteStorm(stormIndex);
+            });
+            return layer;
+        };
         if (storm.conePgn && storm.conePgn.coordinates && storm.conePgn.coordinates[0]) {
             var coneRing = storm.conePgn.coordinates[0].map(function(pair) { return [pair[1], pair[0]]; });
-            var cone = L.polygon(coneRing, {
+            var cone = selectStormOnClick(L.polygon(coneRing, {
                 color: '#f8d66d', fillColor: '#f8d66d', fillOpacity: 0.12,
-                weight: 1.4, opacity: 0.75, dashArray: '5,5', interactive: false
-            }).addTo(tropicalRouteStormLayer);
+                weight: 1.4, opacity: 0.75, dashArray: '5,5', interactive: true
+            })).addTo(tropicalRouteStormLayer);
             bounds.extend(cone.getBounds());
         }
         if (points.length >= 2) {
-            var line = L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
-                color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: false
-            }).addTo(tropicalRouteStormLayer);
+            var line = selectStormOnClick(L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
+                color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: true
+            })).addTo(tropicalRouteStormLayer);
             bounds.extend(line.getBounds());
         }
         if (forecastPoints.length) {
@@ -20300,20 +20303,31 @@
                     iconAnchor: [17, 13],
                     popupAnchor: [0, -12]
                 });
-                L.marker([point.lat, point.lon], { icon: icon, keyboard: true, zIndexOffset: 300 })
-                    .bindPopup(_tropicalForecastPopupHtml(storm, point), { closeButton: true })
-                    .addTo(tropicalRouteStormLayer);
+                var forecastMarker = L.marker([point.lat, point.lon], {
+                    icon: icon, keyboard: true, zIndexOffset: 300
+                }).bindPopup(_tropicalForecastPopupHtml(storm, point), { closeButton: true });
+                selectStormOnClick(forecastMarker).addTo(tropicalRouteStormLayer);
                 bounds.extend([point.lat, point.lon]);
             });
         }
         if (current) {
-            var currentMarker = L.circleMarker([current.lat, current.lon], {
+            var currentMarker = selectStormOnClick(L.circleMarker([current.lat, current.lon], {
                 radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5
             }).bindTooltip((_tropicalClassification(storm, _tropicalWindMph(storm)) + ' ' + (storm.name || '')).trim(), {
                 direction: 'top', opacity: 0.95
-            }).addTo(tropicalRouteStormLayer);
+            })).addTo(tropicalRouteStormLayer);
             bounds.extend(currentMarker.getLatLng());
         }
+    }
+
+    function _drawTropicalRouteStorms(shouldFit) {
+        if (!tropicalRouteMap || !window.L) return;
+        if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
+        else tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
+        var bounds = L.latLngBounds([]);
+        tropicalRouteStorms.forEach(function(storm, index) {
+            _drawTropicalRouteStorm(storm, index, bounds);
+        });
         if (tropicalRouteUserLayer) tropicalRouteRouteClearLayer(tropicalRouteUserLayer);
         else tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
         var userLat = parseFloat(lat), userLon = parseFloat(lon);
@@ -20326,18 +20340,22 @@
                 radius: 7, color: '#ffffff', fillColor: '#7dd3fc', fillOpacity: 1, weight: 2, interactive: false
             }).bindTooltip('Your selected location', { direction: 'top', opacity: 0.95 }).addTo(tropicalRouteUserLayer);
         }
-        _renderTropicalRouteDetails(storm);
+        if (tropicalRouteStorms[tropicalRouteSelectedIndex]) {
+            _renderTropicalRouteDetails(tropicalRouteStorms[tropicalRouteSelectedIndex]);
+        }
         _tropicalMapLayersForMode();
         if (shouldFit && bounds.isValid()) {
             tropicalRouteMap.fitBounds(bounds, { paddingTopLeft: [30, 130], paddingBottomRight: [30, 120], maxZoom: 6, animate: false });
         }
-        if (!storm._forecastPointsLoaded && !storm._forecastPointsPromise) {
-            _loadTropicalForecastPoints(storm).then(function() {
-                if (tropicalRouteStorms[tropicalRouteSelectedIndex] === storm) {
-                    _drawTropicalRouteStorm(storm, false);
-                }
-            });
-        }
+        tropicalRouteStorms.forEach(function(storm) {
+            if (!storm._forecastPointsLoaded && !storm._forecastPointsPromise) {
+                _loadTropicalForecastPoints(storm).then(function() {
+                    if (tropicalRouteStorms.indexOf(storm) !== -1) {
+                        _drawTropicalRouteStorms(false);
+                    }
+                });
+            }
+        });
     }
 
     function tropicalRouteRouteClearLayer(layer) {
@@ -20348,7 +20366,7 @@
         if (!tropicalRouteStorms[index]) return;
         tropicalRouteSelectedIndex = index;
         _renderTropicalStormPicker();
-        _drawTropicalRouteStorm(tropicalRouteStorms[index], true);
+        _renderTropicalRouteDetails(tropicalRouteStorms[index]);
         var picker = document.getElementById('tropical-route-storm-picker');
         if (picker) picker.classList.remove('is-visible');
         _positionTropicalZoomControls();
@@ -20440,7 +20458,7 @@
                 return;
             }
             if (status) status.textContent = '';
-            _drawTropicalRouteStorm(tropicalRouteStorms[tropicalRouteSelectedIndex], !forceRefresh);
+            _drawTropicalRouteStorms(!forceRefresh);
         } catch (error) {
             console.warn('[SkyMonitor tropical tracker] load failed:', error);
             if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC feed.';
