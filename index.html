@@ -2184,7 +2184,9 @@
                 <h3 id="tropical-route-detail-title">Tropical system</h3>
                 <div id="tropical-route-detail-subtitle"></div>
                 <div class="tropical-route-detail-grid">
-                    <div class="tropical-route-detail-cell"><span>Current wind</span><strong id="tropical-route-current-wind">—</strong></div>
+                    <div class="tropical-route-detail-cell"><span>Current sustained wind</span><strong id="tropical-route-current-wind">—</strong></div>
+                    <div class="tropical-route-detail-cell"><span>Current forecast gust</span><strong id="tropical-route-current-gust">—</strong></div>
+                    <div class="tropical-route-detail-cell"><span>Current forecast sustained</span><strong id="tropical-route-current-forecast">—</strong></div>
                     <div class="tropical-route-detail-cell"><span>Pressure</span><strong id="tropical-route-pressure">—</strong></div>
                     <div class="tropical-route-detail-cell"><span>Movement</span><strong id="tropical-route-movement">—</strong></div>
                     <div class="tropical-route-detail-cell"><span>Distance to you</span><strong id="tropical-route-distance">—</strong></div>
@@ -20138,6 +20140,7 @@
                 lon: a,
                 lat: b,
                 wind: _tropicalFinite(value[2]),
+                gust: _tropicalFinite(value[5]),
                 time: value[3] || '',
                 forecastHour: value[4] != null ? _tropicalFinite(value[4]) : null
             };
@@ -20161,14 +20164,21 @@
         var wind = value.windMph ?? value.maxWindMph ?? value.windSpeedMph ??
             value.maxWind ?? value.windSpeed ?? value.intensity ?? value.wind;
         var windNumber = _tropicalFinite(wind);
+        var gust = value.gustMph ?? value.currentGustMph ?? value.maxGustMph ??
+            value.gust ?? value.maxGust;
+        var gustNumber = _tropicalFinite(gust);
         var unit = String(value.windUnit ?? value.units ?? value.unit ?? '').toLowerCase();
         if (windNumber != null && (unit === 'kt' || unit === 'kts' || unit === 'knots' || unit === 'knot')) {
             windNumber = Math.round(windNumber * 1.15078);
+        }
+        if (gustNumber != null && (unit === 'kt' || unit === 'kts' || unit === 'knots' || unit === 'knot')) {
+            gustNumber = Math.round(gustNumber * 1.15078);
         }
         return {
             lon: lonNumber,
             lat: latNumber,
             wind: windNumber,
+            gust: gustNumber,
             time: value.time ?? value.validTime ?? value.forecastTime ?? value.timestamp ?? '',
             forecastHour: value.forecastHour != null
                 ? _tropicalFinite(value.forecastHour)
@@ -20222,10 +20232,40 @@
     }
 
     function _tropicalWindMph(storm) {
+        var direct = _tropicalFinite(storm.currentWindMph ?? storm.maxSustainedWindMph ?? storm.windMph);
+        if (direct != null) return Math.round(direct);
         var value = _tropicalFinite(storm.intensity ?? storm.maxWindMph ?? storm.windSpeedMph ?? storm.maxWind ?? storm.windSpeed);
         var unit = String(storm.windUnit ?? storm.units ?? storm.unit ?? '').toLowerCase();
         if (value == null) return null;
         return Math.round((unit === 'kt' || unit === 'kts' || unit === 'knots') ? value * 1.15078 : value);
+    }
+
+    function _tropicalCurrentForecastPoint(storm) {
+        var direct = storm && storm.currentForecastPoint;
+        if (direct) {
+            var normalized = _tropicalCoordinate(direct);
+            if (normalized) return normalized;
+        }
+        var points = _tropicalPointsFrom(storm && (storm.forecastPoints || storm.forecastTrackPoints));
+        return points.find(function(point) {
+            return point.forecastHour === 0;
+        }) || points[0] || null;
+    }
+
+    function _tropicalWindDetails(storm) {
+        var currentMph = _tropicalWindMph(storm);
+        var currentGustMph = _tropicalFinite(storm.currentGustMph ?? storm.gustMph);
+        var forecastMph = _tropicalFinite(storm.currentForecastWindMph);
+        var forecastGustMph = _tropicalFinite(storm.currentForecastGustMph);
+        var forecastPoint = _tropicalCurrentForecastPoint(storm);
+        if (forecastMph == null && forecastPoint) forecastMph = forecastPoint.wind;
+        if (forecastGustMph == null && forecastPoint) forecastGustMph = forecastPoint.gust;
+        return {
+            currentMph: currentMph,
+            currentGustMph: currentGustMph,
+            forecastMph: forecastMph,
+            forecastGustMph: forecastGustMph
+        };
     }
 
     function _tropicalClassification(storm, windMph) {
@@ -20300,17 +20340,16 @@
     }
 
     function _tropicalJtwcCategory(point) {
-        var label = _tropicalJtwcMarkerLabel(point);
         var windMph = _tropicalFinite(point && (point.wind ?? point.intensity));
-        if (label === 'VT') {
-            // JTWC calls 130 kt / 150 mph or greater a super typhoon.
-            return windMph != null && windMph >= 150
-                ? 'Category 5 super typhoon'
-                : 'Category 4–3 typhoon';
-        }
-        if (label === 'ST') return 'Category 2 typhoon';
-        if (label === 'T') return 'Category 1 typhoon';
-        return '';
+        if (windMph == null || windMph < 74) return '';
+        // Categories are based on maximum sustained wind, not gusts.  Use the
+        // same thresholds for a JTWC typhoon that the NHC uses for a
+        // hurricane, while retaining JTWC's source terminology.
+        if (windMph >= 157) return 'Category 5 typhoon';
+        if (windMph >= 130) return 'Category 4 typhoon';
+        if (windMph >= 111) return 'Category 3 typhoon';
+        if (windMph >= 96) return 'Category 2 typhoon';
+        return 'Category 1 typhoon';
     }
 
     function _tropicalForecastTime(text) {
@@ -20389,14 +20428,16 @@
             ? _tropicalJtwcCategory(point)
             : _tropicalCategory(point.wind);
         var lead = Number(point.forecastHour) === 0
-            ? 'CURRENT FORECAST'
+            ? 'CURRENT FORECAST POINT'
             : point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
+        var windLine = _tropicalFormatWind(point.wind) + ' maximum sustained wind';
+        if (point.gust != null) windLine += '<br>' + _tropicalFormatWind(point.gust) + ' gusts';
         return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
             '<div class="tropical-forecast-popup-title">' + escapeHtml(name) + '</div>' +
-            '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
+            '<div class="tropical-forecast-popup-wind">' + windLine + '</div>' +
             '<div class="tropical-forecast-popup-meta">' +
             (category ? '<b>' + escapeHtml(category) + '</b><br>' : '') +
-            escapeHtml(time) + '<br>Maximum sustained wind</div>' +
+            escapeHtml(time) + '</div>' +
             '<div class="tropical-forecast-popup-note">' + (storm.source === 'JTWC' ? 'JTWC official forecast point · ' : 'NHC official forecast point · ') +
             escapeHtml(point.lat.toFixed(1) + '°, ' + Math.abs(point.lon).toFixed(1) + '°' + (point.lon < 0 ? 'W' : 'E')) +
             '</div>';
@@ -20527,12 +20568,17 @@
         var qualifier = nearest.distance <= 125
             ? 'At the nearest published forecast position to your location'
             : 'The nearest published forecast position is ' + Math.round(nearest.distance).toLocaleString() + ' miles away';
+        var sourceName = storm.source === 'JTWC' ? 'JTWC' : 'NHC';
+        var category = storm.source === 'JTWC'
+            ? (_tropicalJtwcCategory(nearest.point) || 'no category')
+            : _tropicalCategory(nearest.point.wind);
         return {
             html: '<strong>Forecast intensity at your location:</strong> ' + qualifier +
                 when + ': <strong>' + _tropicalFormatWind(nearest.point.wind) + '</strong> maximum sustained wind (' +
-                escapeHtml(storm.source === 'JTWC'
-                    ? (_tropicalJtwcCategory(nearest.point) || 'no category')
-                    : _tropicalCategory(nearest.point.wind)) + ').',
+                escapeHtml(category) + ', official ' + sourceName + ' forecast point).' +
+                (nearest.point.gust != null
+                    ? ' Gusts: <strong>' + _tropicalFormatWind(nearest.point.gust) + '</strong>.'
+                    : ''),
             hasForecast: true
         };
     }
@@ -20655,7 +20701,8 @@
         if (!details || !storm) return;
         var userLat = parseFloat(lat), userLon = parseFloat(lon);
         var current = _tropicalCurrentPoint(storm);
-        var wind = _tropicalWindMph(storm);
+        var windDetails = _tropicalWindDetails(storm);
+        var wind = windDetails.currentMph;
         var classification = _tropicalClassification(storm, wind);
         var name = String(storm.name || 'Unnamed system');
         var pressure = _tropicalFinite(storm.pressure);
@@ -20669,6 +20716,10 @@
                 ? 'Official JTWC position and forecast track.'
                 : 'Official NHC position and forecast track.';
         document.getElementById('tropical-route-current-wind').textContent = _tropicalFormatWind(wind);
+        document.getElementById('tropical-route-current-gust').textContent =
+            windDetails.currentGustMph != null ? _tropicalFormatWind(windDetails.currentGustMph) : 'Not reported';
+        document.getElementById('tropical-route-current-forecast').textContent =
+            windDetails.forecastMph != null ? _tropicalFormatWind(windDetails.forecastMph) : 'Not reported';
         document.getElementById('tropical-route-pressure').textContent = pressure != null ? pressure + ' mb' : '—';
         document.getElementById('tropical-route-movement').textContent = movement;
         document.getElementById('tropical-route-distance').textContent = distance != null ? Math.round(distance).toLocaleString() + ' mi' : '—';
@@ -20704,9 +20755,9 @@
             var title = _tropicalClassification(storm, wind) + ' ' + (storm.name || 'Unnamed');
             var distance = storm._dist != null ? Math.round(storm._dist).toLocaleString() + ' mi from you' : 'Active system';
             return '<button class="tropical-route-storm-choice' + (index === tropicalRouteSelectedIndex ? ' is-active' : '') +
-                '" type="button" onclick="selectTropicalRouteStorm(' + index + ')"><span><b>' +
-                escapeHtml(title) + '</b><small>' + escapeHtml(distance) + '</small></span><strong>' +
-                escapeHtml(_tropicalFormatWind(wind)) + '</strong></button>';
+                 '" type="button" onclick="selectTropicalRouteStorm(' + index + ')"><span><b>' +
+                 escapeHtml(title) + '</b><small>' + escapeHtml(distance) + '</small></span><strong>' +
+                 escapeHtml(_tropicalFormatWind(wind)) + '<small style="display:block;font-size:.65em;font-weight:600;opacity:.7;">sustained</small></strong></button>';
         }).join('');
     }
 
@@ -21181,14 +21232,15 @@
 
         // ——— Tropical card (NHC and JTWC use the same presentation) ———
         function _nhcCard(s){
-            const kt=parseInt(s.intensity)||0, mph=Math.round(kt*1.15078);
+            const windDetails=_tropicalWindDetails(s);
+            const mph=windDetails.currentMph||0;
             const clsMap={HU:'Hurricane',TY:'Typhoon',TS:'Tropical Storm',TD:'Tropical Depression',TC:'Tropical Cyclone',SS:'Subtropical Storm',SD:'Subtropical Depression',EX:'Extratropical'};
             const typeLabel=clsMap[s.classification]||(mph>=74?'Hurricane':mph>=39?'Tropical Storm':'Tropical System');
             const catLabel=s.source==='JTWC'
-                ? _tropicalJtwcCategory({jtwcLabel:s.jtwcLabel,wind:mph}).replace(' typhoon','')
+                ? _tropicalJtwcCategory({wind:mph}).replace(' typhoon','')
                 : mph>=157?'CAT 5':mph>=130?'CAT 4':mph>=111?'CAT 3':mph>=96?'CAT 2':mph>=74?'CAT 1':'';
             const catColor=s.source==='JTWC'
-                ? _tropicalJtwcMarkerColor(s.jtwcLabel)
+                ? _tropicalColor({currentWindMph:mph})
                 : mph>=130?'#ff1744':mph>=111?'#ff5722':mph>=96?'#ff9100':mph>=74?'#ffd54f':mph>=39?'#4fc3f7':'#81c784';
             const distColor=!isNaN(s._dist)?(s._dist<300?'#ff1744':s._dist<700?'#ff9100':'#4fc3f7'):'#4fc3f7';
             const hdl=s.headline?(s.headline.length>110?s.headline.substring(0,110)+'\u2026':s.headline):'';
@@ -21209,8 +21261,9 @@
             // Category
             h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Category</div>';
             h+='<div style="font-size:0.86em;font-weight:700;color:'+catColor+';">'+typeLabel+(catLabel?' <span style="font-size:0.8em;opacity:0.75;">'+catLabel+'</span>':'')+'</div></div>';
-            // Max wind
-            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Max. Wind Speed</div>';
+            // Current maximum sustained wind. Gusts and the current forecast
+            // point are intentionally separate values.
+            h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Current sustained wind</div>';
             h+='<div style="font-size:0.86em;font-weight:700;color:'+catColor+';">'+(mph?mph+' mph':'\u2014')+'</div></div>';
             // Distance
             h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Distance</div>';
@@ -21227,6 +21280,18 @@
             h+='</div></div>';
             // If pressure was shown, add movement as footer
             if(pressureMb>0&&movText) h+='<div style="margin-top:8px;font-size:0.7em;color:#6b7280;">Movement: '+movText+'</div>';
+            if(windDetails.forecastMph!=null || windDetails.currentGustMph!=null) {
+                h+='<div style="margin-top:8px;font-size:0.7em;color:#9ab0bf;line-height:1.5;">';
+                if(windDetails.forecastMph!=null) {
+                    h+='Current forecast point: <b style="color:#c5d3dc;">'+windDetails.forecastMph+' mph sustained</b>';
+                }
+                if(windDetails.currentGustMph!=null) {
+                    if(windDetails.forecastMph!=null) h+=' · ';
+                    h+='Gusts: <b style="color:#c5d3dc;">'+windDetails.currentGustMph+' mph</b>';
+                }
+                h+='</div>';
+            }
+            h+='<div style="margin-top:6px;font-size:0.66em;color:#6b7280;">Category uses maximum sustained wind; gusts are shown separately.</div>';
             if(s.source==='JTWC') h+='<div style="margin-top:8px;font-size:0.68em;color:#6b7280;">Official Joint Typhoon Warning Center data</div>';
             h+='</div>';
             return h;
@@ -21314,7 +21379,7 @@
                     const sLat0=s0.latitudeNumeric??_pc(s0.latitude??null);
                     const sLon0=s0.longitudeNumeric??_pc(s0.longitude??null);
                     mapEl._tropicalFocus={id:s0.id,name:s0.name,lat:sLat0,lon:sLon0};
-                    const mph0=Math.round((parseInt(s0.intensity)||0)*1.15078);
+                    const mph0=_tropicalWindMph(s0)||0;
                     const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
                     const miniMapGeneration=tropicalFetchGeneration;
                     let mountAttempts=0;
@@ -21379,8 +21444,8 @@
                         }
                         if(!isNaN(sLat0)&&!isNaN(sLon0)){
                             const miniLabel=s0.source==='JTWC'
-                                ? _tropicalJtwcMarkerLabel({jtwcLabel:s0.jtwcLabel,wind:Math.round((parseInt(s0.intensity)||0)*1.15078)})
-                                : _tropicalMarkerLabel(Math.round((parseInt(s0.intensity)||0)*1.15078));
+                                ? _tropicalJtwcMarkerLabel({jtwcLabel:s0.jtwcLabel,wind:_tropicalWindMph(s0)})
+                                : _tropicalMarkerLabel(_tropicalWindMph(s0));
                             const miniIconColor=s0.source==='JTWC'
                                 ? _tropicalJtwcMarkerColor(miniLabel)
                                 : cc;
