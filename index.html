@@ -20313,7 +20313,7 @@
             '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
             '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(point.wind)) +
             '</b><br>' + escapeHtml(time) + '<br>Maximum sustained wind</div>' +
-            '<div class="tropical-forecast-popup-note">NHC official forecast point · ' +
+            '<div class="tropical-forecast-popup-note">' + (storm.source === 'JTWC' ? 'JTWC official forecast point · ' : 'NHC official forecast point · ') +
             escapeHtml(point.lat.toFixed(1) + '°, ' + Math.abs(point.lon).toFixed(1) + '°' + (point.lon < 0 ? 'W' : 'E')) +
             '</div>';
     }
@@ -20356,8 +20356,8 @@
         return _tropicalPointInPolygon(latValueNumber, lonValueNumber, coordinates);
     }
 
-    async function _fetchTropicalNHC(forceRefresh) {
-        var url = WEATHER_WORKER_URL + '/api/weather/nhc' +
+    async function _fetchTropicalFeed(path, label, forceRefresh) {
+        var url = WEATHER_WORKER_URL + path +
             (forceRefresh ? '?refresh=' + Date.now() : '');
         var lastError = null;
         for (var attempt = 0; attempt < 3; attempt++) {
@@ -20367,7 +20367,7 @@
                     headers: { Accept: 'application/json' }
                 }, 15000);
                 if (response.ok) return response;
-                lastError = new Error('NHC feed returned ' + response.status);
+                lastError = new Error(label + ' feed returned ' + response.status);
                 if (![502, 503, 504].includes(response.status) || attempt === 2) {
                     throw lastError;
                 }
@@ -20379,7 +20379,15 @@
                 setTimeout(resolve, 500 * Math.pow(2, attempt));
             });
         }
-        throw lastError || new Error('NHC feed unavailable');
+        throw lastError || new Error(label + ' feed unavailable');
+    }
+
+    async function _fetchTropicalNHC(forceRefresh) {
+        return _fetchTropicalFeed('/api/weather/nhc', 'NHC', forceRefresh);
+    }
+
+    async function _fetchTropicalJTWC(forceRefresh) {
+        return _fetchTropicalFeed('/api/weather/jtwc', 'JTWC', forceRefresh);
     }
 
     async function _loadTropicalForecastPoints(storm) {
@@ -20571,7 +20579,9 @@
         var movement = movementSpeed != null ? _tropicalDirection(storm.movementDir) + ' ' + movementSpeed + ' mph' : '—';
         document.getElementById('tropical-route-detail-title').textContent = classification + ' ' + name;
         document.getElementById('tropical-route-detail-subtitle').textContent =
-            'Official NHC position and forecast track.';
+            storm.source === 'JTWC'
+                ? 'Official JTWC position and forecast track.'
+                : 'Official NHC position and forecast track.';
         document.getElementById('tropical-route-current-wind').textContent = _tropicalFormatWind(wind);
         document.getElementById('tropical-route-pressure').textContent = pressure != null ? pressure + ' mb' : '—';
         document.getElementById('tropical-route-movement').textContent = movement;
@@ -20586,10 +20596,16 @@
             }
         }
         var sourceUrl = storm.publicAdvisory && storm.publicAdvisory.url
-            ? storm.publicAdvisory.url : 'https://www.nhc.noaa.gov/';
+            ? storm.publicAdvisory.url
+            : (storm.source === 'JTWC'
+                ? 'https://www.cnmoc.usff.navy.mil/Our-Commands/Fleet-Weather-Center-San-Diego/Joint-Typhoon-Warning-Center/'
+                : 'https://www.nhc.noaa.gov/');
+        var sourceName = storm.source === 'JTWC'
+            ? 'Joint Typhoon Warning Center'
+            : 'National Hurricane Center';
         var satellite = _tropicalSatelliteConfig(storm);
         document.getElementById('tropical-route-source').innerHTML =
-            'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ' +
+            'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">' + sourceName + '</a>. ' +
             'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + '</a>.';
         details.hidden = false;
     }
@@ -20810,10 +20826,30 @@
         var status = document.getElementById('tropical-route-status');
         if (status) status.textContent = forceRefresh ? 'Refreshing official tropical data…' : 'Loading official tropical data…';
         try {
-            var response = await _fetchTropicalNHC(forceRefresh);
-            var payload = await response.json();
+            var feedResults = await Promise.allSettled([
+                _fetchTropicalNHC(forceRefresh),
+                _fetchTropicalJTWC(forceRefresh)
+            ]);
+            var payloads = [];
+            feedResults.forEach(function(result) {
+                if (result.status !== 'fulfilled') return;
+                payloads.push(result.value.json().then(function(payload) {
+                    var source = String(payload.source || '').toUpperCase() === 'JTWC' ? 'JTWC' : 'NHC';
+                    var raw = payload.activeStorms || payload.cycloneMessages ||
+                        (Array.isArray(payload) ? payload : []);
+                    return raw.map(function(storm) {
+                        return Object.assign({}, storm, { source: storm.source || source });
+                    });
+                }));
+            });
+            var feedStorms = await Promise.allSettled(payloads);
+            var raw = [];
+            feedStorms.forEach(function(result) {
+                if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+                    raw = raw.concat(result.value);
+                }
+            });
             if (token !== tropicalRouteLoadToken) return;
-            var raw = payload.activeStorms || payload.cycloneMessages || (Array.isArray(payload) ? payload : []);
             var userLat = parseFloat(lat), userLon = parseFloat(lon);
             tropicalRouteStorms = raw.map(function(storm) {
                 var current = _tropicalCurrentPoint(storm);
@@ -20832,7 +20868,7 @@
             _renderTropicalStormPicker();
             if (!tropicalRouteStorms.length) {
                 tropicalRouteSelectedIndex = null;
-                if (status) status.textContent = 'No active tropical systems are currently published by the National Hurricane Center.';
+                if (status) status.textContent = 'No active tropical systems are currently published by the National Hurricane Center or Joint Typhoon Warning Center.';
                 var details = document.getElementById('tropical-route-details');
                 if (details) details.hidden = true;
                 if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
@@ -20855,7 +20891,7 @@
             _drawTropicalRouteStorms(!forceRefresh || focusIndex != null, focusIndex, focusCenter);
         } catch (error) {
             console.warn('[SkyMonitor tropical tracker] load failed:', error);
-            if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC feed.';
+            if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC and JTWC feeds.';
         }
     }
 
@@ -21023,7 +21059,7 @@
         }
         function _tc(s){return String(s).toLowerCase().replace(/\b\w/g,c=>c.toUpperCase());}
 
-        // ——— NHC card (used when NHC direct fetch succeeds) ———
+        // ——— Tropical card (NHC and JTWC use the same presentation) ———
         function _nhcCard(s){
             const kt=parseInt(s.intensity)||0, mph=Math.round(kt*1.15078);
             const clsMap={HU:'Hurricane',TY:'Typhoon',TS:'Tropical Storm',TD:'Tropical Depression',TC:'Tropical Cyclone',SS:'Subtropical Storm',SD:'Subtropical Depression',EX:'Extratropical'};
@@ -21032,6 +21068,7 @@
             const catColor=mph>=130?'#ff1744':mph>=111?'#ff5722':mph>=96?'#ff9100':mph>=74?'#ffd54f':mph>=39?'#4fc3f7':'#81c784';
             const distColor=!isNaN(s._dist)?(s._dist<300?'#ff1744':s._dist<700?'#ff9100':'#4fc3f7'):'#4fc3f7';
             const hdl=s.headline?(s.headline.length>110?s.headline.substring(0,110)+'\u2026':s.headline):'';
+            const sourceTag=s.source==='JTWC'?' <span style="font-size:0.78em;color:#7dd3fc;font-weight:700;">· JTWC</span>':'';
             // Pressure from NHC JSON (field "pressure", "0" means unknown)
             const pressureMb=parseInt(s.pressure)||0;
             // Movement from NHC JSON fields movementDir (degrees) + movementSpeed (mph or kt)
@@ -21043,7 +21080,7 @@
             let h='<div style="background:rgba(0,0,0,0.18);border:1px solid rgba(255,255,255,0.07);border-radius:14px;padding:13px 15px;margin-bottom:10px;">';
             h+='<div style="display:flex;align-items:flex-start;gap:9px;margin-bottom:11px;">';
             h+='<span style="width:8px;height:8px;border-radius:50%;background:'+distColor+';flex-shrink:0;margin-top:5px;box-shadow:0 0 7px '+distColor+';"></span>';
-            h+='<div style="font-size:0.81em;color:#cbd5e1;line-height:1.5;"><span style="font-weight:800;color:'+catColor+';">'+typeLabel+' '+(s.name||'')+':</span> '+(hdl||'Active tropical system.')+'</div></div>';
+            h+='<div style="font-size:0.81em;color:#cbd5e1;line-height:1.5;"><span style="font-weight:800;color:'+catColor+';">'+typeLabel+' '+(s.name||'')+sourceTag+':</span> '+(hdl||'Active tropical system.')+'</div></div>';
             h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;">';
             // Category
             h+='<div style="background:rgba(255,255,255,0.05);border-radius:10px;padding:9px 11px;"><div style="font-size:0.58em;color:#6b7280;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px;">Category</div>';
@@ -21066,6 +21103,7 @@
             h+='</div></div>';
             // If pressure was shown, add movement as footer
             if(pressureMb>0&&movText) h+='<div style="margin-top:8px;font-size:0.7em;color:#6b7280;">Movement: '+movText+'</div>';
+            if(s.source==='JTWC') h+='<div style="margin-top:8px;font-size:0.68em;color:#6b7280;">Official Joint Typhoon Warning Center data</div>';
             h+='</div>';
             return h;
         }
@@ -21090,18 +21128,31 @@
             }
         }
 
-        // ——— Cloudflare Worker → NHC CurrentStorms.json (CORS-safe, 5-min edge cache) ———
+        // ——— Cloudflare Worker → NHC + JTWC feeds (CORS-safe, 5-min edge cache) ———
         try {
-            const res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000);
+            const feedResults = await Promise.allSettled([
+                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000),
+                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/jtwc', undefined, 10000)
+            ]);
             if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
-            if (!res.ok) {
+            const feedData = [];
+            for (const result of feedResults) {
+                if (result.status !== 'fulfilled' || !result.value.ok) continue;
+                try {
+                    const data = await result.value.json();
+                    const source = String(data.source || '').toUpperCase() === 'JTWC' ? 'JTWC' : 'NHC';
+                    const raw = data.activeStorms || data.cycloneMessages || (Array.isArray(data) ? data : []);
+                    feedData.push(raw.map(function(storm) {
+                        return Object.assign({}, storm, { source: storm.source || source });
+                    }));
+                } catch (_) {}
+            }
+            if (!feedData.length) {
                 _clearTropicalMiniMap(document.getElementById('tropical-map'));
                 widget.style.display='none';
                 return;
             }
-            const nhcData = await res.json();
-            if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
-            const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
+            const rawStorms = feedData.flat();
             // Ray-casting point-in-polygon. GeoJSON coords are [lon, lat].
             function _pip(lat, lon, pgn) {
                 const vs = pgn.coordinates[0];
