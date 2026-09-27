@@ -20203,6 +20203,44 @@
             .trim().toUpperCase();
     }
 
+    function _tropicalPointClassificationCode(storm, point) {
+        var pointCode = String(point && (
+            point.classification || point.stormType || point.storm_type || point.type
+        ) || '').trim().toUpperCase();
+        var knownCodes = {
+            HU: true, TY: true, T: true, ST: true, VT: true, TS: true, TD: true,
+            TC: true, SS: true, SD: true, EX: true, DB: true, LO: true
+        };
+        if (knownCodes[pointCode]) return pointCode;
+
+        // A JTWC storm-level code describes the current system, not every
+        // forecast position. Derive each point from its own wind so a storm
+        // weakening from ST to VT/T/TS is labelled correctly.
+        if (_tropicalIsJTWC(storm)) {
+            var wind = _tropicalFinite(point && point.wind);
+            if (wind != null) {
+                if (wind >= 150) return 'ST';
+                if (wind >= 115) return 'VT';
+                if (wind >= 74) return 'T';
+                if (wind >= 39) return 'TS';
+                return 'TD';
+            }
+        }
+        return '';
+    }
+
+    function _tropicalPointStorm(storm, point) {
+        var pointCode = _tropicalPointClassificationCode(storm, point);
+        return pointCode ? Object.assign({}, storm, { classification: pointCode }) : storm;
+    }
+
+    function _tropicalIsDisturbance(storm) {
+        var code = _tropicalClassificationCode(storm);
+        var name = String(storm && (storm.name || storm.storm_name || '') || '')
+            .trim().toUpperCase();
+        return code === 'DB' || code === 'DISTURBANCE' || /^INVEST(?:\s|$)/.test(name);
+    }
+
     function _tropicalClassification(storm, windMph) {
         var code = _tropicalClassificationCode(storm);
         var jtwc = _tropicalIsJTWC(storm);
@@ -20402,7 +20440,8 @@
     }
 
     function _tropicalForecastPopupHtml(storm, point) {
-        var name = _tropicalClassification(storm, point.wind) + ' ' + _tropicalDisplayName(storm.name || 'system');
+        var pointStorm = _tropicalPointStorm(storm, point);
+        var name = _tropicalClassification(pointStorm, point.wind) + ' ' + _tropicalDisplayName(storm.name || 'system');
         var time = _tropicalForecastDisplayTime(point.time);
         var lead = Number(point.forecastHour) === 0
             ? 'CURRENT FORECAST'
@@ -20410,7 +20449,7 @@
         return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
             '<div class="tropical-forecast-popup-title">' + escapeHtml(name) + '</div>' +
             '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
-            '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(storm, point.wind)) +
+            '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(pointStorm, point.wind)) +
             '</b><br>' + escapeHtml(time) + '<br>Maximum sustained wind</div>' +
             '<div class="tropical-forecast-popup-note">' +
             escapeHtml(_tropicalIsJTWC(storm) ? 'JTWC official forecast point' : 'NHC official forecast point') + ' · ' +
@@ -20760,11 +20799,12 @@
         }
         if (forecastPoints.length) {
             forecastPoints.forEach(function(point) {
+                var pointStorm = _tropicalPointStorm(storm, point);
                 var icon = L.divIcon({
                     className: 'tropical-forecast-icon-wrap',
                     html: '<span class="tropical-forecast-icon" style="--forecast-color:' +
                         _tropicalColor(Object.assign({}, storm, { intensity: point.wind })) + '">' +
-                        escapeHtml(_tropicalMarkerLabel(point.wind, storm)) + '</span>',
+                        escapeHtml(_tropicalMarkerLabel(point.wind, pointStorm)) + '</span>',
                     iconSize: [34, 26],
                     iconAnchor: [17, 13],
                     popupAnchor: [0, -12]
@@ -20954,7 +20994,9 @@
                 return Object.assign({}, storm, { _source: 'NHC' });
             }).concat(jtwcStorms.map(function(storm) {
                 return Object.assign({}, storm, { _source: 'JTWC', source: 'JTWC' });
-            }));
+            })).filter(function(storm) {
+                return !_tropicalIsDisturbance(storm);
+            });
             var userLat = parseFloat(lat), userLon = parseFloat(lon);
             tropicalRouteStorms = raw.map(function(storm) {
                 var current = _tropicalCurrentPoint(storm);
@@ -21261,7 +21303,9 @@
                         .map(function(storm) {
                             return Object.assign({}, storm, { _source: 'JTWC', source: 'JTWC' });
                         })
-                    : []);
+                    : []).filter(function(storm) {
+                        return !_tropicalIsDisturbance(storm);
+                    });
             // Ray-casting point-in-polygon. GeoJSON coords are [lon, lat].
             function _pip(lat, lon, pgn) {
                 const vs = pgn.coordinates[0];
