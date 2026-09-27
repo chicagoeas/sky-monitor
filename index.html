@@ -20687,6 +20687,10 @@
                 clearTimeout(window._tropMapInitTimer);
                 window._tropMapInitTimer = null;
             }
+            if (window._tropMapRetryTimer) {
+                clearTimeout(window._tropMapRetryTimer);
+                window._tropMapRetryTimer = null;
+            }
             if (window._tropMap) {
                 try { window._tropMap.off(); } catch (_) {}
                 try { window._tropMap.remove(); } catch (_) {}
@@ -20750,19 +20754,42 @@
                     const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
                     const miniMapGeneration=tropicalFetchGeneration;
                     let mountAttempts=0;
+                    let miniMapRetryCount=0;
+                    const scheduleMiniMapRetry=(delay)=>{
+                        if(miniMapGeneration!==window._tropicalFetchGeneration ||
+                           miniMapRetryCount>=3 || window._tropMapRetryTimer) return;
+                        miniMapRetryCount++;
+                        window._tropMapRetryTimer=setTimeout(()=>{
+                            window._tropMapRetryTimer=null;
+                            if(miniMapGeneration!==window._tropicalFetchGeneration || !mapEl.isConnected) return;
+                            _clearTropicalMiniMap(mapEl);
+                            mapEl.style.display='block';
+                            mapEl.style.background='#02080e';
+                            mountAttempts=0;
+                            window._tropMapInitTimer=setTimeout(mountMiniMap,0);
+                        },delay);
+                    };
                     const mountMiniMap=()=>{
                         if(miniMapGeneration!==window._tropicalFetchGeneration || !mapEl.isConnected) return;
+                        if(!window.L){
+                            scheduleMiniMapRetry(250);
+                            return;
+                        }
                         const mapSize=mapEl.getBoundingClientRect();
-                        if(mapSize.width<4 || mapSize.height<4){
+                        const mapStyle=getComputedStyle(mapEl);
+                        if(mapSize.width<4 || mapSize.height<4 ||
+                           mapStyle.display==='none' || mapStyle.visibility==='hidden'){
                             if(mountAttempts++<12){
                                 window._tropMapInitTimer=setTimeout(mountMiniMap,50);
+                            } else {
+                                scheduleMiniMapRetry(350);
                             }
                             return;
                         }
                         window._tropMapInitTimer=null;
                         const map=L.map(mapEl,{dragging:false,touchZoom:false,scrollWheelZoom:false,doubleClickZoom:false,keyboard:false,zoomControl:false,attributionControl:false});
                         window._tropMap=map;
-                        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11',{subdomains:'abcd',maxZoom:19}).addTo(map);
+                        const tileLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11',{subdomains:'abcd',maxZoom:19});
                         map.on('click', function(){ openTropicalRoute(); });
                         let bounds=null;
                         if(s0.conePgn?.coordinates){
@@ -20783,8 +20810,26 @@
                             if(bounds){map.fitBounds(bounds,{padding:[12,12],animate:false});}
                             else if(!isNaN(sLat0)&&!isNaN(sLon0)){map.setView([sLat0,sLon0],6,{animate:false});}
                         };
+                        let tileLoaded=false;
+                        tileLayer.on('load',()=>{
+                            tileLoaded=true;
+                            stabilizeMiniMap();
+                        });
+                        tileLayer.on('tileerror',()=>{
+                            if(!tileLoaded) scheduleMiniMapRetry(1200);
+                        });
+                        tileLayer.addTo(map);
                         stabilizeMiniMap();
-                        [80,250,600].forEach(delay=>setTimeout(stabilizeMiniMap,delay));
+                        [80,250,600,1200].forEach(delay=>setTimeout(stabilizeMiniMap,delay));
+                        // Leaflet can be fully initialized while every first
+                        // tile request has failed, leaving only the black
+                        // container. Rebuild a few times instead of waiting
+                        // for the next weather refresh to fix it.
+                        setTimeout(()=>{
+                            if(window._tropMap!==map || miniMapGeneration!==window._tropicalFetchGeneration) return;
+                            const paintedTiles=mapEl.querySelectorAll('.leaflet-tile-loaded').length;
+                            if(!tileLoaded && !paintedTiles) scheduleMiniMapRetry(900);
+                        },1600);
                     };
                     window._tropMapInitTimer=setTimeout(mountMiniMap,0);
                 }
