@@ -13,10 +13,23 @@
             var historicalRadarPage = path === '/radar/historical';
             var tropicalRadarPage = path === '/radar/tropical';
             var radarPage = path === '/radar' || historicalRadarPage;
+            // The public tropical tracker shortcut follows the US hurricane
+            // season window requested by the reporting-map UI: May 15 through
+            // November 30, inclusive. Set this before the body paints so the
+            // shortcut never flashes during the off-season.
+            var now = new Date();
+            var month = now.getMonth();
+            var day = now.getDate();
+            var usHurricaneSeason =
+                (month === 4 && day >= 15) ||
+                (month >= 5 && month <= 9) ||
+                (month === 10 && day <= 30);
             window.SKYMONITOR_INFO_PAGE = infoPage;
             window.SKYMONITOR_RADAR_PAGE = radarPage;
             window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRadarPage;
             window.SKYMONITOR_TROPICAL_PAGE = tropicalRadarPage;
+            window.SKYMONITOR_US_HURRICANE_SEASON = usHurricaneSeason;
+            if (usHurricaneSeason) document.documentElement.classList.add('us-hurricane-season');
             window.SKYMONITOR_INFO_KIND = path === '/privacy' ? 'privacy' :
                 (path === '/about-custom-alerts' ? 'custom-alerts' : '');
             var infoPaths = { '/privacy': true, '/about-custom-alerts': true };
@@ -567,9 +580,14 @@
             letter-spacing: -0.15px;
         }
         #tropical-route-map .leaflet-control-attribution {
+            position: relative;
+            z-index: 1200;
             color: #b4c2cc;
             background: rgba(2,8,14,0.72);
             font-size: 9px;
+            margin-right: 0;
+            margin-bottom: env(safe-area-inset-bottom);
+            white-space: nowrap;
         }
         #tropical-route-map .leaflet-control-attribution a { color: #7dd3fc; }
         #tropical-route-map .tropical-satellite-tile {
@@ -766,6 +784,11 @@
             font-size: 1rem;
         }
         @media (max-width: 650px) {
+            #reporting-map-card .toolkit-header { gap: 4px; }
+            #reporting-map-title { font-size: 0.82em; letter-spacing: -0.15px; }
+            #reporting-map-card .toolkit-header > div { gap: 4px !important; }
+            #open-tropical-tracker-btn { width: 28px; min-width: 28px; height: 27px; }
+            #open-tropical-tracker-btn img { width: 18px; height: 18px; }
             #tropical-route-header .tropical-route-subtitle { display: none; }
             #tropical-route-header h2 { font-size: 0.78rem; }
             #tropical-route-header { gap: 6px; padding-left: 8px; padding-right: 8px; }
@@ -776,6 +799,16 @@
             #tropical-route-storm-picker { top: 53px; left: 10px; }
             #tropical-route-status { left: 10px; top: 57px; }
             #tropical-route-details { left: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); width: calc(100vw - 20px); max-height: 39vh; }
+            #tropical-route-map .leaflet-bottom {
+                z-index: 1200;
+                bottom: env(safe-area-inset-bottom);
+            }
+            #tropical-route-map .leaflet-control-attribution {
+                max-width: calc(100vw - 4px);
+                box-sizing: border-box;
+                padding: 2px 4px;
+                font-size: clamp(7px, 2.1vw, 9px);
+            }
         }
         html.info-route #launch-screen,
         html.skip-launch #launch-screen,
@@ -1004,6 +1037,77 @@
 
         .toolkit-box { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); padding: 20px; border-radius: 16px; margin-bottom: 20px; }
         .toolkit-header { font-weight: 700; color: #f1f5f9; font-size: 0.9em; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .tropical-activity-heading { display: flex; align-items: center; gap: 6px; }
+        .tropical-activity-heading img { width: 19px; height: 19px; object-fit: contain; }
+        #reporting-map-card .toolkit-header { gap: 7px; min-width: 0; }
+        #reporting-map-title {
+            min-width: 0;
+            flex: 1 1 auto;
+            white-space: nowrap;
+            overflow: hidden;
+            font-size: clamp(0.72rem, 4.2vw, 1rem);
+        }
+        #reporting-map-card .toolkit-header > div {
+            flex: 0 0 auto;
+            align-items: center;
+            display: flex;
+            flex-wrap: nowrap;
+        }
+        #open-tropical-tracker-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 30px; height: 28px; box-sizing: border-box; padding: 4px;
+            border: 1px solid var(--primary); border-radius: 6px;
+            background: rgba(79,195,247,0.15); cursor: pointer;
+        }
+        #open-tropical-tracker-btn img { display: block; width: 19px; height: 19px; object-fit: contain; }
+        /* The tropical shortcut is available only from the fullscreen map
+           and only during the requested US hurricane-season window. */
+        #open-tropical-tracker-btn { display: none !important; }
+        html.radar-route.us-hurricane-season #open-tropical-tracker-btn {
+            display: inline-flex !important;
+        }
+        #reporting-map-card .toolkit-header > div > button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            vertical-align: middle;
+            width: 30px;
+            min-width: 30px;
+            height: 28px;
+            min-height: 28px;
+            box-sizing: border-box;
+            padding: 4px !important;
+            line-height: 1;
+        }
+        #reporting-map-card .toolkit-header > div > button img {
+            margin: 0;
+        }
+        /* Keep historical radar out of the regular reporting tab. The
+           shared button rule above must not override this route-only action. */
+        #reporting-map-card .toolkit-header > div > #historical-radar-clock-button {
+            display: none !important;
+        }
+        html.radar-route #reporting-map-card .toolkit-header > div > #historical-radar-clock-button {
+            display: inline-flex !important;
+        }
+        #historical-radar-clock-button {
+            width: 30px; height: 28px; box-sizing: border-box; padding: 4px;
+            border: 1px solid var(--primary); border-radius: 6px;
+            background: rgba(79,195,247,0.15); color: var(--primary); cursor: pointer;
+            line-height: 1;
+        }
+        html.radar-route #reporting-map-card .toolkit-header > div { gap: 5px !important; }
+        html.radar-route #reporting-map-card .toolkit-header button {
+            width: 30px;
+            min-width: 30px;
+            height: 28px;
+            min-height: 28px;
+            padding: 4px !important;
+        }
+        html.radar-route #reporting-map-title {
+            font-size: clamp(0.68rem, 3.6vw, 1rem);
+        }
+        #reporting-map-title { line-height: 1; }
 
         #orbit-container { position: relative; height: 120px; width: 100%; margin: 20px 0; border-bottom: 2px solid #444; overflow: hidden; }
         .orbit-arc { position: absolute; bottom: 0; left: 10%; right: 10%; height: 200%; border: 2px dashed rgba(255,255,255,0.2); border-radius: 50%; }
@@ -2468,10 +2572,10 @@
         <div id="pws-qc-panel" style="display:none;"></div>
 
         <div id="tropical-widget" style="display:none; background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.18); border-radius:16px; padding:16px 18px; margin-bottom:15px;">
-            <div class="sky-hd">🌀 Tropical Activity</div>
+            <div class="sky-hd tropical-activity-heading"><img src="/icons/wu/2.svg" alt="" aria-hidden="true"> Tropical Activity</div>
             <div id="tropical-storms-list"></div>
             <div id="tropical-map" role="button" tabindex="0" aria-label="Open interactive tropical tracker"
-                 onclick="openTropicalRoute()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTropicalRoute();}"
+                 onclick="openTropicalRoute(this._tropicalFocus || null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTropicalRoute(this._tropicalFocus || null);}"
                  style="height:200px; border-radius:10px; overflow:hidden; margin-top:10px; display:none; cursor:pointer;"
                  title="Open interactive tropical tracker"></div>
         </div>
@@ -2791,6 +2895,9 @@
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span id="reporting-map-title">LIVE REPORTING MAP</span>
                 <div style="display:flex; gap:6px;">
+                    <button id="open-tropical-tracker-btn" type="button" onclick="openTropicalRoute()" title="Open Tropical Tracker" aria-label="Open Tropical Tracker">
+                        <img src="/icons/wu/2.svg" alt="" aria-hidden="true">
+                    </button>
                     <button id="historical-radar-clock-button" type="button" onclick="openHistoricalRadarPicker()" title="Choose historical radar time" aria-label="Choose historical radar time">&#128336;</button>
                     <button onclick="refreshReportingMap()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
@@ -4847,6 +4954,14 @@
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
+        if (tabId === 'reporting') {
+            // The title may be measured while the reporting tab is hidden
+            // during startup. Refit after the active class has painted so the
+            // title can never occupy the controls' space.
+            fitReportingMapTitle();
+            requestAnimationFrame(fitReportingMapTitle);
+            setTimeout(fitReportingMapTitle, 0);
+        }
         if (tabId !== 'severe') {
             document.querySelectorAll('.alert-full-text').forEach(el => { el.style.display = 'none'; });
             document.querySelectorAll('.alert-expand-btn').forEach(btn => { btn.textContent = '\u25bc Show more'; });
@@ -4863,6 +4978,7 @@
         if (tabId === 'reporting') {
             renderReportCategories();
             setTimeout(function() {
+                fitReportingMapTitle();
                 initReportingMap();
                 if (!reportingMap) return;
                 reportingMap.invalidateSize({ pan: true, animate: false });
@@ -4873,6 +4989,7 @@
                 if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
                     setTimeout(function() {
                         if (!document.getElementById('reporting-tab')?.classList.contains('active') || !reportingMap) return;
+                        fitReportingMapTitle();
                         reportingMap.invalidateSize({ pan: true, animate: false });
                         syncReportingMapLayers();
                         ensureReportPinMarker();
@@ -13743,7 +13860,11 @@
     let tropicalRouteSatelliteTimestamp = 0;
     let tropicalRouteSatelliteLoadPromise = null;
     let tropicalRouteStorms = [];
-    let tropicalRouteSelectedIndex = 0;
+    let tropicalRouteSelectedIndex = null;
+    let tropicalRoutePendingFocus = null;
+    let tropicalRouteInitialViewPending = true;
+    let tropicalRouteTransitioning = false;
+    let tropicalRouteReturnPath = '/';
     const TROPICAL_SATELLITE_PREF_KEY = 'skymonitor_tropical_satellite_overlay';
     let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
         ? 'satellite'
@@ -18201,7 +18322,10 @@
         syncSingleSiteRadarVisibility();
         syncReportingRadarActionVisibility();
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'HISTORICAL RADAR';
+        if (title) {
+            title.textContent = 'HISTORICAL RADAR';
+            fitReportingMapTitle();
+        }
         _renderHistoricalRadarControls();
         const countMessage = frameCount < HISTORICAL_RADAR_ON_DEMAND_COUNT
             ? 'Showing ' + frameCount + ' completed scans available so far.'
@@ -18415,7 +18539,10 @@
             enterHistoricalRadarRoute();
         }
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'HISTORICAL RADAR';
+        if (title) {
+            title.textContent = 'HISTORICAL RADAR';
+            fitReportingMapTitle();
+        }
         _renderHistoricalRadarControls();
 
         const bounds = window.L.geoJSON(feature).getBounds();
@@ -18479,7 +18606,10 @@
         syncReportingRadarActionVisibility();
         _renderHistoricalRadarControls();
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'LIVE REPORTING MAP';
+        if (title) {
+            title.textContent = 'LIVE REPORTING MAP';
+            fitReportingMapTitle();
+        }
         if (wasActive && reportingMap) {
             if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
                 reportingMap.removeLayer(reportingRadarLayer);
@@ -18615,11 +18745,82 @@
         // previously saved (possibly exact) location.
     }
 
+    function isUsHurricaneSeasonNow() {
+        const now = new Date();
+        const month = now.getMonth();
+        const day = now.getDate();
+        return (month === 4 && day >= 15) ||
+            (month >= 5 && month <= 9) ||
+            (month === 10 && day <= 30);
+    }
+
+    function fitReportingMapTitle() {
+        const title = document.getElementById('reporting-map-title');
+        if (!title || !title.isConnected || !title.clientWidth) return;
+
+        // Measure the title at several sizes against the actual width left
+        // beside the controls. This keeps the label on one line while using
+        // all available space on narrow fullscreen phones.
+        title.style.fontSize = '';
+        const baseStyle = getComputedStyle(title);
+        const baseSize = parseFloat(baseStyle.fontSize) || 16;
+        const probe = title.cloneNode(true);
+        probe.removeAttribute('id');
+        probe.style.cssText = [
+            'position:absolute',
+            'visibility:hidden',
+            'pointer-events:none',
+            'display:inline-block',
+            'width:max-content',
+            'max-width:none',
+            'white-space:nowrap',
+            'flex:none'
+        ].join(';');
+        probe.style.fontFamily = baseStyle.fontFamily;
+        probe.style.fontWeight = baseStyle.fontWeight;
+        probe.style.fontStyle = baseStyle.fontStyle;
+        probe.style.letterSpacing = baseStyle.letterSpacing;
+        probe.style.lineHeight = baseStyle.lineHeight;
+        document.body.appendChild(probe);
+
+        const availableWidth = title.clientWidth;
+        let low = 10;
+        let high = Math.min(24, Math.max(16, baseSize));
+        let best = low;
+        for (let i = 0; i < 14; i++) {
+            const mid = (low + high) / 2;
+            probe.style.fontSize = mid + 'px';
+            if (probe.getBoundingClientRect().width <= availableWidth) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        title.style.fontSize = best.toFixed(2) + 'px';
+        probe.remove();
+    }
+
+    function syncTropicalTrackerButtonVisibility() {
+        const inSeason = isUsHurricaneSeasonNow();
+        const root = document.documentElement;
+        const isFullscreen = root.classList.contains('radar-route');
+        const button = document.getElementById('open-tropical-tracker-btn');
+        root.classList.toggle('us-hurricane-season', inSeason);
+        window.SKYMONITOR_US_HURRICANE_SEASON = inSeason;
+        if (button) {
+            const visible = isFullscreen && inSeason;
+            button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+            button.tabIndex = visible ? 0 : -1;
+        }
+        fitReportingMapTitle();
+    }
+
     function setRadarRouteState(isRadar, isHistorical) {
         const active = !!isRadar;
         const historicalRoute = active && !!isHistorical;
         const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
-        if (!active && wasFullscreenReportingMap && !_turnstileVerified &&
+        if (!active && wasFullscreenReportingMap && !tropicalRouteTransitioning && !_turnstileVerified &&
             !_turnstilePendingRadarExit) {
             // Browser-back can leave the fullscreen URL before this handler
             // runs. Restore the radar route while verification is pending so
@@ -18648,6 +18849,7 @@
         window.SKYMONITOR_RADAR_PAGE = active;
         window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRoute;
         document.documentElement.classList.toggle('radar-route', active);
+        syncTropicalTrackerButtonVisibility();
         _renderHistoricalRadarControls();
         document.title = historicalRoute
             ? 'Historical Radar · SkyMonitor'
@@ -20116,6 +20318,44 @@
             '</div>';
     }
 
+    function _tropicalPointInRing(lat, lon, ring) {
+        if (!Array.isArray(ring) || ring.length < 3) return false;
+        var inside = false;
+        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            var xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+            var xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+            if (!isFinite(xi) || !isFinite(yi) || !isFinite(xj) || !isFinite(yj)) continue;
+            if (((yi > lat) !== (yj > lat)) &&
+                (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    function _tropicalPointInPolygon(lat, lon, polygon) {
+        if (!Array.isArray(polygon) || !polygon.length ||
+            !_tropicalPointInRing(lat, lon, polygon[0])) return false;
+        for (var i = 1; i < polygon.length; i++) {
+            if (_tropicalPointInRing(lat, lon, polygon[i])) return false;
+        }
+        return true;
+    }
+
+    function _tropicalLocationInCone(storm, latValue, lonValue) {
+        var latValueNumber = Number(latValue), lonValueNumber = Number(lonValue);
+        var cone = storm && storm.conePgn;
+        if (!isFinite(latValueNumber) || !isFinite(lonValueNumber) ||
+            !cone || !Array.isArray(cone.coordinates)) return false;
+        var coordinates = cone.coordinates;
+        if (String(cone.type || 'Polygon').toLowerCase() === 'multipolygon') {
+            return coordinates.some(function(polygon) {
+                return _tropicalPointInPolygon(latValueNumber, lonValueNumber, polygon);
+            });
+        }
+        return _tropicalPointInPolygon(latValueNumber, lonValueNumber, coordinates);
+    }
+
     async function _fetchTropicalNHC(forceRefresh) {
         var url = WEATHER_WORKER_URL + '/api/weather/nhc' +
             (forceRefresh ? '?refresh=' + Date.now() : '');
@@ -20182,7 +20422,16 @@
             var distance = _tropicalDistanceMiles(userLat, userLon, point.lat, point.lon);
             return !best || distance < best.distance ? { point: point, distance: distance } : best;
         }, null);
-        var when = nearest.point.time ? ' at ' + escapeHtml(new Date(nearest.point.time).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' })) : '';
+        var nearestDate = _tropicalForecastDate(nearest.point.time);
+        var when = nearestDate
+            ? ' at ' + escapeHtml(nearestDate.toLocaleString([], {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZoneName: 'short'
+            }))
+            : '';
         var qualifier = nearest.distance <= 125
             ? 'At the nearest published forecast position to your location'
             : 'The nearest published forecast position is ' + Math.round(nearest.distance).toLocaleString() + ' miles away';
@@ -20200,6 +20449,27 @@
             source: 'https://librewxr.net/',
             timestamp: tropicalRouteSatelliteTimestamp
         };
+    }
+
+    function _tropicalMapAttributionHtml() {
+        var attribution =
+            '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors' +
+            ' &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>';
+        if (tropicalRouteMapMode === 'satellite') {
+            attribution +=
+                ', Satellite: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>';
+        }
+        return attribution;
+    }
+
+    function _updateTropicalMapAttribution() {
+        if (!tropicalRouteMap || !tropicalRouteMap.attributionControl) return;
+        var control = tropicalRouteMap.attributionControl;
+        if (tropicalRouteMap._skyMonitorTropicalAttribution) {
+            control.removeAttribution(tropicalRouteMap._skyMonitorTropicalAttribution);
+        }
+        tropicalRouteMap._skyMonitorTropicalAttribution = _tropicalMapAttributionHtml();
+        control.addAttribution(tropicalRouteMap._skyMonitorTropicalAttribution);
     }
 
     async function _ensureTropicalSatelliteLayer() {
@@ -20237,8 +20507,7 @@
                     opacity: 0.76,
                     className: 'tropical-satellite-tile',
                     pane: 'tropical-satellite-pane',
-                    noWrap: true,
-                    attribution: '<a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a> satellite · NOAA GMGSI'
+                    noWrap: true
                 }
             );
             if (tropicalRouteMapMode === 'satellite') {
@@ -20284,6 +20553,7 @@
                 tropicalRouteBaseLayer.addTo(tropicalRouteMap);
             }
         }
+        _updateTropicalMapAttribution();
     }
 
     function _renderTropicalRouteDetails(storm) {
@@ -20306,8 +20576,15 @@
         document.getElementById('tropical-route-pressure').textContent = pressure != null ? pressure + ' mb' : '—';
         document.getElementById('tropical-route-movement').textContent = movement;
         document.getElementById('tropical-route-distance').textContent = distance != null ? Math.round(distance).toLocaleString() + ' mi' : '—';
-        var intensity = _tropicalForecastAtLocation(storm, userLat, userLon);
-        document.getElementById('tropical-route-location-intensity').innerHTML = intensity.html;
+        var intensityEl = document.getElementById('tropical-route-location-intensity');
+        var locationInCone = _tropicalLocationInCone(storm, userLat, userLon);
+        if (intensityEl) {
+            intensityEl.hidden = !locationInCone;
+            if (locationInCone) {
+                var intensity = _tropicalForecastAtLocation(storm, userLat, userLon);
+                intensityEl.innerHTML = intensity.html;
+            }
+        }
         var sourceUrl = storm.publicAdvisory && storm.publicAdvisory.url
             ? storm.publicAdvisory.url : 'https://www.nhc.noaa.gov/';
         var satellite = _tropicalSatelliteConfig(storm);
@@ -20331,13 +20608,17 @@
         }).join('');
     }
 
-    function _drawTropicalRouteStorm(storm, stormIndex, bounds) {
+    function _drawTropicalRouteStorm(storm, stormIndex, bounds, focusBounds, focusIndex) {
         if (!tropicalRouteMap || !window.L || !storm) return;
         var current = _tropicalCurrentPoint(storm);
         var forecastPoints = storm._forecastPoints || [];
         var track = forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm);
         var points = track.length >= 2 ? track : _tropicalPointsFrom(storm.trackPts);
         var color = _tropicalColor(storm);
+        var extendBounds = function(value) {
+            bounds.extend(value);
+            if (focusBounds && stormIndex === focusIndex) focusBounds.extend(value);
+        };
         var selectStormOnClick = function(layer) {
             layer.on('click', function() {
                 selectTropicalRouteStorm(stormIndex);
@@ -20350,13 +20631,13 @@
                 color: '#f8d66d', fillColor: '#f8d66d', fillOpacity: 0.12,
                 weight: 1.4, opacity: 0.75, dashArray: '5,5', interactive: true
             })).addTo(tropicalRouteStormLayer);
-            bounds.extend(cone.getBounds());
+            extendBounds(cone.getBounds());
         }
         if (points.length >= 2) {
             var line = selectStormOnClick(L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
                 color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: true
             })).addTo(tropicalRouteStormLayer);
-            bounds.extend(line.getBounds());
+            extendBounds(line.getBounds());
         }
         if (forecastPoints.length) {
             forecastPoints.forEach(function(point) {
@@ -20373,7 +20654,7 @@
                     icon: icon, keyboard: true, zIndexOffset: 300
                 }).bindPopup(_tropicalForecastPopupHtml(storm, point), { closeButton: true });
                 selectStormOnClick(forecastMarker).addTo(tropicalRouteStormLayer);
-                bounds.extend([point.lat, point.lon]);
+                extendBounds([point.lat, point.lon]);
             });
         }
         if (current) {
@@ -20382,17 +20663,18 @@
             }).bindTooltip((_tropicalClassification(storm, _tropicalWindMph(storm)) + ' ' + (storm.name || '')).trim(), {
                 direction: 'top', opacity: 0.95
             })).addTo(tropicalRouteStormLayer);
-            bounds.extend(currentMarker.getLatLng());
+            extendBounds(currentMarker.getLatLng());
         }
     }
 
-    function _drawTropicalRouteStorms(shouldFit) {
+    function _drawTropicalRouteStorms(shouldFit, focusIndex, focusCenter) {
         if (!tropicalRouteMap || !window.L) return;
         if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
         else tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
         var bounds = L.latLngBounds([]);
+        var focusBounds = focusIndex != null ? L.latLngBounds([]) : null;
         tropicalRouteStorms.forEach(function(storm, index) {
-            _drawTropicalRouteStorm(storm, index, bounds);
+            _drawTropicalRouteStorm(storm, index, bounds, focusBounds, focusIndex);
         });
         if (tropicalRouteUserLayer) tropicalRouteRouteClearLayer(tropicalRouteUserLayer);
         else tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
@@ -20406,12 +20688,25 @@
                 radius: 7, color: '#ffffff', fillColor: '#7dd3fc', fillOpacity: 1, weight: 2, interactive: false
             }).bindTooltip('Your selected location', { direction: 'top', opacity: 0.95 }).addTo(tropicalRouteUserLayer);
         }
-        if (tropicalRouteStorms[tropicalRouteSelectedIndex]) {
+        if (tropicalRouteSelectedIndex != null && tropicalRouteStorms[tropicalRouteSelectedIndex]) {
             _renderTropicalRouteDetails(tropicalRouteStorms[tropicalRouteSelectedIndex]);
+        } else {
+            var details = document.getElementById('tropical-route-details');
+            if (details) details.hidden = true;
         }
         _tropicalMapLayersForMode();
-        if (shouldFit && bounds.isValid()) {
-            tropicalRouteMap.fitBounds(bounds, { paddingTopLeft: [30, 130], paddingBottomRight: [30, 120], maxZoom: 6, animate: false });
+        if (shouldFit) {
+            var viewBounds = focusBounds && focusBounds.isValid() ? focusBounds : bounds;
+            if (viewBounds.isValid()) {
+                tropicalRouteMap.fitBounds(viewBounds, {
+                    paddingTopLeft: [30, 130],
+                    paddingBottomRight: [30, 120],
+                    maxZoom: 6,
+                    animate: false
+                });
+            } else if (focusCenter && isFinite(focusCenter.lat) && isFinite(focusCenter.lon)) {
+                tropicalRouteMap.setView([focusCenter.lat, focusCenter.lon], 5, { animate: false });
+            }
         }
         tropicalRouteStorms.forEach(function(storm) {
             if (!storm._forecastPointsLoaded && !storm._forecastPointsPromise) {
@@ -20498,6 +20793,17 @@
         }
     }
 
+    function _tropicalFocusIndex(focus) {
+        if (!focus || !tropicalRouteStorms.length) return null;
+        var focusId = focus.id != null ? String(focus.id) : '';
+        var focusName = focus.name ? String(focus.name).trim().toLowerCase() : '';
+        var index = tropicalRouteStorms.findIndex(function(storm) {
+            return (focusId && storm.id != null && String(storm.id) === focusId) ||
+                (focusName && String(storm.name || '').trim().toLowerCase() === focusName);
+        });
+        return index >= 0 ? index : null;
+    }
+
     async function loadTropicalRouteData(forceRefresh) {
         if (!window.SKYMONITOR_TROPICAL_PAGE && !document.documentElement.classList.contains('tropical-route')) return;
         var token = ++tropicalRouteLoadToken;
@@ -20519,9 +20825,13 @@
                 .sort(function(a, b) {
                     return (a._dist == null ? Infinity : a._dist) - (b._dist == null ? Infinity : b._dist);
                 });
-            if (tropicalRouteSelectedIndex >= tropicalRouteStorms.length) tropicalRouteSelectedIndex = 0;
+            if (tropicalRouteSelectedIndex != null &&
+                tropicalRouteSelectedIndex >= tropicalRouteStorms.length) {
+                tropicalRouteSelectedIndex = null;
+            }
             _renderTropicalStormPicker();
             if (!tropicalRouteStorms.length) {
+                tropicalRouteSelectedIndex = null;
                 if (status) status.textContent = 'No active tropical systems are currently published by the National Hurricane Center.';
                 var details = document.getElementById('tropical-route-details');
                 if (details) details.hidden = true;
@@ -20530,7 +20840,19 @@
                 return;
             }
             if (status) status.textContent = '';
-            _drawTropicalRouteStorms(!forceRefresh);
+            var focusIndex = null;
+            var focusCenter = tropicalRoutePendingFocus;
+            if (tropicalRouteInitialViewPending) {
+                var pendingFocus = tropicalRoutePendingFocus;
+                focusIndex = pendingFocus ? _tropicalFocusIndex(pendingFocus) : null;
+                if (pendingFocus && pendingFocus.select && focusIndex != null) {
+                    tropicalRouteSelectedIndex = focusIndex;
+                }
+                tropicalRouteInitialViewPending = false;
+                tropicalRoutePendingFocus = null;
+                _renderTropicalStormPicker();
+            }
+            _drawTropicalRouteStorms(!forceRefresh || focusIndex != null, focusIndex, focusCenter);
         } catch (error) {
             console.warn('[SkyMonitor tropical tracker] load failed:', error);
             if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC feed.';
@@ -20563,32 +20885,54 @@
                 subdomains: 'abcd',
                 maxZoom: 19,
                 noWrap: true,
-                attribution: '&copy; <a href="https://openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>'
+                attribution: ''
             }).addTo(tropicalRouteMap);
             tropicalRouteLabelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
                 subdomains: 'abcd',
                 maxZoom: 19,
                 noWrap: true,
                 pane: 'tropical-labels-pane',
-                attribution: '&copy; CARTO labels'
+                attribution: ''
             });
             tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
             _tropicalMapLayersForMode();
+            _updateTropicalMapAttribution();
         }
         tropicalRouteMap.invalidateSize({ pan: false, animate: false });
         _positionTropicalZoomControls();
         if (!tropicalRouteRefreshTimer) {
             tropicalRouteRefreshTimer = setInterval(function() { loadTropicalRouteData(true); }, 300000);
         }
-        if (!tropicalRouteStorms.length) loadTropicalRouteData(false);
+        if (!tropicalRouteStorms.length) {
+            loadTropicalRouteData(false);
+        } else if (tropicalRouteInitialViewPending) {
+            var pendingFocus = tropicalRoutePendingFocus;
+            var focusIndex = pendingFocus ? _tropicalFocusIndex(pendingFocus) : null;
+            if (pendingFocus && pendingFocus.select && focusIndex != null) {
+                tropicalRouteSelectedIndex = focusIndex;
+            }
+            var focusCenter = pendingFocus;
+            tropicalRouteInitialViewPending = false;
+            tropicalRoutePendingFocus = null;
+            _renderTropicalStormPicker();
+            _drawTropicalRouteStorms(true, focusIndex, focusCenter);
+        }
     }
 
     function setTropicalRouteState(active) {
         active = !!active;
+        var wasActive = document.documentElement.classList.contains('tropical-route');
         window.SKYMONITOR_TROPICAL_PAGE = active;
         document.documentElement.classList.toggle('tropical-route', active);
         if (active) {
+            if (!wasActive) {
+                tropicalRouteInitialViewPending = true;
+                tropicalRouteSelectedIndex = null;
+                var details = document.getElementById('tropical-route-details');
+                if (details) details.hidden = true;
+                _renderTropicalStormPicker();
+            }
             document.title = 'Tropical Tracker · SkyMonitor';
             setTimeout(initTropicalRoute, 80);
         } else {
@@ -20603,8 +20947,42 @@
         }
     }
 
-    function openTropicalRoute() {
+    function openTropicalRoute(focus) {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        var openedFromRadar = document.documentElement.classList.contains('radar-route') ||
+            currentPath === '/radar' || currentPath === '/radar/historical';
+        if (openedFromRadar) {
+            tropicalRouteReturnPath = currentPath === '/radar/historical'
+                ? '/radar/historical'
+                : '/radar';
+        } else if (currentPath !== '/radar/tropical') {
+            tropicalRouteReturnPath = '/';
+        }
+        if (document.documentElement.classList.contains('radar-route')) {
+            tropicalRouteTransitioning = true;
+            try {
+                setRadarRouteState(false);
+            } finally {
+                tropicalRouteTransitioning = false;
+            }
+        }
+        if (focus && isFinite(Number(focus.lat)) && isFinite(Number(focus.lon))) {
+            tropicalRoutePendingFocus = {
+                id: focus.id != null ? focus.id : null,
+                name: focus.name || '',
+                lat: Number(focus.lat),
+                lon: Number(focus.lon),
+                select: true
+            };
+            tropicalRouteInitialViewPending = true;
+            tropicalRouteSelectedIndex = null;
+        } else {
+            // Direct links and the fullscreen reporting-map shortcut should
+            // show the complete basin view, with no storm selected.
+            tropicalRoutePendingFocus = null;
+            tropicalRouteInitialViewPending = true;
+            tropicalRouteSelectedIndex = null;
+        }
         if (currentPath !== '/radar/tropical') {
             window.history.pushState({ skymonitorTropical: true }, '', '/radar/tropical');
         }
@@ -20613,8 +20991,18 @@
 
     function closeTropicalRoute() {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
-        if (currentPath === '/radar/tropical') window.history.pushState({}, '', '/');
+        var returnPath = tropicalRouteReturnPath || '/';
+        if (currentPath === '/radar/tropical') {
+            window.history.pushState({
+                skymonitorRadar: returnPath === '/radar' || returnPath === '/radar/historical',
+                historicalRadar: returnPath === '/radar/historical'
+            }, '', returnPath);
+        }
         setTropicalRouteState(false);
+        if (returnPath === '/radar' || returnPath === '/radar/historical') {
+            setRadarRouteState(true, returnPath === '/radar/historical');
+        }
+        tropicalRouteReturnPath = '/';
     }
 
     // ——— LOAD ALL ———
@@ -20687,6 +21075,10 @@
                 clearTimeout(window._tropMapInitTimer);
                 window._tropMapInitTimer = null;
             }
+            if (window._tropMapRetryTimer) {
+                clearTimeout(window._tropMapRetryTimer);
+                window._tropMapRetryTimer = null;
+            }
             if (window._tropMap) {
                 try { window._tropMap.off(); } catch (_) {}
                 try { window._tropMap.remove(); } catch (_) {}
@@ -20746,24 +21138,55 @@
                     const s0=storms[0];
                     const sLat0=s0.latitudeNumeric??_pc(s0.latitude??null);
                     const sLon0=s0.longitudeNumeric??_pc(s0.longitude??null);
+                    mapEl._tropicalFocus={id:s0.id,name:s0.name,lat:sLat0,lon:sLon0};
                     const mph0=Math.round((parseInt(s0.intensity)||0)*1.15078);
                     const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
                     const miniMapGeneration=tropicalFetchGeneration;
                     let mountAttempts=0;
+                    let miniMapRetryCount=0;
+                    const scheduleMiniMapRetry=(delay)=>{
+                        if(miniMapGeneration!==window._tropicalFetchGeneration ||
+                           miniMapRetryCount>=3 || window._tropMapRetryTimer) return;
+                        miniMapRetryCount++;
+                        window._tropMapRetryTimer=setTimeout(()=>{
+                            window._tropMapRetryTimer=null;
+                            if(miniMapGeneration!==window._tropicalFetchGeneration || !mapEl.isConnected) return;
+                            _clearTropicalMiniMap(mapEl);
+                            mapEl.style.display='block';
+                            mapEl.style.background='#02080e';
+                            mountAttempts=0;
+                            window._tropMapInitTimer=setTimeout(mountMiniMap,0);
+                        },delay);
+                    };
                     const mountMiniMap=()=>{
                         if(miniMapGeneration!==window._tropicalFetchGeneration || !mapEl.isConnected) return;
+                        if(!window.L){
+                            scheduleMiniMapRetry(250);
+                            return;
+                        }
                         const mapSize=mapEl.getBoundingClientRect();
-                        if(mapSize.width<4 || mapSize.height<4){
+                        const mapStyle=getComputedStyle(mapEl);
+                        if(mapSize.width<4 || mapSize.height<4 ||
+                           mapStyle.display==='none' || mapStyle.visibility==='hidden'){
                             if(mountAttempts++<12){
                                 window._tropMapInitTimer=setTimeout(mountMiniMap,50);
+                            } else {
+                                scheduleMiniMapRetry(350);
                             }
                             return;
                         }
                         window._tropMapInitTimer=null;
                         const map=L.map(mapEl,{dragging:false,touchZoom:false,scrollWheelZoom:false,doubleClickZoom:false,keyboard:false,zoomControl:false,attributionControl:false});
                         window._tropMap=map;
-                        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11',{subdomains:'abcd',maxZoom:19}).addTo(map);
-                        map.on('click', function(){ openTropicalRoute(); });
+                        const tileLayer=L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11',{subdomains:'abcd',maxZoom:19});
+                        map.on('click', function(){
+                            openTropicalRoute({
+                                id: s0.id,
+                                name: s0.name,
+                                lat: sLat0,
+                                lon: sLon0
+                            });
+                        });
                         let bounds=null;
                         if(s0.conePgn?.coordinates){
                             const ring=s0.conePgn.coordinates[0].map(c=>[c[1],c[0]]);
@@ -20783,8 +21206,26 @@
                             if(bounds){map.fitBounds(bounds,{padding:[12,12],animate:false});}
                             else if(!isNaN(sLat0)&&!isNaN(sLon0)){map.setView([sLat0,sLon0],6,{animate:false});}
                         };
+                        let tileLoaded=false;
+                        tileLayer.on('load',()=>{
+                            tileLoaded=true;
+                            stabilizeMiniMap();
+                        });
+                        tileLayer.on('tileerror',()=>{
+                            if(!tileLoaded) scheduleMiniMapRetry(1200);
+                        });
+                        tileLayer.addTo(map);
                         stabilizeMiniMap();
-                        [80,250,600].forEach(delay=>setTimeout(stabilizeMiniMap,delay));
+                        [80,250,600,1200].forEach(delay=>setTimeout(stabilizeMiniMap,delay));
+                        // Leaflet can be fully initialized while every first
+                        // tile request has failed, leaving only the black
+                        // container. Rebuild a few times instead of waiting
+                        // for the next weather refresh to fix it.
+                        setTimeout(()=>{
+                            if(window._tropMap!==map || miniMapGeneration!==window._tropicalFetchGeneration) return;
+                            const paintedTiles=mapEl.querySelectorAll('.leaflet-tile-loaded').length;
+                            if(!tileLoaded && !paintedTiles) scheduleMiniMapRetry(900);
+                        },1600);
                     };
                     window._tropMapInitTimer=setTimeout(mountMiniMap,0);
                 }
@@ -22338,6 +22779,10 @@
         setTimeout(scrollToPrivacyContact, 0);
     });
 
+    window.addEventListener('resize', function() {
+        fitReportingMapTitle();
+    });
+
     // The launch screen is a guard against a blank first paint, not a guard
     // against every optional weather provider. Define this before
     // DOMContentLoaded so the primary load can dismiss it as soon as the
@@ -22355,6 +22800,7 @@
         // window.onload; without this ordering they briefly use the Chicago
         // fallback coordinates.
         loadLoc();
+        syncTropicalTrackerButtonVisibility();
         syncUnitControls();
         var pendingMode = null;
         try {
