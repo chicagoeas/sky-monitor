@@ -1039,9 +1039,20 @@
         .toolkit-header { font-weight: 700; color: #f1f5f9; font-size: 0.9em; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
         .tropical-activity-heading { display: flex; align-items: center; gap: 6px; }
         .tropical-activity-heading img { width: 19px; height: 19px; object-fit: contain; }
-        #reporting-map-card .toolkit-header { gap: 7px; }
-        #reporting-map-title { min-width: 0; flex: 1 1 auto; white-space: nowrap; }
-        #reporting-map-card .toolkit-header > div { flex: 0 0 auto; align-items: center; }
+        #reporting-map-card .toolkit-header { gap: 7px; min-width: 0; }
+        #reporting-map-title {
+            min-width: 0;
+            flex: 1 1 auto;
+            white-space: nowrap;
+            overflow: hidden;
+            font-size: clamp(0.72rem, 4.2vw, 1rem);
+        }
+        #reporting-map-card .toolkit-header > div {
+            flex: 0 0 auto;
+            align-items: center;
+            display: flex;
+            flex-wrap: nowrap;
+        }
         #open-tropical-tracker-btn {
             display: inline-flex; align-items: center; justify-content: center;
             width: 30px; height: 28px; box-sizing: border-box; padding: 4px;
@@ -1055,14 +1066,20 @@
         html.radar-route.us-hurricane-season #open-tropical-tracker-btn {
             display: inline-flex !important;
         }
-        html.radar-route #reporting-map-card .toolkit-header > div > button {
+        #reporting-map-card .toolkit-header > div > button {
             display: inline-flex;
             align-items: center;
             justify-content: center;
             vertical-align: middle;
+            width: 30px;
+            min-width: 30px;
+            height: 28px;
+            min-height: 28px;
+            box-sizing: border-box;
+            padding: 4px !important;
             line-height: 1;
         }
-        html.radar-route #reporting-map-card .toolkit-header > div > button img {
+        #reporting-map-card .toolkit-header > div > button img {
             margin: 0;
         }
         #historical-radar-clock-button {
@@ -1072,8 +1089,17 @@
             line-height: 1;
         }
         html.radar-route #reporting-map-card .toolkit-header > div { gap: 5px !important; }
-        html.radar-route #reporting-map-card .toolkit-header button { width: 29px; min-width: 29px; padding-left: 3px !important; padding-right: 3px !important; }
-        #reporting-map-title { font-size: 1rem; line-height: 1; }
+        html.radar-route #reporting-map-card .toolkit-header button {
+            width: 30px;
+            min-width: 30px;
+            height: 28px;
+            min-height: 28px;
+            padding: 4px !important;
+        }
+        html.radar-route #reporting-map-title {
+            font-size: clamp(0.68rem, 3.6vw, 1rem);
+        }
+        #reporting-map-title { line-height: 1; }
 
         #orbit-container { position: relative; height: 120px; width: 100%; margin: 20px 0; border-bottom: 2px solid #444; overflow: hidden; }
         .orbit-arc { position: absolute; bottom: 0; left: 10%; right: 10%; height: 200%; border: 2px dashed rgba(255,255,255,0.2); border-radius: 50%; }
@@ -4920,6 +4946,14 @@
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
+        if (tabId === 'reporting') {
+            // The title may be measured while the reporting tab is hidden
+            // during startup. Refit after the active class has painted so the
+            // title can never occupy the controls' space.
+            fitReportingMapTitle();
+            requestAnimationFrame(fitReportingMapTitle);
+            setTimeout(fitReportingMapTitle, 0);
+        }
         if (tabId !== 'severe') {
             document.querySelectorAll('.alert-full-text').forEach(el => { el.style.display = 'none'; });
             document.querySelectorAll('.alert-expand-btn').forEach(btn => { btn.textContent = '\u25bc Show more'; });
@@ -4936,6 +4970,7 @@
         if (tabId === 'reporting') {
             renderReportCategories();
             setTimeout(function() {
+                fitReportingMapTitle();
                 initReportingMap();
                 if (!reportingMap) return;
                 reportingMap.invalidateSize({ pan: true, animate: false });
@@ -4946,6 +4981,7 @@
                 if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
                     setTimeout(function() {
                         if (!document.getElementById('reporting-tab')?.classList.contains('active') || !reportingMap) return;
+                        fitReportingMapTitle();
                         reportingMap.invalidateSize({ pan: true, animate: false });
                         syncReportingMapLayers();
                         ensureReportPinMarker();
@@ -13820,6 +13856,7 @@
     let tropicalRoutePendingFocus = null;
     let tropicalRouteInitialViewPending = true;
     let tropicalRouteTransitioning = false;
+    let tropicalRouteReturnPath = '/';
     const TROPICAL_SATELLITE_PREF_KEY = 'skymonitor_tropical_satellite_overlay';
     let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
         ? 'satellite'
@@ -18740,7 +18777,7 @@
 
         const availableWidth = title.clientWidth;
         let low = 10;
-        let high = Math.min(24, Math.max(14, baseSize));
+        let high = Math.min(24, Math.max(16, baseSize));
         let best = low;
         for (let i = 0; i < 14; i++) {
             const mid = (low + high) / 2;
@@ -20799,10 +20836,9 @@
             var focusCenter = tropicalRoutePendingFocus;
             if (tropicalRouteInitialViewPending) {
                 var pendingFocus = tropicalRoutePendingFocus;
-                focusIndex = _tropicalFocusIndex(pendingFocus);
-                if (focusIndex == null) focusIndex = 0;
-                if (pendingFocus && pendingFocus.select && _tropicalFocusIndex(pendingFocus) != null) {
-                    tropicalRouteSelectedIndex = _tropicalFocusIndex(pendingFocus);
+                focusIndex = pendingFocus ? _tropicalFocusIndex(pendingFocus) : null;
+                if (pendingFocus && pendingFocus.select && focusIndex != null) {
+                    tropicalRouteSelectedIndex = focusIndex;
                 }
                 tropicalRouteInitialViewPending = false;
                 tropicalRoutePendingFocus = null;
@@ -20864,10 +20900,9 @@
             loadTropicalRouteData(false);
         } else if (tropicalRouteInitialViewPending) {
             var pendingFocus = tropicalRoutePendingFocus;
-            var focusIndex = _tropicalFocusIndex(pendingFocus);
-            if (focusIndex == null) focusIndex = 0;
-            if (pendingFocus && pendingFocus.select && _tropicalFocusIndex(pendingFocus) != null) {
-                tropicalRouteSelectedIndex = _tropicalFocusIndex(pendingFocus);
+            var focusIndex = pendingFocus ? _tropicalFocusIndex(pendingFocus) : null;
+            if (pendingFocus && pendingFocus.select && focusIndex != null) {
+                tropicalRouteSelectedIndex = focusIndex;
             }
             var focusCenter = pendingFocus;
             tropicalRouteInitialViewPending = false;
@@ -20906,6 +20941,15 @@
 
     function openTropicalRoute(focus) {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        var openedFromRadar = document.documentElement.classList.contains('radar-route') ||
+            currentPath === '/radar' || currentPath === '/radar/historical';
+        if (openedFromRadar) {
+            tropicalRouteReturnPath = currentPath === '/radar/historical'
+                ? '/radar/historical'
+                : '/radar';
+        } else if (currentPath !== '/radar/tropical') {
+            tropicalRouteReturnPath = '/';
+        }
         if (document.documentElement.classList.contains('radar-route')) {
             tropicalRouteTransitioning = true;
             try {
@@ -20924,6 +20968,12 @@
             };
             tropicalRouteInitialViewPending = true;
             tropicalRouteSelectedIndex = null;
+        } else {
+            // Direct links and the fullscreen reporting-map shortcut should
+            // show the complete basin view, with no storm selected.
+            tropicalRoutePendingFocus = null;
+            tropicalRouteInitialViewPending = true;
+            tropicalRouteSelectedIndex = null;
         }
         if (currentPath !== '/radar/tropical') {
             window.history.pushState({ skymonitorTropical: true }, '', '/radar/tropical');
@@ -20933,8 +20983,18 @@
 
     function closeTropicalRoute() {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
-        if (currentPath === '/radar/tropical') window.history.pushState({}, '', '/');
+        var returnPath = tropicalRouteReturnPath || '/';
+        if (currentPath === '/radar/tropical') {
+            window.history.pushState({
+                skymonitorRadar: returnPath === '/radar' || returnPath === '/radar/historical',
+                historicalRadar: returnPath === '/radar/historical'
+            }, '', returnPath);
+        }
         setTropicalRouteState(false);
+        if (returnPath === '/radar' || returnPath === '/radar/historical') {
+            setRadarRouteState(true, returnPath === '/radar/historical');
+        }
+        tropicalRouteReturnPath = '/';
     }
 
     // ——— LOAD ALL ———
