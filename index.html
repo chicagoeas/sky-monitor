@@ -20234,6 +20234,20 @@
         return pointCode ? Object.assign({}, storm, { classification: pointCode }) : storm;
     }
 
+    function _tropicalNamedStormTitle(storm) {
+        var name = _tropicalDisplayName(storm && (storm.name || storm.storm_name || '') || 'Unnamed system');
+        var wind = _tropicalWindMph(storm);
+        if (_tropicalIsJTWC(storm)) {
+            var code = _tropicalClassificationCode(storm);
+            if (code === 'ST' || code === 'VT' || code === 'TY' || code === 'T' || wind >= 74) {
+                return 'Typhoon ' + name;
+            }
+            if (code === 'TS' || wind >= 39) return 'Tropical Storm ' + name;
+            if (code === 'TD' || wind != null) return 'Tropical Depression ' + name;
+        }
+        return (_tropicalClassification(storm, wind) + ' ' + name).trim();
+    }
+
     function _tropicalIsDisturbance(storm) {
         var code = _tropicalClassificationCode(storm);
         var name = String(storm && (storm.name || storm.storm_name || '') || '')
@@ -20441,7 +20455,7 @@
 
     function _tropicalForecastPopupHtml(storm, point) {
         var pointStorm = _tropicalPointStorm(storm, point);
-        var name = _tropicalClassification(pointStorm, point.wind) + ' ' + _tropicalDisplayName(storm.name || 'system');
+        var name = _tropicalNamedStormTitle(storm);
         var time = _tropicalForecastDisplayTime(point.time);
         var lead = Number(point.forecastHour) === 0
             ? 'CURRENT FORECAST'
@@ -20721,7 +20735,7 @@
         var movement = movementData.speed != null
             ? movementData.direction + ' ' + movementData.speed + ' mph'
             : '—';
-        document.getElementById('tropical-route-detail-title').textContent = classification + ' ' + name;
+        document.getElementById('tropical-route-detail-title').textContent = _tropicalNamedStormTitle(storm);
         document.getElementById('tropical-route-detail-subtitle').textContent =
             _tropicalIsJTWC(storm)
                 ? 'Official JTWC position, intensity, forecast track, and cone.'
@@ -20757,7 +20771,7 @@
         if (!picker) return;
         picker.innerHTML = tropicalRouteStorms.map(function(storm, index) {
             var wind = _tropicalWindMph(storm);
-            var title = _tropicalClassification(storm, wind) + ' ' + _tropicalDisplayName(storm.name || 'Unnamed');
+            var title = _tropicalNamedStormTitle(storm);
             var distance = storm._dist != null ? Math.round(storm._dist).toLocaleString() + ' mi from you' : 'Active system';
             return '<button class="tropical-route-storm-choice' + (index === tropicalRouteSelectedIndex ? ' is-active' : '') +
                 '" type="button" onclick="selectTropicalRouteStorm(' + index + ')"><span><b>' +
@@ -20819,7 +20833,7 @@
         if (current) {
             var currentMarker = selectStormOnClick(L.circleMarker([current.lat, current.lon], {
                 radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5
-            }).bindTooltip((_tropicalClassification(storm, _tropicalWindMph(storm)) + ' ' + _tropicalDisplayName(storm.name || '')).trim(), {
+            }).bindTooltip(_tropicalNamedStormTitle(storm), {
                 direction: 'top', opacity: 0.95
             })).addTo(tropicalRouteStormLayer);
             extendBounds(currentMarker.getLatLng());
