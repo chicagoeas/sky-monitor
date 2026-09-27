@@ -20509,7 +20509,7 @@
                 var response = await _weatherFetch(url, {
                     cache: 'no-store',
                     headers: { Accept: 'application/json' }
-                }, 15000);
+                }, 30000);
                 if (response.ok) return response;
                 lastError = new Error(label + ' feed returned ' + response.status);
                 if (![502, 503, 504].includes(response.status) || attempt === 2) {
@@ -21017,12 +21017,19 @@
                 _fetchTropicalJTWC(forceRefresh)
             ]);
             var payloads = [];
+            var successfulFeedCount = 0;
             feedResults.forEach(function(result) {
                 if (result.status !== 'fulfilled') return;
                 payloads.push(result.value.json().then(function(payload) {
                     var source = String(payload.source || '').toUpperCase() === 'JTWC' ? 'JTWC' : 'NHC';
-                    var raw = payload.activeStorms || payload.cycloneMessages ||
-                        (Array.isArray(payload) ? payload : []);
+                    // Do not let a truthy but malformed field (for example an
+                    // object from a partial upstream response) make this feed
+                    // throw and disappear from the combined result.
+                    var raw = Array.isArray(payload.activeStorms) ? payload.activeStorms :
+                        Array.isArray(payload.cycloneMessages) ? payload.cycloneMessages :
+                        Array.isArray(payload) ? payload : null;
+                    if (!raw) throw new Error(source + ' feed returned no storm array');
+                    successfulFeedCount++;
                     return raw.map(function(storm) {
                         return Object.assign({}, storm, { agency: storm.agency || source });
                     });
@@ -21036,6 +21043,10 @@
                 }
             });
             if (token !== tropicalRouteLoadToken) return;
+            if (!successfulFeedCount) {
+                if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC and JTWC feeds.';
+                return;
+            }
             var userLat = parseFloat(lat), userLon = parseFloat(lon);
             tropicalRouteStorms = raw.map(function(storm) {
                 var current = _tropicalCurrentPoint(storm);
@@ -21335,8 +21346,8 @@
         // ——— Cloudflare Worker → NHC + JTWC feeds (CORS-safe, 5-min edge cache) ———
         try {
             const feedResults = await Promise.allSettled([
-                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000),
-                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/jtwc', undefined, 10000)
+                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 30000),
+                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/jtwc', undefined, 30000)
             ]);
             if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
             const feedData = [];
@@ -21345,7 +21356,9 @@
                 try {
                     const data = await result.value.json();
                     const source = String(data.source || '').toUpperCase() === 'JTWC' ? 'JTWC' : 'NHC';
-                    const raw = data.activeStorms || data.cycloneMessages || (Array.isArray(data) ? data : []);
+                    const raw = Array.isArray(data.activeStorms) ? data.activeStorms :
+                        Array.isArray(data.cycloneMessages) ? data.cycloneMessages :
+                        (Array.isArray(data) ? data : []);
                     feedData.push(raw.map(function(storm) {
                         return Object.assign({}, storm, { agency: storm.agency || source });
                     }));
