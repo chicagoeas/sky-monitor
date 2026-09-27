@@ -579,6 +579,33 @@
             font: 900 0.62rem/1 system-ui, sans-serif;
             letter-spacing: -0.15px;
         }
+        .tropical-jtwc-forecast-icon-wrap {
+            background: transparent;
+            border: 0;
+        }
+        .tropical-jtwc-forecast-icon,
+        .tropical-jtwc-current-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 21px;
+            height: 21px;
+            box-sizing: border-box;
+            border: 1px solid rgba(7,19,29,0.82);
+            border-radius: 50%;
+            color: #07131d;
+            background: var(--jtwc-color, #f3f1da);
+            box-shadow: 0 1px 5px rgba(0,0,0,0.46);
+            font: 900 0.47rem/1 system-ui, sans-serif;
+            letter-spacing: -0.15px;
+        }
+        .tropical-jtwc-current-icon {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #ffffff;
+            box-shadow: 0 1px 7px rgba(0,0,0,0.62);
+            font-size: 0.52rem;
+        }
         #tropical-route-map .leaflet-control-attribution {
             position: relative;
             z-index: 1200;
@@ -20233,6 +20260,30 @@
         return 'TD';
     }
 
+    function _tropicalJtwcMarkerLabel(point) {
+        var explicit = String(point && (point.jtwcLabel || point.label || point.intensityLabel) || '').trim().toUpperCase();
+        if (explicit) return explicit;
+        var windMph = _tropicalFinite(point && (point.wind ?? point.intensity));
+        if (windMph == null) return '•';
+        if (windMph >= 150) return 'VT';
+        if (windMph >= 115) return 'ST';
+        if (windMph >= 74) return 'T';
+        if (windMph >= 55) return 'SS';
+        if (windMph >= 39) return 'TS';
+        return 'TD';
+    }
+
+    function _tropicalJtwcMarkerColor(label) {
+        return {
+            VT: '#ef7892',
+            ST: '#f3c65b',
+            T: '#f3f1da',
+            SS: '#83e8ec',
+            TS: '#67d3e7',
+            TD: '#8cc9db'
+        }[String(label || '').toUpperCase()] || '#f3f1da';
+    }
+
     function _tropicalForecastTime(text) {
         if (!text) return '';
         var parsed = _tropicalForecastDate(text);
@@ -20631,6 +20682,7 @@
         var track = forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm);
         var points = track.length >= 2 ? track : _tropicalPointsFrom(storm.trackPts);
         var color = _tropicalColor(storm);
+        var isJtwc = storm.source === 'JTWC';
         var extendBounds = function(value) {
             bounds.extend(value);
             if (focusBounds && stormIndex === focusIndex) focusBounds.extend(value);
@@ -20651,19 +20703,28 @@
         }
         if (points.length >= 2) {
             var line = selectStormOnClick(L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
-                color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: true
+                color: isJtwc ? '#526b9a' : color,
+                weight: isJtwc ? 2.5 : 4,
+                opacity: isJtwc ? 0.92 : 0.95,
+                dashArray: isJtwc ? null : '9,7',
+                interactive: true
             })).addTo(tropicalRouteStormLayer);
             extendBounds(line.getBounds());
         }
         if (forecastPoints.length) {
             forecastPoints.forEach(function(point) {
+                var markerLabel = isJtwc
+                    ? _tropicalJtwcMarkerLabel(point)
+                    : _tropicalMarkerLabel(point.wind);
                 var icon = L.divIcon({
-                    className: 'tropical-forecast-icon-wrap',
-                    html: '<span class="tropical-forecast-icon" style="--forecast-color:' +
-                        _tropicalColor({ intensity: point.wind }) + '">' +
-                        escapeHtml(_tropicalMarkerLabel(point.wind)) + '</span>',
-                    iconSize: [34, 26],
-                    iconAnchor: [17, 13],
+                    className: isJtwc ? 'tropical-jtwc-forecast-icon-wrap' : 'tropical-forecast-icon-wrap',
+                    html: isJtwc
+                        ? '<span class="tropical-jtwc-forecast-icon" style="--jtwc-color:' +
+                            _tropicalJtwcMarkerColor(markerLabel) + '">' + escapeHtml(markerLabel) + '</span>'
+                        : '<span class="tropical-forecast-icon" style="--forecast-color:' +
+                            _tropicalColor({ intensity: point.wind }) + '">' + escapeHtml(markerLabel) + '</span>',
+                    iconSize: isJtwc ? [21, 21] : [34, 26],
+                    iconAnchor: isJtwc ? [10.5, 10.5] : [17, 13],
                     popupAnchor: [0, -12]
                 });
                 var forecastMarker = L.marker([point.lat, point.lon], {
@@ -20674,11 +20735,33 @@
             });
         }
         if (current) {
-            var currentMarker = selectStormOnClick(L.circleMarker([current.lat, current.lon], {
-                radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5
-            }).bindTooltip((_tropicalClassification(storm, _tropicalWindMph(storm)) + ' ' + (storm.name || '')).trim(), {
-                direction: 'top', opacity: 0.95
-            })).addTo(tropicalRouteStormLayer);
+            var currentMarker;
+            var currentLabel = _tropicalJtwcMarkerLabel({
+                jtwcLabel: storm.jtwcLabel,
+                wind: _tropicalWindMph(storm)
+            });
+            if (isJtwc) {
+                currentMarker = L.marker([current.lat, current.lon], {
+                    icon: L.divIcon({
+                        className: 'tropical-jtwc-forecast-icon-wrap',
+                        html: '<span class="tropical-jtwc-current-icon" style="--jtwc-color:' +
+                            _tropicalJtwcMarkerColor(currentLabel) + '">' + escapeHtml(currentLabel) + '</span>',
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12]
+                    }),
+                    keyboard: true,
+                    zIndexOffset: 400
+                });
+            } else {
+                currentMarker = L.circleMarker([current.lat, current.lon], {
+                    radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5
+                });
+            }
+            currentMarker = selectStormOnClick(currentMarker.bindTooltip(
+                (isJtwc ? currentLabel : _tropicalClassification(storm, _tropicalWindMph(storm))) +
+                ' ' + (storm.name || ''),
+                { direction: 'top', opacity: 0.95 }
+            )).addTo(tropicalRouteStormLayer);
             extendBounds(currentMarker.getLatLng());
         }
     }
@@ -21245,10 +21328,29 @@
                             bounds=coneL.getBounds();
                         }
                         if(s0.trackPts?.length>=2){
-                            L.polyline(s0.trackPts.map(c=>[c[1],c[0]]),{color:'#ffffff',weight:2.5,opacity:0.85,dashArray:'7,5',interactive:false}).addTo(map);
+                            L.polyline(s0.trackPts.map(c=>[c[1],c[0]]),{
+                                color:s0.source==='JTWC'?'#526b9a':'#ffffff',
+                                weight:s0.source==='JTWC'?2:2.5,
+                                opacity:0.85,
+                                dashArray:s0.source==='JTWC'?null:'7,5',
+                                interactive:false
+                            }).addTo(map);
                         }
                         if(!isNaN(sLat0)&&!isNaN(sLon0)){
-                            L.circleMarker([sLat0,sLon0],{radius:8,color:'#fff',fillColor:cc,fillOpacity:1,weight:2,interactive:false}).addTo(map);
+                            if(s0.source==='JTWC'){
+                                const miniLabel=_tropicalJtwcMarkerLabel({jtwcLabel:s0.jtwcLabel,wind:Math.round((parseInt(s0.intensity)||0)*1.15078)});
+                                L.marker([sLat0,sLon0],{
+                                    icon:L.divIcon({
+                                        className:'tropical-jtwc-forecast-icon-wrap',
+                                        html:'<span class="tropical-jtwc-current-icon" style="--jtwc-color:'+_tropicalJtwcMarkerColor(miniLabel)+';">'+escapeHtml(miniLabel)+'</span>',
+                                        iconSize:[24,24],
+                                        iconAnchor:[12,12]
+                                    }),
+                                    interactive:false
+                                }).addTo(map);
+                            } else {
+                                L.circleMarker([sLat0,sLon0],{radius:8,color:'#fff',fillColor:cc,fillOpacity:1,weight:2,interactive:false}).addTo(map);
+                            }
                         }
                         L.circleMarker([userLat,userLon],{radius:5,color:'#fff',fillColor:'#7dd3fc',fillOpacity:0.9,weight:1.5,interactive:false}).addTo(map);
                         const stabilizeMiniMap=()=>{
