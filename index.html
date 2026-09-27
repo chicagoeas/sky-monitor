@@ -771,6 +771,11 @@
             font-size: 1rem;
         }
         @media (max-width: 650px) {
+            #reporting-map-card .toolkit-header { gap: 4px; }
+            #reporting-map-title { font-size: 0.82em; letter-spacing: -0.15px; }
+            #reporting-map-card .toolkit-header > div { gap: 4px !important; }
+            #open-tropical-tracker-btn { width: 28px; min-width: 28px; height: 27px; }
+            #open-tropical-tracker-btn img { width: 18px; height: 18px; }
             #tropical-route-header .tropical-route-subtitle { display: none; }
             #tropical-route-header h2 { font-size: 0.78rem; }
             #tropical-route-header { gap: 6px; padding-left: 8px; padding-right: 8px; }
@@ -1019,6 +1024,26 @@
 
         .toolkit-box { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); padding: 20px; border-radius: 16px; margin-bottom: 20px; }
         .toolkit-header { font-weight: 700; color: #f1f5f9; font-size: 0.9em; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+        .tropical-activity-heading { display: flex; align-items: center; gap: 6px; }
+        .tropical-activity-heading img { width: 19px; height: 19px; object-fit: contain; }
+        #reporting-map-card .toolkit-header { gap: 7px; }
+        #reporting-map-title { min-width: 0; flex: 1 1 auto; white-space: nowrap; }
+        #reporting-map-card .toolkit-header > div { flex: 0 0 auto; align-items: center; }
+        #open-tropical-tracker-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 30px; height: 28px; box-sizing: border-box; padding: 4px;
+            border: 1px solid var(--primary); border-radius: 6px;
+            background: rgba(79,195,247,0.15); cursor: pointer;
+        }
+        #open-tropical-tracker-btn img { display: block; width: 19px; height: 19px; object-fit: contain; }
+        #historical-radar-clock-button {
+            width: 30px; height: 28px; box-sizing: border-box; padding: 4px;
+            border: 1px solid var(--primary); border-radius: 6px;
+            background: rgba(79,195,247,0.15); color: var(--primary); cursor: pointer;
+            line-height: 1;
+        }
+        html.radar-route #reporting-map-card .toolkit-header > div { gap: 5px !important; }
+        html.radar-route #reporting-map-card .toolkit-header button { width: 29px; min-width: 29px; padding-left: 3px !important; padding-right: 3px !important; }
 
         #orbit-container { position: relative; height: 120px; width: 100%; margin: 20px 0; border-bottom: 2px solid #444; overflow: hidden; }
         .orbit-arc { position: absolute; bottom: 0; left: 10%; right: 10%; height: 200%; border: 2px dashed rgba(255,255,255,0.2); border-radius: 50%; }
@@ -2483,10 +2508,10 @@
         <div id="pws-qc-panel" style="display:none;"></div>
 
         <div id="tropical-widget" style="display:none; background:rgba(79,195,247,0.05); border:1px solid rgba(79,195,247,0.18); border-radius:16px; padding:16px 18px; margin-bottom:15px;">
-            <div class="sky-hd">🌀 Tropical Activity</div>
+            <div class="sky-hd tropical-activity-heading"><img src="/icons/wu/2.svg" alt="" aria-hidden="true"> Tropical Activity</div>
             <div id="tropical-storms-list"></div>
             <div id="tropical-map" role="button" tabindex="0" aria-label="Open interactive tropical tracker"
-                 onclick="openTropicalRoute()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTropicalRoute();}"
+                 onclick="openTropicalRoute(this._tropicalFocus || null)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTropicalRoute(this._tropicalFocus || null);}"
                  style="height:200px; border-radius:10px; overflow:hidden; margin-top:10px; display:none; cursor:pointer;"
                  title="Open interactive tropical tracker"></div>
         </div>
@@ -2806,6 +2831,9 @@
             <div class="toolkit-header" style="margin-bottom:10px;">
                 <span id="reporting-map-title">LIVE REPORTING MAP</span>
                 <div style="display:flex; gap:6px;">
+                    <button id="open-tropical-tracker-btn" type="button" onclick="openTropicalRoute()" title="Open Tropical Tracker" aria-label="Open Tropical Tracker">
+                        <img src="/icons/wu/2.svg" alt="" aria-hidden="true">
+                    </button>
                     <button id="historical-radar-clock-button" type="button" onclick="openHistoricalRadarPicker()" title="Choose historical radar time" aria-label="Choose historical radar time">&#128336;</button>
                     <button onclick="refreshReportingMap()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Refresh">&#8635;</button>
                     <button id="map-settings-btn" onclick="toggleMapSettings()" style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;" title="Map layers">&#9881;&#65039;</button>
@@ -13761,6 +13789,7 @@
     let tropicalRouteSelectedIndex = null;
     let tropicalRoutePendingFocus = null;
     let tropicalRouteInitialViewPending = true;
+    let tropicalRouteTransitioning = false;
     const TROPICAL_SATELLITE_PREF_KEY = 'skymonitor_tropical_satellite_overlay';
     let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
         ? 'satellite'
@@ -18636,7 +18665,7 @@
         const active = !!isRadar;
         const historicalRoute = active && !!isHistorical;
         const wasFullscreenReportingMap = document.documentElement.classList.contains('radar-route');
-        if (!active && wasFullscreenReportingMap && !_turnstileVerified &&
+        if (!active && wasFullscreenReportingMap && !tropicalRouteTransitioning && !_turnstileVerified &&
             !_turnstilePendingRadarExit) {
             // Browser-back can leave the fullscreen URL before this handler
             // runs. Restore the radar route while verification is pending so
@@ -20133,6 +20162,44 @@
             '</div>';
     }
 
+    function _tropicalPointInRing(lat, lon, ring) {
+        if (!Array.isArray(ring) || ring.length < 3) return false;
+        var inside = false;
+        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            var xi = Number(ring[i][0]), yi = Number(ring[i][1]);
+            var xj = Number(ring[j][0]), yj = Number(ring[j][1]);
+            if (!isFinite(xi) || !isFinite(yi) || !isFinite(xj) || !isFinite(yj)) continue;
+            if (((yi > lat) !== (yj > lat)) &&
+                (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    function _tropicalPointInPolygon(lat, lon, polygon) {
+        if (!Array.isArray(polygon) || !polygon.length ||
+            !_tropicalPointInRing(lat, lon, polygon[0])) return false;
+        for (var i = 1; i < polygon.length; i++) {
+            if (_tropicalPointInRing(lat, lon, polygon[i])) return false;
+        }
+        return true;
+    }
+
+    function _tropicalLocationInCone(storm, latValue, lonValue) {
+        var latValueNumber = Number(latValue), lonValueNumber = Number(lonValue);
+        var cone = storm && storm.conePgn;
+        if (!isFinite(latValueNumber) || !isFinite(lonValueNumber) ||
+            !cone || !Array.isArray(cone.coordinates)) return false;
+        var coordinates = cone.coordinates;
+        if (String(cone.type || 'Polygon').toLowerCase() === 'multipolygon') {
+            return coordinates.some(function(polygon) {
+                return _tropicalPointInPolygon(latValueNumber, lonValueNumber, polygon);
+            });
+        }
+        return _tropicalPointInPolygon(latValueNumber, lonValueNumber, coordinates);
+    }
+
     async function _fetchTropicalNHC(forceRefresh) {
         var url = WEATHER_WORKER_URL + '/api/weather/nhc' +
             (forceRefresh ? '?refresh=' + Date.now() : '');
@@ -20353,8 +20420,15 @@
         document.getElementById('tropical-route-pressure').textContent = pressure != null ? pressure + ' mb' : '—';
         document.getElementById('tropical-route-movement').textContent = movement;
         document.getElementById('tropical-route-distance').textContent = distance != null ? Math.round(distance).toLocaleString() + ' mi' : '—';
-        var intensity = _tropicalForecastAtLocation(storm, userLat, userLon);
-        document.getElementById('tropical-route-location-intensity').innerHTML = intensity.html;
+        var intensityEl = document.getElementById('tropical-route-location-intensity');
+        var locationInCone = _tropicalLocationInCone(storm, userLat, userLon);
+        if (intensityEl) {
+            intensityEl.hidden = !locationInCone;
+            if (locationInCone) {
+                var intensity = _tropicalForecastAtLocation(storm, userLat, userLon);
+                intensityEl.innerHTML = intensity.html;
+            }
+        }
         var sourceUrl = storm.publicAdvisory && storm.publicAdvisory.url
             ? storm.publicAdvisory.url : 'https://www.nhc.noaa.gov/';
         var satellite = _tropicalSatelliteConfig(storm);
@@ -20613,10 +20687,15 @@
             var focusIndex = null;
             var focusCenter = tropicalRoutePendingFocus;
             if (tropicalRouteInitialViewPending) {
-                focusIndex = _tropicalFocusIndex(tropicalRoutePendingFocus);
+                var pendingFocus = tropicalRoutePendingFocus;
+                focusIndex = _tropicalFocusIndex(pendingFocus);
                 if (focusIndex == null) focusIndex = 0;
+                if (pendingFocus && pendingFocus.select && _tropicalFocusIndex(pendingFocus) != null) {
+                    tropicalRouteSelectedIndex = _tropicalFocusIndex(pendingFocus);
+                }
                 tropicalRouteInitialViewPending = false;
                 tropicalRoutePendingFocus = null;
+                _renderTropicalStormPicker();
             }
             _drawTropicalRouteStorms(!forceRefresh || focusIndex != null, focusIndex, focusCenter);
         } catch (error) {
@@ -20673,11 +20752,16 @@
         if (!tropicalRouteStorms.length) {
             loadTropicalRouteData(false);
         } else if (tropicalRouteInitialViewPending) {
-            var focusIndex = _tropicalFocusIndex(tropicalRoutePendingFocus);
+            var pendingFocus = tropicalRoutePendingFocus;
+            var focusIndex = _tropicalFocusIndex(pendingFocus);
             if (focusIndex == null) focusIndex = 0;
-            var focusCenter = tropicalRoutePendingFocus;
+            if (pendingFocus && pendingFocus.select && _tropicalFocusIndex(pendingFocus) != null) {
+                tropicalRouteSelectedIndex = _tropicalFocusIndex(pendingFocus);
+            }
+            var focusCenter = pendingFocus;
             tropicalRouteInitialViewPending = false;
             tropicalRoutePendingFocus = null;
+            _renderTropicalStormPicker();
             _drawTropicalRouteStorms(true, focusIndex, focusCenter);
         }
     }
@@ -20711,12 +20795,21 @@
 
     function openTropicalRoute(focus) {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (document.documentElement.classList.contains('radar-route')) {
+            tropicalRouteTransitioning = true;
+            try {
+                setRadarRouteState(false);
+            } finally {
+                tropicalRouteTransitioning = false;
+            }
+        }
         if (focus && isFinite(Number(focus.lat)) && isFinite(Number(focus.lon))) {
             tropicalRoutePendingFocus = {
                 id: focus.id != null ? focus.id : null,
                 name: focus.name || '',
                 lat: Number(focus.lat),
-                lon: Number(focus.lon)
+                lon: Number(focus.lon),
+                select: true
             };
             tropicalRouteInitialViewPending = true;
             tropicalRouteSelectedIndex = null;
@@ -20866,6 +20959,7 @@
                     const s0=storms[0];
                     const sLat0=s0.latitudeNumeric??_pc(s0.latitude??null);
                     const sLon0=s0.longitudeNumeric??_pc(s0.longitude??null);
+                    mapEl._tropicalFocus={id:s0.id,name:s0.name,lat:sLat0,lon:sLon0};
                     const mph0=Math.round((parseInt(s0.intensity)||0)*1.15078);
                     const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
                     const miniMapGeneration=tropicalFetchGeneration;
