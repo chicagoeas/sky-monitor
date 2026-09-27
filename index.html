@@ -13,10 +13,23 @@
             var historicalRadarPage = path === '/radar/historical';
             var tropicalRadarPage = path === '/radar/tropical';
             var radarPage = path === '/radar' || historicalRadarPage;
+            // The public tropical tracker shortcut follows the US hurricane
+            // season window requested by the reporting-map UI: May 15 through
+            // November 30, inclusive. Set this before the body paints so the
+            // shortcut never flashes during the off-season.
+            var now = new Date();
+            var month = now.getMonth();
+            var day = now.getDate();
+            var usHurricaneSeason =
+                (month === 4 && day >= 15) ||
+                (month >= 5 && month <= 9) ||
+                (month === 10 && day <= 30);
             window.SKYMONITOR_INFO_PAGE = infoPage;
             window.SKYMONITOR_RADAR_PAGE = radarPage;
             window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRadarPage;
             window.SKYMONITOR_TROPICAL_PAGE = tropicalRadarPage;
+            window.SKYMONITOR_US_HURRICANE_SEASON = usHurricaneSeason;
+            if (usHurricaneSeason) document.documentElement.classList.add('us-hurricane-season');
             window.SKYMONITOR_INFO_KIND = path === '/privacy' ? 'privacy' :
                 (path === '/about-custom-alerts' ? 'custom-alerts' : '');
             var infoPaths = { '/privacy': true, '/about-custom-alerts': true };
@@ -1036,6 +1049,22 @@
             background: rgba(79,195,247,0.15); cursor: pointer;
         }
         #open-tropical-tracker-btn img { display: block; width: 19px; height: 19px; object-fit: contain; }
+        /* The tropical shortcut is available only from the fullscreen map
+           and only during the requested US hurricane-season window. */
+        #open-tropical-tracker-btn { display: none !important; }
+        html.radar-route.us-hurricane-season #open-tropical-tracker-btn {
+            display: inline-flex !important;
+        }
+        html.radar-route #reporting-map-card .toolkit-header > div > button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            vertical-align: middle;
+            line-height: 1;
+        }
+        html.radar-route #reporting-map-card .toolkit-header > div > button img {
+            margin: 0;
+        }
         #historical-radar-clock-button {
             width: 30px; height: 28px; box-sizing: border-box; padding: 4px;
             border: 1px solid var(--primary); border-radius: 6px;
@@ -1044,6 +1073,7 @@
         }
         html.radar-route #reporting-map-card .toolkit-header > div { gap: 5px !important; }
         html.radar-route #reporting-map-card .toolkit-header button { width: 29px; min-width: 29px; padding-left: 3px !important; padding-right: 3px !important; }
+        #reporting-map-title { font-size: 1rem; line-height: 1; }
 
         #orbit-container { position: relative; height: 120px; width: 100%; margin: 20px 0; border-bottom: 2px solid #444; overflow: hidden; }
         .orbit-arc { position: absolute; bottom: 0; left: 10%; right: 10%; height: 200%; border: 2px dashed rgba(255,255,255,0.2); border-radius: 50%; }
@@ -18247,7 +18277,10 @@
         syncSingleSiteRadarVisibility();
         syncReportingRadarActionVisibility();
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'HISTORICAL RADAR';
+        if (title) {
+            title.textContent = 'HISTORICAL RADAR';
+            fitReportingMapTitle();
+        }
         _renderHistoricalRadarControls();
         const countMessage = frameCount < HISTORICAL_RADAR_ON_DEMAND_COUNT
             ? 'Showing ' + frameCount + ' completed scans available so far.'
@@ -18461,7 +18494,10 @@
             enterHistoricalRadarRoute();
         }
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'HISTORICAL RADAR';
+        if (title) {
+            title.textContent = 'HISTORICAL RADAR';
+            fitReportingMapTitle();
+        }
         _renderHistoricalRadarControls();
 
         const bounds = window.L.geoJSON(feature).getBounds();
@@ -18525,7 +18561,10 @@
         syncReportingRadarActionVisibility();
         _renderHistoricalRadarControls();
         const title = document.getElementById('reporting-map-title');
-        if (title) title.textContent = 'LIVE REPORTING MAP';
+        if (title) {
+            title.textContent = 'LIVE REPORTING MAP';
+            fitReportingMapTitle();
+        }
         if (wasActive && reportingMap) {
             if (reportingRadarLayer && reportingMap.hasLayer(reportingRadarLayer)) {
                 reportingMap.removeLayer(reportingRadarLayer);
@@ -18661,6 +18700,77 @@
         // previously saved (possibly exact) location.
     }
 
+    function isUsHurricaneSeasonNow() {
+        const now = new Date();
+        const month = now.getMonth();
+        const day = now.getDate();
+        return (month === 4 && day >= 15) ||
+            (month >= 5 && month <= 9) ||
+            (month === 10 && day <= 30);
+    }
+
+    function fitReportingMapTitle() {
+        const title = document.getElementById('reporting-map-title');
+        if (!title || !title.isConnected || !title.clientWidth) return;
+
+        // Measure the title at several sizes against the actual width left
+        // beside the controls. This keeps the label on one line while using
+        // all available space on narrow fullscreen phones.
+        title.style.fontSize = '';
+        const baseStyle = getComputedStyle(title);
+        const baseSize = parseFloat(baseStyle.fontSize) || 16;
+        const probe = title.cloneNode(true);
+        probe.removeAttribute('id');
+        probe.style.cssText = [
+            'position:absolute',
+            'visibility:hidden',
+            'pointer-events:none',
+            'display:inline-block',
+            'width:max-content',
+            'max-width:none',
+            'white-space:nowrap',
+            'flex:none'
+        ].join(';');
+        probe.style.fontFamily = baseStyle.fontFamily;
+        probe.style.fontWeight = baseStyle.fontWeight;
+        probe.style.fontStyle = baseStyle.fontStyle;
+        probe.style.letterSpacing = baseStyle.letterSpacing;
+        probe.style.lineHeight = baseStyle.lineHeight;
+        document.body.appendChild(probe);
+
+        const availableWidth = title.clientWidth;
+        let low = 10;
+        let high = Math.min(24, Math.max(14, baseSize));
+        let best = low;
+        for (let i = 0; i < 14; i++) {
+            const mid = (low + high) / 2;
+            probe.style.fontSize = mid + 'px';
+            if (probe.getBoundingClientRect().width <= availableWidth) {
+                best = mid;
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        title.style.fontSize = best.toFixed(2) + 'px';
+        probe.remove();
+    }
+
+    function syncTropicalTrackerButtonVisibility() {
+        const inSeason = isUsHurricaneSeasonNow();
+        const root = document.documentElement;
+        const isFullscreen = root.classList.contains('radar-route');
+        const button = document.getElementById('open-tropical-tracker-btn');
+        root.classList.toggle('us-hurricane-season', inSeason);
+        window.SKYMONITOR_US_HURRICANE_SEASON = inSeason;
+        if (button) {
+            const visible = isFullscreen && inSeason;
+            button.setAttribute('aria-hidden', visible ? 'false' : 'true');
+            button.tabIndex = visible ? 0 : -1;
+        }
+        fitReportingMapTitle();
+    }
+
     function setRadarRouteState(isRadar, isHistorical) {
         const active = !!isRadar;
         const historicalRoute = active && !!isHistorical;
@@ -18694,6 +18804,7 @@
         window.SKYMONITOR_RADAR_PAGE = active;
         window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRoute;
         document.documentElement.classList.toggle('radar-route', active);
+        syncTropicalTrackerButtonVisibility();
         _renderHistoricalRadarControls();
         document.title = historicalRoute
             ? 'Historical Radar · SkyMonitor'
@@ -22600,6 +22711,10 @@
         setTimeout(scrollToPrivacyContact, 0);
     });
 
+    window.addEventListener('resize', function() {
+        fitReportingMapTitle();
+    });
+
     // The launch screen is a guard against a blank first paint, not a guard
     // against every optional weather provider. Define this before
     // DOMContentLoaded so the primary load can dismiss it as soon as the
@@ -22617,6 +22732,7 @@
         // window.onload; without this ordering they briefly use the Chicago
         // fallback coordinates.
         loadLoc();
+        syncTropicalTrackerButtonVisibility();
         syncUnitControls();
         var pendingMode = null;
         try {
