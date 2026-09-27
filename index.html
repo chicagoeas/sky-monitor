@@ -20186,12 +20186,36 @@
         return Math.round((unit === 'kt' || unit === 'kts' || unit === 'knots') ? value * 1.15078 : value);
     }
 
+    function _tropicalIsJTWC(storm) {
+        return String(storm && (storm.source || storm._source || '')).toUpperCase() === 'JTWC' ||
+            /^(WP|IO|SH)/i.test(String(storm && (storm.id || storm.stormId || '')));
+    }
+
+    function _tropicalClassificationCode(storm) {
+        return String(storm && (storm.classification || storm.stormType || storm.storm_type || '') || '')
+            .trim().toUpperCase();
+    }
+
     function _tropicalClassification(storm, windMph) {
-        var map = { HU: 'Hurricane', TY: 'Typhoon', TS: 'Tropical Storm', TD: 'Tropical Depression',
-            TC: 'Tropical Cyclone', SS: 'Subtropical Storm', SD: 'Subtropical Depression', EX: 'Extratropical' };
-        return map[String(storm.classification || '').toUpperCase()] ||
-            (windMph != null && windMph >= 74 ? 'Hurricane' :
-                (windMph != null && windMph >= 39 ? 'Tropical Storm' : 'Tropical Depression'));
+        var code = _tropicalClassificationCode(storm);
+        var jtwc = _tropicalIsJTWC(storm);
+        var map = {
+            HU: 'Hurricane', TY: 'Typhoon', T: 'Typhoon',
+            ST: jtwc ? 'Super Typhoon' : 'Severe Tropical Storm',
+            VT: 'Very Strong Typhoon',
+            TS: 'Tropical Storm', TD: 'Tropical Depression',
+            TC: 'Tropical Cyclone', SS: 'Subtropical Storm',
+            SD: 'Subtropical Depression', EX: 'Extratropical',
+            DB: 'Disturbance', LO: 'Low'
+        };
+        if (map[code]) return map[code];
+        if (jtwc) {
+            return windMph != null && windMph >= 150 ? 'Super Typhoon' :
+                windMph != null && windMph >= 74 ? 'Typhoon' :
+                windMph != null && windMph >= 39 ? 'Tropical Storm' : 'Tropical Depression';
+        }
+        return windMph != null && windMph >= 74 ? 'Hurricane' :
+            (windMph != null && windMph >= 39 ? 'Tropical Storm' : 'Tropical Depression');
     }
 
     function _tropicalColor(storm) {
@@ -20215,8 +20239,23 @@
         return wind == null ? '—' : Math.round(wind) + ' mph';
     }
 
-    function _tropicalCategory(wind) {
+    function _tropicalCategory(storm, wind) {
         if (wind == null) return 'Unknown';
+        if (_tropicalIsJTWC(storm)) {
+            var code = _tropicalClassificationCode(storm);
+            if (code === 'ST') return 'Super Typhoon';
+            if (code === 'VT') return 'Very Strong Typhoon';
+            if (wind >= 150) return 'Super Typhoon';
+            if (code === 'T' || code === 'TY' || wind >= 74) return 'Typhoon';
+            if (code === 'SS') return 'Subtropical Storm';
+            if (code === 'SD') return 'Subtropical Depression';
+            if (code === 'TC') return 'Tropical Cyclone';
+            if (code === 'DB') return 'Disturbance';
+            if (code === 'LO') return 'Low';
+            if (code === 'EX') return 'Extratropical';
+            if (code === 'TS' || wind >= 39) return 'Tropical Storm';
+            return 'Tropical Depression';
+        }
         if (wind >= 157) return 'Category 5 hurricane';
         if (wind >= 130) return 'Category 4 hurricane';
         if (wind >= 111) return 'Category 3 hurricane';
@@ -20226,8 +20265,23 @@
         return 'Tropical depression';
     }
 
-    function _tropicalMarkerLabel(wind) {
+    function _tropicalMarkerLabel(wind, storm) {
         if (wind == null) return '•';
+        if (_tropicalIsJTWC(storm)) {
+            var code = _tropicalClassificationCode(storm);
+            if (code === 'ST') return 'ST';
+            if (code === 'VT') return 'VT';
+            if (wind >= 150) return 'ST';
+            if (code === 'T' || code === 'TY' || wind >= 74) return 'T';
+            if (code === 'SS') return 'SS';
+            if (code === 'SD') return 'SD';
+            if (code === 'TC') return 'TC';
+            if (code === 'DB') return 'DB';
+            if (code === 'LO') return 'LO';
+            if (code === 'EX') return 'EX';
+            if (code === 'TS' || wind >= 39) return 'TS';
+            return 'TD';
+        }
         if (wind >= 74) return 'H' + (wind >= 157 ? '5' : wind >= 130 ? '4' : wind >= 111 ? '3' : wind >= 96 ? '2' : '1');
         if (wind >= 39) return 'TS';
         return 'TD';
@@ -20311,9 +20365,10 @@
         return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
             '<div class="tropical-forecast-popup-title">' + escapeHtml(name) + '</div>' +
             '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
-            '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(point.wind)) +
+            '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(storm, point.wind)) +
             '</b><br>' + escapeHtml(time) + '<br>Maximum sustained wind</div>' +
-            '<div class="tropical-forecast-popup-note">NHC official forecast point · ' +
+            '<div class="tropical-forecast-popup-note">' +
+            escapeHtml(_tropicalIsJTWC(storm) ? 'JTWC official forecast point' : 'NHC official forecast point') + ' · ' +
             escapeHtml(point.lat.toFixed(1) + '°, ' + Math.abs(point.lon).toFixed(1) + '°' + (point.lon < 0 ? 'W' : 'E')) +
             '</div>';
     }
@@ -20382,6 +20437,17 @@
         throw lastError || new Error('NHC feed unavailable');
     }
 
+    async function _fetchTropicalJTWC(forceRefresh) {
+        var url = WEATHER_WORKER_URL + '/api/weather/jtwc' +
+            (forceRefresh ? '?refresh=' + Date.now() : '');
+        var response = await _weatherFetch(url, {
+            cache: 'no-store',
+            headers: { Accept: 'application/json' }
+        }, 15000);
+        if (!response.ok) throw new Error('JTWC feed returned ' + response.status);
+        return response;
+    }
+
     async function _loadTropicalForecastPoints(storm) {
         if (!storm || storm._forecastPointsLoaded || storm._forecastPointsPromise) {
             return storm && storm._forecastPointsPromise ? storm._forecastPointsPromise : (storm ? storm._forecastPoints || [] : []);
@@ -20438,7 +20504,7 @@
         return {
             html: '<strong>Forecast intensity at your location:</strong> ' + qualifier +
                 when + ': <strong>' + _tropicalFormatWind(nearest.point.wind) + '</strong> maximum sustained wind (' +
-                escapeHtml(_tropicalCategory(nearest.point.wind)) + ').',
+                escapeHtml(_tropicalCategory(storm, nearest.point.wind)) + ').',
             hasForecast: true
         };
     }
@@ -20571,7 +20637,9 @@
         var movement = movementSpeed != null ? _tropicalDirection(storm.movementDir) + ' ' + movementSpeed + ' mph' : '—';
         document.getElementById('tropical-route-detail-title').textContent = classification + ' ' + name;
         document.getElementById('tropical-route-detail-subtitle').textContent =
-            'Official NHC position and forecast track.';
+            _tropicalIsJTWC(storm)
+                ? 'Official JTWC position and intensity.'
+                : 'Official NHC position and forecast track.';
         document.getElementById('tropical-route-current-wind').textContent = _tropicalFormatWind(wind);
         document.getElementById('tropical-route-pressure').textContent = pressure != null ? pressure + ' mb' : '—';
         document.getElementById('tropical-route-movement').textContent = movement;
@@ -20585,11 +20653,15 @@
                 intensityEl.innerHTML = intensity.html;
             }
         }
-        var sourceUrl = storm.publicAdvisory && storm.publicAdvisory.url
-            ? storm.publicAdvisory.url : 'https://www.nhc.noaa.gov/';
+        var sourceUrl = _tropicalIsJTWC(storm)
+            ? 'https://www.metoc.navy.mil/jtwc/jtwc.html'
+            : (storm.publicAdvisory && storm.publicAdvisory.url
+                ? storm.publicAdvisory.url : 'https://www.nhc.noaa.gov/');
         var satellite = _tropicalSatelliteConfig(storm);
         document.getElementById('tropical-route-source').innerHTML =
-            'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ' +
+            (_tropicalIsJTWC(storm)
+                ? 'Position and intensity: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Joint Typhoon Warning Center</a>. '
+                : 'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ') +
             'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + '</a>.';
         details.hidden = false;
     }
@@ -20644,8 +20716,8 @@
                 var icon = L.divIcon({
                     className: 'tropical-forecast-icon-wrap',
                     html: '<span class="tropical-forecast-icon" style="--forecast-color:' +
-                        _tropicalColor({ intensity: point.wind }) + '">' +
-                        escapeHtml(_tropicalMarkerLabel(point.wind)) + '</span>',
+                        _tropicalColor(Object.assign({}, storm, { intensity: point.wind })) + '">' +
+                        escapeHtml(_tropicalMarkerLabel(point.wind, storm)) + '</span>',
                     iconSize: [34, 26],
                     iconAnchor: [17, 13],
                     popupAnchor: [0, -12]
@@ -20810,10 +20882,32 @@
         var status = document.getElementById('tropical-route-status');
         if (status) status.textContent = forceRefresh ? 'Refreshing official tropical data…' : 'Loading official tropical data…';
         try {
-            var response = await _fetchTropicalNHC(forceRefresh);
-            var payload = await response.json();
+            var feedResults = await Promise.allSettled([
+                _fetchTropicalNHC(forceRefresh),
+                _fetchTropicalJTWC(forceRefresh)
+            ]);
             if (token !== tropicalRouteLoadToken) return;
-            var raw = payload.activeStorms || payload.cycloneMessages || (Array.isArray(payload) ? payload : []);
+            var raw = [];
+            var payloads = await Promise.all(feedResults.map(function(result) {
+                return result.status === 'fulfilled'
+                    ? result.value.json().catch(function() { return null; })
+                    : Promise.resolve(null);
+            }));
+            var nhcPayload = payloads[0];
+            var jtwcPayload = payloads[1];
+            var nhcStorms = nhcPayload
+                ? (nhcPayload.activeStorms || nhcPayload.cycloneMessages ||
+                    (Array.isArray(nhcPayload) ? nhcPayload : []))
+                : [];
+            var jtwcStorms = jtwcPayload
+                ? (jtwcPayload.activeStorms ||
+                    (Array.isArray(jtwcPayload) ? jtwcPayload : []))
+                : [];
+            raw = nhcStorms.map(function(storm) {
+                return Object.assign({}, storm, { _source: 'NHC' });
+            }).concat(jtwcStorms.map(function(storm) {
+                return Object.assign({}, storm, { _source: 'JTWC', source: 'JTWC' });
+            }));
             var userLat = parseFloat(lat), userLon = parseFloat(lon);
             tropicalRouteStorms = raw.map(function(storm) {
                 var current = _tropicalCurrentPoint(storm);
@@ -20832,7 +20926,7 @@
             _renderTropicalStormPicker();
             if (!tropicalRouteStorms.length) {
                 tropicalRouteSelectedIndex = null;
-                if (status) status.textContent = 'No active tropical systems are currently published by the National Hurricane Center.';
+                if (status) status.textContent = 'No active tropical systems are currently published by the National Hurricane Center or Joint Typhoon Warning Center.';
                 var details = document.getElementById('tropical-route-details');
                 if (details) details.hidden = true;
                 if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
@@ -20855,7 +20949,7 @@
             _drawTropicalRouteStorms(!forceRefresh || focusIndex != null, focusIndex, focusCenter);
         } catch (error) {
             console.warn('[SkyMonitor tropical tracker] load failed:', error);
-            if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC feed.';
+            if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC and JTWC feeds.';
         }
     }
 
@@ -21025,10 +21119,10 @@
 
         // ——— NHC card (used when NHC direct fetch succeeds) ———
         function _nhcCard(s){
-            const kt=parseInt(s.intensity)||0, mph=Math.round(kt*1.15078);
-            const clsMap={HU:'Hurricane',TY:'Typhoon',TS:'Tropical Storm',TD:'Tropical Depression',TC:'Tropical Cyclone',SS:'Subtropical Storm',SD:'Subtropical Depression',EX:'Extratropical'};
-            const typeLabel=clsMap[s.classification]||(mph>=74?'Hurricane':mph>=39?'Tropical Storm':'Tropical System');
-            const catLabel=mph>=157?'CAT 5':mph>=130?'CAT 4':mph>=111?'CAT 3':mph>=96?'CAT 2':mph>=74?'CAT 1':'';
+            const mph=_tropicalWindMph(s);
+            const typeLabel=_tropicalClassification(s,mph);
+            const catLabel=_tropicalIsJTWC(s) ? '' :
+                (mph>=157?'CAT 5':mph>=130?'CAT 4':mph>=111?'CAT 3':mph>=96?'CAT 2':mph>=74?'CAT 1':'');
             const catColor=mph>=130?'#ff1744':mph>=111?'#ff5722':mph>=96?'#ff9100':mph>=74?'#ffd54f':mph>=39?'#4fc3f7':'#81c784';
             const distColor=!isNaN(s._dist)?(s._dist<300?'#ff1744':s._dist<700?'#ff9100':'#4fc3f7'):'#4fc3f7';
             const hdl=s.headline?(s.headline.length>110?s.headline.substring(0,110)+'\u2026':s.headline):'';
@@ -21090,18 +21184,37 @@
             }
         }
 
-        // ——— Cloudflare Worker → NHC CurrentStorms.json (CORS-safe, 5-min edge cache) ———
+        // ——— Cloudflare Worker → NHC + JTWC feeds (CORS-safe, 5-min edge cache) ———
         try {
-            const res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000);
+            const feedResults = await Promise.allSettled([
+                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/nhc', undefined, 10000),
+                _weatherFetch(WEATHER_WORKER_URL + '/api/weather/jtwc', undefined, 10000)
+            ]);
             if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
-            if (!res.ok) {
+            const feedPayloads = await Promise.all(feedResults.map(function(result) {
+                return result.status === 'fulfilled' && result.value.ok
+                    ? result.value.json().catch(function() { return null; })
+                    : Promise.resolve(null);
+            }));
+            const nhcData = feedPayloads[0];
+            const jtwcData = feedPayloads[1];
+            if (!nhcData && !jtwcData) {
                 _clearTropicalMiniMap(document.getElementById('tropical-map'));
                 widget.style.display='none';
                 return;
             }
-            const nhcData = await res.json();
             if (tropicalFetchGeneration !== window._tropicalFetchGeneration) return;
-            const rawStorms = nhcData.activeStorms || nhcData.cycloneMessages || (Array.isArray(nhcData) ? nhcData : []);
+            const rawStorms = (nhcData
+                ? (nhcData.activeStorms || nhcData.cycloneMessages ||
+                    (Array.isArray(nhcData) ? nhcData : []))
+                : []).map(function(storm) {
+                    return Object.assign({}, storm, { _source: 'NHC' });
+                }).concat(jtwcData
+                    ? (jtwcData.activeStorms || (Array.isArray(jtwcData) ? jtwcData : []))
+                        .map(function(storm) {
+                            return Object.assign({}, storm, { _source: 'JTWC', source: 'JTWC' });
+                        })
+                    : []);
             // Ray-casting point-in-polygon. GeoJSON coords are [lon, lat].
             function _pip(lat, lon, pgn) {
                 const vs = pgn.coordinates[0];
@@ -21115,8 +21228,8 @@
             function _pc(str){if(!str)return NaN;const m=String(str).match(/([\d.]+)([NSEW])/i);if(!m)return parseFloat(str);return(/[SW]/i.test(m[2]))?-parseFloat(m[1]):parseFloat(m[1]);}
             const storms = rawStorms.map(s => {
                 // NHC JSON uses latitudeNumeric/longitudeNumeric (numbers) and latitude/longitude (strings like "29.4N")
-                const sLat = s.latitudeNumeric  ?? _pc(s.latitude  ?? s.lat ?? s.centerLat ?? null);
-                const sLon = s.longitudeNumeric ?? _pc(s.longitude ?? s.lon ?? s.centerLon ?? null);
+                const sLat = s.latitudeNumeric  ?? _pc(s.latitude  ?? s.lat ?? s.centerLat ?? s.center_latitude ?? null);
+                const sLon = s.longitudeNumeric ?? _pc(s.longitude ?? s.lon ?? s.centerLon ?? s.center_longitude ?? null);
                 return Object.assign({}, s, { _dist: Math.round(_haverMi(userLat, userLon, sLat, sLon)) });
             }).filter(s => {
                 // Cone polygon available → exact PIP check (the correct path)
@@ -21136,10 +21249,10 @@
                     mapEl.style.display='block';
                     mapEl.style.background='#02080e';
                     const s0=storms[0];
-                    const sLat0=s0.latitudeNumeric??_pc(s0.latitude??null);
-                    const sLon0=s0.longitudeNumeric??_pc(s0.longitude??null);
+                    const sLat0=s0.latitudeNumeric??_pc(s0.latitude??s0.lat??s0.center_latitude??null);
+                    const sLon0=s0.longitudeNumeric??_pc(s0.longitude??s0.lon??s0.center_longitude??null);
                     mapEl._tropicalFocus={id:s0.id,name:s0.name,lat:sLat0,lon:sLon0};
-                    const mph0=Math.round((parseInt(s0.intensity)||0)*1.15078);
+                    const mph0=_tropicalWindMph(s0);
                     const cc=mph0>=130?'#ff1744':mph0>=111?'#ff5722':mph0>=96?'#ff9100':mph0>=74?'#ffd54f':'#4fc3f7';
                     const miniMapGeneration=tropicalFetchGeneration;
                     let mountAttempts=0;
