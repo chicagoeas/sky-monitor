@@ -5690,6 +5690,24 @@
         "avalanche warning","nuclear power plant warning","fire warning","volcano warning"
     ];
 
+    const CIVIL_ALERT_TYPES = [
+        "evacuation immediate","civil emergency message","local area emergency",
+        "civil danger warning","law enforcement warning","shelter in place warning",
+        "radiological hazard warning","hazardous materials warning","earthquake warning",
+        "child abduction emergency","911 telephone outage emergency","blue alert",
+        "nuclear power plant warning","fire warning","volcano warning"
+    ];
+
+    // Civil/authority alerts still render their safety banner and alert card,
+    // but they are intentionally excluded from Threat Level scoring. This
+    // applies equally to official NWS event names and custom CIVIL products.
+    function isCivilAlertEventName(value) {
+        var eventName = String(value || '').toLowerCase();
+        return /^(?:blu|cae|cdw|cem|eqw|evi|frw|hmw|lew|lae|toe|nuw|rhw|spw|vow)\b/.test(eventName) ||
+            /\bcivil(?: emergency| danger)?\b/.test(eventName) ||
+            CIVIL_ALERT_TYPES.some(function(type) { return eventName.includes(type); });
+    }
+
     const SEVERITY_SCORE = { 'Extreme': 4, 'Severe': 3, 'Moderate': 2, 'Minor': 1, 'Unknown': 0 };
     const SPC_LABELS = { TSTM:"General Thunderstorms", MRGL:"Marginal Severe Storm Risk", SLGT:"Possible Severe Storm Risk", ENH:"Likely Severe Storm Risk", MDT:"Very Likely Severe Storm Risk", HIGH:"EXTREME Severe Storm Risk" };
 
@@ -12049,6 +12067,7 @@
         const _threatAlertEvents = [];
         const _seenThreatAlertEvents = {};
         (window.activeAlertEvents || []).forEach(function(eventName) {
+            if (isCivilAlertEventName(eventName)) return;
             var threatName = _threatEventName(eventName);
             var key = threatName.toLowerCase();
             if (!key || _seenThreatAlertEvents[key]) return;
@@ -12269,7 +12288,7 @@
             extremeWindWarning: false, highWindWarning: false, blizzardWarning: false,
             iceStormWarning: false, winterStormWarning: false, snowSquallWarning: false,
             dustStormWarning: false, floodWarning: false, coastalFloodWarning: false,
-            lakeshoreFloodWarning: false, floodAdvisory: false, civilEmergency: false, tornadoWatch: false,
+            lakeshoreFloodWarning: false, floodAdvisory: false, tornadoWatch: false,
             svrWatch: false };
         var nwsFamilyScores = {};
         if (window.activeTornadoWarning) {
@@ -12308,6 +12327,9 @@
             }
         });
         (window.customSkyThreatAlerts || []).forEach(function(custom) {
+            // Custom CIVIL alerts can trigger the safety banner, but never
+            // contribute points, hazard categories, factors, or tier flags.
+            if (custom.family === 'civil') return;
             var existing = nwsFamilyScores[custom.family] || 0;
             var increment = Math.max(0, custom.score - existing);
             if (increment > 0) {
@@ -12333,8 +12355,6 @@
             } else if (custom.family === 'flashFlood') {
                 if (custom.score >= 9) customThreatFlags.ffConsiderable = true;
                 if (custom.score >= 16) { customThreatFlags.ffCatastrophic = true; customThreatFlags.ffEmergency = true; }
-            } else if (custom.family === 'civil') {
-                customThreatFlags.civilEmergency = true;
             }
         });
 
@@ -12412,7 +12432,6 @@
         // instant, no-score-needed life-threatening situations.
         const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE ||
             customThreatFlags.tornadoEmergency || customThreatFlags.tornadoPDS || customThreatFlags.ffEmergency ||
-            customThreatFlags.civilEmergency ||
             _hasExtremeWindWarning || _hasTyphoonWarning || _hasHurricaneWarningNow || _hasTsunamiWarning;
 
         // CRITICAL: Confirmed (OBSERVED) tornado on the ground, Destructive SVR,
@@ -16190,7 +16209,6 @@
             family = 'civil'; score = 16;
             label = 'SkyMonitor ' + (nwsEventLabel || 'Civil Emergency');
             color = '#b71c1c'; hazardCategory = 'other'; bannerScore = 16000;
-            flags.civilEmergency = true;
         } else if (/\bEWW\b|EXTREME WIND WARNING/.test(classSignals)) {
             family = 'extremeWind'; score = 8; label = 'SkyMonitor Extreme Wind Warning'; color = '#ff9100';
             hazardCategory = 'wind'; bannerScore = 20000; flags.extremeWindWarning = true;
