@@ -2236,7 +2236,7 @@
             <div id="tropical-route-map" aria-label="Interactive tropical storm map"></div>
             <div id="tropical-route-settings-panel" hidden>
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite Overlay</span>
+                    <span id="tropical-satellite-label" style="font-size:0.82em; color:#ccc;">&#128225; Satellite Overlay (live only)</span>
                     <label class="ios-toggle">
                         <input type="checkbox" id="tropical-satellite-toggle-cb" onchange="toggleTropicalSatellite()">
                         <span class="ios-toggle-track"></span>
@@ -2289,7 +2289,7 @@
                 <div class="historical-radar-picker-head">
                     <div>
                         <div id="tropical-history-picker-title" class="historical-radar-picker-kicker">HISTORICAL TROPICAL TRACKER</div>
-                        <div style="margin-top:4px;color:#9fb2c2;font-size:0.68em;">Choose a past time. Satellite mode loads up to 100 LibreWXR scans; older dates show the next 50 hours of official best-track positions.</div>
+                        <div style="margin-top:4px;color:#9fb2c2;font-size:0.68em;">Choose a past time. Historical mode uses exact NOAA observations and archived forecast products when available; it never substitutes a current satellite image.</div>
                     </div>
                     <button class="historical-radar-picker-close" type="button" onclick="closeTropicalHistoryPicker()" aria-label="Close date picker">&#10005;</button>
                 </div>
@@ -20956,12 +20956,11 @@
             String(baseDate.getMinutes()).padStart(2, '0');
         var availability = tropicalRouteHistoricalState.availability;
         _setTropicalHistoryPickerNote(
-            availability && availability.satelliteStart
-                ? 'LibreWXR satellite scans currently span ' +
-                    new Date(availability.satelliteStart).toLocaleDateString() + ' through ' +
-                    new Date(availability.satelliteEnd).toLocaleDateString() +
-                    '. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842. Dates before the satellite range show 50 hours of track data.'
-                : 'Satellite range is determined by the oldest published LibreWXR infrared scan. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842. Dates before satellite coverage show 50 hours of track data.',
+            'Historical mode uses exact NOAA best-track observations. Archived NHC forecast cones are shown when NOAA has the advisory product for that storm; no current satellite image is substituted for a historical one.',
+            false
+        );
+        _setTropicalHistoryPickerNote(
+            'Historical mode uses exact NOAA best-track observations. Archived NHC forecast cones are shown when available; historical satellite imagery is not substituted from a live feed.',
             false
         );
         _renderTropicalHistoryPickerCalendar();
@@ -21063,12 +21062,12 @@
         tropicalRouteHistoricalState.index = safeIndex;
         var timestamp = frames[safeIndex];
         tropicalRouteStorms.forEach(function(storm) {
-            var points = storm.forecastPoints || [];
+            var points = storm.observationPoints || [];
             var point = points.reduce(function(best, candidate) {
                 return !best || Math.abs(new Date(candidate.time).getTime() - timestamp) <
                     Math.abs(new Date(best.time).getTime() - timestamp) ? candidate : best;
             }, null);
-            if (point) {
+            if (point && Math.abs(new Date(point.time).getTime() - timestamp) <= 12 * 3600000) {
                 storm._historicalCurrent = point;
                 // Keep details, colors, categories, and labels synchronized
                 // with the selected historical position just like live data.
@@ -21078,9 +21077,7 @@
                 if (point.time) storm.validTime = point.time;
             }
         });
-        if (tropicalRouteHistoricalState.satelliteFrames.length) {
-            _setTropicalSatelliteFrame(timestamp);
-        }
+        // Historical mode never requests a current satellite frame.
         _renderTropicalHistoryControls();
         _drawTropicalRouteStorms(false);
     }
@@ -21125,22 +21122,19 @@
             if (token !== tropicalRouteHistoricalState.loadToken) return;
             tropicalRouteHistoricalState.selectedMs = timeMs;
             tropicalRouteHistoricalState.availability = payload.availability || null;
-            tropicalRouteHistoricalState.satelliteFrames = Array.isArray(payload.satellite && payload.satellite.frames)
-                ? payload.satellite.frames : [];
-            tropicalRouteHistoricalState.satelliteTileTemplate =
-                payload.satellite && payload.satellite.tileTemplate
-                    ? String(payload.satellite.tileTemplate) : '';
-            tropicalRouteHistoricalState.frames = tropicalRouteHistoricalState.satelliteFrames.length
-                ? tropicalRouteHistoricalState.satelliteFrames.slice(0, 100)
-                : Array.from({ length: 50 }, function(_, index) { return timeMs + index * 3600000; });
-            tropicalRouteHistoricalState.index = 0;
+            tropicalRouteHistoricalState.satelliteFrames = [];
+            tropicalRouteHistoricalState.satelliteTileTemplate = '';
+            tropicalRouteHistoricalState.frames = Array.isArray(payload.frames)
+                ? payload.frames.map(Number).filter(Number.isFinite).sort(function(a, b) { return a - b; })
+                : [];
             tropicalRouteHistoricalActive = true;
+            tropicalRouteMapMode = 'map';
             tropicalRouteStorms = (Array.isArray(payload.storms) ? payload.storms : []).map(function(storm) {
-                var point = (storm.forecastPoints || [])[0] || storm;
+                var point = (storm.observationPoints || []).reduce(function(best, candidate) {
+                    return !best || Math.abs(new Date(candidate.time).getTime() - timeMs) <
+                        Math.abs(new Date(best.time).getTime() - timeMs) ? candidate : best;
+                }, null) || storm;
                 var historicalStorm = Object.assign({}, storm, { _historicalCurrent: point });
-                // Use the same forecast-point marker path as live NHC/JTWC
-                // storms. Without this, historical data only reached the
-                // fallback polyline and current circle-marker branches.
                 historicalStorm._forecastPoints = _tropicalPointsFrom(storm.forecastPoints)
                     .filter(function(candidate) { return candidate.wind != null; });
                 historicalStorm._forecastPointsLoaded = true;
@@ -21148,17 +21142,22 @@
             });
             tropicalRouteSelectedIndex = tropicalRouteStorms.length ? 0 : null;
             _renderTropicalStormPicker();
-            _setTropicalHistoricalFrame(0);
-            var satelliteCount = tropicalRouteHistoricalState.satelliteFrames.length;
+            var initialIndex = tropicalRouteHistoricalState.frames.reduce(function(best, frame, index) {
+                return best == null ||
+                    Math.abs(frame - timeMs) < Math.abs(tropicalRouteHistoricalState.frames[best] - timeMs)
+                    ? index : best;
+            }, null);
+            _setTropicalHistoricalFrame(initialIndex == null ? 0 : initialIndex);
             if (status) {
                 status.textContent = tropicalRouteStorms.length
-                    ? (satelliteCount
-                        ? 'Historical NHC/JTWC tracks with ' + satelliteCount + ' archived LibreWXR satellite scans.'
-                        : 'Pre-satellite date: showing the next 50 hours of NHC/JTWC best-track positions.')
+                    ? 'Historical NOAA best-track observations' +
+                        (tropicalRouteStorms.some(function(storm) { return storm.conePgn; })
+                            ? ' with archived NHC forecast cone data.'
+                            : '. No archived operational cone is available for this selection.')
                     : 'No NHC/JTWC system was active at the selected time.';
             }
             _setTropicalHistoryPickerNote(
-                payload.availability && payload.availability.satelliteStart
+                false
                     ? 'Archived LibreWXR satellite scans currently span ' +
                         new Date(payload.availability.satelliteStart).toLocaleDateString() + ' through ' +
                         new Date(payload.availability.satelliteEnd).toLocaleDateString() +
@@ -21166,6 +21165,7 @@
                     : 'No satellite scan covers this selected time. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842. This selection shows 50 hours of track data.',
                 false
             );
+            _setTropicalHistoryPickerNote('Historical mode uses exact NOAA best-track observations. Archived NHC forecast cones are shown when available; historical satellite imagery is not substituted from a live feed.', false);
         } catch (error) {
             console.warn('[SkyMonitor tropical history] load failed:', error);
             if (status) status.textContent = 'Historical tropical data is temporarily unavailable. Retry to check NOAA archives.';
@@ -21272,6 +21272,12 @@
     }
 
     function _tropicalSatelliteConfig() {
+        if (tropicalRouteHistoricalActive) {
+            return {
+                name: 'No historical satellite archive',
+                source: 'https://www.nhc.noaa.gov/gis/'
+            };
+        }
         return {
             name: 'LibreWXR NOAA GMGSI satellite',
             source: 'https://librewxr.net/',
@@ -21283,7 +21289,7 @@
         var attribution =
             '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors' +
             ' &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>';
-        if (tropicalRouteMapMode === 'satellite') {
+        if (tropicalRouteMapMode === 'satellite' && !tropicalRouteHistoricalActive) {
             attribution +=
                 ', Satellite: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>';
         }
@@ -21301,7 +21307,7 @@
     }
 
     function _setTropicalSatelliteFrame(timestampMs) {
-        if (!tropicalRouteMap || !window.L || !Number(timestampMs)) return;
+        if (tropicalRouteHistoricalActive || !tropicalRouteMap || !window.L || !Number(timestampMs)) return;
         var timestamp = Math.round(Number(timestampMs) / 1000);
         if (tropicalRouteSatelliteTileLayer && tropicalRouteSatelliteTimestamp === timestamp) {
             if (tropicalRouteMapMode === 'satellite' && !tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
@@ -21340,13 +21346,8 @@
     async function _ensureTropicalSatelliteLayer() {
         if (!tropicalRouteMap || !window.L) return;
         if (tropicalRouteHistoricalActive) {
-            // Never fall through to the live metadata feed while historical
-            // data is loading or unavailable. That made a historical page
-            // display the current satellite scan.
-            if (tropicalRouteHistoricalState.satelliteFrames.length) {
-                _setTropicalSatelliteFrame(
-                    tropicalRouteHistoricalState.satelliteFrames[tropicalRouteHistoricalState.index]
-                );
+            if (tropicalRouteSatelliteTileLayer && tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
+                tropicalRouteMap.removeLayer(tropicalRouteSatelliteTileLayer);
             }
             return;
         }
@@ -21403,6 +21404,7 @@
 
     function _tropicalMapLayersForMode() {
         if (!tropicalRouteMap) return;
+        if (tropicalRouteHistoricalActive) tropicalRouteMapMode = 'map';
         if (tropicalRouteMapMode === 'satellite') {
             // Satellite is an overlay, not a replacement basemap. Keeping the
             // dark map underneath makes coastlines and geography readable
@@ -21448,7 +21450,9 @@
         document.getElementById('tropical-route-detail-title').textContent = _tropicalNamedStormTitle(storm);
         document.getElementById('tropical-route-detail-subtitle').textContent =
             storm.historical
-                ? 'Historical best track and the next 50 hours from the selected time.'
+                ? (storm.forecastSource
+                    ? 'Historical best-track observation with the archived forecast issued at that time.'
+                    : 'Historical best-track observation at the selected time.')
                 : _tropicalIsJTWC(storm)
                 ? 'Official JTWC position, intensity, forecast track, and cone.'
                 : 'Official NHC position and forecast track.';
@@ -21480,7 +21484,12 @@
                 : (_tropicalIsJTWC(storm)
                 ? 'Track, cone, position, and intensity: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Joint Typhoon Warning Center</a>. '
                 : 'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ')) +
-            'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + '</a>.';
+            (storm.historical
+                ? (storm.forecastSource
+                    ? 'Forecast: <a href="https://www.nhc.noaa.gov/gis/" target="_blank" rel="noopener noreferrer">' +
+                        escapeHtml(storm.forecastSource) + '</a>.'
+                    : 'No archived operational forecast product is available for this storm at the selected time.')
+                : 'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + '</a>.');
         details.hidden = false;
     }
 
@@ -21502,8 +21511,12 @@
         if (!tropicalRouteMap || !window.L || !storm) return;
         var current = _tropicalCurrentPoint(storm);
         var forecastPoints = storm._forecastPoints || [];
-        var track = forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm);
-        var points = track.length >= 2 ? track : _tropicalPointsFrom(storm.trackPts);
+        var track = storm.historical
+            ? forecastPoints
+            : (forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm));
+        var points = track.length >= 2
+            ? track
+            : (storm.historical ? [] : _tropicalPointsFrom(storm.trackPts));
         var color = _tropicalColor(storm);
         var extendBounds = function(value) {
             bounds.extend(value);
@@ -21537,8 +21550,11 @@
             })).addTo(tropicalRouteStormLayer);
             extendBounds(line.getBounds());
         }
-        if (forecastPoints.length) {
-            forecastPoints.forEach(function(point) {
+        var markerPoints = storm.historical
+            ? forecastPoints.filter(function(point) { return Number(point.forecastHour) > 0; })
+            : forecastPoints;
+        if (markerPoints.length) {
+            markerPoints.forEach(function(point) {
                 var pointStorm = _tropicalPointStorm(storm, point);
                 var icon = L.divIcon({
                     className: 'tropical-forecast-icon-wrap',
@@ -21674,7 +21690,9 @@
     }
 
     function setTropicalMapMode(mode) {
-        tropicalRouteMapMode = mode === 'satellite' ? 'satellite' : 'map';
+        tropicalRouteMapMode = tropicalRouteHistoricalActive
+            ? 'map'
+            : (mode === 'satellite' ? 'satellite' : 'map');
         try {
             localStorage.setItem(
                 TROPICAL_SATELLITE_PREF_KEY,
@@ -21682,7 +21700,10 @@
             );
         } catch (error) {}
         var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
-        if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
+        if (satelliteToggle) {
+            satelliteToggle.checked = !tropicalRouteHistoricalActive && tropicalRouteMapMode === 'satellite';
+            satelliteToggle.disabled = tropicalRouteHistoricalActive;
+        }
         _tropicalMapLayersForMode();
     }
 
@@ -21793,7 +21814,16 @@
         tropicalRouteHistoricalActive = !!window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE ||
             tropicalRouteHistoricalActive;
         var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
-        if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
+        if (satelliteToggle) {
+            satelliteToggle.checked = !tropicalRouteHistoricalActive && tropicalRouteMapMode === 'satellite';
+            satelliteToggle.disabled = tropicalRouteHistoricalActive;
+        }
+        var satelliteLabel = document.getElementById('tropical-satellite-label');
+        if (satelliteLabel) {
+            satelliteLabel.textContent = tropicalRouteHistoricalActive
+                ? 'Satellite overlay unavailable for historical time'
+                : 'Satellite Overlay (live only)';
+        }
         if (!tropicalRouteMap) {
             tropicalRouteMap = L.map('tropical-route-map', {
                 zoomControl: false,
