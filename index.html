@@ -3287,6 +3287,7 @@
     // v1.0.5: Full per-alert-type scoring
     window.activeAlertEvents = [];
     window.nwsBannerScore = 0;
+    window.activeAlertChecklistPriority = 0;
     // Keep every alert's time window even when multiple CAP records share the
     // same event name (for example, one current and one future Red Flag
     // Warning). The display/scoring list is intentionally de-duplicated, but
@@ -8039,6 +8040,7 @@
         window.activeFFE = false;
         window.activeAlertEvents = [];
         window.nwsBannerScore = 0;
+        window.activeAlertChecklistPriority = 0;
         window.activeSVRDestructive = false;
         window.activeTornadoObserved = false;
         window.alertMaxHailIn = 0;
@@ -8458,7 +8460,8 @@
                 restoreAlertViewState(alertViewState);
 
                 if (highestTheme) document.body.classList.add(highestTheme);
-                if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
+            window.activeAlertChecklistPriority = checklistPriority;
+            if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
             } else {
                 stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             }
@@ -12266,7 +12269,7 @@
             extremeWindWarning: false, highWindWarning: false, blizzardWarning: false,
             iceStormWarning: false, winterStormWarning: false, snowSquallWarning: false,
             dustStormWarning: false, floodWarning: false, coastalFloodWarning: false,
-            lakeshoreFloodWarning: false, floodAdvisory: false, tornadoWatch: false,
+            lakeshoreFloodWarning: false, floodAdvisory: false, civilEmergency: false, tornadoWatch: false,
             svrWatch: false };
         var nwsFamilyScores = {};
         if (window.activeTornadoWarning) {
@@ -12330,6 +12333,8 @@
             } else if (custom.family === 'flashFlood') {
                 if (custom.score >= 9) customThreatFlags.ffConsiderable = true;
                 if (custom.score >= 16) { customThreatFlags.ffCatastrophic = true; customThreatFlags.ffEmergency = true; }
+            } else if (custom.family === 'civil') {
+                customThreatFlags.civilEmergency = true;
             }
         });
 
@@ -12407,6 +12412,7 @@
         // instant, no-score-needed life-threatening situations.
         const _isLifeThreatening = window.activeTornadoEmergency || window.activePDSTornado || window.activeFFE ||
             customThreatFlags.tornadoEmergency || customThreatFlags.tornadoPDS || customThreatFlags.ffEmergency ||
+            customThreatFlags.civilEmergency ||
             _hasExtremeWindWarning || _hasTyphoonWarning || _hasHurricaneWarningNow || _hasTsunamiWarning;
 
         // CRITICAL: Confirmed (OBSERVED) tornado on the ground, Destructive SVR,
@@ -16173,6 +16179,18 @@
             family = 'sps'; score = 1; label = 'SkyMonitor Special Weather Statement'; color = '#ffeb3b';
             hazardCategory = 'other'; bannerScore = 2000; flags.specialWeatherStatement = true;
             if (/DEVELOPING STORM|STRONG WIND|SMALL HAIL|SNOW SQUALL/.test(qualifiers)) score += 1;
+        } else if (
+            /\b(?:BLU|CAE|CDW|CEM|EQW|EVI|FRW|HMW|LEW|LAE|TOE|NUW|RHW|SPW|VOW)\b/.test(classSignals) ||
+            /\b(?:CIVIL|CIVIL EMERGENCY|CIVIL DANGER|LAW ENFORCEMENT|LOCAL AREA|SHELTER IN PLACE|EVACUATION IMMEDIATE|CHILD ABDUCTION|911 TELEPHONE OUTAGE|NUCLEAR POWER PLANT|RADIOLOGICAL HAZARD|HAZARDOUS MATERIALS|EARTHQUAKE|FIRE|VOLCANO|BLUE ALERT)\b/.test(classSignals)
+        ) {
+            // Civil/authority alerts use the same life-safety banner path as
+            // their official NWS equivalents. The editable headline remains
+            // visible in the alert strip, while the safety banner uses an
+            // action-oriented message below.
+            family = 'civil'; score = 16;
+            label = 'SkyMonitor ' + (nwsEventLabel || 'Civil Emergency');
+            color = '#b71c1c'; hazardCategory = 'other'; bannerScore = 16000;
+            flags.civilEmergency = true;
         } else if (/\bEWW\b|EXTREME WIND WARNING/.test(classSignals)) {
             family = 'extremeWind'; score = 8; label = 'SkyMonitor Extreme Wind Warning'; color = '#ff9100';
             hazardCategory = 'wind'; bannerScore = 20000; flags.extremeWindWarning = true;
@@ -16287,6 +16305,65 @@
         return 0;
     }
 
+    function customSkyChecklistInfo(feature, threatInfo) {
+        if (!feature || !threatInfo) return null;
+        var props = feature.properties || {};
+        var code = customSkyAlertCode(props);
+        var classText = customSkyAlertValue(props, [
+            'alertClass', 'alert_class', 'alertClassCode', 'alert_class_code',
+            'class', 'severity', 'alertType', 'alert_type', 'event', 'type'
+        ], '').toUpperCase();
+        var qualifiers = customSkyAlertQualifiers(props).toUpperCase();
+        var eventLabel = CUSTOM_SKY_NWS_CODE_LABELS[code] || classText;
+        var signals = (code + ' ' + eventLabel + ' ' + classText).toUpperCase();
+
+        // Keep this priority order aligned with the official alert renderer:
+        // civil emergencies > tornado emergencies/PDS > tornado warnings >
+        // severe storms/flash floods.
+        if (
+            threatInfo.family === 'civil' ||
+            /\b(?:BLU|CAE|CDW|CEM|EQW|EVI|FRW|HMW|LEW|LAE|TOE|NUW|RHW|SPW|VOW)\b/.test(signals) ||
+            /\b(?:CIVIL|CIVIL EMERGENCY|CIVIL DANGER|LAW ENFORCEMENT|LOCAL AREA|SHELTER IN PLACE|EVACUATION IMMEDIATE|CHILD ABDUCTION|911 TELEPHONE OUTAGE|NUCLEAR POWER PLANT|RADIOLOGICAL HAZARD|HAZARDOUS MATERIALS|EARTHQUAKE|FIRE|VOLCANO|BLUE ALERT)\b/.test(signals)
+        ) {
+            var civilText = 'CIVIL EMERGENCY! MONITOR LOCAL MEDIA FOR INSTRUCTIONS!';
+            if (/\bEVI\b|EVACUATION IMMEDIATE/.test(signals)) civilText = 'EVACUATE IMMEDIATELY! FOLLOW LOCAL GUIDANCE!';
+            else if (/\bFRW\b|FIRE WARNING/.test(signals)) civilText = 'WILDFIRE IN YOUR AREA! FOLLOW LOCAL GUIDANCE!';
+            else if (/\bCAE\b|CHILD ABDUCTION|AMBER ALERT/.test(signals)) civilText = 'AMBER ALERT! FOLLOW LOCAL GUIDANCE!';
+            else if (/\bSPW\b|SHELTER IN PLACE/.test(signals)) civilText = 'SHELTER IN PLACE NOW!';
+            else if (/\bEQW\b|EARTHQUAKE WARNING/.test(signals)) civilText = 'EARTHQUAKE! FOLLOW LOCAL GUIDANCE!';
+            else if (/\bTOE\b|911 TELEPHONE OUTAGE/.test(signals)) civilText = '911 TELEPHONE OUTAGE! FOLLOW LOCAL GUIDANCE!';
+            return { text: civilText, priority: 5, theme: 'theme-tor' };
+        }
+        if (threatInfo.family === 'tornado') {
+            if (threatInfo.score >= 20 || /TORNADO EMERGENCY/.test(qualifiers)) {
+                return { text: 'TORNADO EMERGENCY!!! EXTREMELY DANGEROUS SITUATION!!! TAKE COVER NOW!', priority: 4, theme: 'theme-tor' };
+            }
+            if (threatInfo.score >= 15 || /PDS|PARTICULARLY DANGEROUS/.test(qualifiers)) {
+                return { text: 'PARTICULARLY DANGEROUS SITUATION! TAKE COVER NOW!', priority: 3, theme: 'theme-tor' };
+            }
+            return { text: 'TAKE COVER NOW!', priority: 2, theme: 'theme-tor' };
+        }
+        if (threatInfo.family === 'svr') {
+            return {
+                text: threatInfo.isDestructive || /DESTRUCTIVE/.test(qualifiers)
+                    ? 'DESTRUCTIVE SEVERE THUNDERSTORM! TAKE SHELTER!'
+                    : 'MOVE TO AN INTERIOR ROOM!',
+                priority: 1,
+                theme: 'theme-svr'
+            };
+        }
+        if (threatInfo.family === 'flashFlood') {
+            if (threatInfo.score >= 16 || /FLASH FLOOD EMERGENCY|CATASTROPHIC/.test(qualifiers)) {
+                return { text: 'FLASH FLOOD EMERGENCY! SEEK HIGHER GROUND NOW!', priority: 4, theme: 'theme-ffw' };
+            }
+            return { text: 'TURN AROUND, DON`T DROWN!', priority: 1, theme: 'theme-ffw' };
+        }
+        if (threatInfo.family === 'dustStorm') {
+            return { text: 'PULL ASIDE STAY ALIVE!', priority: 1, theme: 'theme-svr' };
+        }
+        return null;
+    }
+
     function renderCustomSkyHazards() {
         var stack = document.getElementById('alert-stack');
         if (!stack) return;
@@ -16302,6 +16379,26 @@
             return;
         }
         if (!(window.activeAlertEvents || []).length) stack.innerHTML = '';
+        var checklist = document.getElementById('safety-checklist');
+        var customChecklistChoice = features.map(function(feature) {
+            var threat = customSkyThreatInfo(feature);
+            return { feature: feature, threat: threat, checklist: customSkyChecklistInfo(feature, threat) };
+        }).filter(function(item) {
+            return !!item.checklist;
+        }).sort(function(a, b) {
+            return b.checklist.priority - a.checklist.priority ||
+                customSkyBannerScore(b.threat) - customSkyBannerScore(a.threat);
+        })[0];
+        // The official renderer gets first say at an equal or stronger
+        // safety message. A custom alert can still promote the banner when it
+        // represents a more urgent action than the official alert.
+        if (checklist && customChecklistChoice &&
+            customChecklistChoice.checklist.priority > (window.activeAlertChecklistPriority || 0)) {
+            checklist.innerText = customChecklistChoice.checklist.text;
+            checklist.style.display = 'block';
+            document.body.classList.add(customChecklistChoice.checklist.theme);
+            checklist.setAttribute('data-custom-skymonitor', 'true');
+        }
         // Custom alerts use the same home-page banner as NWS alerts, but only
         // replace it when their severity is strictly higher than the strongest
         // NWS alert. Equal-level and higher-level NWS alerts always win.
