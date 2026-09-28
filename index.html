@@ -11,7 +11,8 @@
             var path = window.location.pathname.replace(/\/+$/, '') || '/';
             var infoPage = path === '/privacy' || path === '/about-custom-alerts';
             var historicalRadarPage = path === '/radar/historical';
-            var tropicalRadarPage = path === '/radar/tropical';
+            var tropicalRadarHistoryPage = path === '/radar/tropical/historical';
+            var tropicalRadarPage = path === '/radar/tropical' || tropicalRadarHistoryPage;
             var radarPage = path === '/radar' || historicalRadarPage;
             // The public tropical tracker shortcut follows the US hurricane
             // season window requested by the reporting-map UI: May 15 through
@@ -28,6 +29,7 @@
             window.SKYMONITOR_RADAR_PAGE = radarPage;
             window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRadarPage;
             window.SKYMONITOR_TROPICAL_PAGE = tropicalRadarPage;
+            window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE = tropicalRadarHistoryPage;
             window.SKYMONITOR_US_HURRICANE_SEASON = usHurricaneSeason;
             if (usHurricaneSeason) document.documentElement.classList.add('us-hurricane-season');
             window.SKYMONITOR_INFO_KIND = path === '/privacy' ? 'privacy' :
@@ -56,7 +58,7 @@
                         ? (radarRef.pathname.replace(/\/+$/, '') || '/')
                         : '';
                     if (radarRefPath === '/radar' || radarRefPath === '/radar/historical' ||
-                        radarRefPath === '/radar/tropical') armSkipLaunch();
+                        radarRefPath === '/radar/tropical' || radarRefPath === '/radar/tropical/historical') armSkipLaunch();
                 }
                 document.addEventListener('click', function (event) {
                     var link = event.target && event.target.closest
@@ -68,6 +70,7 @@
                     if (destination.origin === window.location.origin &&
                         (infoPaths[destinationPath] || destinationPath === '/radar' ||
                             destinationPath === '/radar/historical' || destinationPath === '/radar/tropical' ||
+                            destinationPath === '/radar/tropical/historical' ||
                             destinationPath === '/')) {
                         armSkipLaunch();
                     }
@@ -80,6 +83,7 @@
                     : 'About Custom Alerts · SkyMonitor';
             } else if (tropicalRadarPage) {
                 document.documentElement.classList.add('tropical-route');
+                if (tropicalRadarHistoryPage) document.documentElement.classList.add('tropical-history-route');
                 document.title = 'Tropical Tracker · SkyMonitor';
             } else if (radarPage) {
                 document.documentElement.classList.add('radar-route');
@@ -154,7 +158,7 @@
                         title: 'About Custom Alerts · SkyMonitor',
                         description: 'Learn how SkyMonitor custom alerts work, what they mean, and why they should not replace official warnings.'
                     }
-                    : path === '/radar/tropical'
+                    : (path === '/radar/tropical' || path === '/radar/tropical/historical')
                         ? {
                             title: 'Tropical Tracker · SkyMonitor',
                             description: 'Interactive tropical storm, hurricane, and tropical depression tracking with forecast paths, location intensity, and satellite imagery.'
@@ -1594,6 +1598,85 @@
             backdrop-filter: blur(12px);
             pointer-events: auto;
         }
+        #tropical-history-controls {
+            display: none;
+            position: absolute;
+            left: 50%;
+            bottom: calc(14px + env(safe-area-inset-bottom));
+            z-index: 1900;
+            width: min(470px, calc(100% - 28px));
+            transform: translateX(-50%);
+            box-sizing: border-box;
+            padding: 10px 13px 9px;
+            border: 1px solid rgba(248,214,109,0.42);
+            border-radius: 13px;
+            background: rgba(3, 15, 25, 0.93);
+            box-shadow: 0 8px 26px rgba(0,0,0,0.42);
+            backdrop-filter: blur(12px);
+            pointer-events: auto;
+        }
+        html.tropical-route #tropical-history-controls.is-visible { display: block; }
+        #tropical-history-controls .historical-radar-heading { margin-bottom: 5px; }
+        #tropical-history-controls .historical-radar-endpoints {
+            display: flex;
+            justify-content: space-between;
+            color: #9aaebc;
+            font-size: 0.63em;
+        }
+        #tropical-history-controls #tropical-history-slider {
+            display: block;
+            width: 100%;
+            height: 24px;
+            margin: 0;
+            appearance: none;
+            -webkit-appearance: none;
+            background: transparent;
+            outline: none;
+            cursor: pointer;
+        }
+        #tropical-history-slider::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: 999px;
+            background: linear-gradient(
+                to right, #f8d66d 0, #f8d66d var(--tropical-progress, 0%),
+                rgba(255,255,255,0.26) var(--tropical-progress, 0%),
+                rgba(255,255,255,0.26) 100%
+            );
+        }
+        #tropical-history-slider::-moz-range-track {
+            height: 4px; border: 0; border-radius: 999px; background: rgba(255,255,255,0.26);
+        }
+        #tropical-history-slider::-moz-range-progress {
+            height: 4px; border-radius: 999px; background: #f8d66d;
+        }
+        #tropical-history-slider::-webkit-slider-thumb {
+            width: 14px; height: 14px; margin-top: -5px;
+            appearance: none; -webkit-appearance: none;
+            border: 2px solid #07131d; border-radius: 50%; background: #fff8d8;
+            box-shadow: 0 0 0 2px #f8d66d, 0 0 9px rgba(248,214,109,0.62);
+        }
+        #tropical-history-slider::-moz-range-thumb {
+            width: 10px; height: 10px; border: 2px solid #07131d; border-radius: 50%;
+            background: #fff8d8; box-shadow: 0 0 0 2px #f8d66d, 0 0 9px rgba(248,214,109,0.62);
+        }
+        #tropical-history-status {
+            min-height: 1.15em; margin-top: 4px; color: #9aaebc;
+            font-size: 0.64em; line-height: 1.25; text-align: center;
+        }
+        #tropical-history-controls .historical-radar-heading > span:first-child { color: #f8d66d; }
+        #tropical-history-controls .historical-radar-time {
+            color: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 0.78em; white-space: nowrap;
+        }
+        #tropical-history-time-button,
+        #tropical-history-play {
+            min-width: 31px; height: 25px; padding: 2px 7px;
+            border: 1px solid rgba(248,214,109,0.5); border-radius: 6px;
+            background: rgba(248,214,109,0.12); color: #fff8d8; cursor: pointer;
+        }
+        #tropical-history-time-button { min-width: 0; font: inherit; font-size: 0.78em; }
+        #tropical-history-play { font-weight: 900; line-height: 1; }
+        #tropical-history-play:disabled { opacity: 0.45; cursor: default; }
         html.radar-route #historical-radar-controls.is-visible {
             display: block;
         }
@@ -1795,6 +1878,19 @@
             backdrop-filter: blur(5px);
         }
         #historical-radar-picker.is-open { display: flex; }
+        .historical-radar-picker {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 4600;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            box-sizing: border-box;
+            background: rgba(0,0,0,0.72);
+            backdrop-filter: blur(5px);
+        }
+        .historical-radar-picker.is-open { display: flex; }
         .historical-radar-picker-card {
             width: min(360px, 100%);
             overflow: hidden;
@@ -1853,12 +1949,14 @@
             align-items: center;
             gap: 6px;
         }
-        #historical-radar-month-label {
+        #historical-radar-month-label,
+        #tropical-history-month-label {
             color: #fff;
             font-size: 0.95em;
             font-weight: 800;
         }
-        #historical-radar-picker-year {
+        #historical-radar-picker-year,
+        #tropical-history-picker-year {
             min-width: 67px;
             padding: 5px 20px 5px 7px;
             border: 1px solid rgba(129,212,250,0.35);
@@ -1916,7 +2014,8 @@
             font-size: 0.76em;
             font-weight: 700;
         }
-        #historical-radar-picker-time {
+        #historical-radar-picker-time,
+        #tropical-history-picker-time {
             width: 125px;
             box-sizing: border-box;
             padding: 7px 8px;
@@ -1951,12 +2050,14 @@
             font-weight: 800;
             cursor: pointer;
         }
-        #historical-radar-picker-cancel {
+        #historical-radar-picker-cancel,
+        #tropical-history-picker-cancel {
             border: 1px solid rgba(255,255,255,0.18);
             background: rgba(255,255,255,0.06);
             color: #d7e0e8;
         }
-        #historical-radar-picker-select {
+        #historical-radar-picker-select,
+        #tropical-history-picker-select {
             border: 1px solid #1685ff;
             background: #126bd1;
             color: #fff;
@@ -1973,7 +2074,14 @@
                 width: calc(100% - 20px);
                 padding: 9px 11px 8px;
             }
+            #tropical-history-controls {
+                width: calc(100% - 20px);
+                padding: 9px 11px 8px;
+            }
             #historical-radar-controls .historical-radar-heading {
+                font-size: 0.67em;
+            }
+            #tropical-history-controls .historical-radar-heading {
                 font-size: 0.67em;
             }
         }
@@ -2117,6 +2225,9 @@
             <button id="tropical-route-refresh" class="tropical-route-icon-btn" type="button"
                     onclick="loadTropicalRouteData(true)" title="Refresh" aria-label="Refresh"
                     style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 11px; border-radius:6px; font-size:0.8em; cursor:pointer;">&#8635;</button>
+            <button id="tropical-route-history-btn" class="tropical-route-icon-btn" type="button"
+                    onclick="openTropicalHistoryPicker()" title="Historical tropical tracker" aria-label="Historical tropical tracker"
+                    style="background:rgba(248,214,109,0.13); border:1px solid #f8d66d; color:#f8d66d; padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;">&#128336;</button>
             <button id="tropical-route-settings-btn" class="tropical-route-icon-btn" type="button"
                     onclick="toggleTropicalSettings()" title="Map layers" aria-label="Map layers" aria-expanded="false"
                     style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;">&#9881;&#65039;</button>
@@ -2137,6 +2248,26 @@
                 <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomOut()" aria-label="Zoom out">−</button>
             </div>
             <div id="tropical-route-status" role="status" aria-live="polite">Loading tropical systems…</div>
+            <div id="tropical-history-controls" aria-label="Historical tropical timeline">
+                <div class="historical-radar-heading">
+                    <span id="tropical-history-kicker">HISTORICAL TROPICAL</span>
+                    <span style="display:flex;align-items:center;gap:7px;">
+                        <button id="tropical-history-time-button" type="button"
+                                onclick="openTropicalHistoryPicker()" aria-label="Selected historical tropical time">--</button>
+                        <button id="tropical-history-play" type="button"
+                                onclick="toggleTropicalHistoryPlayback()" aria-label="Play historical tropical timeline"
+                                title="Play historical tropical timeline">&#9654;</button>
+                    </span>
+                </div>
+                <input id="tropical-history-slider" type="range" min="0" max="0" value="0" step="1"
+                       aria-label="Historical tropical frame"
+                       oninput="onTropicalHistorySliderInput(this.value)">
+                <div class="historical-radar-endpoints">
+                    <span id="tropical-history-start">--</span>
+                    <span id="tropical-history-end">--</span>
+                </div>
+                <div id="tropical-history-status" role="status" aria-live="polite"></div>
+            </div>
             <div id="tropical-route-details" hidden>
                 <div class="tropical-route-detail-kicker">SELECTED SYSTEM</div>
                 <h3 id="tropical-route-detail-title">Tropical system</h3>
@@ -2149,6 +2280,41 @@
                 </div>
                 <div id="tropical-route-location-intensity"></div>
                 <div id="tropical-route-source"></div>
+            </div>
+        </div>
+        <div id="tropical-history-picker" class="historical-radar-picker" role="dialog" aria-modal="true"
+             aria-labelledby="tropical-history-picker-title"
+             onclick="if(event.target===this) closeTropicalHistoryPicker()">
+            <div class="historical-radar-picker-card">
+                <div class="historical-radar-picker-head">
+                    <div>
+                        <div id="tropical-history-picker-title" class="historical-radar-picker-kicker">HISTORICAL TROPICAL TRACKER</div>
+                        <div style="margin-top:4px;color:#9fb2c2;font-size:0.68em;">Choose a past time. Satellite mode loads up to 100 LibreWXR scans; older dates show the next 50 hours of official best-track positions.</div>
+                    </div>
+                    <button class="historical-radar-picker-close" type="button" onclick="closeTropicalHistoryPicker()" aria-label="Close date picker">&#10005;</button>
+                </div>
+                <div class="historical-radar-picker-body">
+                    <div class="historical-radar-month-nav">
+                        <button id="tropical-history-picker-prev" type="button" onclick="shiftTropicalHistoryPickerMonth(-1)" aria-label="Previous month">&#8249;</button>
+                        <div class="historical-radar-month-title">
+                            <span id="tropical-history-month-label"></span>
+                            <select id="tropical-history-picker-year" onchange="jumpTropicalHistoryPickerYear(this.value)" aria-label="Jump to year"></select>
+                        </div>
+                        <button id="tropical-history-picker-next" type="button" onclick="shiftTropicalHistoryPickerMonth(1)" aria-label="Next month">&#8250;</button>
+                    </div>
+                    <div id="tropical-history-calendar" class="historical-radar-calendar-grid"></div>
+                    <div class="historical-radar-time-row">
+                        <label for="tropical-history-picker-time">&#128336; Local time</label>
+                        <input id="tropical-history-picker-time" type="time" step="60">
+                    </div>
+                    <div id="tropical-history-picker-note" class="historical-radar-picker-note">
+                        Satellite archive range is loading. NHC historical tracks begin in 1851; the JTWC/IBTrACS historical archive reaches back to 1842.
+                    </div>
+                </div>
+                <div class="historical-radar-picker-footer">
+                    <button id="tropical-history-picker-cancel" type="button" onclick="closeTropicalHistoryPicker()">Cancel</button>
+                    <button id="tropical-history-picker-select" type="button" onclick="selectTropicalHistoryTime()">Select</button>
+                </div>
             </div>
         </div>
     </section>
@@ -13892,6 +14058,17 @@
     let tropicalRouteInitialViewPending = true;
     let tropicalRouteTransitioning = false;
     let tropicalRouteReturnPath = '/';
+    let tropicalRouteHistoricalActive = !!window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE;
+    let tropicalRouteHistoricalState = {
+        selectedMs: 0,
+        frames: [],
+        index: 0,
+        satelliteFrames: [],
+        availability: null,
+        playing: false,
+        playbackTimer: null,
+        loadToken: 0
+    };
     const TROPICAL_SATELLITE_PREF_KEY = 'skymonitor_tropical_satellite_overlay';
     let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
         ? 'satellite'
@@ -19066,11 +19243,15 @@
 
     window.addEventListener('popstate', function() {
         const path = window.location.pathname.replace(/\/+$/, '') || '/';
-        if (path === '/radar/tropical') {
+        if (path === '/radar/tropical' || path === '/radar/tropical/historical') {
+            tropicalRouteHistoricalActive = path === '/radar/tropical/historical';
+            window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE = tropicalRouteHistoricalActive;
+            document.documentElement.classList.toggle('tropical-history-route', tropicalRouteHistoricalActive);
             setTropicalRouteState(true);
             return;
         }
         if (document.documentElement.classList.contains('tropical-route')) {
+            if (tropicalRouteHistoricalActive) leaveTropicalHistorical();
             setTropicalRouteState(false);
         }
         const isHistorical = path === '/radar/historical';
@@ -20276,6 +20457,7 @@
     }
 
     function _tropicalCurrentPoint(storm) {
+        if (storm && storm._historicalCurrent) return _tropicalCoordinate(storm._historicalCurrent);
         var point = _tropicalCoordinate(storm);
         if (point) return point;
         var candidates = [storm.trackPts, storm.trackPoints, storm.positions];
@@ -20574,7 +20756,10 @@
         var pointStorm = _tropicalPointStorm(storm, point);
         var name = _tropicalNamedStormTitle(storm);
         var time = _tropicalForecastDisplayTime(point.time);
-        var lead = Number(point.forecastHour) === 0
+        var historicalPoint = storm && storm.historical;
+        var lead = historicalPoint
+            ? (Number(point.forecastHour) === 0 ? 'SELECTED BEST-TRACK POSITION' : 'HISTORICAL TRACK +' + point.forecastHour + ' HOURS')
+            : Number(point.forecastHour) === 0
             ? 'CURRENT FORECAST'
             : point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
         return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
@@ -20582,8 +20767,10 @@
             '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
             '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(pointStorm, point.wind)) +
             '</b><br>' + escapeHtml(time) + '<br>Maximum sustained wind</div>' +
-            '<div class="tropical-forecast-popup-note">' +
-            escapeHtml(_tropicalIsJTWC(storm) ? 'JTWC official forecast point' : 'NHC official forecast point') + ' · ' +
+             '<div class="tropical-forecast-popup-note">' +
+             escapeHtml(historicalPoint
+                 ? (storm.historicalTrackSource || 'NOAA historical best-track position')
+                 : (_tropicalIsJTWC(storm) ? 'JTWC official forecast point' : 'NHC official forecast point')) + ' · ' +
             escapeHtml(point.lat.toFixed(1) + '°, ' + Math.abs(point.lon).toFixed(1) + '°' + (point.lon < 0 ? 'W' : 'E')) +
             '</div>';
     }
@@ -20661,6 +20848,345 @@
         }, 15000);
         if (!response.ok) throw new Error('JTWC feed returned ' + response.status);
         return response;
+    }
+
+    const TROPICAL_HISTORY_EARLIEST_YEAR = 1842;
+    let tropicalHistoryPickerDate = null;
+    let tropicalHistoryPickerMonth = null;
+
+    async function _fetchTropicalHistorical(timeMs, forceRefresh) {
+        var query = '?time=' + encodeURIComponent(new Date(timeMs).toISOString());
+        if (forceRefresh) query += '&refresh=' + Date.now();
+        var response = await _weatherFetch(
+            WEATHER_WORKER_URL + '/api/weather/tropical/historical' + query,
+            { cache: 'no-store', headers: { Accept: 'application/json' } },
+            30000
+        );
+        if (!response.ok) throw new Error('Historical tropical feed returned ' + response.status);
+        return response.json();
+    }
+
+    function _tropicalHistoryDateKey(date) {
+        if (!date || !isFinite(date.getTime())) return '';
+        return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') +
+            '-' + String(date.getDate()).padStart(2, '0');
+    }
+
+    function _setTropicalHistoryPickerNote(message, isError) {
+        var note = document.getElementById('tropical-history-picker-note');
+        if (!note) return;
+        note.textContent = message || '';
+        note.classList.toggle('is-error', !!isError);
+    }
+
+    function _renderTropicalHistoryPickerCalendar() {
+        var calendar = document.getElementById('tropical-history-calendar');
+        var label = document.getElementById('tropical-history-month-label');
+        var next = document.getElementById('tropical-history-picker-next');
+        var prev = document.getElementById('tropical-history-picker-prev');
+        var yearSelect = document.getElementById('tropical-history-picker-year');
+        if (!calendar || !label || !tropicalHistoryPickerMonth) return;
+        var month = tropicalHistoryPickerMonth;
+        var now = new Date();
+        var monthStart = new Date(month.getFullYear(), month.getMonth(), 1);
+        var firstDay = monthStart.getDay();
+        var daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+        var minDate = new Date(TROPICAL_HISTORY_EARLIEST_YEAR, 0, 1);
+        var selectedKey = _tropicalHistoryDateKey(tropicalHistoryPickerDate);
+        label.textContent = month.toLocaleString([], { month: 'short' });
+        if (yearSelect) {
+            yearSelect.innerHTML = '';
+            for (var year = now.getFullYear(); year >= TROPICAL_HISTORY_EARLIEST_YEAR; year--) {
+                var option = document.createElement('option');
+                option.value = String(year);
+                option.textContent = String(year);
+                yearSelect.appendChild(option);
+            }
+            yearSelect.value = String(month.getFullYear());
+        }
+        calendar.innerHTML = ['Su','Mo','Tu','We','Th','Fr','Sa'].map(function(day) {
+            return '<span class="historical-radar-weekday">' + day + '</span>';
+        }).join('');
+        for (var cell = 0; cell < 42; cell++) {
+            var date = new Date(month.getFullYear(), month.getMonth(), cell - firstDay + 1);
+            var key = _tropicalHistoryDateKey(date);
+            var isOutside = date.getMonth() !== month.getMonth();
+            var isFuture = date.getTime() > new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+            var isTooOld = date.getTime() < minDate.getTime();
+            var button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'historical-radar-day' + (isOutside ? ' is-outside' : '') +
+                (key === selectedKey ? ' is-selected' : '');
+            button.textContent = String(date.getDate());
+            button.disabled = isFuture || isTooOld;
+            button.setAttribute('aria-label', date.toLocaleDateString([], {
+                weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+            }));
+            button.onclick = function(selectedDate) {
+                return function() {
+                    tropicalHistoryPickerDate = new Date(
+                        selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()
+                    );
+                    tropicalHistoryPickerMonth = new Date(
+                        selectedDate.getFullYear(), selectedDate.getMonth(), 1
+                    );
+                    _renderTropicalHistoryPickerCalendar();
+                };
+            }(date);
+            calendar.appendChild(button);
+        }
+        var currentMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+        var oldestMonth = new Date(TROPICAL_HISTORY_EARLIEST_YEAR, 0, 1).getTime();
+        var shownMonth = monthStart.getTime();
+        if (prev) prev.disabled = shownMonth <= oldestMonth;
+        if (next) next.disabled = shownMonth >= currentMonth;
+    }
+
+    function openTropicalHistoryPicker() {
+        var picker = document.getElementById('tropical-history-picker');
+        var timeInput = document.getElementById('tropical-history-picker-time');
+        if (!picker || !timeInput) return;
+        var baseMs = tropicalRouteHistoricalState.selectedMs || Date.now() - 6 * 3600000;
+        var baseDate = new Date(baseMs);
+        tropicalHistoryPickerDate = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
+        tropicalHistoryPickerMonth = new Date(baseDate.getFullYear(), baseDate.getMonth(), 1);
+        timeInput.value = String(baseDate.getHours()).padStart(2, '0') + ':' +
+            String(baseDate.getMinutes()).padStart(2, '0');
+        var availability = tropicalRouteHistoricalState.availability;
+        _setTropicalHistoryPickerNote(
+            availability && availability.satelliteStart
+                ? 'LibreWXR satellite scans currently span ' +
+                    new Date(availability.satelliteStart).toLocaleDateString() + ' through ' +
+                    new Date(availability.satelliteEnd).toLocaleDateString() +
+                    '. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842. Dates before the satellite range show 50 hours of track data.'
+                : 'Satellite range is determined by the oldest published LibreWXR infrared scan. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842. Dates before satellite coverage show 50 hours of track data.',
+            false
+        );
+        _renderTropicalHistoryPickerCalendar();
+        picker.classList.add('is-open');
+        setModalOpen(true);
+    }
+
+    function closeTropicalHistoryPicker() {
+        var picker = document.getElementById('tropical-history-picker');
+        if (picker) picker.classList.remove('is-open');
+        setModalOpen(false);
+    }
+
+    function shiftTropicalHistoryPickerMonth(delta) {
+        if (!tropicalHistoryPickerMonth) return;
+        var next = new Date(
+            tropicalHistoryPickerMonth.getFullYear(),
+            tropicalHistoryPickerMonth.getMonth() + Number(delta || 0), 1
+        );
+        var now = new Date();
+        if (next > new Date(now.getFullYear(), now.getMonth(), 1) ||
+            next < new Date(TROPICAL_HISTORY_EARLIEST_YEAR, 0, 1)) return;
+        tropicalHistoryPickerMonth = next;
+        _renderTropicalHistoryPickerCalendar();
+    }
+
+    function jumpTropicalHistoryPickerYear(value) {
+        var year = Number(value);
+        if (!isFinite(year) || year < TROPICAL_HISTORY_EARLIEST_YEAR) return;
+        var now = new Date();
+        var month = tropicalHistoryPickerMonth ? tropicalHistoryPickerMonth.getMonth() : now.getMonth();
+        tropicalHistoryPickerMonth = new Date(year, month, 1);
+        if (tropicalHistoryPickerMonth > new Date(now.getFullYear(), now.getMonth(), 1)) {
+            tropicalHistoryPickerMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+        var day = tropicalHistoryPickerDate ? tropicalHistoryPickerDate.getDate() : 1;
+        tropicalHistoryPickerDate = new Date(
+            tropicalHistoryPickerMonth.getFullYear(),
+            tropicalHistoryPickerMonth.getMonth(),
+            Math.min(day, new Date(tropicalHistoryPickerMonth.getFullYear(), tropicalHistoryPickerMonth.getMonth() + 1, 0).getDate())
+        );
+        _renderTropicalHistoryPickerCalendar();
+    }
+
+    function selectTropicalHistoryTime() {
+        if (!tropicalHistoryPickerDate) return;
+        var input = document.getElementById('tropical-history-picker-time');
+        var parts = String(input && input.value || '00:00').split(':');
+        var hour = Number(parts[0]), minute = Number(parts[1]);
+        var selectedMs = new Date(
+            tropicalHistoryPickerDate.getFullYear(), tropicalHistoryPickerDate.getMonth(),
+            tropicalHistoryPickerDate.getDate(), hour, minute, 0, 0
+        ).getTime();
+        if (!isFinite(selectedMs) || selectedMs >= Date.now()) {
+            _setTropicalHistoryPickerNote('Choose a valid date and time in the past.', true);
+            return;
+        }
+        closeTropicalHistoryPicker();
+        activateTropicalHistorical(selectedMs);
+    }
+
+    function _tropicalHistoryTimeLabel(timestamp, includeDate) {
+        if (!timestamp) return '--';
+        return new Date(timestamp).toLocaleString([], includeDate ? {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+        } : {
+            month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+        });
+    }
+
+    function _renderTropicalHistoryControls() {
+        var controls = document.getElementById('tropical-history-controls');
+        var slider = document.getElementById('tropical-history-slider');
+        var time = document.getElementById('tropical-history-time-button');
+        var start = document.getElementById('tropical-history-start');
+        var end = document.getElementById('tropical-history-end');
+        var play = document.getElementById('tropical-history-play');
+        if (!controls || !slider || !time || !start || !end) return;
+        var frames = tropicalRouteHistoricalState.frames || [];
+        var active = tropicalRouteHistoricalActive && frames.length;
+        controls.classList.toggle('is-visible', !!active);
+        slider.max = String(Math.max(0, frames.length - 1));
+        slider.value = String(Math.min(tropicalRouteHistoricalState.index, Math.max(0, frames.length - 1)));
+        slider.style.setProperty('--tropical-progress', frames.length > 1
+            ? (tropicalRouteHistoricalState.index / (frames.length - 1) * 100) + '%' : '0%');
+        time.textContent = frames.length ? _tropicalHistoryTimeLabel(frames[tropicalRouteHistoricalState.index], true) : '--';
+        start.textContent = frames.length ? _tropicalHistoryTimeLabel(frames[0], false) : '--';
+        end.textContent = frames.length ? _tropicalHistoryTimeLabel(frames[frames.length - 1], false) : '--';
+        if (play) {
+            play.disabled = frames.length < 2;
+            play.textContent = tropicalRouteHistoricalState.playing ? '\u23f8' : '\u25b6';
+        }
+    }
+
+    function _setTropicalHistoricalFrame(index) {
+        var frames = tropicalRouteHistoricalState.frames || [];
+        if (!frames.length) return;
+        var safeIndex = Math.max(0, Math.min(Number(index) || 0, frames.length - 1));
+        tropicalRouteHistoricalState.index = safeIndex;
+        var timestamp = frames[safeIndex];
+        tropicalRouteStorms.forEach(function(storm) {
+            var points = storm.forecastPoints || [];
+            var point = points.reduce(function(best, candidate) {
+                return !best || Math.abs(new Date(candidate.time).getTime() - timestamp) <
+                    Math.abs(new Date(best.time).getTime() - timestamp) ? candidate : best;
+            }, null);
+            if (point) storm._historicalCurrent = point;
+        });
+        if (tropicalRouteHistoricalState.satelliteFrames.length) {
+            _setTropicalSatelliteFrame(timestamp);
+        }
+        _renderTropicalHistoryControls();
+        _drawTropicalRouteStorms(false);
+    }
+
+    function onTropicalHistorySliderInput(value) {
+        if (!tropicalRouteHistoricalActive) return;
+        tropicalRouteHistoricalState.playing = false;
+        if (tropicalRouteHistoricalState.playbackTimer) {
+            clearTimeout(tropicalRouteHistoricalState.playbackTimer);
+            tropicalRouteHistoricalState.playbackTimer = null;
+        }
+        _setTropicalHistoricalFrame(Number(value) || 0);
+    }
+
+    function _scheduleTropicalHistoryPlayback() {
+        if (!tropicalRouteHistoricalState.playing || !tropicalRouteHistoricalActive) return;
+        tropicalRouteHistoricalState.playbackTimer = setTimeout(function() {
+            var next = tropicalRouteHistoricalState.index + 1;
+            if (next >= tropicalRouteHistoricalState.frames.length) next = 0;
+            _setTropicalHistoricalFrame(next);
+            _scheduleTropicalHistoryPlayback();
+        }, 650);
+    }
+
+    function toggleTropicalHistoryPlayback() {
+        if (!tropicalRouteHistoricalActive || tropicalRouteHistoricalState.frames.length < 2) return;
+        tropicalRouteHistoricalState.playing = !tropicalRouteHistoricalState.playing;
+        _renderTropicalHistoryControls();
+        if (tropicalRouteHistoricalState.playing) _scheduleTropicalHistoryPlayback();
+        else if (tropicalRouteHistoricalState.playbackTimer) {
+            clearTimeout(tropicalRouteHistoricalState.playbackTimer);
+            tropicalRouteHistoricalState.playbackTimer = null;
+        }
+    }
+
+    async function loadTropicalHistoricalData(timeMs, forceRefresh) {
+        var token = ++tropicalRouteHistoricalState.loadToken;
+        var status = document.getElementById('tropical-route-status');
+        if (status) status.textContent = forceRefresh ? 'Refreshing historical tropical data…' : 'Loading historical tropical data…';
+        try {
+            var payload = await _fetchTropicalHistorical(timeMs, forceRefresh);
+            if (token !== tropicalRouteHistoricalState.loadToken) return;
+            tropicalRouteHistoricalState.selectedMs = timeMs;
+            tropicalRouteHistoricalState.availability = payload.availability || null;
+            tropicalRouteHistoricalState.satelliteFrames = Array.isArray(payload.satellite && payload.satellite.frames)
+                ? payload.satellite.frames : [];
+            tropicalRouteHistoricalState.frames = tropicalRouteHistoricalState.satelliteFrames.length
+                ? tropicalRouteHistoricalState.satelliteFrames.slice(0, 100)
+                : Array.from({ length: 50 }, function(_, index) { return timeMs + index * 3600000; });
+            tropicalRouteHistoricalState.index = 0;
+            tropicalRouteHistoricalActive = true;
+            tropicalRouteStorms = (Array.isArray(payload.storms) ? payload.storms : []).map(function(storm) {
+                var point = (storm.forecastPoints || [])[0] || storm;
+                return Object.assign({}, storm, { _historicalCurrent: point });
+            });
+            tropicalRouteSelectedIndex = tropicalRouteStorms.length ? 0 : null;
+            _renderTropicalStormPicker();
+            _setTropicalHistoricalFrame(0);
+            var satelliteCount = tropicalRouteHistoricalState.satelliteFrames.length;
+            if (status) {
+                status.textContent = tropicalRouteStorms.length
+                    ? (satelliteCount
+                        ? 'Historical NHC/JTWC tracks with ' + satelliteCount + ' available LibreWXR satellite scans.'
+                        : 'Pre-satellite date: showing the next 50 hours of NHC/JTWC best-track positions.')
+                    : 'No NHC/JTWC system was active at the selected time.';
+            }
+            _setTropicalHistoryPickerNote(
+                payload.availability && payload.availability.satelliteStart
+                    ? 'LibreWXR satellite scans currently span ' +
+                        new Date(payload.availability.satelliteStart).toLocaleDateString() + ' through ' +
+                        new Date(payload.availability.satelliteEnd).toLocaleDateString() +
+                        '. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842.'
+                    : 'No satellite scan covers this selected time. NHC HURDAT2 begins in 1851; the JTWC-basin NOAA IBTrACS archive reaches back to 1842. This selection shows 50 hours of track data.',
+                false
+            );
+        } catch (error) {
+            console.warn('[SkyMonitor tropical history] load failed:', error);
+            if (status) status.textContent = 'Historical tropical data is temporarily unavailable. Retry to check NOAA archives.';
+        }
+    }
+
+    function activateTropicalHistorical(selectedMs) {
+        tropicalRouteHistoricalActive = true;
+        tropicalRouteHistoricalState.selectedMs = selectedMs;
+        tropicalRouteHistoricalState.playing = false;
+        if (window.location.pathname !== '/radar/tropical/historical') {
+            window.history.pushState({ skymonitorTropical: true, tropicalHistorical: true },
+                '', '/radar/tropical/historical');
+        }
+        window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE = true;
+        document.documentElement.classList.add('tropical-history-route');
+        document.title = 'Historical Tropical Tracker · SkyMonitor';
+        loadTropicalHistoricalData(selectedMs, false);
+    }
+
+    function leaveTropicalHistorical() {
+        tropicalRouteHistoricalActive = false;
+        tropicalRouteHistoricalState.playing = false;
+        if (tropicalRouteHistoricalState.playbackTimer) {
+            clearTimeout(tropicalRouteHistoricalState.playbackTimer);
+            tropicalRouteHistoricalState.playbackTimer = null;
+        }
+        tropicalRouteHistoricalState.frames = [];
+        tropicalRouteHistoricalState.satelliteFrames = [];
+        tropicalRouteHistoricalState.availability = null;
+        window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE = false;
+        document.documentElement.classList.remove('tropical-history-route');
+        _renderTropicalHistoryControls();
+        if (tropicalRouteSatelliteTileLayer && tropicalRouteMap && tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
+            tropicalRouteMap.removeLayer(tropicalRouteSatelliteTileLayer);
+        }
+        tropicalRouteSatelliteTileLayer = null;
+        tropicalRouteSatelliteTimestamp = 0;
+        tropicalRouteStorms = [];
+        tropicalRouteSelectedIndex = null;
+        document.title = 'Tropical Tracker · SkyMonitor';
     }
 
     async function _loadTropicalForecastPoints(storm) {
@@ -20753,8 +21279,44 @@
         control.addAttribution(tropicalRouteMap._skyMonitorTropicalAttribution);
     }
 
+    function _setTropicalSatelliteFrame(timestampMs) {
+        if (!tropicalRouteMap || !window.L || !Number(timestampMs)) return;
+        var timestamp = Math.round(Number(timestampMs) / 1000);
+        if (tropicalRouteSatelliteTileLayer && tropicalRouteSatelliteTimestamp === timestamp) {
+            if (tropicalRouteMapMode === 'satellite' && !tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
+                tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
+            }
+            return;
+        }
+        if (tropicalRouteSatelliteTileLayer && tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer)) {
+            tropicalRouteMap.removeLayer(tropicalRouteSatelliteTileLayer);
+        }
+        tropicalRouteSatelliteTimestamp = timestamp;
+        tropicalRouteSatelliteTileLayer = L.tileLayer(
+            LIBREWXR_RADAR_BASE_URL + '/v2/satellite/' + timestamp +
+            '/' + (window.devicePixelRatio >= 1.5 ? '512' : '256') + '/{z}/{x}/{y}/0/0_0.png',
+            {
+                maxZoom: 10,
+                maxNativeZoom: 8,
+                tileSize: 256,
+                opacity: 0.76,
+                className: 'tropical-satellite-tile',
+                pane: 'tropical-satellite-pane',
+                noWrap: true
+            }
+        );
+        if (tropicalRouteMapMode === 'satellite') tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
+    }
+
     async function _ensureTropicalSatelliteLayer() {
         if (!tropicalRouteMap || !window.L) return;
+        if (tropicalRouteHistoricalActive &&
+            tropicalRouteHistoricalState.satelliteFrames.length) {
+            _setTropicalSatelliteFrame(
+                tropicalRouteHistoricalState.satelliteFrames[tropicalRouteHistoricalState.index]
+            );
+            return;
+        }
         if (tropicalRouteSatelliteTileLayer && tropicalRouteSatelliteTimestamp) {
             if (!tropicalRouteMap.hasLayer(tropicalRouteSatelliteTileLayer) &&
                 tropicalRouteMapMode === 'satellite') {
@@ -20777,20 +21339,7 @@
             var latest = frames.reduce(function(best, frame) {
                 return !best || Number(frame.time) > Number(best.time) ? frame : best;
             }, null);
-            tropicalRouteSatelliteTimestamp = Number(latest.time);
-            tropicalRouteSatelliteTileLayer = L.tileLayer(
-                LIBREWXR_RADAR_BASE_URL + '/v2/satellite/' + tropicalRouteSatelliteTimestamp +
-                '/' + (window.devicePixelRatio >= 1.5 ? '512' : '256') + '/{z}/{x}/{y}/0/0_0.png',
-                {
-                    maxZoom: 10,
-                    maxNativeZoom: 8,
-                    tileSize: 256,
-                    opacity: 0.76,
-                    className: 'tropical-satellite-tile',
-                    pane: 'tropical-satellite-pane',
-                    noWrap: true
-                }
-            );
+            _setTropicalSatelliteFrame(Number(latest.time) * 1000);
             if (tropicalRouteMapMode === 'satellite') {
                 tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
             }
@@ -20854,7 +21403,9 @@
             : '—';
         document.getElementById('tropical-route-detail-title').textContent = _tropicalNamedStormTitle(storm);
         document.getElementById('tropical-route-detail-subtitle').textContent =
-            _tropicalIsJTWC(storm)
+            storm.historical
+                ? 'Historical best track and the next 50 hours from the selected time.'
+                : _tropicalIsJTWC(storm)
                 ? 'Official JTWC position, intensity, forecast track, and cone.'
                 : 'Official NHC position and forecast track.';
         document.getElementById('tropical-route-current-wind').textContent = _tropicalFormatWind(wind);
@@ -20876,9 +21427,15 @@
                 ? storm.publicAdvisory.url : 'https://www.nhc.noaa.gov/');
         var satellite = _tropicalSatelliteConfig(storm);
         document.getElementById('tropical-route-source').innerHTML =
-            (_tropicalIsJTWC(storm)
+            (storm.historical
+                ? 'Historical track: <a href="' + escapeHtml(storm.dataProvider === 'NOAA IBTrACS'
+                    ? 'https://www.ncei.noaa.gov/data/international-best-track-archive-for-climate-stewardship-ibtracs/'
+                    : 'https://www.nhc.noaa.gov/data/hurdat/') +
+                    '" target="_blank" rel="noopener noreferrer">' +
+                    escapeHtml(storm.historicalTrackSource || 'NOAA best-track archive') + '</a>. '
+                : (_tropicalIsJTWC(storm)
                 ? 'Track, cone, position, and intensity: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Joint Typhoon Warning Center</a>. '
-                : 'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ') +
+                : 'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ')) +
             'Satellite: <a href="' + escapeHtml(satellite.source) + '" target="_blank" rel="noopener noreferrer">' + satellite.name + '</a>.';
         details.hidden = false;
     }
@@ -20921,6 +21478,14 @@
                 weight: 1.4, opacity: 0.75, dashArray: '5,5', interactive: true
             })).addTo(tropicalRouteStormLayer);
             extendBounds(cone.getBounds());
+        }
+        if (storm.historical && Array.isArray(storm.pastTrackPts) && storm.pastTrackPts.length >= 2) {
+            var pastLine = selectStormOnClick(L.polyline(storm.pastTrackPts.map(function(pair) {
+                return [pair[1], pair[0]];
+            }), {
+                color: color, weight: 4, opacity: 0.9, interactive: true
+            })).addTo(tropicalRouteStormLayer);
+            extendBounds(pastLine.getBounds());
         }
         if (points.length >= 2) {
             var line = selectStormOnClick(L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
@@ -20999,6 +21564,7 @@
             }
         }
         tropicalRouteStorms.forEach(function(storm) {
+            if (tropicalRouteHistoricalActive) return;
             if (!storm._forecastPointsLoaded && !storm._forecastPointsPromise) {
                 _loadTropicalForecastPoints(storm).then(function() {
                     if (tropicalRouteStorms.indexOf(storm) !== -1) {
@@ -21096,6 +21662,10 @@
 
     async function loadTropicalRouteData(forceRefresh) {
         if (!window.SKYMONITOR_TROPICAL_PAGE && !document.documentElement.classList.contains('tropical-route')) return;
+        if (tropicalRouteHistoricalActive || window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE) {
+            var historicalTime = tropicalRouteHistoricalState.selectedMs || Date.now() - 6 * 3600000;
+            return loadTropicalHistoricalData(historicalTime, !!forceRefresh);
+        }
         var token = ++tropicalRouteLoadToken;
         var status = document.getElementById('tropical-route-status');
         if (status) status.textContent = forceRefresh ? 'Refreshing official tropical data…' : 'Loading official tropical data…';
@@ -21176,6 +21746,8 @@
     function initTropicalRoute() {
         if (!document.documentElement.classList.contains('tropical-route')) return;
         if (!window.L) { setTimeout(initTropicalRoute, 300); return; }
+        tropicalRouteHistoricalActive = !!window.SKYMONITOR_TROPICAL_HISTORICAL_PAGE ||
+            tropicalRouteHistoricalActive;
         var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
         if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
         if (!tropicalRouteMap) {
@@ -21218,7 +21790,12 @@
         if (!tropicalRouteRefreshTimer) {
             tropicalRouteRefreshTimer = setInterval(function() { loadTropicalRouteData(true); }, 300000);
         }
-        if (!tropicalRouteStorms.length) {
+        if (tropicalRouteHistoricalActive) {
+            loadTropicalHistoricalData(
+                tropicalRouteHistoricalState.selectedMs || Date.now() - 6 * 3600000,
+                false
+            );
+        } else if (!tropicalRouteStorms.length) {
             loadTropicalRouteData(false);
         } else if (tropicalRouteInitialViewPending) {
             var pendingFocus = tropicalRoutePendingFocus;
@@ -21247,7 +21824,9 @@
                 if (details) details.hidden = true;
                 _renderTropicalStormPicker();
             }
-            document.title = 'Tropical Tracker · SkyMonitor';
+            document.title = tropicalRouteHistoricalActive
+                ? 'Historical Tropical Tracker · SkyMonitor'
+                : 'Tropical Tracker · SkyMonitor';
             setTimeout(initTropicalRoute, 80);
         } else {
             if (tropicalRouteRefreshTimer) {
@@ -21263,6 +21842,9 @@
 
     function openTropicalRoute(focus) {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (currentPath === '/radar/tropical/historical') {
+            leaveTropicalHistorical();
+        }
         var openedFromRadar = document.documentElement.classList.contains('radar-route') ||
             currentPath === '/radar' || currentPath === '/radar/historical';
         if (openedFromRadar) {
@@ -21305,6 +21887,12 @@
 
     function closeTropicalRoute() {
         var currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+        if (currentPath === '/radar/tropical/historical') {
+            leaveTropicalHistorical();
+            window.history.pushState({ skymonitorTropical: true }, '', '/radar/tropical');
+            setTropicalRouteState(true);
+            return;
+        }
         var returnPath = tropicalRouteReturnPath || '/';
         if (currentPath === '/radar/tropical') {
             window.history.pushState({
