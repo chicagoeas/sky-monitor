@@ -630,27 +630,6 @@
             box-shadow: 0 12px 30px rgba(0,0,0,0.45);
         }
         #tropical-route-settings-panel[hidden] { display: none; }
-        .tropical-route-setting {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-            min-height: 31px;
-            color: #c9d7e0;
-            font-size: 0.78rem;
-        }
-        .tropical-route-setting + .tropical-route-setting {
-            border-top: 1px solid rgba(255,255,255,0.07);
-        }
-        .tropical-route-setting-label {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-        }
-        .tropical-route-setting-label small {
-            color: #728797;
-            font-size: 0.72em;
-        }
         #tropical-route-storm-picker {
             position: absolute;
             z-index: 900;
@@ -2145,38 +2124,10 @@
         <div id="tropical-route-map-wrap">
             <div id="tropical-route-map" aria-label="Interactive tropical storm map"></div>
             <div id="tropical-route-settings-panel" hidden>
-                <div class="tropical-route-setting">
-                    <span class="tropical-route-setting-label">&#128225; Satellite Overlay</span>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite Overlay</span>
                     <label class="ios-toggle">
                         <input type="checkbox" id="tropical-satellite-toggle-cb" onchange="toggleTropicalSatellite()">
-                        <span class="ios-toggle-track"></span>
-                    </label>
-                </div>
-                <div class="tropical-route-setting">
-                    <span class="tropical-route-setting-label">&#127919; Forecast Cone</span>
-                    <label class="ios-toggle">
-                        <input type="checkbox" id="tropical-forecast-cone-toggle-cb" onchange="toggleTropicalLayer('forecastCone', this.checked)">
-                        <span class="ios-toggle-track"></span>
-                    </label>
-                </div>
-                <div class="tropical-route-setting">
-                    <span class="tropical-route-setting-label">&#10145;&#65039; Forecast Track</span>
-                    <label class="ios-toggle">
-                        <input type="checkbox" id="tropical-forecast-track-toggle-cb" onchange="toggleTropicalLayer('forecastTrack', this.checked)">
-                        <span class="ios-toggle-track"></span>
-                    </label>
-                </div>
-                <div class="tropical-route-setting">
-                    <span class="tropical-route-setting-label">&#128308; Past Track <small>(NHC best track)</small></span>
-                    <label class="ios-toggle">
-                        <input type="checkbox" id="tropical-past-track-toggle-cb" onchange="toggleTropicalLayer('pastTrack', this.checked)">
-                        <span class="ios-toggle-track"></span>
-                    </label>
-                </div>
-                <div class="tropical-route-setting">
-                    <span class="tropical-route-setting-label">&#128167; Wind Radii</span>
-                    <label class="ios-toggle">
-                        <input type="checkbox" id="tropical-wind-radii-toggle-cb" onchange="toggleTropicalLayer('windRadii', this.checked)">
                         <span class="ios-toggle-track"></span>
                     </label>
                 </div>
@@ -13908,7 +13859,6 @@
     let tropicalRouteSatelliteTileLayer = null;
     let tropicalRouteSatelliteTimestamp = 0;
     let tropicalRouteSatelliteLoadPromise = null;
-    let tropicalRouteSatelliteRefreshTimer = null;
     let tropicalRouteStorms = [];
     let tropicalRouteSelectedIndex = null;
     let tropicalRoutePendingFocus = null;
@@ -13916,26 +13866,9 @@
     let tropicalRouteTransitioning = false;
     let tropicalRouteReturnPath = '/';
     const TROPICAL_SATELLITE_PREF_KEY = 'skymonitor_tropical_satellite_overlay';
-    const TROPICAL_LAYER_PREF_KEY = 'skymonitor_tropical_layer_visibility';
-    const NOWCOAST_SATELLITE_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/satellite/wms';
-    const NOWCOAST_SATELLITE_WMS_LAYER = 'global_longwave_imagery_mosaic';
     let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
         ? 'satellite'
         : 'map';
-    let tropicalRouteLayerPrefs = (function() {
-        const defaults = {
-            forecastCone: true,
-            forecastTrack: true,
-            pastTrack: true,
-            windRadii: true
-        };
-        try {
-            const stored = JSON.parse(localStorage.getItem(TROPICAL_LAYER_PREF_KEY) || '{}');
-            return Object.assign(defaults, stored && typeof stored === 'object' ? stored : {});
-        } catch (error) {
-            return defaults;
-        }
-    })();
     let tropicalRouteLoadToken = 0;
     let tropicalRouteRefreshTimer = null;
     let lsrLayer = null;
@@ -20164,8 +20097,7 @@
                 lat: b,
                 wind: _tropicalFinite(value[2]),
                 time: value[3] || '',
-                forecastHour: value[4] != null ? _tropicalFinite(value[4]) : null,
-                radii: null
+                forecastHour: value[4] != null ? _tropicalFinite(value[4]) : null
             };
         }
         if (typeof value !== 'object') return null;
@@ -20199,10 +20131,7 @@
             forecastHour: value.forecastHour != null
                 ? _tropicalFinite(value.forecastHour)
                 : null,
-            kind: value.kind || '',
-            radii: Array.isArray(value.radii)
-                ? value.radii.map(function(radius) { return _tropicalFinite(radius); })
-                : null
+            kind: value.kind || ''
         };
     }
 
@@ -20680,8 +20609,8 @@
 
     function _tropicalSatelliteConfig() {
         return {
-            name: 'NOAA nowCOAST global longwave imagery',
-            source: 'https://nowcoast.noaa.gov/',
+            name: 'LibreWXR NOAA GMGSI satellite',
+            source: 'https://librewxr.net/',
             timestamp: tropicalRouteSatelliteTimestamp
         };
     }
@@ -20692,7 +20621,7 @@
             ' &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a>';
         if (tropicalRouteMapMode === 'satellite') {
             attribution +=
-                ', Satellite: <a href="https://nowcoast.noaa.gov/" target="_blank" rel="noopener noreferrer">NOAA nowCOAST</a>';
+                ', Satellite: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>';
         }
         return attribution;
     }
@@ -20717,22 +20646,32 @@
             return;
         }
         if (tropicalRouteSatelliteLoadPromise) return tropicalRouteSatelliteLoadPromise;
-        tropicalRouteSatelliteLoadPromise = Promise.resolve().then(function() {
-            tropicalRouteSatelliteTimestamp = Date.now();
-            tropicalRouteSatelliteTileLayer = L.tileLayer.wms(
-                NOWCOAST_SATELLITE_WMS_URL,
+        tropicalRouteSatelliteLoadPromise = fetch(
+            LIBREWXR_RADAR_BASE_URL + '/public/weather-maps.json?source=tropical',
+            { cache: 'no-store', headers: { Accept: 'application/json' } }
+        ).then(function(response) {
+            if (!response.ok) throw new Error('LibreWXR satellite metadata returned ' + response.status);
+            return response.json();
+        }).then(function(metadata) {
+            var frames = metadata && metadata.satellite && metadata.satellite.infrared;
+            if (!Array.isArray(frames) || !frames.length) {
+                throw new Error('LibreWXR satellite metadata has no infrared frames');
+            }
+            var latest = frames.reduce(function(best, frame) {
+                return !best || Number(frame.time) > Number(best.time) ? frame : best;
+            }, null);
+            tropicalRouteSatelliteTimestamp = Number(latest.time);
+            tropicalRouteSatelliteTileLayer = L.tileLayer(
+                LIBREWXR_RADAR_BASE_URL + '/v2/satellite/' + tropicalRouteSatelliteTimestamp +
+                '/' + (window.devicePixelRatio >= 1.5 ? '512' : '256') + '/{z}/{x}/{y}/0/0_0.png',
                 {
-                    layers: NOWCOAST_SATELLITE_WMS_LAYER,
-                    styles: '',
-                    format: 'image/png',
-                    transparent: true,
-                    version: '1.3.0',
+                    maxZoom: 10,
+                    maxNativeZoom: 8,
                     tileSize: 256,
                     opacity: 0.76,
                     className: 'tropical-satellite-tile',
                     pane: 'tropical-satellite-pane',
-                    noWrap: true,
-                    attribution: ''
+                    noWrap: true
                 }
             );
             if (tropicalRouteMapMode === 'satellite') {
@@ -20741,26 +20680,15 @@
             var status = document.getElementById('tropical-route-status');
             if (status && tropicalRouteMapMode === 'satellite') status.textContent = '';
         }).catch(function(error) {
-            console.warn('[SkyMonitor tropical tracker] NOAA nowCOAST satellite failed:', error);
+            console.warn('[SkyMonitor tropical tracker] LibreWXR satellite failed:', error);
             var status = document.getElementById('tropical-route-status');
             if (status && tropicalRouteMapMode === 'satellite') {
-                status.textContent = 'NOAA nowCOAST satellite imagery is temporarily unavailable.';
+                status.textContent = 'LibreWXR satellite imagery is temporarily unavailable.';
             }
         }).finally(function() {
             tropicalRouteSatelliteLoadPromise = null;
         });
         return tropicalRouteSatelliteLoadPromise;
-    }
-
-    function _refreshTropicalSatelliteLayer() {
-        if (!tropicalRouteSatelliteTileLayer) {
-            if (tropicalRouteMapMode === 'satellite') _ensureTropicalSatelliteLayer();
-            return;
-        }
-        tropicalRouteSatelliteTimestamp = Date.now();
-        tropicalRouteSatelliteTileLayer.setParams({ _refresh: tropicalRouteSatelliteTimestamp });
-        tropicalRouteSatelliteTileLayer.redraw();
-        _updateTropicalMapAttribution();
     }
 
     function _tropicalMapLayersForMode() {
@@ -20790,76 +20718,6 @@
             }
         }
         _updateTropicalMapAttribution();
-    }
-
-    function _syncTropicalLayerControls() {
-        var controls = {
-            forecastCone: document.getElementById('tropical-forecast-cone-toggle-cb'),
-            forecastTrack: document.getElementById('tropical-forecast-track-toggle-cb'),
-            pastTrack: document.getElementById('tropical-past-track-toggle-cb'),
-            windRadii: document.getElementById('tropical-wind-radii-toggle-cb')
-        };
-        Object.keys(controls).forEach(function(key) {
-            if (controls[key]) controls[key].checked = tropicalRouteLayerPrefs[key] !== false;
-        });
-    }
-
-    function toggleTropicalLayer(layerName, enabled) {
-        if (!Object.prototype.hasOwnProperty.call(tropicalRouteLayerPrefs, layerName)) return;
-        tropicalRouteLayerPrefs[layerName] = !!enabled;
-        try {
-            localStorage.setItem(TROPICAL_LAYER_PREF_KEY, JSON.stringify(tropicalRouteLayerPrefs));
-        } catch (error) {}
-        _syncTropicalLayerControls();
-        _drawTropicalRouteStorms(false);
-    }
-
-    function _tropicalWindRadiiSector(point, radiusNm, startBearing, endBearing) {
-        var radius = _tropicalFinite(radiusNm);
-        if (!point || radius == null || radius <= 0) return null;
-        var points = [[point.lat, point.lon]];
-        var latOffset = radius / 60;
-        var cosLat = Math.max(0.2, Math.cos(point.lat * Math.PI / 180));
-        var lonOffset = latOffset / cosLat;
-        for (var bearing = startBearing; bearing <= endBearing; bearing += 10) {
-            var radians = bearing * Math.PI / 180;
-            points.push([
-                point.lat + Math.cos(radians) * latOffset,
-                point.lon + Math.sin(radians) * lonOffset
-            ]);
-        }
-        var endRadians = endBearing * Math.PI / 180;
-        points.push([
-            point.lat + Math.cos(endRadians) * latOffset,
-            point.lon + Math.sin(endRadians) * lonOffset
-        ]);
-        points.push([point.lat, point.lon]);
-        return points;
-    }
-
-    function _drawTropicalJtwcWindRadii(storm, point, selectStormOnClick, extendBounds) {
-        if (!point || !Array.isArray(point.radii) || point.radii.length < 4) return;
-        var quadrants = [
-            { start: 0, end: 90, radius: point.radii[0] },
-            { start: 90, end: 180, radius: point.radii[1] },
-            { start: 180, end: 270, radius: point.radii[2] },
-            { start: 270, end: 360, radius: point.radii[3] }
-        ];
-        quadrants.forEach(function(quadrant) {
-            var sector = _tropicalWindRadiiSector(
-                point, quadrant.radius, quadrant.start, quadrant.end
-            );
-            if (!sector) return;
-            var layer = selectStormOnClick(L.polygon(sector, {
-                color: '#ffb74d',
-                fillColor: '#ffb74d',
-                fillOpacity: 0.09,
-                weight: 1,
-                opacity: 0.52,
-                interactive: true
-            })).addTo(tropicalRouteStormLayer);
-            extendBounds(layer.getBounds());
-        });
     }
 
     function _renderTropicalRouteDetails(storm) {
@@ -20928,7 +20786,6 @@
         var forecastPoints = storm._forecastPoints || [];
         var track = forecastPoints.length >= 2 ? forecastPoints : _tropicalTrackPoints(storm);
         var points = track.length >= 2 ? track : _tropicalPointsFrom(storm.trackPts);
-        var pastPoints = _tropicalPointsFrom(storm.pastTrackPts || storm.bestTrackPts);
         var color = _tropicalColor(storm);
         var extendBounds = function(value) {
             bounds.extend(value);
@@ -20940,8 +20797,7 @@
             });
             return layer;
         };
-        if (tropicalRouteLayerPrefs.forecastCone &&
-            storm.conePgn && storm.conePgn.coordinates && storm.conePgn.coordinates[0]) {
+        if (storm.conePgn && storm.conePgn.coordinates && storm.conePgn.coordinates[0]) {
             var coneRing = storm.conePgn.coordinates[0].map(function(pair) { return [pair[1], pair[0]]; });
             var cone = selectStormOnClick(L.polygon(coneRing, {
                 color: '#f8d66d', fillColor: '#f8d66d', fillOpacity: 0.12,
@@ -20949,46 +20805,13 @@
             })).addTo(tropicalRouteStormLayer);
             extendBounds(cone.getBounds());
         }
-        if (tropicalRouteLayerPrefs.pastTrack && pastPoints.length >= 2) {
-            var pastLine = selectStormOnClick(L.polyline(pastPoints.map(function(point) {
-                return [point.lat, point.lon];
-            }), {
-                color: '#b0bec5',
-                weight: 2.5,
-                opacity: 0.82,
-                dashArray: '3,6',
-                interactive: true
-            })).addTo(tropicalRouteStormLayer);
-            extendBounds(pastLine.getBounds());
-        }
-        if (tropicalRouteLayerPrefs.forecastTrack && points.length >= 2) {
+        if (points.length >= 2) {
             var line = selectStormOnClick(L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
                 color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: true
             })).addTo(tropicalRouteStormLayer);
             extendBounds(line.getBounds());
         }
-        if (tropicalRouteLayerPrefs.windRadii && Array.isArray(storm.windRadiiPgn)) {
-            storm.windRadiiPgn.forEach(function(radii) {
-                if (!radii || !Array.isArray(radii.coordinates) || !radii.coordinates[0]) return;
-                var ring = radii.coordinates[0].map(function(pair) { return [pair[1], pair[0]]; });
-                if (ring.length < 4) return;
-                var radiiLayer = selectStormOnClick(L.polygon(ring, {
-                    color: '#ffb74d',
-                    fillColor: '#ffb74d',
-                    fillOpacity: 0.08,
-                    weight: 1,
-                    opacity: 0.5,
-                    interactive: true
-                })).addTo(tropicalRouteStormLayer);
-                extendBounds(radiiLayer.getBounds());
-            });
-        }
-        if (tropicalRouteLayerPrefs.windRadii) {
-            forecastPoints.forEach(function(point) {
-                _drawTropicalJtwcWindRadii(storm, point, selectStormOnClick, extendBounds);
-            });
-        }
-        if (tropicalRouteLayerPrefs.forecastTrack && forecastPoints.length) {
+        if (forecastPoints.length) {
             forecastPoints.forEach(function(point) {
                 var pointStorm = _tropicalPointStorm(storm, point);
                 var icon = L.divIcon({
@@ -21238,7 +21061,6 @@
         if (!window.L) { setTimeout(initTropicalRoute, 300); return; }
         var satelliteToggle = document.getElementById('tropical-satellite-toggle-cb');
         if (satelliteToggle) satelliteToggle.checked = tropicalRouteMapMode === 'satellite';
-        _syncTropicalLayerControls();
         if (!tropicalRouteMap) {
             tropicalRouteMap = L.map('tropical-route-map', {
                 zoomControl: false,
@@ -21279,12 +21101,6 @@
         if (!tropicalRouteRefreshTimer) {
             tropicalRouteRefreshTimer = setInterval(function() { loadTropicalRouteData(true); }, 300000);
         }
-        if (!tropicalRouteSatelliteRefreshTimer) {
-            tropicalRouteSatelliteRefreshTimer = setInterval(
-                _refreshTropicalSatelliteLayer,
-                10 * 60 * 1000
-            );
-        }
         if (!tropicalRouteStorms.length) {
             loadTropicalRouteData(false);
         } else if (tropicalRouteInitialViewPending) {
@@ -21320,10 +21136,6 @@
             if (tropicalRouteRefreshTimer) {
                 clearInterval(tropicalRouteRefreshTimer);
                 tropicalRouteRefreshTimer = null;
-            }
-            if (tropicalRouteSatelliteRefreshTimer) {
-                clearInterval(tropicalRouteSatelliteRefreshTimer);
-                tropicalRouteSatelliteRefreshTimer = null;
             }
             if (tropicalRouteMap) setTimeout(function() { tropicalRouteMap.invalidateSize({ pan: false, animate: false }); }, 80);
             if (!weatherLoadedLocationKey) {
