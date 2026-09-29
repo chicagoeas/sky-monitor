@@ -9026,7 +9026,10 @@
             _lastPirateLon = null;
             // PirateWeather failed — try Open-Meteo as a live backup
             try {
-                await fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal);
+                // Match PirateWeather's single-render behavior: keep the
+                // Open-Meteo values available for QC, but let the PWS/NWS
+                // source-selection chain paint the current observation once.
+                await fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal, true);
                 if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
                 window._pirateLoadFailed = false;
             } catch(e2) {
@@ -9353,7 +9356,7 @@
 
     // Full Open-Meteo fallback — used when PirateWeather is completely unavailable
     // Populates all weather data EXCEPT minutely (not supported by Open-Meteo)
-    async function fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal) {
+    async function fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal, deferObservationRender) {
         function omIcon(code, isDay) {
             var d = isDay !== false;
             if (code === 0) return d ? 'clear-day' : 'clear-night';
@@ -9414,52 +9417,47 @@
         window.pirateAlerts = window.pirateAlerts || [];
 
         document.getElementById('vibeCheck').innerText = fakeCurr.summary;
-        // Open-Meteo is the live backup for the current observation when
-        // PirateWeather is unavailable. Keep the Now card synchronized with
-        // that same current condition until NWS supplies a better observation.
+        // Keep Open-Meteo's values available as the model/QC reference, but
+        // defer the visible current-observation card until source selection.
         currentCondition = fakeCurr.summary || '';
-        if (currentCondition) document.getElementById('conditionText').innerText = currentCondition;
-        var _omCurrentIcon = _pwSummaryIcon(currentCondition, isNightAtStation);
-        if (_omCurrentIcon) {
-            document.getElementById('weatherIcon').src = _omCurrentIcon;
-            document.getElementById('weatherIcon').style.display = 'block';
-        }
-
-        // Temperature
         const temp = fakeCurr.temperature;
-        window.liveTemp = Math.round(temp);
-        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
         liveUV = fakeCurr.uvIndex || 0;
-
-        // Wind
         const windSpeed = fakeCurr.windSpeed, windDir = fakeCurr.windBearing;
-        liveWindSpd = Math.round(windSpeed);
-        document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
-        setWindCompass(liveWindSpd > 0 && windDir != null ? windDir : null);
-
-        // Humidity
         const humidity = cur.relative_humidity_2m; // already 0-100
-        (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-
-        // Feels-like (NWS formula — same as fetchPirate)
-        (function() {
-            var T = temp, W = liveWindSpd, RH = humidity, fl = T;
-            if (T <= 50 && W >= 3) {
-                fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
-            } else if (T >= 70) {
-                var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
-                if (hiSimple >= 80) {
-                    var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH - 0.22475541*T*RH
-                        - 0.00683783*T*T - 0.05391317*RH*RH + 0.00122874*T*T*RH
-                        + 0.00085282*T*RH*RH - 0.00000199*T*T*RH*RH;
-                    if (RH < 13 && T >= 80 && T <= 112) hiRoth -= (13-RH)/4 * Math.sqrt((17-Math.abs(T-95))/17);
-                    if (RH > 85 && T >= 80 && T <= 87) hiRoth += (RH-85)/10 * (87-T)/5;
-                    fl = (T + hiRoth) / 2;
-                } else { fl = hiSimple; }
+        const modelWindSpeed = Math.round(windSpeed);
+        var omFeelsLike = temp;
+        if (temp <= 50 && modelWindSpeed >= 3) {
+            omFeelsLike = 35.74 + 0.6215*temp - 35.75*Math.pow(modelWindSpeed,0.16) + 0.4275*temp*Math.pow(modelWindSpeed,0.16);
+        } else if (temp >= 70) {
+            var hiSimple = 0.5 * (temp + 61.0 + (temp - 68.0) * 1.2 + humidity * 0.094);
+            if (hiSimple >= 80) {
+                var hiRoth = -42.379 + 2.04901523*temp + 10.14333127*humidity - 0.22475541*temp*humidity
+                    - 0.00683783*temp*temp - 0.05391317*humidity*humidity + 0.00122874*temp*temp*humidity
+                    + 0.00085282*temp*humidity*humidity - 0.00000199*temp*temp*humidity*humidity;
+                if (humidity < 13 && temp >= 80 && temp <= 112) hiRoth -= (13-humidity)/4 * Math.sqrt((17-Math.abs(temp-95))/17);
+                if (humidity > 85 && temp >= 80 && temp <= 87) hiRoth += (humidity-85)/10 * (87-temp)/5;
+                omFeelsLike = (temp + hiRoth) / 2;
+            } else { omFeelsLike = hiSimple; }
+        }
+        if (!deferObservationRender) {
+            if (currentCondition) document.getElementById('conditionText').innerText = currentCondition;
+            var _omCurrentIcon = _pwSummaryIcon(currentCondition, isNightAtStation);
+            if (_omCurrentIcon) {
+                document.getElementById('weatherIcon').src = _omCurrentIcon;
+                document.getElementById('weatherIcon').style.display = 'block';
             }
-            liveFeelsLike = fl;
-        })();
-        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
+
+            // Render the model observation only when this function is the
+            // final fallback, not while PWS/NWS QC is still selecting a source.
+            window.liveTemp = Math.round(temp);
+            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
+            liveWindSpd = modelWindSpeed;
+            document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
+            setWindCompass(liveWindSpd > 0 && windDir != null ? windDir : null);
+            (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+            liveFeelsLike = omFeelsLike;
+            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
+        }
 
         // Pressure
         const presIn = (cur.surface_pressure * 0.02953).toFixed(2);
@@ -9537,11 +9535,13 @@
         SkyDB.set(SkyDB.S.weather, 'hourly_data', { ts: Date.now(), data: hourlyRows, tzOffset: window.pirateTimezoneOffset || 0 });
         // Outdoor Score is rendered when the TWC daily forecast arrives.
         computeFloodOutlook();
-        updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, fakeCurr.summary, liveUV, (fakeCurr.precipIntensity || 0) * 100);
+        if (!deferObservationRender) {
+            updateSmartComfort(Math.round(temp), omFeelsLike, Math.round(humidity), modelWindSpeed, fakeCurr.summary, liveUV, (fakeCurr.precipIntensity || 0) * 100);
+        }
         SkyDB.set(SkyDB.S.weather, 'last_conditions', {
             ts: Date.now(),
             temp: Math.round(temp), humidity: Math.round(humidity),
-            feelsLike: Math.round(liveFeelsLike), wind: liveWindSpd,
+            feelsLike: Math.round(omFeelsLike), wind: modelWindSpeed,
             condition: fakeCurr.summary || '', uv: liveUV,
             pressure: presIn || null,
             pressureHTML: (document.getElementById('presVal') || {}).innerHTML || null,
