@@ -3135,6 +3135,8 @@
     var _turnstileSilentWidgetId = null;
     var _turnstileSilentRequestActive = false;
     var _turnstileSilentWaiters = [];
+    var _turnstileSilentTimeoutId = null;
+    const TURNSTILE_SILENT_TIMEOUT_MS = 15000;
     var _turnstileReturnTab = 'home';
     var _turnstileReturnScrollX = 0;
     var _turnstileReturnScrollY = 0;
@@ -4606,7 +4608,12 @@
     }
 
     function _finishSilentTurnstileRequest(token, error) {
+        if (!_turnstileSilentRequestActive) return;
         _turnstileSilentRequestActive = false;
+        if (_turnstileSilentTimeoutId !== null) {
+            clearTimeout(_turnstileSilentTimeoutId);
+            _turnstileSilentTimeoutId = null;
+        }
         if (token) {
             _turnstileToken = token;
             _turnstileTokenIssuedAt = Date.now();
@@ -4621,41 +4628,50 @@
 
     function _requestSilentTurnstileToken() {
         if (_turnstileSilentRequestActive) return;
-        if (typeof turnstile === 'undefined') {
-            setTimeout(_requestSilentTurnstileToken, 250);
-            return;
+        _turnstileSilentRequestActive = true;
+        _turnstileSilentTimeoutId = setTimeout(function() {
+            _finishSilentTurnstileRequest('', new Error('Verification timed out.'));
+        }, TURNSTILE_SILENT_TIMEOUT_MS);
+
+        function tryRequestToken() {
+            if (!_turnstileSilentRequestActive) return;
+            if (typeof turnstile === 'undefined') {
+                setTimeout(tryRequestToken, 250);
+                return;
+            }
+
+            try {
+                if (_turnstileSilentWidgetId === null) {
+                    _turnstileSilentWidgetId = turnstile.render('#turnstile-silent-container', {
+                        sitekey: TURNSTILE_SITE_KEY,
+                        theme: 'dark',
+                        size: 'invisible',
+                        execution: 'execute',
+                        appearance: 'interaction-only',
+                        // Keep the silent renewal action identical to the
+                        // first visible challenge. The reports Worker validates
+                        // this action when it verifies the token.
+                        action: 'report_gate',
+                        callback: function(token) {
+                            _finishSilentTurnstileRequest(token, null);
+                        },
+                        'expired-callback': function() {
+                            _finishSilentTurnstileRequest('', new Error('Verification expired.'));
+                        },
+                        'error-callback': function() {
+                            _finishSilentTurnstileRequest('', new Error('Verification failed.'));
+                        }
+                    });
+                } else {
+                    turnstile.reset(_turnstileSilentWidgetId);
+                }
+                turnstile.execute(_turnstileSilentWidgetId);
+            } catch (error) {
+                _finishSilentTurnstileRequest('', error);
+            }
         }
 
-        _turnstileSilentRequestActive = true;
-        try {
-            if (_turnstileSilentWidgetId === null) {
-                _turnstileSilentWidgetId = turnstile.render('#turnstile-silent-container', {
-                    sitekey: TURNSTILE_SITE_KEY,
-                    theme: 'dark',
-                    size: 'invisible',
-                    execution: 'execute',
-                    appearance: 'interaction-only',
-                    // Keep the silent renewal action identical to the
-                    // first visible challenge. The reports Worker validates
-                    // this action when it verifies the token.
-                    action: 'report_gate',
-                    callback: function(token) {
-                        _finishSilentTurnstileRequest(token, null);
-                    },
-                    'expired-callback': function() {
-                        _finishSilentTurnstileRequest('', new Error('Verification expired.'));
-                    },
-                    'error-callback': function() {
-                        _finishSilentTurnstileRequest('', new Error('Verification failed.'));
-                    }
-                });
-            } else {
-                turnstile.reset(_turnstileSilentWidgetId);
-            }
-            turnstile.execute(_turnstileSilentWidgetId);
-        } catch (error) {
-            _finishSilentTurnstileRequest('', error);
-        }
+        tryRequestToken();
     }
 
     // Report tokens are one-use. The first visit uses the visible widget;
@@ -14029,6 +14045,58 @@
     let reportPinIcon = null;
     let privacySnapGeneration = 0;
     let selectedReportType = '';
+    const REPORT_SUBMISSION_ID_STORAGE_KEY = 'skymonitor_pending_report_submission_id';
+    var _pendingReportSubmissionId = '';
+
+    function createReportSubmissionId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            try { return window.crypto.randomUUID(); } catch (error) {}
+        }
+        var bytes = new Uint8Array(16);
+        if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+            try {
+                window.crypto.getRandomValues(bytes);
+            } catch (error) {
+                for (var i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+            }
+        } else {
+            for (var i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+        }
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        var hex = Array.from(bytes, function(byte) {
+            return byte.toString(16).padStart(2, '0');
+        }).join('');
+        return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' +
+            hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+    }
+
+    function getPendingReportSubmissionId() {
+        if (_pendingReportSubmissionId) return _pendingReportSubmissionId;
+        try {
+            _pendingReportSubmissionId =
+                localStorage.getItem(REPORT_SUBMISSION_ID_STORAGE_KEY) || '';
+        } catch (error) {}
+        if (!_pendingReportSubmissionId) {
+            _pendingReportSubmissionId = createReportSubmissionId();
+            try {
+                localStorage.setItem(
+                    REPORT_SUBMISSION_ID_STORAGE_KEY,
+                    _pendingReportSubmissionId
+                );
+            } catch (error) {}
+        }
+        return _pendingReportSubmissionId;
+    }
+
+    function clearPendingReportSubmissionId(expectedId) {
+        if (expectedId && _pendingReportSubmissionId &&
+            _pendingReportSubmissionId !== expectedId) return;
+        _pendingReportSubmissionId = '';
+        try {
+            localStorage.removeItem(REPORT_SUBMISSION_ID_STORAGE_KEY);
+        } catch (error) {}
+    }
 
     // Report icons are resolved here so report pickers, IEM/NWS storm reports,
     // user-report markers, nearby reports, and popups stay visually consistent.
@@ -14153,6 +14221,11 @@
             b.style.color = '#e0e0e0';
         });
         if (cat.sub) {
+            if (!cat.sub.options.some(function(option) {
+                return option.type === selectedReportType;
+            })) {
+                selectedReportType = '';
+            }
             // Highlight selected top-level
             const topBtn = document.querySelector('#report-cat-grid button[data-cat-type="' + cat.type + '"]');
             if (topBtn) { topBtn.style.background = 'rgba(79,195,247,0.12)'; topBtn.style.borderColor = 'var(--primary)'; }
@@ -16894,8 +16967,10 @@
         }).bindTooltip('Report location', { permanent: false }).addTo(reportingMap);
         reportPinMarker.on('dragend', function(e) {
             const pos = e.target.getLatLng();
-            reportLat = parseFloat(pos.lat.toFixed(5));
-            reportLon = parseFloat(pos.lng.toFixed(5));
+            const nextLat = parseFloat(pos.lat.toFixed(5));
+            const nextLon = parseFloat(pos.lng.toFixed(5));
+            reportLat = nextLat;
+            reportLon = nextLon;
             localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
             localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
             updatePinCoordsDisplay();
@@ -20038,29 +20113,49 @@
         const notes = document.getElementById('report-notes').value.trim();
         const btn = document.querySelector('#reporting-tab button[onclick="submitUserReport()"]');
         const status = document.getElementById('report-status');
-        const reportTurnstileToken = await getTurnstileTokenForReport().catch(function(error) {
-            if (status) {
-                status.style.display = 'block';
-                status.textContent = 'Verification could not be renewed. Please try again.';
-                status.style.color = 'var(--warning)';
-            }
-            return null;
-        });
-        if (!reportTurnstileToken) {
-            submitUserReport._inFlight = false;
-            return;
+        const submissionId = getPendingReportSubmissionId();
+        const reportBody = {
+            lat: reportLat != null ? reportLat : parseFloat(lat),
+            lon: reportLon != null ? reportLon : parseFloat(lon),
+            type: type,
+            notes: notes,
+            time: new Date().toISOString(),
+            clientRequestId: submissionId
+        };
+        if (btn) { btn.textContent = '\u23F3 Preparing...'; btn.disabled = true; }
+        if (status) {
+            status.style.display = 'block';
+            status.textContent = 'Preparing secure submission...';
+            status.style.color = '#888';
         }
-        if (btn) { btn.textContent = '\u23F3 Submitting...'; btn.disabled = true; }
-        if (status) { status.style.display = 'block'; status.textContent = 'Sending report...'; status.style.color = '#888'; }
         try {
-            const res = await fetch(REPORTS_WORKER_URL, {
+            let reportTurnstileToken;
+            try {
+                reportTurnstileToken = await getTurnstileTokenForReport();
+            } catch (verificationError) {
+                if (status) {
+                    status.textContent = 'Verification could not be renewed. Please try submitting again.';
+                    status.style.color = 'var(--warning)';
+                }
+                return;
+            }
+            if (!reportTurnstileToken) {
+                if (status) status.style.display = 'none';
+                return;
+            }
+
+            if (btn) btn.textContent = '\u23F3 Submitting...';
+            if (status) status.textContent = 'Sending report...';
+            reportBody.turnstileToken = reportTurnstileToken;
+            const res = await _weatherFetch(REPORTS_WORKER_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lat: reportLat != null ? reportLat : parseFloat(lat), lon: reportLon != null ? reportLon : parseFloat(lon), type: type, notes: notes, time: new Date().toISOString(), turnstileToken: reportTurnstileToken })
-            });
+                body: JSON.stringify(reportBody)
+            }, 15000);
             if (res.ok) {
                 clearReportCategory();
                 document.getElementById('report-notes').value = '';
+                clearPendingReportSubmissionId(submissionId);
                 invalidateTurnstile();
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
@@ -20068,10 +20163,7 @@
                 // The Worker uses 403 specifically when Turnstile rejects or
                 // has expired. Re-open the visible gate so the user can
                 // recover without guessing why the submission failed.
-                var errorBody = '';
-                try { errorBody = await res.text(); } catch (_) {}
-                var needsVerification = res.status === 403 &&
-                    /turnstile verification required|verification failed|verification expired|bot detected/i.test(errorBody);
+                var needsVerification = res.status === 403;
                 invalidateTurnstile();
                 if (needsVerification) {
                     // Do not erase the device-level verification just because
@@ -20082,6 +20174,12 @@
                         status.textContent = 'Report verification could not be refreshed. Please try submitting again.';
                         status.style.color = 'var(--warning)';
                     }
+                } else if (res.status === 409) {
+                    clearPendingReportSubmissionId(submissionId);
+                    if (status) {
+                        status.textContent = 'A previous attempt was accepted, but these report details changed. Tap Submit again to send the updated report.';
+                        status.style.color = 'var(--warning)';
+                    }
                 } else if (status) {
                     status.textContent = 'Report failed. Please try again.';
                     status.style.color = 'var(--danger)';
@@ -20089,10 +20187,19 @@
             }
         } catch(e) {
             invalidateTurnstile();
-            if (status) { status.textContent = _isOffline ? 'You cannot send reports when offline.' : 'Report failed. Please try again.'; status.style.color = 'var(--warning)'; }
+            if (status) {
+                const timedOut = /timed out/i.test(String(e && e.message || e));
+                status.textContent = _isOffline
+                    ? 'You cannot send reports when offline. Please reconnect and retry.'
+                    : timedOut
+                        ? 'No confirmation received. Retrying the same report is safe; edited details may need a new submission.'
+                        : 'Report failed. Please try again.';
+                status.style.color = 'var(--warning)';
+            }
+        } finally {
+            if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
+            submitUserReport._inFlight = false;
         }
-        if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
-        submitUserReport._inFlight = false;
     }
 
     // ——— NEARBY USER REPORTS (home tab, BETA) ———
