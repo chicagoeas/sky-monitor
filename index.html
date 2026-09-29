@@ -3291,6 +3291,7 @@
     window.meteoAlarmAlerts = [];
     window.environmentCanadaAlerts = [];
     window.locationCountryCode = '';
+    window.locationState = '';
     window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
@@ -5274,8 +5275,42 @@
         updateOutlookMap(activeOutlookCenter, day);
     }
 
+    function _isAlaskaOrHawaiiLocation() {
+        var state = String(window.locationState || '').trim().toLowerCase();
+        return state === 'ak' || state === 'alaska' ||
+            state === 'hi' || state === 'hawaii';
+    }
+
+    function _syncOutlookCenterAvailability() {
+        var restricted = _isAlaskaOrHawaiiLocation();
+        var select = document.getElementById('outlook-center-select');
+        if (select) {
+            ['spc', 'wpc'].forEach(function(center) {
+                var option = select.querySelector('option[value="' + center + '"]');
+                if (option) {
+                    option.hidden = restricted;
+                    option.disabled = restricted;
+                }
+            });
+        }
+        return restricted;
+    }
+
+    function _setWeatherLocationState(state) {
+        window.locationState = String(state || '').trim();
+        if (_syncOutlookCenterAvailability() &&
+            (activeOutlookCenter === 'spc' || activeOutlookCenter === 'wpc')) {
+            switchOutlookCenter('cpc');
+        }
+    }
+
     function updateOutlookMap(center, day) {
         day = day || 1;
+        if (_isAlaskaOrHawaiiLocation() && (center === 'spc' || center === 'wpc')) {
+            // Guard direct/programmatic map updates as well as the selector.
+            switchOutlookCenter('cpc');
+            return;
+        }
         const img = document.getElementById('spc-map');
         const lnk = document.getElementById('spc-link');
         const titleEl = document.getElementById('outlook-title');
@@ -5364,6 +5399,10 @@
     }
 
     function switchOutlookCenter(center) {
+        if (_syncOutlookCenterAvailability() &&
+            (center === 'spc' || center === 'wpc')) {
+            center = 'cpc';
+        }
         activeOutlookCenter = center;
 
         // Sync the native select if called programmatically
@@ -11103,6 +11142,11 @@
             window.isOutsideUS = false; applyUSMode();
             const p = await pointsRes.json();
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+            var _nwsPointState = p.properties.relativeLocation &&
+                p.properties.relativeLocation.properties &&
+                p.properties.relativeLocation.properties.state;
+            if (!_nwsPointState) _nwsPointState = p.properties.state;
+            if (_nwsPointState) _setWeatherLocationState(_nwsPointState);
             // Elevation of the user's requested coordinate (meters), returned by the NWS
             // /points/ endpoint — used for lapse-rate correction when comparing NWS obs
             // (which may be from a much higher station) against local PWS readings.
@@ -22439,6 +22483,8 @@
         window.isBeachLocation = false;
         window.isWaterLocation = false;
         window.locationCountryCode = '';
+        window.locationState = '';
+        _syncOutlookCenterAvailability();
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
@@ -22470,6 +22516,9 @@
                     window.locationCountryCode = String(
                         _nomD.country_code || _nomD.countryCode || ''
                     ).toUpperCase();
+                    if (_nomD.address && _nomD.address.state) {
+                        _setWeatherLocationState(_nomD.address.state);
+                    }
                     if (_nomD.error) {
                         window.isWaterLocation = true;
                     } else {
