@@ -3154,13 +3154,27 @@
     // preserve LOCAL OBSERVATION rather than importing conditions from a
     // distant airport in a different weather regime.
     const GLOBAL_AVIATION_MAX_DISTANCE_KM = 100;
-    // A PWS must stay within this temperature delta of PirateWeather's
-    // independent current observation to be eligible for display.
-    const PWS_MAX_PIRATE_TEMP_DEVIATION_F = 15;
+    // Reject only extreme PWS temperature outliers against the best available
+    // current-weather reference: PirateWeather normally, Open-Meteo if PW fails.
+    const PWS_MAX_REFERENCE_TEMP_DEVIATION_F = 15;
     // Humidity is checked separately against nearby PWS peers. This is a
     // percentage-point difference, not a relative percentage.
     const PWS_MAX_NEIGHBOR_HUMIDITY_DEVIATION_PCT = 30;
     const PWS_MIN_HUMIDITY_PEERS = 2;
+
+    function setPwsQcTemperatureReference(source, temperature) {
+        var numericTemperature = temperature == null ? null : Number(temperature);
+        window._pwsQcTemperatureReference = {
+            source: source || null,
+            temperature: Number.isFinite(numericTemperature) ? numericTemperature : null
+        };
+    }
+
+    function getPwsQcTemperatureReference() {
+        var reference = window._pwsQcTemperatureReference;
+        return reference && reference.temperature != null &&
+            isFinite(reference.temperature) ? Number(reference.temperature) : null;
+    }
 
     function pwsPassesNeighborHumidityQC(station, peerStations) {
         if (!station || station.humidity == null || !isFinite(station.humidity)) return false;
@@ -3272,6 +3286,7 @@
     window._syncMinDone = false;
     window._maybeHideSync = function() {};
     window.pirateCurrently = null;
+    window._pwsQcTemperatureReference = null;
     window.pirateAlerts = [];
     window.meteoAlarmAlerts = [];
     window.environmentCanadaAlerts = [];
@@ -5952,6 +5967,32 @@
         return stations[0] || null;
     }
 
+    function applyPwsStations(stations, loadGeneration) {
+        if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) {
+            return { station: null, available: false };
+        }
+        const stationList = Array.isArray(stations) ? stations : [];
+        const station = stationList[0] || null;
+        const available = !!(station && station.temp !== null && station.humidity !== null);
+        window.wuData = station;
+        window.wuNeighborData = stationList.slice(1).filter(function(item) { return item != null; });
+        window.wuElevFt = station && station.elev != null ? station.elev : null;
+        window.wuDeviates = false;
+
+        const stationEl = document.getElementById('wuStation');
+        const linkEl = document.getElementById('wuLink');
+        if (available && station.stationId) {
+            if (linkEl) {
+                linkEl.innerText = station.stationId;
+                linkEl.href = 'https://www.wunderground.com/dashboard/pws/' + station.stationId;
+            }
+            if (stationEl) stationEl.style.display = 'block';
+        } else if (stationEl) {
+            stationEl.style.display = 'none';
+        }
+        return { station: station, available: available };
+    }
+
     function getFormattedTime(event, totalMs) {
         const eventLower = event.toLowerCase();
         const shortFused = ["flash flood warning","severe thunderstorm warning","special marine warning","tornado warning","extreme wind warning","snow squall warning","dust storm warning"];
@@ -7118,14 +7159,13 @@
             if (skipObservation) return;
             const _intlPw = window.pirateCurrently;
             const _intlRawCandidates = [];
-            const _intlPwTemp = _intlPw.temperature != null &&
-                isFinite(_intlPw.temperature) ? _intlPw.temperature : null;
+            const _intlPwTemp = getPwsQcTemperatureReference();
             const _intlIsValidPws = function(s) {
                 return s && s.temp != null && s.humidity != null &&
                     isFinite(s.temp) && isFinite(s.humidity) &&
                     s.humidity >= 0 && s.humidity <= 100 &&
                     (_intlPwTemp === null ||
-                        Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_PIRATE_TEMP_DEVIATION_F);
+                        Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_REFERENCE_TEMP_DEVIATION_F);
             };
             if (_intlIsValidPws(window.wuData)) _intlRawCandidates.push({ s: window.wuData, rank: 0 });
             (window.wuNeighborData || []).forEach(function(s, i) {
@@ -7170,7 +7210,7 @@
                 }
             }
             // Render PWS values for international locations when available.
-            // PirateWeather remains the completed-source replacement only for
+            // The active model provider (PirateWeather or Open-Meteo) fills only
             // fields the PWS record does not contain.
             if (_intlTemp != null) {
                 window.liveTemp = Math.round(_intlTemp);
@@ -8691,6 +8731,42 @@
         const locationChanged = (requestLat !== _lastPirateLat || requestLon !== _lastPirateLon);
         if (!locationChanged && now - _lastPirateFetch < 300000 && !_isOffline) return; // throttle to 5 min (bypass when offline so coming back online clears the flag)
         window._pirateLoadFailed = false;
+        window._pwsQcTemperatureReference = null;
+        const pwsCountryPromise = (async function() {
+            var country = String(
+                window.locationCountryCode || window._gpsCountryCode || ''
+            ).trim().toUpperCase();
+            if (!country && window._locationClassificationPromise) {
+                await Promise.race([
+                    window._locationClassificationPromise.catch(function() {}),
+                    new Promise(function(resolve) { setTimeout(resolve, 1200); })
+                ]);
+                country = String(
+                    window.locationCountryCode || window._gpsCountryCode || ''
+                ).trim().toUpperCase();
+            }
+            return country;
+        })();
+        // Start the PWS request independently of PirateWeather. US/Canadian
+        // lookups can now finish during either the PW request or Open-Meteo
+        // fallback, so the same QC chain can select the nearest station.
+        const wuPromise = pwsCountryPromise.then(function(country) {
+            if (country && country !== 'US' && country !== 'CA') return [];
+            return fetchWUMulti(requestLat, requestLon, requestSignal);
+        });
+        const wuStationsPromise = pwsCountryPromise.then(function(country) {
+            if (country && country !== 'US' && country !== 'CA') return [];
+            const waitMs = country ? 4000 : 2500;
+            return Promise.race([
+                wuPromise,
+                new Promise(function(resolve) { setTimeout(function() { resolve([]); }, waitMs); })
+            ]);
+        });
+        wuPromise.then(function(lateStations) {
+            if (Array.isArray(lateStations) && lateStations.length) {
+                applyPwsStations(lateStations, loadGeneration);
+            }
+        }).catch(function() {});
         try {
             const resP = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/fast?lat=' +
                 encodeURIComponent(requestLat) + '&lon=' + encodeURIComponent(requestLon), {
@@ -8705,45 +8781,9 @@
             window._fastNwsAlerts = fastPayload.nwsAlerts || null;
             window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
-            // Start the PWS lookup here for US/Canadian QC. International
-            // locations use the official METAR/ASOS/AWOS chain instead; a
-            // slow or empty WU response must not add ~10 seconds to that path.
-            let wuStations;
-            const wuPromise = fetchWUMulti(requestLat, requestLon, requestSignal);
-            var countryForPws = String(
-                window.locationCountryCode || window._gpsCountryCode || ''
-            ).trim().toUpperCase();
-            if (!countryForPws && window._locationClassificationPromise) {
-                // The reverse-geocoder writes locationCountryCode before its
-                // optional beach lookup finishes. Give that first step a
-                // short head start, but never wait on geocoding indefinitely.
-                await Promise.race([
-                    window._locationClassificationPromise.catch(function() {}),
-                    new Promise(function(resolve) { setTimeout(resolve, 1200); })
-                ]);
-                countryForPws = String(
-                    window.locationCountryCode || window._gpsCountryCode || ''
-                ).trim().toUpperCase();
-            }
-            if (countryForPws && countryForPws !== 'US' && countryForPws !== 'CA') {
-                wuStations = [];
-            } else if (!countryForPws) {
-                // Unknown country: preserve the NWS path without allowing a
-                // slow PWS lookup to become the page's critical path.
-                wuStations = await Promise.race([
-                    wuPromise,
-                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 2500); })
-                ]);
-            } else {
-                // A PWS is valuable enrichment, but it must not block the
-                // official observation chain on a phone. The late-result
-                // handler below still applies a station that arrives after
-                // this bounded window.
-                wuStations = await Promise.race([
-                    wuPromise,
-                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 4000); })
-                ]);
-            }
+            // Wait only within the existing PWS budget; a slower station lookup
+            // must not hold the official observation chain hostage.
+            const wuStations = await wuStationsPromise;
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Mark the throttle only after the PirateWeather response has been
             // validated. If rendering or the request fails, the next refresh
@@ -8751,20 +8791,8 @@
             _lastPirateFetch = Date.now();
             _lastPirateLat = requestLat;
             _lastPirateLon = requestLon;
-            const wu = wuStations[0] || null;
-            const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
+            applyPwsStations(wuStations, loadGeneration);
             // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
-            const useWU = wuAvailable;
-            window.wuData = wu || null;
-            window.wuNeighborData = wuStations.slice(1).filter(function(s) { return s != null; });
-            window.wuElevFt = (wu && wu.elev != null) ? wu.elev : null;
-            window.wuDeviates = false; // reset; fetchNWSChain sets this based on wuData availability
-            const wuStationEl = document.getElementById('wuStation');
-            const wuLinkEl = document.getElementById('wuLink');
-            if (useWU && wu.stationId) {
-                wuLinkEl.innerText = wu.stationId; wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
-                wuStationEl.style.display = 'block';
-            } else wuStationEl.style.display = 'none';
             const curr = d.currently;
             window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
@@ -8788,6 +8816,7 @@
             if (curr.precipProbability != null && curr.precipProbability < 0)        { curr.precipProbability = null;   _currSentinelBad = true; }
             if (curr.cloudCover != null && curr.cloudCover < 0)                      { curr.cloudCover = null;          _currSentinelBad = true; }
             if (curr.visibility != null && curr.visibility < 0)                      { curr.visibility = null;          _currSentinelBad = true; }
+            setPwsQcTemperatureReference('PirateWeather', curr.temperature);
             // _patchSentinelsFromOpenMeteo is called after hourly data is stored below
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
@@ -8988,21 +9017,6 @@
             _isOffline = false;
             window._pirateLoadFailed = false;
             lastSyncTime = new Date(); localStorage.setItem('sm_last_sync', lastSyncTime.getTime());
-            wuPromise.then(function(lateStations) {
-                if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-                if (!Array.isArray(lateStations) || !lateStations.length) return;
-                var late = lateStations[0];
-                window.wuData = late || null;
-                window.wuNeighborData = lateStations.slice(1).filter(function(s) { return s != null; });
-                window.wuElevFt = late && late.elev != null ? late.elev : null;
-                var stationEl = document.getElementById('wuStation');
-                var linkEl = document.getElementById('wuLink');
-                if (late && late.stationId && stationEl && linkEl) {
-                    linkEl.innerText = late.stationId;
-                    linkEl.href = 'https://www.wunderground.com/dashboard/pws/' + late.stationId;
-                    stationEl.style.display = 'block';
-                }
-            }).catch(function() {});
         } catch(e) {
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Do not throttle a failed attempt. This is especially important
@@ -9163,6 +9177,11 @@
                     if (cached && cached.data) renderTWCForecast(cached.data);
                 });
             }
+            // PirateWeather and Open-Meteo may both fail; still allow a valid
+            // nearby PWS observation to reach the official-station QC chain.
+            const fallbackWuStations = await wuStationsPromise;
+            if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+            applyPwsStations(fallbackWuStations, loadGeneration);
         }
     }
 
@@ -9378,7 +9397,7 @@
         const utcOffH = (d.utc_offset_seconds || 0) / 3600;
         if (d.utc_offset_seconds != null) { stationTzOffset = d.utc_offset_seconds; window.pirateTimezoneOffset = utcOffH; }
 
-        // Build PirateWeather-compatible current object so the rest of the app can use it normally
+        // Build a current-weather-compatible object so the rest of the app can use it normally.
         const fakeCurr = {
             temperature: cur.temperature_2m,
             humidity: cur.relative_humidity_2m / 100,
@@ -9391,6 +9410,7 @@
             icon: omIcon(cur.weather_code, !isNightAtStation)
         };
         window.pirateCurrently = fakeCurr;
+        setPwsQcTemperatureReference('Open-Meteo', fakeCurr.temperature);
         window.pirateAlerts = window.pirateAlerts || [];
 
         document.getElementById('vibeCheck').innerText = fakeCurr.summary;
@@ -9855,10 +9875,12 @@
             if (val === null || val === undefined) return '--';
             return unit === 'temperature' ? _fmtTemp(val) : Math.round(val) + unit;
         }
-        var source = 'PWS (WU QC ✓)';
+        var reference = window._pwsQcTemperatureReference || {};
+        var referenceSource = reference.source || 'Current weather backup';
+        var source = 'PWS (QC ✓)';
         if (!pws1) {
             if (officialActive) source = officialLabel + ' (no QC-passing PWS nearby)';
-            else source = 'PirateWeather (no PWS or official data)';
+            else source = referenceSource + ' (no PWS or official data)';
         }
         var rows = '';
         var pws1Color = pws1 ? '#00e676' : '#9e9e9e';
@@ -9872,13 +9894,13 @@
               + '<td style="text-align:right; padding-right:8px;">' + fmt(officialTemp, 'temperature') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(officialHum, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + officialColor + ';">' + (officialActive ? (pws1 ? 'Standby' : 'Override ✓') : 'Unavailable') + '</td></tr>';
-        var pirateTemp = window.pirateCurrently && window.pirateCurrently.temperature !== null ? window.pirateCurrently.temperature : null;
-        var pirateActive = !pws1 && !officialActive;
-        var pirateColor = pirateActive ? '#ffd54f' : '#9e9e9e';
-        rows += '<tr><td style="padding:3px 0; color:' + pirateColor + ';">⬤ PirateWeather</td>'
-              + '<td style="text-align:right; padding-right:8px;">' + fmt(pirateTemp, 'temperature') + '</td>'
+        var referenceTemp = reference.temperature != null ? reference.temperature : null;
+        var referenceActive = !pws1 && !officialActive;
+        var referenceColor = referenceActive ? '#ffd54f' : '#9e9e9e';
+        rows += '<tr><td style="padding:3px 0; color:' + referenceColor + ';">⬤ ' + escapeHtml(referenceSource) + '</td>'
+              + '<td style="text-align:right; padding-right:8px;">' + fmt(referenceTemp, 'temperature') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">—</td>'
-              + '<td style="font-size:0.78em; color:' + pirateColor + ';">' + (pirateActive ? 'Active ✓' : 'Backup') + '</td></tr>';
+              + '<td style="font-size:0.78em; color:' + referenceColor + ';">' + (referenceActive ? 'Active ✓' : 'Backup') + '</td></tr>';
         panel.innerHTML = '<div style="font-weight:700; color:#4fc3f7; margin-bottom:6px;">Active: ' + source + '</div>'
             + '<table style="width:100%; border-collapse:collapse;">'
             + '<thead><tr style="opacity:0.45;"><th style="text-align:left; padding-bottom:4px; font-weight:600;">Source</th>'
@@ -9933,7 +9955,7 @@
     // structurally valid station response but fails while the observation/QC
     // chain is being resolved.  In that case the old broad catch left the
     // station label and condition behind while temp/wind/humidity stayed "--".
-    // Use the already-fetched PWS first, then PirateWeather, and complete the
+    // Use the already-fetched PWS first, then the active model backup, and complete the
     // card in one place so a retry is not required.
     function _renderLocalObservationFallback() {
         try {
@@ -9953,7 +9975,12 @@
             var stationEl = document.getElementById('stationName');
             if (stationEl) stationEl.innerText = 'LOCAL OBSERVATION';
             var metaEl = document.getElementById('meta-name');
-            if (metaEl && !pwsUsable) metaEl.innerText = 'PirateWeather API';
+            if (metaEl && !pwsUsable) {
+                var modelSource = window._pwsQcTemperatureReference &&
+                    window._pwsQcTemperatureReference.source;
+                metaEl.innerText = modelSource === 'Open-Meteo'
+                    ? 'Open-Meteo API' : 'PirateWeather API';
+            }
             var wuStationEl = document.getElementById('wuStation');
             var wuLinkEl = document.getElementById('wuLink');
             if (pwsUsable && pws.stationId && wuStationEl && wuLinkEl) {
@@ -10387,13 +10414,12 @@
 
         // ── Shared PWS quality-control chain ─────────────────────────────────
         // This deliberately mirrors fetchNWSChain:
-        //   QC-passing PWS → official station fallback → PirateWeather.
+        //   QC-passing PWS → official station fallback → active model backup.
         // The official airport observation is a reference/fallback, never the
         // first choice when a nearby PWS passes the same QC rules.
         var _eccWu = window.wuData;
         var _eccPwNowPre = window.pirateCurrently;
-        var _eccPwTempPre = (_eccPwNowPre && _eccPwNowPre.temperature != null)
-            ? _eccPwNowPre.temperature : null;
+        var _eccPwTempPre = getPwsQcTemperatureReference();
         var _eccMed = function(a) {
             var m = Math.floor(a.length / 2);
             return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
@@ -10406,7 +10432,7 @@
         var _eccIsValidStation = function(s) {
             if (!s || s.temp === null || s.humidity === null) return false;
             if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > PWS_MAX_REFERENCE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var _eccNeighbors = (window.wuNeighborData || []).filter(_eccIsValidStation);
@@ -10416,8 +10442,7 @@
                 .sort(function(a, b) { return a - b; });
             _eccNeighborMedianTemp = _eccMed(_eccNeighborTemps);
         }
-        var _eccPwTemp = (_eccPwNowPre && _eccPwNowPre.temperature != null)
-            ? _eccPwNowPre.temperature : null;
+        var _eccPwTemp = getPwsQcTemperatureReference();
         var _eccReferenceTemp = tempF !== null
             ? tempF
             : (_eccNeighborMedianTemp !== null ? _eccNeighborMedianTemp : _eccPwTemp);
@@ -10465,7 +10490,7 @@
 
         var _eccOfficialFallback = !_eccWuAvail && _eccOfficialTempF !== null;
         var _eccPw = window.pirateCurrently || {};
-        var _eccSource = _eccWuAvail ? 'pws' : (_eccOfficialFallback ? 'ecc' : 'pirate');
+        var _eccSource = _eccWuAvail ? 'pws' : (_eccOfficialFallback ? 'ecc' : 'model');
         var _eccTemp = null, _eccHumidity = null, _eccWind = null, _eccWindDir = null;
         if (_eccSource === 'pws') {
             _eccTemp = _eccWu.temp;
@@ -10519,7 +10544,7 @@
         // Feels-like calculation is the same NWS wind-chill/heat-index
         // calculation, using the selected source values above.
         var _eccFeels = null;
-        if (_eccSource === 'pirate' && _eccPw.apparentTemperature != null) {
+        if (_eccSource === 'model' && _eccPw.apparentTemperature != null) {
             _eccFeels = _eccPw.apparentTemperature;
         } else if (_eccTemp != null && isFinite(_eccTemp)) {
             var _eccRhForFeels = _eccHumidity;
@@ -10800,12 +10825,12 @@
         }
 
         // This is intentionally the same PWS QC pass as the ECCC chain:
-        // validate humidity and a 15°F PirateWeather outlier limit, build a
+        // validate humidity and a 15°F active-model outlier limit, build a
         // neighbor median, prefer complete observations, then compare to the
         // independent official station before selecting a source.
         var wu = window.wuData;
         var pwNow = window.pirateCurrently;
-        var pwTemp = pwNow && pwNow.temperature != null ? pwNow.temperature : null;
+        var pwTemp = getPwsQcTemperatureReference();
         var median = function(values) {
             var middle = Math.floor(values.length / 2);
             return values.length % 2 ? values[middle] :
@@ -10818,7 +10843,7 @@
         var isValidStation = function(station) {
             if (!station || station.temp === null || station.humidity === null) return false;
             if (!isFinite(station.humidity) || station.humidity < 0 || station.humidity > 100) return false;
-            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > PWS_MAX_REFERENCE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var neighbors = (window.wuNeighborData || []).filter(isValidStation);
@@ -10877,7 +10902,7 @@
         }
 
         var officialFallback = !wuAvailable && officialTempF !== null;
-        var source = wuAvailable ? 'pws' : (officialFallback ? 'global' : 'pirate');
+        var source = wuAvailable ? 'pws' : (officialFallback ? 'global' : 'model');
         var pw = window.pirateCurrently || {};
         var selectedTemp = source === 'pws' ? wu.temp
             : source === 'global' ? officialTempF : pw.temperature;
@@ -10914,7 +10939,7 @@
         document.getElementById('conditionText').innerText = condition;
 
         var feelsLike = null;
-        if (source === 'pirate' && pw.apparentTemperature != null) {
+        if (source === 'model' && pw.apparentTemperature != null) {
             feelsLike = pw.apparentTemperature;
         } else if (selectedTemp != null && isFinite(selectedTemp) &&
             selectedHumidity != null && isFinite(selectedHumidity) &&
@@ -11259,10 +11284,10 @@
             // are so bad they trigger a hard rejection threshold.
             //
             // Reference = neighbor median (computed from neighbors only, so a bad primary
-            // can't bias its own QC). Falls back to PirateWeather when no neighbors exist.
+            // can't bias its own QC). Falls back to the active model backup: PirateWeather
+            // normally, or Open-Meteo when PirateWeather is unavailable.
             let _wu = window.wuData;
-            const _pwNowPre = window.pirateCurrently;
-            const _pwTempPre = (_pwNowPre && _pwNowPre.temperature != null) ? _pwNowPre.temperature : null;
+            const _pwTempPre = getPwsQcTemperatureReference();
             const _med = function(a) { var m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m-1] + a[m]) / 2; };
 
             // Hard validity guard: humidity outside [0,100] is a sensor glitch — null it out.
@@ -11270,11 +11295,11 @@
             const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
 
             // Station validity: must have temp + humidity, and not a confirmed glitch
-            // (>15°F from PirateWeather baseline). Applied to primary AND neighbors.
+            // (>15°F from the active model reference). Applied to primary AND neighbors.
             const _isValidStation = function(s) {
                 if (!s || s.temp === null || s.humidity === null) return false;
                 if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > PWS_MAX_REFERENCE_TEMP_DEVIATION_F) return false;
                 return true;
             };
             const _neighbors = (window.wuNeighborData || []).filter(_isValidStation);
@@ -11287,10 +11312,9 @@
                 _neighborMedianTemp = _med(_nT);
                 if (_nH.length) _neighborMedianHum = _med(_nH);
             }
-            const _pwNow = window.pirateCurrently;
-            const _pwTemp = (_pwNow && _pwNow.temperature != null) ? _pwNow.temperature : null;
+            const _pwTemp = getPwsQcTemperatureReference();
             // Reference: prefer the independent NWS observation when available.
-            // PirateWeather is a model estimate and can reinforce a bad PWS reading.
+            // The model reference is the fallback when NWS and neighbor data are absent.
             const _refTemp = nwsObsTempF !== null
                 ? nwsObsTempF
                 : (_neighborMedianTemp !== null ? _neighborMedianTemp : _pwTemp);
@@ -11365,7 +11389,7 @@
                 }
             }
 
-            // Fallback chain: QC-passing PWS → NWS obs (lapse-corrected) → PirateWeather
+            // Fallback chain: QC-passing PWS → NWS obs (lapse-corrected) → active model backup.
             const _useNWSFallback = !_wuAvail && !window.isOutsideUS && nwsObsTempFAdj !== null;
 
             // Update the source QC diagnostic panel
@@ -11373,8 +11397,8 @@
 
             // Only temperature is required — NWS ASOS stations (e.g. O'Hare) often return
             // null for relativeHumidity (calculated field). A null humidity must NOT block
-            // the entire NWS override; use PirateWeather for any field NWS did
-            // not provide, now that the NWS observation request is complete.
+            // the entire NWS override; use the current model backup for any field NWS
+            // did not provide. This is Open-Meteo when PirateWeather is unavailable.
             if (_useNWSFallback) {
                 var _pwObsForFallback = window.pirateCurrently || {};
                 window.liveTemp = Math.round(nwsObsTempFAdj);
@@ -11439,7 +11463,7 @@
                 updateSmartComfort(Math.round(nwsObsTempFAdj), liveFeelsLike, _rhForComfort, liveWindSpd,
                     _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0, nwsCond);
             } else if (_wuAvail && !window.wuDeviates) {
-                // PWS passed WU QC — overwrite the PirateWeather baseline that fetchPirate()
+                // PWS passed QC — overwrite the model baseline that fetchPirate()
                 // laid down with the actual trusted station values. Single render, no flash.
                 var _wuT = _wu.temp, _wuH = _wu.humidity;
                 window.liveTemp = Math.round(_wuT);
@@ -11572,7 +11596,7 @@
                 comfortVal:   (document.getElementById('aqi-val') || {}).innerText || null,
                 comfortDesc:  (document.getElementById('aqi-desc') || {}).innerText || null,
                 comfortColor: (document.getElementById('aqi-val') || {}).style.color || null,
-                // Authoritative live values — may differ from PirateWeather baseline when NWS
+                // Authoritative live values — may differ from the model baseline when NWS
                 // obs or a trusted PWS overwrote them. Restored offline so the display exactly
                 // matches what was shown online at the time of the last successful sync.
                 liveTemp:      (function(){ var el=document.getElementById('tempVal'); if(!el||el.innerText==='--') return null; var v=parseInt(el.innerText); return isNaN(v)?null:v; })(),
@@ -11690,7 +11714,7 @@
                 if (c.comfortVal) { var _cvEl = document.getElementById('aqi-val'); if (_cvEl) { _cvEl.innerText = c.comfortVal; if (c.comfortColor) _cvEl.style.color = c.comfortColor; } }
                 if (c.comfortDesc) { var _cdEl = document.getElementById('aqi-desc'); if (_cdEl) _cdEl.innerText = c.comfortDesc; }
                 // Restore authoritative temp/feels-like/wind/humidity — these were written by
-                // the NWS obs or trusted PWS branch and may differ from the PirateWeather values
+                // the NWS obs or trusted PWS branch and may differ from the model values
                 // that last_conditions captured. Applying them here ensures offline shows exactly
                 // what was on screen at the time of the last successful sync.
                 if (c.liveTemp != null) {
