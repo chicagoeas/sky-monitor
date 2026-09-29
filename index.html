@@ -3301,6 +3301,8 @@
     var _turnstileSilentWidgetId = null;
     var _turnstileSilentRequestActive = false;
     var _turnstileSilentWaiters = [];
+    var _turnstileSilentTimeoutId = null;
+    const TURNSTILE_SILENT_TIMEOUT_MS = 15000;
     var _turnstileReturnTab = 'home';
     var _turnstileReturnScrollX = 0;
     var _turnstileReturnScrollY = 0;
@@ -3318,13 +3320,27 @@
     // preserve LOCAL OBSERVATION rather than importing conditions from a
     // distant airport in a different weather regime.
     const GLOBAL_AVIATION_MAX_DISTANCE_KM = 100;
-    // A PWS must stay within this temperature delta of PirateWeather's
-    // independent current observation to be eligible for display.
-    const PWS_MAX_PIRATE_TEMP_DEVIATION_F = 15;
+    // Reject only extreme PWS temperature outliers against the best available
+    // current-weather reference: PirateWeather normally, Open-Meteo if PW fails.
+    const PWS_MAX_REFERENCE_TEMP_DEVIATION_F = 15;
     // Humidity is checked separately against nearby PWS peers. This is a
     // percentage-point difference, not a relative percentage.
     const PWS_MAX_NEIGHBOR_HUMIDITY_DEVIATION_PCT = 30;
     const PWS_MIN_HUMIDITY_PEERS = 2;
+
+    function setPwsQcTemperatureReference(source, temperature) {
+        var numericTemperature = temperature == null ? null : Number(temperature);
+        window._pwsQcTemperatureReference = {
+            source: source || null,
+            temperature: Number.isFinite(numericTemperature) ? numericTemperature : null
+        };
+    }
+
+    function getPwsQcTemperatureReference() {
+        var reference = window._pwsQcTemperatureReference;
+        return reference && reference.temperature != null &&
+            isFinite(reference.temperature) ? Number(reference.temperature) : null;
+    }
 
     function pwsPassesNeighborHumidityQC(station, peerStations) {
         if (!station || station.humidity == null || !isFinite(station.humidity)) return false;
@@ -3436,10 +3452,12 @@
     window._syncMinDone = false;
     window._maybeHideSync = function() {};
     window.pirateCurrently = null;
+    window._pwsQcTemperatureReference = null;
     window.pirateAlerts = [];
     window.meteoAlarmAlerts = [];
     window.environmentCanadaAlerts = [];
     window.locationCountryCode = '';
+    window.locationState = '';
     window.wuDeviates = false;
     window.chartInstances = {};
     window.activeAlertWatches = [];
@@ -4772,7 +4790,12 @@
     }
 
     function _finishSilentTurnstileRequest(token, error) {
+        if (!_turnstileSilentRequestActive) return;
         _turnstileSilentRequestActive = false;
+        if (_turnstileSilentTimeoutId !== null) {
+            clearTimeout(_turnstileSilentTimeoutId);
+            _turnstileSilentTimeoutId = null;
+        }
         if (token) {
             _turnstileToken = token;
             _turnstileTokenIssuedAt = Date.now();
@@ -4787,41 +4810,50 @@
 
     function _requestSilentTurnstileToken() {
         if (_turnstileSilentRequestActive) return;
-        if (typeof turnstile === 'undefined') {
-            setTimeout(_requestSilentTurnstileToken, 250);
-            return;
+        _turnstileSilentRequestActive = true;
+        _turnstileSilentTimeoutId = setTimeout(function() {
+            _finishSilentTurnstileRequest('', new Error('Verification timed out.'));
+        }, TURNSTILE_SILENT_TIMEOUT_MS);
+
+        function tryRequestToken() {
+            if (!_turnstileSilentRequestActive) return;
+            if (typeof turnstile === 'undefined') {
+                setTimeout(tryRequestToken, 250);
+                return;
+            }
+
+            try {
+                if (_turnstileSilentWidgetId === null) {
+                    _turnstileSilentWidgetId = turnstile.render('#turnstile-silent-container', {
+                        sitekey: TURNSTILE_SITE_KEY,
+                        theme: 'dark',
+                        size: 'invisible',
+                        execution: 'execute',
+                        appearance: 'interaction-only',
+                        // Keep the silent renewal action identical to the
+                        // first visible challenge. The reports Worker validates
+                        // this action when it verifies the token.
+                        action: 'report_gate',
+                        callback: function(token) {
+                            _finishSilentTurnstileRequest(token, null);
+                        },
+                        'expired-callback': function() {
+                            _finishSilentTurnstileRequest('', new Error('Verification expired.'));
+                        },
+                        'error-callback': function() {
+                            _finishSilentTurnstileRequest('', new Error('Verification failed.'));
+                        }
+                    });
+                } else {
+                    turnstile.reset(_turnstileSilentWidgetId);
+                }
+                turnstile.execute(_turnstileSilentWidgetId);
+            } catch (error) {
+                _finishSilentTurnstileRequest('', error);
+            }
         }
 
-        _turnstileSilentRequestActive = true;
-        try {
-            if (_turnstileSilentWidgetId === null) {
-                _turnstileSilentWidgetId = turnstile.render('#turnstile-silent-container', {
-                    sitekey: TURNSTILE_SITE_KEY,
-                    theme: 'dark',
-                    size: 'invisible',
-                    execution: 'execute',
-                    appearance: 'interaction-only',
-                    // Keep the silent renewal action identical to the
-                    // first visible challenge. The reports Worker validates
-                    // this action when it verifies the token.
-                    action: 'report_gate',
-                    callback: function(token) {
-                        _finishSilentTurnstileRequest(token, null);
-                    },
-                    'expired-callback': function() {
-                        _finishSilentTurnstileRequest('', new Error('Verification expired.'));
-                    },
-                    'error-callback': function() {
-                        _finishSilentTurnstileRequest('', new Error('Verification failed.'));
-                    }
-                });
-            } else {
-                turnstile.reset(_turnstileSilentWidgetId);
-            }
-            turnstile.execute(_turnstileSilentWidgetId);
-        } catch (error) {
-            _finishSilentTurnstileRequest('', error);
-        }
+        tryRequestToken();
     }
 
     // Report tokens are one-use. The first visit uses the visible widget;
@@ -5409,8 +5441,78 @@
         updateOutlookMap(activeOutlookCenter, day);
     }
 
+    function _isAlaskaOrHawaiiLocation() {
+        var state = String(window.locationState || '').trim().toLowerCase();
+        return state === 'ak' || state === 'alaska' ||
+            state === 'hi' || state === 'hawaii';
+    }
+
+    function _isUSOutlookTerritoryLocation() {
+        var countryCode = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (['PR', 'GU', 'AS', 'MP', 'VI'].indexOf(countryCode) !== -1) return true;
+
+        var state = String(window.locationState || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[.,]/g, '')
+            .replace(/\s+/g, ' ');
+        return [
+            'pr', 'puerto rico',
+            'gu', 'guam',
+            'as', 'american samoa',
+            'mp', 'cnmi', 'northern mariana islands',
+            'vi', 'us virgin islands', 'u s virgin islands',
+            'united states virgin islands', 'virgin islands of the united states'
+        ].indexOf(state) !== -1;
+    }
+
+    function _syncOutlookCenterAvailability() {
+        var territory = _isUSOutlookTerritoryLocation();
+        var restrictSPCWPC = territory || _isAlaskaOrHawaiiLocation();
+        var section = document.getElementById('spc-outlook-section');
+        if (section) section.style.display = territory ? 'none' : '';
+
+        var select = document.getElementById('outlook-center-select');
+        if (select) {
+            ['spc', 'wpc'].forEach(function(center) {
+                var option = select.querySelector('option[value="' + center + '"]');
+                if (option) {
+                    option.hidden = restrictSPCWPC;
+                    option.disabled = restrictSPCWPC;
+                }
+            });
+            ['nhc', 'cpc'].forEach(function(center) {
+                var option = select.querySelector('option[value="' + center + '"]');
+                if (option) {
+                    option.hidden = territory;
+                    option.disabled = territory;
+                }
+            });
+        }
+        return territory;
+    }
+
+    function _setWeatherLocationState(state) {
+        window.locationState = String(state || '').trim();
+        _syncOutlookCenterAvailability();
+        if (!_isUSOutlookTerritoryLocation() &&
+            _isAlaskaOrHawaiiLocation() &&
+            (activeOutlookCenter === 'spc' || activeOutlookCenter === 'wpc')) {
+            switchOutlookCenter('cpc');
+        }
+    }
+
     function updateOutlookMap(center, day) {
         day = day || 1;
+        if (_isUSOutlookTerritoryLocation()) {
+            // No outlook products are available for the covered U.S. territories.
+            return;
+        }
+        if (_isAlaskaOrHawaiiLocation() && (center === 'spc' || center === 'wpc')) {
+            // Guard direct/programmatic map updates as well as the selector.
+            switchOutlookCenter('cpc');
+            return;
+        }
         const img = document.getElementById('spc-map');
         const lnk = document.getElementById('spc-link');
         const titleEl = document.getElementById('outlook-title');
@@ -5499,6 +5601,12 @@
     }
 
     function switchOutlookCenter(center) {
+        _syncOutlookCenterAvailability();
+        if (_isUSOutlookTerritoryLocation()) return;
+        if (_isAlaskaOrHawaiiLocation() &&
+            (center === 'spc' || center === 'wpc')) {
+            center = 'cpc';
+        }
         activeOutlookCenter = center;
 
         // Sync the native select if called programmatically
@@ -6100,6 +6208,32 @@
     async function fetchWUData(latP, lonP) {
         const stations = await fetchWUMulti(latP, lonP);
         return stations[0] || null;
+    }
+
+    function applyPwsStations(stations, loadGeneration) {
+        if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) {
+            return { station: null, available: false };
+        }
+        const stationList = Array.isArray(stations) ? stations : [];
+        const station = stationList[0] || null;
+        const available = !!(station && station.temp !== null && station.humidity !== null);
+        window.wuData = station;
+        window.wuNeighborData = stationList.slice(1).filter(function(item) { return item != null; });
+        window.wuElevFt = station && station.elev != null ? station.elev : null;
+        window.wuDeviates = false;
+
+        const stationEl = document.getElementById('wuStation');
+        const linkEl = document.getElementById('wuLink');
+        if (available && station.stationId) {
+            if (linkEl) {
+                linkEl.innerText = station.stationId;
+                linkEl.href = 'https://www.wunderground.com/dashboard/pws/' + station.stationId;
+            }
+            if (stationEl) stationEl.style.display = 'block';
+        } else if (stationEl) {
+            stationEl.style.display = 'none';
+        }
+        return { station: station, available: available };
     }
 
     function getFormattedTime(event, totalMs) {
@@ -7268,14 +7402,13 @@
             if (skipObservation) return;
             const _intlPw = window.pirateCurrently;
             const _intlRawCandidates = [];
-            const _intlPwTemp = _intlPw.temperature != null &&
-                isFinite(_intlPw.temperature) ? _intlPw.temperature : null;
+            const _intlPwTemp = getPwsQcTemperatureReference();
             const _intlIsValidPws = function(s) {
                 return s && s.temp != null && s.humidity != null &&
                     isFinite(s.temp) && isFinite(s.humidity) &&
                     s.humidity >= 0 && s.humidity <= 100 &&
                     (_intlPwTemp === null ||
-                        Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_PIRATE_TEMP_DEVIATION_F);
+                        Math.abs(s.temp - _intlPwTemp) <= PWS_MAX_REFERENCE_TEMP_DEVIATION_F);
             };
             if (_intlIsValidPws(window.wuData)) _intlRawCandidates.push({ s: window.wuData, rank: 0 });
             (window.wuNeighborData || []).forEach(function(s, i) {
@@ -7320,7 +7453,7 @@
                 }
             }
             // Render PWS values for international locations when available.
-            // PirateWeather remains the completed-source replacement only for
+            // The active model provider (PirateWeather or Open-Meteo) fills only
             // fields the PWS record does not contain.
             if (_intlTemp != null) {
                 window.liveTemp = Math.round(_intlTemp);
@@ -8841,6 +8974,42 @@
         const locationChanged = (requestLat !== _lastPirateLat || requestLon !== _lastPirateLon);
         if (!locationChanged && now - _lastPirateFetch < 300000 && !_isOffline) return; // throttle to 5 min (bypass when offline so coming back online clears the flag)
         window._pirateLoadFailed = false;
+        window._pwsQcTemperatureReference = null;
+        const pwsCountryPromise = (async function() {
+            var country = String(
+                window.locationCountryCode || window._gpsCountryCode || ''
+            ).trim().toUpperCase();
+            if (!country && window._locationClassificationPromise) {
+                await Promise.race([
+                    window._locationClassificationPromise.catch(function() {}),
+                    new Promise(function(resolve) { setTimeout(resolve, 1200); })
+                ]);
+                country = String(
+                    window.locationCountryCode || window._gpsCountryCode || ''
+                ).trim().toUpperCase();
+            }
+            return country;
+        })();
+        // Start the PWS request independently of PirateWeather. US/Canadian
+        // lookups can now finish during either the PW request or Open-Meteo
+        // fallback, so the same QC chain can select the nearest station.
+        const wuPromise = pwsCountryPromise.then(function(country) {
+            if (country && country !== 'US' && country !== 'CA') return [];
+            return fetchWUMulti(requestLat, requestLon, requestSignal);
+        });
+        const wuStationsPromise = pwsCountryPromise.then(function(country) {
+            if (country && country !== 'US' && country !== 'CA') return [];
+            const waitMs = country ? 4000 : 2500;
+            return Promise.race([
+                wuPromise,
+                new Promise(function(resolve) { setTimeout(function() { resolve([]); }, waitMs); })
+            ]);
+        });
+        wuPromise.then(function(lateStations) {
+            if (Array.isArray(lateStations) && lateStations.length) {
+                applyPwsStations(lateStations, loadGeneration);
+            }
+        }).catch(function() {});
         try {
             const resP = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/fast?lat=' +
                 encodeURIComponent(requestLat) + '&lon=' + encodeURIComponent(requestLon), {
@@ -8855,45 +9024,9 @@
             window._fastNwsAlerts = fastPayload.nwsAlerts || null;
             window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
-            // Start the PWS lookup here for US/Canadian QC. International
-            // locations use the official METAR/ASOS/AWOS chain instead; a
-            // slow or empty WU response must not add ~10 seconds to that path.
-            let wuStations;
-            const wuPromise = fetchWUMulti(requestLat, requestLon, requestSignal);
-            var countryForPws = String(
-                window.locationCountryCode || window._gpsCountryCode || ''
-            ).trim().toUpperCase();
-            if (!countryForPws && window._locationClassificationPromise) {
-                // The reverse-geocoder writes locationCountryCode before its
-                // optional beach lookup finishes. Give that first step a
-                // short head start, but never wait on geocoding indefinitely.
-                await Promise.race([
-                    window._locationClassificationPromise.catch(function() {}),
-                    new Promise(function(resolve) { setTimeout(resolve, 1200); })
-                ]);
-                countryForPws = String(
-                    window.locationCountryCode || window._gpsCountryCode || ''
-                ).trim().toUpperCase();
-            }
-            if (countryForPws && countryForPws !== 'US' && countryForPws !== 'CA') {
-                wuStations = [];
-            } else if (!countryForPws) {
-                // Unknown country: preserve the NWS path without allowing a
-                // slow PWS lookup to become the page's critical path.
-                wuStations = await Promise.race([
-                    wuPromise,
-                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 2500); })
-                ]);
-            } else {
-                // A PWS is valuable enrichment, but it must not block the
-                // official observation chain on a phone. The late-result
-                // handler below still applies a station that arrives after
-                // this bounded window.
-                wuStations = await Promise.race([
-                    wuPromise,
-                    new Promise(function(resolve) { setTimeout(function() { resolve([]); }, 4000); })
-                ]);
-            }
+            // Wait only within the existing PWS budget; a slower station lookup
+            // must not hold the official observation chain hostage.
+            const wuStations = await wuStationsPromise;
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Mark the throttle only after the PirateWeather response has been
             // validated. If rendering or the request fails, the next refresh
@@ -8901,20 +9034,8 @@
             _lastPirateFetch = Date.now();
             _lastPirateLat = requestLat;
             _lastPirateLon = requestLon;
-            const wu = wuStations[0] || null;
-            const wuAvailable = wu && wu.temp !== null && wu.humidity !== null;
+            applyPwsStations(wuStations, loadGeneration);
             // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
-            const useWU = wuAvailable;
-            window.wuData = wu || null;
-            window.wuNeighborData = wuStations.slice(1).filter(function(s) { return s != null; });
-            window.wuElevFt = (wu && wu.elev != null) ? wu.elev : null;
-            window.wuDeviates = false; // reset; fetchNWSChain sets this based on wuData availability
-            const wuStationEl = document.getElementById('wuStation');
-            const wuLinkEl = document.getElementById('wuLink');
-            if (useWU && wu.stationId) {
-                wuLinkEl.innerText = wu.stationId; wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + wu.stationId;
-                wuStationEl.style.display = 'block';
-            } else wuStationEl.style.display = 'none';
             const curr = d.currently;
             window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
@@ -8938,6 +9059,7 @@
             if (curr.precipProbability != null && curr.precipProbability < 0)        { curr.precipProbability = null;   _currSentinelBad = true; }
             if (curr.cloudCover != null && curr.cloudCover < 0)                      { curr.cloudCover = null;          _currSentinelBad = true; }
             if (curr.visibility != null && curr.visibility < 0)                      { curr.visibility = null;          _currSentinelBad = true; }
+            setPwsQcTemperatureReference('PirateWeather', curr.temperature);
             // _patchSentinelsFromOpenMeteo is called after hourly data is stored below
             const daySummary = d.hourly?.summary || d.daily?.data?.[0]?.summary || null;
             if (daySummary) document.getElementById('vibeCheck').innerText = daySummary;
@@ -9138,21 +9260,6 @@
             _isOffline = false;
             window._pirateLoadFailed = false;
             lastSyncTime = new Date(); localStorage.setItem('sm_last_sync', lastSyncTime.getTime());
-            wuPromise.then(function(lateStations) {
-                if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-                if (!Array.isArray(lateStations) || !lateStations.length) return;
-                var late = lateStations[0];
-                window.wuData = late || null;
-                window.wuNeighborData = lateStations.slice(1).filter(function(s) { return s != null; });
-                window.wuElevFt = late && late.elev != null ? late.elev : null;
-                var stationEl = document.getElementById('wuStation');
-                var linkEl = document.getElementById('wuLink');
-                if (late && late.stationId && stationEl && linkEl) {
-                    linkEl.innerText = late.stationId;
-                    linkEl.href = 'https://www.wunderground.com/dashboard/pws/' + late.stationId;
-                    stationEl.style.display = 'block';
-                }
-            }).catch(function() {});
         } catch(e) {
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
             // Do not throttle a failed attempt. This is especially important
@@ -9162,7 +9269,10 @@
             _lastPirateLon = null;
             // PirateWeather failed — try Open-Meteo as a live backup
             try {
-                await fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal);
+                // Match PirateWeather's single-render behavior: keep the
+                // Open-Meteo values available for QC, but let the PWS/NWS
+                // source-selection chain paint the current observation once.
+                await fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal, true);
                 if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
                 window._pirateLoadFailed = false;
             } catch(e2) {
@@ -9313,6 +9423,11 @@
                     if (cached && cached.data) renderTWCForecast(cached.data);
                 });
             }
+            // PirateWeather and Open-Meteo may both fail; still allow a valid
+            // nearby PWS observation to reach the official-station QC chain.
+            const fallbackWuStations = await wuStationsPromise;
+            if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+            applyPwsStations(fallbackWuStations, loadGeneration);
         }
     }
 
@@ -9484,7 +9599,7 @@
 
     // Full Open-Meteo fallback — used when PirateWeather is completely unavailable
     // Populates all weather data EXCEPT minutely (not supported by Open-Meteo)
-    async function fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal) {
+    async function fetchOpenMeteoFallback(loadGeneration, requestLat, requestLon, requestSignal, deferObservationRender) {
         function omIcon(code, isDay) {
             var d = isDay !== false;
             if (code === 0) return d ? 'clear-day' : 'clear-night';
@@ -9528,7 +9643,7 @@
         const utcOffH = (d.utc_offset_seconds || 0) / 3600;
         if (d.utc_offset_seconds != null) { stationTzOffset = d.utc_offset_seconds; window.pirateTimezoneOffset = utcOffH; }
 
-        // Build PirateWeather-compatible current object so the rest of the app can use it normally
+        // Build a current-weather-compatible object so the rest of the app can use it normally.
         const fakeCurr = {
             temperature: cur.temperature_2m,
             humidity: cur.relative_humidity_2m / 100,
@@ -9541,55 +9656,51 @@
             icon: omIcon(cur.weather_code, !isNightAtStation)
         };
         window.pirateCurrently = fakeCurr;
+        setPwsQcTemperatureReference('Open-Meteo', fakeCurr.temperature);
         window.pirateAlerts = window.pirateAlerts || [];
 
         document.getElementById('vibeCheck').innerText = fakeCurr.summary;
-        // Open-Meteo is the live backup for the current observation when
-        // PirateWeather is unavailable. Keep the Now card synchronized with
-        // that same current condition until NWS supplies a better observation.
+        // Keep Open-Meteo's values available as the model/QC reference, but
+        // defer the visible current-observation card until source selection.
         currentCondition = fakeCurr.summary || '';
-        if (currentCondition) document.getElementById('conditionText').innerText = currentCondition;
-        var _omCurrentIcon = _pwSummaryIcon(currentCondition, isNightAtStation);
-        if (_omCurrentIcon) {
-            document.getElementById('weatherIcon').src = _omCurrentIcon;
-            document.getElementById('weatherIcon').style.display = 'block';
-        }
-
-        // Temperature
         const temp = fakeCurr.temperature;
-        window.liveTemp = Math.round(temp);
-        (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
         liveUV = fakeCurr.uvIndex || 0;
-
-        // Wind
         const windSpeed = fakeCurr.windSpeed, windDir = fakeCurr.windBearing;
-        liveWindSpd = Math.round(windSpeed);
-        document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
-        setWindCompass(liveWindSpd > 0 && windDir != null ? windDir : null);
-
-        // Humidity
         const humidity = cur.relative_humidity_2m; // already 0-100
-        (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
-
-        // Feels-like (NWS formula — same as fetchPirate)
-        (function() {
-            var T = temp, W = liveWindSpd, RH = humidity, fl = T;
-            if (T <= 50 && W >= 3) {
-                fl = 35.74 + 0.6215*T - 35.75*Math.pow(W,0.16) + 0.4275*T*Math.pow(W,0.16);
-            } else if (T >= 70) {
-                var hiSimple = 0.5 * (T + 61.0 + (T - 68.0) * 1.2 + RH * 0.094);
-                if (hiSimple >= 80) {
-                    var hiRoth = -42.379 + 2.04901523*T + 10.14333127*RH - 0.22475541*T*RH
-                        - 0.00683783*T*T - 0.05391317*RH*RH + 0.00122874*T*T*RH
-                        + 0.00085282*T*RH*RH - 0.00000199*T*T*RH*RH;
-                    if (RH < 13 && T >= 80 && T <= 112) hiRoth -= (13-RH)/4 * Math.sqrt((17-Math.abs(T-95))/17);
-                    if (RH > 85 && T >= 80 && T <= 87) hiRoth += (RH-85)/10 * (87-T)/5;
-                    fl = (T + hiRoth) / 2;
-                } else { fl = hiSimple; }
+        const modelWindSpeed = Math.round(windSpeed);
+        var omFeelsLike = temp;
+        if (temp <= 50 && modelWindSpeed >= 3) {
+            omFeelsLike = 35.74 + 0.6215*temp - 35.75*Math.pow(modelWindSpeed,0.16) + 0.4275*temp*Math.pow(modelWindSpeed,0.16);
+        } else if (temp >= 70) {
+            var hiSimple = 0.5 * (temp + 61.0 + (temp - 68.0) * 1.2 + humidity * 0.094);
+            if (hiSimple >= 80) {
+                var hiRoth = -42.379 + 2.04901523*temp + 10.14333127*humidity - 0.22475541*temp*humidity
+                    - 0.00683783*temp*temp - 0.05391317*humidity*humidity + 0.00122874*temp*temp*humidity
+                    + 0.00085282*temp*humidity*humidity - 0.00000199*temp*temp*humidity*humidity;
+                if (humidity < 13 && temp >= 80 && temp <= 112) hiRoth -= (13-humidity)/4 * Math.sqrt((17-Math.abs(temp-95))/17);
+                if (humidity > 85 && temp >= 80 && temp <= 87) hiRoth += (humidity-85)/10 * (87-temp)/5;
+                omFeelsLike = (temp + hiRoth) / 2;
+            } else { omFeelsLike = hiSimple; }
+        }
+        if (!deferObservationRender) {
+            if (currentCondition) document.getElementById('conditionText').innerText = currentCondition;
+            var _omCurrentIcon = _pwSummaryIcon(currentCondition, isNightAtStation);
+            if (_omCurrentIcon) {
+                document.getElementById('weatherIcon').src = _omCurrentIcon;
+                document.getElementById('weatherIcon').style.display = 'block';
             }
-            liveFeelsLike = fl;
-        })();
-        (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
+
+            // Render the model observation only when this function is the
+            // final fallback, not while PWS/NWS QC is still selecting a source.
+            window.liveTemp = Math.round(temp);
+            (function(){ var _tv = Math.round(temp); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
+            liveWindSpd = modelWindSpeed;
+            document.getElementById('windVal').innerText = _fmtWind(liveWindSpd);
+            setWindCompass(liveWindSpd > 0 && windDir != null ? windDir : null);
+            (function(){ var _hv = Math.round(humidity); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
+            liveFeelsLike = omFeelsLike;
+            (function(){ var _fv = Math.round(liveFeelsLike); var _fe = document.getElementById('feelsVal'); _fe.innerText = _fmtTemp(_fv); _fe.style.color = colorFeelsLike(_fv); })();
+        }
 
         // Pressure
         const presIn = (cur.surface_pressure * 0.02953).toFixed(2);
@@ -9667,11 +9778,13 @@
         SkyDB.set(SkyDB.S.weather, 'hourly_data', { ts: Date.now(), data: hourlyRows, tzOffset: window.pirateTimezoneOffset || 0 });
         // Outdoor Score is rendered when the TWC daily forecast arrives.
         computeFloodOutlook();
-        updateSmartComfort(Math.round(temp), liveFeelsLike, Math.round(humidity), liveWindSpd, fakeCurr.summary, liveUV, (fakeCurr.precipIntensity || 0) * 100);
+        if (!deferObservationRender) {
+            updateSmartComfort(Math.round(temp), omFeelsLike, Math.round(humidity), modelWindSpeed, fakeCurr.summary, liveUV, (fakeCurr.precipIntensity || 0) * 100);
+        }
         SkyDB.set(SkyDB.S.weather, 'last_conditions', {
             ts: Date.now(),
             temp: Math.round(temp), humidity: Math.round(humidity),
-            feelsLike: Math.round(liveFeelsLike), wind: liveWindSpd,
+            feelsLike: Math.round(omFeelsLike), wind: modelWindSpeed,
             condition: fakeCurr.summary || '', uv: liveUV,
             pressure: presIn || null,
             pressureHTML: (document.getElementById('presVal') || {}).innerHTML || null,
@@ -10005,10 +10118,12 @@
             if (val === null || val === undefined) return '--';
             return unit === 'temperature' ? _fmtTemp(val) : Math.round(val) + unit;
         }
-        var source = 'PWS (WU QC ✓)';
+        var reference = window._pwsQcTemperatureReference || {};
+        var referenceSource = reference.source || 'Current weather backup';
+        var source = 'PWS (QC ✓)';
         if (!pws1) {
             if (officialActive) source = officialLabel + ' (no QC-passing PWS nearby)';
-            else source = 'PirateWeather (no PWS or official data)';
+            else source = referenceSource + ' (no PWS or official data)';
         }
         var rows = '';
         var pws1Color = pws1 ? '#00e676' : '#9e9e9e';
@@ -10022,13 +10137,13 @@
               + '<td style="text-align:right; padding-right:8px;">' + fmt(officialTemp, 'temperature') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">' + fmt(officialHum, '%') + '</td>'
               + '<td style="font-size:0.78em; color:' + officialColor + ';">' + (officialActive ? (pws1 ? 'Standby' : 'Override ✓') : 'Unavailable') + '</td></tr>';
-        var pirateTemp = window.pirateCurrently && window.pirateCurrently.temperature !== null ? window.pirateCurrently.temperature : null;
-        var pirateActive = !pws1 && !officialActive;
-        var pirateColor = pirateActive ? '#ffd54f' : '#9e9e9e';
-        rows += '<tr><td style="padding:3px 0; color:' + pirateColor + ';">⬤ PirateWeather</td>'
-              + '<td style="text-align:right; padding-right:8px;">' + fmt(pirateTemp, 'temperature') + '</td>'
+        var referenceTemp = reference.temperature != null ? reference.temperature : null;
+        var referenceActive = !pws1 && !officialActive;
+        var referenceColor = referenceActive ? '#ffd54f' : '#9e9e9e';
+        rows += '<tr><td style="padding:3px 0; color:' + referenceColor + ';">⬤ ' + escapeHtml(referenceSource) + '</td>'
+              + '<td style="text-align:right; padding-right:8px;">' + fmt(referenceTemp, 'temperature') + '</td>'
               + '<td style="text-align:right; padding-right:8px;">—</td>'
-              + '<td style="font-size:0.78em; color:' + pirateColor + ';">' + (pirateActive ? 'Active ✓' : 'Backup') + '</td></tr>';
+              + '<td style="font-size:0.78em; color:' + referenceColor + ';">' + (referenceActive ? 'Active ✓' : 'Backup') + '</td></tr>';
         panel.innerHTML = '<div style="font-weight:700; color:#4fc3f7; margin-bottom:6px;">Active: ' + source + '</div>'
             + '<table style="width:100%; border-collapse:collapse;">'
             + '<thead><tr style="opacity:0.45;"><th style="text-align:left; padding-bottom:4px; font-weight:600;">Source</th>'
@@ -10083,7 +10198,7 @@
     // structurally valid station response but fails while the observation/QC
     // chain is being resolved.  In that case the old broad catch left the
     // station label and condition behind while temp/wind/humidity stayed "--".
-    // Use the already-fetched PWS first, then PirateWeather, and complete the
+    // Use the already-fetched PWS first, then the active model backup, and complete the
     // card in one place so a retry is not required.
     function _renderLocalObservationFallback() {
         try {
@@ -10103,7 +10218,12 @@
             var stationEl = document.getElementById('stationName');
             if (stationEl) stationEl.innerText = 'LOCAL OBSERVATION';
             var metaEl = document.getElementById('meta-name');
-            if (metaEl && !pwsUsable) metaEl.innerText = 'PirateWeather API';
+            if (metaEl && !pwsUsable) {
+                var modelSource = window._pwsQcTemperatureReference &&
+                    window._pwsQcTemperatureReference.source;
+                metaEl.innerText = modelSource === 'Open-Meteo'
+                    ? 'Open-Meteo API' : 'PirateWeather API';
+            }
             var wuStationEl = document.getElementById('wuStation');
             var wuLinkEl = document.getElementById('wuLink');
             if (pwsUsable && pws.stationId && wuStationEl && wuLinkEl) {
@@ -10537,13 +10657,12 @@
 
         // ── Shared PWS quality-control chain ─────────────────────────────────
         // This deliberately mirrors fetchNWSChain:
-        //   QC-passing PWS → official station fallback → PirateWeather.
+        //   QC-passing PWS → official station fallback → active model backup.
         // The official airport observation is a reference/fallback, never the
         // first choice when a nearby PWS passes the same QC rules.
         var _eccWu = window.wuData;
         var _eccPwNowPre = window.pirateCurrently;
-        var _eccPwTempPre = (_eccPwNowPre && _eccPwNowPre.temperature != null)
-            ? _eccPwNowPre.temperature : null;
+        var _eccPwTempPre = getPwsQcTemperatureReference();
         var _eccMed = function(a) {
             var m = Math.floor(a.length / 2);
             return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
@@ -10556,7 +10675,7 @@
         var _eccIsValidStation = function(s) {
             if (!s || s.temp === null || s.humidity === null) return false;
             if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+            if (_eccPwTempPre !== null && Math.abs(s.temp - _eccPwTempPre) > PWS_MAX_REFERENCE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var _eccNeighbors = (window.wuNeighborData || []).filter(_eccIsValidStation);
@@ -10566,8 +10685,7 @@
                 .sort(function(a, b) { return a - b; });
             _eccNeighborMedianTemp = _eccMed(_eccNeighborTemps);
         }
-        var _eccPwTemp = (_eccPwNowPre && _eccPwNowPre.temperature != null)
-            ? _eccPwNowPre.temperature : null;
+        var _eccPwTemp = getPwsQcTemperatureReference();
         var _eccReferenceTemp = tempF !== null
             ? tempF
             : (_eccNeighborMedianTemp !== null ? _eccNeighborMedianTemp : _eccPwTemp);
@@ -10615,7 +10733,7 @@
 
         var _eccOfficialFallback = !_eccWuAvail && _eccOfficialTempF !== null;
         var _eccPw = window.pirateCurrently || {};
-        var _eccSource = _eccWuAvail ? 'pws' : (_eccOfficialFallback ? 'ecc' : 'pirate');
+        var _eccSource = _eccWuAvail ? 'pws' : (_eccOfficialFallback ? 'ecc' : 'model');
         var _eccTemp = null, _eccHumidity = null, _eccWind = null, _eccWindDir = null;
         if (_eccSource === 'pws') {
             _eccTemp = _eccWu.temp;
@@ -10669,7 +10787,7 @@
         // Feels-like calculation is the same NWS wind-chill/heat-index
         // calculation, using the selected source values above.
         var _eccFeels = null;
-        if (_eccSource === 'pirate' && _eccPw.apparentTemperature != null) {
+        if (_eccSource === 'model' && _eccPw.apparentTemperature != null) {
             _eccFeels = _eccPw.apparentTemperature;
         } else if (_eccTemp != null && isFinite(_eccTemp)) {
             var _eccRhForFeels = _eccHumidity;
@@ -10950,12 +11068,12 @@
         }
 
         // This is intentionally the same PWS QC pass as the ECCC chain:
-        // validate humidity and a 15°F PirateWeather outlier limit, build a
+        // validate humidity and a 15°F active-model outlier limit, build a
         // neighbor median, prefer complete observations, then compare to the
         // independent official station before selecting a source.
         var wu = window.wuData;
         var pwNow = window.pirateCurrently;
-        var pwTemp = pwNow && pwNow.temperature != null ? pwNow.temperature : null;
+        var pwTemp = getPwsQcTemperatureReference();
         var median = function(values) {
             var middle = Math.floor(values.length / 2);
             return values.length % 2 ? values[middle] :
@@ -10968,7 +11086,7 @@
         var isValidStation = function(station) {
             if (!station || station.temp === null || station.humidity === null) return false;
             if (!isFinite(station.humidity) || station.humidity < 0 || station.humidity > 100) return false;
-            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+            if (pwTemp !== null && Math.abs(station.temp - pwTemp) > PWS_MAX_REFERENCE_TEMP_DEVIATION_F) return false;
             return true;
         };
         var neighbors = (window.wuNeighborData || []).filter(isValidStation);
@@ -11027,7 +11145,7 @@
         }
 
         var officialFallback = !wuAvailable && officialTempF !== null;
-        var source = wuAvailable ? 'pws' : (officialFallback ? 'global' : 'pirate');
+        var source = wuAvailable ? 'pws' : (officialFallback ? 'global' : 'model');
         var pw = window.pirateCurrently || {};
         var selectedTemp = source === 'pws' ? wu.temp
             : source === 'global' ? officialTempF : pw.temperature;
@@ -11064,7 +11182,7 @@
         document.getElementById('conditionText').innerText = condition;
 
         var feelsLike = null;
-        if (source === 'pirate' && pw.apparentTemperature != null) {
+        if (source === 'model' && pw.apparentTemperature != null) {
             feelsLike = pw.apparentTemperature;
         } else if (selectedTemp != null && isFinite(selectedTemp) &&
             selectedHumidity != null && isFinite(selectedHumidity) &&
@@ -11228,6 +11346,11 @@
             window.isOutsideUS = false; applyUSMode();
             const p = await pointsRes.json();
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+            var _nwsPointState = p.properties.relativeLocation &&
+                p.properties.relativeLocation.properties &&
+                p.properties.relativeLocation.properties.state;
+            if (!_nwsPointState) _nwsPointState = p.properties.state;
+            if (_nwsPointState) _setWeatherLocationState(_nwsPointState);
             // Elevation of the user's requested coordinate (meters), returned by the NWS
             // /points/ endpoint — used for lapse-rate correction when comparing NWS obs
             // (which may be from a much higher station) against local PWS readings.
@@ -11409,10 +11532,10 @@
             // are so bad they trigger a hard rejection threshold.
             //
             // Reference = neighbor median (computed from neighbors only, so a bad primary
-            // can't bias its own QC). Falls back to PirateWeather when no neighbors exist.
+            // can't bias its own QC). Falls back to the active model backup: PirateWeather
+            // normally, or Open-Meteo when PirateWeather is unavailable.
             let _wu = window.wuData;
-            const _pwNowPre = window.pirateCurrently;
-            const _pwTempPre = (_pwNowPre && _pwNowPre.temperature != null) ? _pwNowPre.temperature : null;
+            const _pwTempPre = getPwsQcTemperatureReference();
             const _med = function(a) { var m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m-1] + a[m]) / 2; };
 
             // Hard validity guard: humidity outside [0,100] is a sensor glitch — null it out.
@@ -11420,11 +11543,11 @@
             const _wuRawAvail = _wu && _wu.temp !== null && _wu.humidity !== null;
 
             // Station validity: must have temp + humidity, and not a confirmed glitch
-            // (>15°F from PirateWeather baseline). Applied to primary AND neighbors.
+            // (>15°F from the active model reference). Applied to primary AND neighbors.
             const _isValidStation = function(s) {
                 if (!s || s.temp === null || s.humidity === null) return false;
                 if (!isFinite(s.humidity) || s.humidity < 0 || s.humidity > 100) return false;
-                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > PWS_MAX_PIRATE_TEMP_DEVIATION_F) return false;
+                if (_pwTempPre !== null && Math.abs(s.temp - _pwTempPre) > PWS_MAX_REFERENCE_TEMP_DEVIATION_F) return false;
                 return true;
             };
             const _neighbors = (window.wuNeighborData || []).filter(_isValidStation);
@@ -11437,10 +11560,9 @@
                 _neighborMedianTemp = _med(_nT);
                 if (_nH.length) _neighborMedianHum = _med(_nH);
             }
-            const _pwNow = window.pirateCurrently;
-            const _pwTemp = (_pwNow && _pwNow.temperature != null) ? _pwNow.temperature : null;
+            const _pwTemp = getPwsQcTemperatureReference();
             // Reference: prefer the independent NWS observation when available.
-            // PirateWeather is a model estimate and can reinforce a bad PWS reading.
+            // The model reference is the fallback when NWS and neighbor data are absent.
             const _refTemp = nwsObsTempF !== null
                 ? nwsObsTempF
                 : (_neighborMedianTemp !== null ? _neighborMedianTemp : _pwTemp);
@@ -11515,7 +11637,7 @@
                 }
             }
 
-            // Fallback chain: QC-passing PWS → NWS obs (lapse-corrected) → PirateWeather
+            // Fallback chain: QC-passing PWS → NWS obs (lapse-corrected) → active model backup.
             const _useNWSFallback = !_wuAvail && !window.isOutsideUS && nwsObsTempFAdj !== null;
 
             // Update the source QC diagnostic panel
@@ -11523,8 +11645,8 @@
 
             // Only temperature is required — NWS ASOS stations (e.g. O'Hare) often return
             // null for relativeHumidity (calculated field). A null humidity must NOT block
-            // the entire NWS override; use PirateWeather for any field NWS did
-            // not provide, now that the NWS observation request is complete.
+            // the entire NWS override; use the current model backup for any field NWS
+            // did not provide. This is Open-Meteo when PirateWeather is unavailable.
             if (_useNWSFallback) {
                 var _pwObsForFallback = window.pirateCurrently || {};
                 window.liveTemp = Math.round(nwsObsTempFAdj);
@@ -11589,7 +11711,7 @@
                 updateSmartComfort(Math.round(nwsObsTempFAdj), liveFeelsLike, _rhForComfort, liveWindSpd,
                     _pw ? (_pw.summary || '') : '', liveUV, _pw ? ((_pw.precipProbability || 0) * 100) : 0, nwsCond);
             } else if (_wuAvail && !window.wuDeviates) {
-                // PWS passed WU QC — overwrite the PirateWeather baseline that fetchPirate()
+                // PWS passed QC — overwrite the model baseline that fetchPirate()
                 // laid down with the actual trusted station values. Single render, no flash.
                 var _wuT = _wu.temp, _wuH = _wu.humidity;
                 window.liveTemp = Math.round(_wuT);
@@ -11722,7 +11844,7 @@
                 comfortVal:   (document.getElementById('aqi-val') || {}).innerText || null,
                 comfortDesc:  (document.getElementById('aqi-desc') || {}).innerText || null,
                 comfortColor: (document.getElementById('aqi-val') || {}).style.color || null,
-                // Authoritative live values — may differ from PirateWeather baseline when NWS
+                // Authoritative live values — may differ from the model baseline when NWS
                 // obs or a trusted PWS overwrote them. Restored offline so the display exactly
                 // matches what was shown online at the time of the last successful sync.
                 liveTemp:      (function(){ var el=document.getElementById('tempVal'); if(!el||el.innerText==='--') return null; var v=parseInt(el.innerText); return isNaN(v)?null:v; })(),
@@ -11840,7 +11962,7 @@
                 if (c.comfortVal) { var _cvEl = document.getElementById('aqi-val'); if (_cvEl) { _cvEl.innerText = c.comfortVal; if (c.comfortColor) _cvEl.style.color = c.comfortColor; } }
                 if (c.comfortDesc) { var _cdEl = document.getElementById('aqi-desc'); if (_cdEl) _cdEl.innerText = c.comfortDesc; }
                 // Restore authoritative temp/feels-like/wind/humidity — these were written by
-                // the NWS obs or trusted PWS branch and may differ from the PirateWeather values
+                // the NWS obs or trusted PWS branch and may differ from the model values
                 // that last_conditions captured. Applying them here ensures offline shows exactly
                 // what was on screen at the time of the last successful sync.
                 if (c.liveTemp != null) {
@@ -14207,6 +14329,58 @@
     let reportPinIcon = null;
     let privacySnapGeneration = 0;
     let selectedReportType = '';
+    const REPORT_SUBMISSION_ID_STORAGE_KEY = 'skymonitor_pending_report_submission_id';
+    var _pendingReportSubmissionId = '';
+
+    function createReportSubmissionId() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            try { return window.crypto.randomUUID(); } catch (error) {}
+        }
+        var bytes = new Uint8Array(16);
+        if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+            try {
+                window.crypto.getRandomValues(bytes);
+            } catch (error) {
+                for (var i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+            }
+        } else {
+            for (var i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+        }
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        var hex = Array.from(bytes, function(byte) {
+            return byte.toString(16).padStart(2, '0');
+        }).join('');
+        return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' +
+            hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+    }
+
+    function getPendingReportSubmissionId() {
+        if (_pendingReportSubmissionId) return _pendingReportSubmissionId;
+        try {
+            _pendingReportSubmissionId =
+                localStorage.getItem(REPORT_SUBMISSION_ID_STORAGE_KEY) || '';
+        } catch (error) {}
+        if (!_pendingReportSubmissionId) {
+            _pendingReportSubmissionId = createReportSubmissionId();
+            try {
+                localStorage.setItem(
+                    REPORT_SUBMISSION_ID_STORAGE_KEY,
+                    _pendingReportSubmissionId
+                );
+            } catch (error) {}
+        }
+        return _pendingReportSubmissionId;
+    }
+
+    function clearPendingReportSubmissionId(expectedId) {
+        if (expectedId && _pendingReportSubmissionId &&
+            _pendingReportSubmissionId !== expectedId) return;
+        _pendingReportSubmissionId = '';
+        try {
+            localStorage.removeItem(REPORT_SUBMISSION_ID_STORAGE_KEY);
+        } catch (error) {}
+    }
 
     // Report icons are resolved here so report pickers, IEM/NWS storm reports,
     // user-report markers, nearby reports, and popups stay visually consistent.
@@ -14331,6 +14505,11 @@
             b.style.color = '#e0e0e0';
         });
         if (cat.sub) {
+            if (!cat.sub.options.some(function(option) {
+                return option.type === selectedReportType;
+            })) {
+                selectedReportType = '';
+            }
             // Highlight selected top-level
             const topBtn = document.querySelector('#report-cat-grid button[data-cat-type="' + cat.type + '"]');
             if (topBtn) { topBtn.style.background = 'rgba(79,195,247,0.12)'; topBtn.style.borderColor = 'var(--primary)'; }
@@ -17072,8 +17251,10 @@
         }).bindTooltip('Report location', { permanent: false }).addTo(reportingMap);
         reportPinMarker.on('dragend', function(e) {
             const pos = e.target.getLatLng();
-            reportLat = parseFloat(pos.lat.toFixed(5));
-            reportLon = parseFloat(pos.lng.toFixed(5));
+            const nextLat = parseFloat(pos.lat.toFixed(5));
+            const nextLon = parseFloat(pos.lng.toFixed(5));
+            reportLat = nextLat;
+            reportLon = nextLon;
             localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
             localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
             updatePinCoordsDisplay();
@@ -20220,29 +20401,47 @@
         const notes = document.getElementById('report-notes').value.trim();
         const btn = document.querySelector('#reporting-tab button[onclick="submitUserReport()"]');
         const status = document.getElementById('report-status');
-        const reportTurnstileToken = await getTurnstileTokenForReport().catch(function(error) {
-            if (status) {
-                status.style.display = 'block';
-                status.textContent = 'Verification could not be renewed. Please try again.';
-                status.style.color = 'var(--warning)';
-            }
-            return null;
-        });
-        if (!reportTurnstileToken) {
-            submitUserReport._inFlight = false;
-            return;
-        }
+        const submissionId = getPendingReportSubmissionId();
+        const reportBody = {
+            lat: reportLat != null ? reportLat : parseFloat(lat),
+            lon: reportLon != null ? reportLon : parseFloat(lon),
+            type: type,
+            notes: notes,
+            time: new Date().toISOString(),
+            clientRequestId: submissionId
+        };
         if (btn) { btn.textContent = '\u23F3 Submitting...'; btn.disabled = true; }
-        if (status) { status.style.display = 'block'; status.textContent = 'Sending report...'; status.style.color = '#888'; }
+        if (status) {
+            status.style.display = 'block';
+            status.textContent = 'Sending report...';
+            status.style.color = '#888';
+        }
         try {
-            const res = await fetch(REPORTS_WORKER_URL, {
+            let reportTurnstileToken;
+            try {
+                reportTurnstileToken = await getTurnstileTokenForReport();
+            } catch (verificationError) {
+                if (status) {
+                    status.textContent = 'Verification could not be renewed. Please try submitting again.';
+                    status.style.color = 'var(--warning)';
+                }
+                return;
+            }
+            if (!reportTurnstileToken) {
+                if (status) status.style.display = 'none';
+                return;
+            }
+
+            reportBody.turnstileToken = reportTurnstileToken;
+            const res = await _weatherFetch(REPORTS_WORKER_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lat: reportLat != null ? reportLat : parseFloat(lat), lon: reportLon != null ? reportLon : parseFloat(lon), type: type, notes: notes, time: new Date().toISOString(), turnstileToken: reportTurnstileToken })
-            });
+                body: JSON.stringify(reportBody)
+            }, 15000);
             if (res.ok) {
                 clearReportCategory();
                 document.getElementById('report-notes').value = '';
+                clearPendingReportSubmissionId(submissionId);
                 invalidateTurnstile();
                 if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
                 setTimeout(loadReportingMapData, 1500);
@@ -20250,10 +20449,7 @@
                 // The Worker uses 403 specifically when Turnstile rejects or
                 // has expired. Re-open the visible gate so the user can
                 // recover without guessing why the submission failed.
-                var errorBody = '';
-                try { errorBody = await res.text(); } catch (_) {}
-                var needsVerification = res.status === 403 &&
-                    /turnstile verification required|verification failed|verification expired|bot detected/i.test(errorBody);
+                var needsVerification = res.status === 403;
                 invalidateTurnstile();
                 if (needsVerification) {
                     // Do not erase the device-level verification just because
@@ -20264,6 +20460,12 @@
                         status.textContent = 'Report verification could not be refreshed. Please try submitting again.';
                         status.style.color = 'var(--warning)';
                     }
+                } else if (res.status === 409) {
+                    clearPendingReportSubmissionId(submissionId);
+                    if (status) {
+                        status.textContent = 'A previous attempt was accepted, but these report details changed. Tap Submit again to send the updated report.';
+                        status.style.color = 'var(--warning)';
+                    }
                 } else if (status) {
                     status.textContent = 'Report failed. Please try again.';
                     status.style.color = 'var(--danger)';
@@ -20271,10 +20473,19 @@
             }
         } catch(e) {
             invalidateTurnstile();
-            if (status) { status.textContent = _isOffline ? 'You cannot send reports when offline.' : 'Report failed. Please try again.'; status.style.color = 'var(--warning)'; }
+            if (status) {
+                const timedOut = /timed out/i.test(String(e && e.message || e));
+                status.textContent = _isOffline
+                    ? 'You cannot send reports when offline. Please reconnect and retry.'
+                    : timedOut
+                        ? 'No confirmation received. Retrying the same report is safe; edited details may need a new submission.'
+                        : 'Report failed. Please try again.';
+                status.style.color = 'var(--warning)';
+            }
+        } finally {
+            if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
+            submitUserReport._inFlight = false;
         }
-        if (btn) { btn.textContent = 'SUBMIT REPORT'; btn.disabled = false; }
-        submitUserReport._inFlight = false;
     }
 
     // ——— NEARBY USER REPORTS (home tab, BETA) ———
@@ -22972,6 +23183,8 @@
         window.isBeachLocation = false;
         window.isWaterLocation = false;
         window.locationCountryCode = '';
+        window.locationState = '';
+        _syncOutlookCenterAvailability();
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
@@ -23003,6 +23216,10 @@
                     window.locationCountryCode = String(
                         _nomD.country_code || _nomD.countryCode || ''
                     ).toUpperCase();
+                    _syncOutlookCenterAvailability();
+                    if (_nomD.address && _nomD.address.state) {
+                        _setWeatherLocationState(_nomD.address.state);
+                    }
                     if (_nomD.error) {
                         window.isWaterLocation = true;
                     } else {
