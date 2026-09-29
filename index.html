@@ -5281,24 +5281,56 @@
             state === 'hi' || state === 'hawaii';
     }
 
+    function _isUSOutlookTerritoryLocation() {
+        var countryCode = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (['PR', 'GU', 'AS', 'MP', 'VI'].indexOf(countryCode) !== -1) return true;
+
+        var state = String(window.locationState || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[.,]/g, '')
+            .replace(/\s+/g, ' ');
+        return [
+            'pr', 'puerto rico',
+            'gu', 'guam',
+            'as', 'american samoa',
+            'mp', 'cnmi', 'northern mariana islands',
+            'vi', 'us virgin islands', 'u s virgin islands',
+            'united states virgin islands', 'virgin islands of the united states'
+        ].indexOf(state) !== -1;
+    }
+
     function _syncOutlookCenterAvailability() {
-        var restricted = _isAlaskaOrHawaiiLocation();
+        var territory = _isUSOutlookTerritoryLocation();
+        var restrictSPCWPC = territory || _isAlaskaOrHawaiiLocation();
+        var section = document.getElementById('spc-outlook-section');
+        if (section) section.style.display = territory ? 'none' : '';
+
         var select = document.getElementById('outlook-center-select');
         if (select) {
             ['spc', 'wpc'].forEach(function(center) {
                 var option = select.querySelector('option[value="' + center + '"]');
                 if (option) {
-                    option.hidden = restricted;
-                    option.disabled = restricted;
+                    option.hidden = restrictSPCWPC;
+                    option.disabled = restrictSPCWPC;
+                }
+            });
+            ['nhc', 'cpc'].forEach(function(center) {
+                var option = select.querySelector('option[value="' + center + '"]');
+                if (option) {
+                    option.hidden = territory;
+                    option.disabled = territory;
                 }
             });
         }
-        return restricted;
+        return territory;
     }
 
     function _setWeatherLocationState(state) {
         window.locationState = String(state || '').trim();
-        if (_syncOutlookCenterAvailability() &&
+        _syncOutlookCenterAvailability();
+        if (!_isUSOutlookTerritoryLocation() &&
+            _isAlaskaOrHawaiiLocation() &&
             (activeOutlookCenter === 'spc' || activeOutlookCenter === 'wpc')) {
             switchOutlookCenter('cpc');
         }
@@ -5306,6 +5338,10 @@
 
     function updateOutlookMap(center, day) {
         day = day || 1;
+        if (_isUSOutlookTerritoryLocation()) {
+            // No outlook products are available for the covered U.S. territories.
+            return;
+        }
         if (_isAlaskaOrHawaiiLocation() && (center === 'spc' || center === 'wpc')) {
             // Guard direct/programmatic map updates as well as the selector.
             switchOutlookCenter('cpc');
@@ -5399,7 +5435,9 @@
     }
 
     function switchOutlookCenter(center) {
-        if (_syncOutlookCenterAvailability() &&
+        _syncOutlookCenterAvailability();
+        if (_isUSOutlookTerritoryLocation()) return;
+        if (_isAlaskaOrHawaiiLocation() &&
             (center === 'spc' || center === 'wpc')) {
             center = 'cpc';
         }
@@ -22516,6 +22554,7 @@
                     window.locationCountryCode = String(
                         _nomD.country_code || _nomD.countryCode || ''
                     ).toUpperCase();
+                    _syncOutlookCenterAvailability();
                     if (_nomD.address && _nomD.address.state) {
                         _setWeatherLocationState(_nomD.address.state);
                     }
