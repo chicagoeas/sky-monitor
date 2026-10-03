@@ -14171,6 +14171,7 @@
     let tropicalRouteLabelsLayer = null;
     let tropicalRouteStormLayer = null;
     let tropicalRouteUserLayer = null;
+    let tropicalRouteOverlayRedrawTimer = null;
     let tropicalRouteSatelliteTileLayer = null;
     let tropicalRouteSatelliteTimestamp = 0;
     let tropicalRouteSatelliteLoadPromise = null;
@@ -20889,7 +20890,7 @@
     function _tropicalLocationInCone(storm, latValue, lonValue) {
         var latValueNumber = Number(latValue), lonValueNumber = Number(lonValue);
         var cone = storm && storm.conePgn;
-        if (!isFinite(latValueNumber) || !isFinite(lonValueNumber) ||
+        if (_tropicalIsJTWC(storm) || !isFinite(latValueNumber) || !isFinite(lonValueNumber) ||
             !cone || !Array.isArray(cone.coordinates)) return false;
         var coordinates = cone.coordinates;
         if (String(cone.type || 'Polygon').toLowerCase() === 'multipolygon') {
@@ -21236,7 +21237,9 @@
             if (status) {
                 status.textContent = tropicalRouteStorms.length
                     ? 'Historical NOAA best-track observations' +
-                        (tropicalRouteStorms.some(function(storm) { return storm.conePgn; })
+                        (tropicalRouteStorms.some(function(storm) {
+                            return !_tropicalIsJTWC(storm) && storm.conePgn;
+                        })
                             ? ' with archived NHC forecast cone data.'
                             : '. No archived operational cone is available for this selection.')
                     : 'No NHC/JTWC system was active at the selected time.';
@@ -21422,7 +21425,7 @@
                 opacity: 0.76,
                 className: 'tropical-satellite-tile',
                 pane: 'tropical-satellite-pane',
-                noWrap: true
+                noWrap: false
             }
         );
         if (tropicalRouteMapMode === 'satellite') tropicalRouteSatelliteTileLayer.addTo(tropicalRouteMap);
@@ -21539,7 +21542,7 @@
                     ? 'Historical best-track observation with the archived forecast issued at that time.'
                     : 'Historical best-track observation at the selected time.')
                 : _tropicalIsJTWC(storm)
-                ? 'Official JTWC position, intensity, forecast track, and cone.'
+                ? 'Official JTWC position, intensity, and forecast track.'
                 : 'Official NHC position and forecast track.';
         document.getElementById('tropical-route-current-wind').textContent = _tropicalFormatWind(wind);
         document.getElementById('tropical-route-pressure').textContent = pressure != null ? pressure + ' mb' : '—';
@@ -21567,7 +21570,7 @@
                     '" target="_blank" rel="noopener noreferrer">' +
                     escapeHtml(storm.historicalTrackSource || 'NOAA best-track archive') + '</a>. '
                 : (_tropicalIsJTWC(storm)
-                ? 'Track, cone, position, and intensity: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Joint Typhoon Warning Center</a>. '
+                ? 'Track, position, and intensity: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">Joint Typhoon Warning Center</a>. '
                 : 'Track and cone: <a href="' + escapeHtml(sourceUrl) + '" target="_blank" rel="noopener noreferrer">National Hurricane Center</a>. ')) +
             (storm.historical
                 ? (storm.forecastSource
@@ -21592,9 +21595,56 @@
         }).join('');
     }
 
+    function _tropicalMapLongitudeNear(longitude, referenceLongitude) {
+        var value = Number(longitude);
+        var reference = Number(referenceLongitude);
+        if (!isFinite(value) || !isFinite(reference)) return value;
+        return value + 360 * Math.round((reference - value) / 360);
+    }
+
+    function _tropicalMapWorldOffset(anchorLongitude) {
+        var centerLongitude = tropicalRouteMap && tropicalRouteMap.getCenter
+            ? tropicalRouteMap.getCenter().lng : 0;
+        return 360 * Math.round((centerLongitude - Number(anchorLongitude)) / 360);
+    }
+
+    function _tropicalMapLatLngPath(points, worldOffset) {
+        var previousLongitude = null;
+        return points.map(function(point) {
+            var latitude = Number(point.lat);
+            var longitude = Number(point.lon);
+            if (previousLongitude != null) {
+                longitude = _tropicalMapLongitudeNear(longitude, previousLongitude);
+            }
+            previousLongitude = longitude;
+            return [latitude, longitude + worldOffset];
+        });
+    }
+
+    function _tropicalMapConeRing(ring) {
+        var centerLongitude = tropicalRouteMap && tropicalRouteMap.getCenter
+            ? tropicalRouteMap.getCenter().lng : 0;
+        var previousLongitude = null;
+        var points = ring.map(function(pair) {
+            var longitude = Number(pair[0]);
+            if (previousLongitude != null) {
+                longitude = _tropicalMapLongitudeNear(longitude, previousLongitude);
+            }
+            previousLongitude = longitude;
+            return [Number(pair[1]), longitude];
+        });
+        var longitudes = points.map(function(point) { return point[1]; });
+        var minLongitude = Math.min.apply(null, longitudes);
+        var maxLongitude = Math.max.apply(null, longitudes);
+        var offset = 360 * Math.round((centerLongitude - (minLongitude + maxLongitude) / 2) / 360);
+        return points.map(function(point) { return [point[0], point[1] + offset]; });
+    }
+
     function _drawTropicalRouteStorm(storm, stormIndex, bounds, focusBounds, focusIndex) {
         if (!tropicalRouteMap || !window.L || !storm) return;
         var current = _tropicalCurrentPoint(storm);
+        var worldOffset = current ? _tropicalMapWorldOffset(current.lon) : 0;
+        var displayedCurrent = current ? [current.lat, current.lon + worldOffset] : null;
         var forecastPoints = storm._forecastPoints || [];
         var track = storm.historical
             ? forecastPoints
@@ -21613,8 +21663,9 @@
             });
             return layer;
         };
-        if (storm.conePgn && storm.conePgn.coordinates && storm.conePgn.coordinates[0]) {
-            var coneRing = storm.conePgn.coordinates[0].map(function(pair) { return [pair[1], pair[0]]; });
+        if (!_tropicalIsJTWC(storm) && storm.conePgn &&
+            storm.conePgn.coordinates && storm.conePgn.coordinates[0]) {
+            var coneRing = _tropicalMapConeRing(storm.conePgn.coordinates[0]);
             var cone = selectStormOnClick(L.polygon(coneRing, {
                 color: '#f8d66d', fillColor: '#f8d66d', fillOpacity: 0.12,
                 weight: 1.4, opacity: 0.75, dashArray: '5,5', interactive: true
@@ -21622,15 +21673,17 @@
             extendBounds(cone.getBounds());
         }
         if (storm.historical && Array.isArray(storm.pastTrackPts) && storm.pastTrackPts.length >= 2) {
-            var pastLine = selectStormOnClick(L.polyline(storm.pastTrackPts.map(function(pair) {
-                return [pair[1], pair[0]];
-            }), {
+            var pastLinePoints = _tropicalMapLatLngPath(storm.pastTrackPts.map(function(pair) {
+                return { lat: pair[1], lon: pair[0] };
+            }), worldOffset);
+            var pastLine = selectStormOnClick(L.polyline(pastLinePoints, {
                 color: color, weight: 4, opacity: 0.9, interactive: true
             })).addTo(tropicalRouteStormLayer);
             extendBounds(pastLine.getBounds());
         }
         if (points.length >= 2) {
-            var line = selectStormOnClick(L.polyline(points.map(function(point) { return [point.lat, point.lon]; }), {
+            var linePoints = _tropicalMapLatLngPath(points, worldOffset);
+            var line = selectStormOnClick(L.polyline(linePoints, {
                 color: color, weight: 4, opacity: 0.95, dashArray: '9,7', interactive: true
             })).addTo(tropicalRouteStormLayer);
             extendBounds(line.getBounds());
@@ -21650,15 +21703,19 @@
                     iconAnchor: [17, 13],
                     popupAnchor: [0, -12]
                 });
-                var forecastMarker = L.marker([point.lat, point.lon], {
+                var markerLon = _tropicalMapLongitudeNear(
+                    point.lon,
+                    current ? current.lon : point.lon
+                ) + worldOffset;
+                var forecastMarker = L.marker([point.lat, markerLon], {
                     icon: icon, keyboard: true, zIndexOffset: 300
                 }).bindPopup(_tropicalForecastPopupHtml(storm, point), { closeButton: true });
                 selectStormOnClick(forecastMarker).addTo(tropicalRouteStormLayer);
-                extendBounds([point.lat, point.lon]);
+                extendBounds([point.lat, markerLon]);
             });
         }
         if (current) {
-            var currentMarker = selectStormOnClick(L.circleMarker([current.lat, current.lon], {
+            var currentMarker = selectStormOnClick(L.circleMarker(displayedCurrent, {
                 radius: 9, color: '#ffffff', fillColor: color, fillOpacity: 1, weight: 2.5
             }).bindTooltip(_tropicalNamedStormTitle(storm), {
                 direction: 'top', opacity: 0.95
@@ -21680,11 +21737,15 @@
         else tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
         var userLat = parseFloat(lat), userLon = parseFloat(lon);
         if (isFinite(userLat) && isFinite(userLon)) {
-            L.circle([userLat, userLon], {
+            var displayedUserLon = _tropicalMapLongitudeNear(
+                userLon,
+                tropicalRouteMap.getCenter().lng
+            );
+            L.circle([userLat, displayedUserLon], {
                 radius: 115000, color: '#7dd3fc', fillColor: '#7dd3fc',
                 fillOpacity: 0.08, weight: 1.5, opacity: 0.7, interactive: false
             }).addTo(tropicalRouteUserLayer);
-            L.circleMarker([userLat, userLon], {
+            L.circleMarker([userLat, displayedUserLon], {
                 radius: 7, color: '#ffffff', fillColor: '#7dd3fc', fillOpacity: 1, weight: 2, interactive: false
             }).bindTooltip('Your selected location', { direction: 'top', opacity: 0.95 }).addTo(tropicalRouteUserLayer);
         }
@@ -21915,8 +21976,6 @@
                 minZoom: 2,
                 maxZoom: 10,
                 worldCopyJump: false,
-                maxBounds: [[-85.05, -180], [85.05, 180]],
-                maxBoundsViscosity: 1,
                 fadeAnimation: false,
                 attributionControl: true
             }).setView([20, -60], 3);
@@ -21929,18 +21988,29 @@
             tropicalRouteBaseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
                 subdomains: 'abcd',
                 maxZoom: 19,
-                noWrap: true,
+                noWrap: false,
                 attribution: ''
             }).addTo(tropicalRouteMap);
             tropicalRouteLabelsLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
                 subdomains: 'abcd',
                 maxZoom: 19,
-                noWrap: true,
+                noWrap: false,
                 pane: 'tropical-labels-pane',
                 attribution: ''
             });
             tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
+            tropicalRouteMap.on('moveend', function() {
+                if (tropicalRouteOverlayRedrawTimer) {
+                    clearTimeout(tropicalRouteOverlayRedrawTimer);
+                }
+                tropicalRouteOverlayRedrawTimer = setTimeout(function() {
+                    tropicalRouteOverlayRedrawTimer = null;
+                    if (tropicalRouteMap && tropicalRouteStorms.length) {
+                        _drawTropicalRouteStorms(false);
+                    }
+                }, 0);
+            });
             _tropicalMapLayersForMode();
             _updateTropicalMapAttribution();
         }
@@ -22202,7 +22272,9 @@
                 return Object.assign({}, s, { _dist: Math.round(_haverMi(userLat, userLon, sLat, sLon)) });
             }).filter(s => {
                 // Cone polygon available → exact PIP check (the correct path)
-                if (s.conePgn && s.conePgn.coordinates) return _pip(userLat, userLon, s.conePgn);
+                if (!_tropicalIsJTWC(s) && s.conePgn && s.conePgn.coordinates) {
+                    return _pip(userLat, userLon, s.conePgn);
+                }
                 // No cone yet (Worker not redeployed / cone fetch failed) → distance fallback
                 // Keep NaN distances too — better to show and be wrong than miss real threats
                 return isNaN(s._dist) || s._dist <= MAX_MI;
@@ -22270,7 +22342,7 @@
                             });
                         });
                         let bounds=null;
-                        if(s0.conePgn?.coordinates){
+                        if(!_tropicalIsJTWC(s0) && s0.conePgn?.coordinates){
                             const ring=s0.conePgn.coordinates[0].map(c=>[c[1],c[0]]);
                             const coneL=L.polygon(ring,{color:'#4fc3f7',fillColor:'#4fc3f7',fillOpacity:0.18,weight:1.5,opacity:0.7,interactive:false}).addTo(map);
                             bounds=coneL.getBounds();
