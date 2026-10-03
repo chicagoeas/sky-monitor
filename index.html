@@ -14004,6 +14004,7 @@
     let tropicalRouteStormLayer = null;
     let tropicalRouteUserLayer = null;
     let tropicalRouteOverlayRedrawTimer = null;
+    let tropicalRoutePendingPopupState = null;
     let tropicalRouteSatelliteTileLayer = null;
     let tropicalRouteSatelliteTimestamp = 0;
     let tropicalRouteSatelliteLoadPromise = null;
@@ -21028,6 +21029,33 @@
         return points.map(function(point) { return [point[0], point[1] + offset]; });
     }
 
+    function _captureTropicalOpenPopup() {
+        if (!tropicalRouteMap || !tropicalRouteMap._popup ||
+            !tropicalRouteMap.hasLayer(tropicalRouteMap._popup)) return null;
+        var popup = tropicalRouteMap._popup;
+        var latLng = popup.getLatLng && popup.getLatLng();
+        if (!latLng) return null;
+        return {
+            lat: latLng.lat,
+            lon: latLng.lng,
+            content: popup.getContent(),
+            options: Object.assign({}, popup.options || {})
+        };
+    }
+
+    function _restoreTropicalOpenPopup(state) {
+        if (!state || !tropicalRouteMap || !window.L) return;
+        var longitude = _tropicalMapLongitudeNear(
+            state.lon,
+            tropicalRouteMap.getCenter().lng
+        );
+        var options = Object.assign({}, state.options, { autoPan: false });
+        L.popup(options)
+            .setLatLng([state.lat, longitude])
+            .setContent(state.content)
+            .openOn(tropicalRouteMap);
+    }
+
     function _drawTropicalRouteStorm(storm, stormIndex, bounds, focusBounds, focusIndex) {
         if (!tropicalRouteMap || !window.L || !storm) return;
         var current = _tropicalCurrentPoint(storm);
@@ -21348,6 +21376,11 @@
             });
             tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
+            tropicalRouteMap.on('movestart zoomstart', function() {
+                if (!tropicalRoutePendingPopupState) {
+                    tropicalRoutePendingPopupState = _captureTropicalOpenPopup();
+                }
+            });
             tropicalRouteMap.on('moveend', function() {
                 if (tropicalRouteOverlayRedrawTimer) {
                     clearTimeout(tropicalRouteOverlayRedrawTimer);
@@ -21355,7 +21388,11 @@
                 tropicalRouteOverlayRedrawTimer = setTimeout(function() {
                     tropicalRouteOverlayRedrawTimer = null;
                     if (tropicalRouteMap && tropicalRouteStorms.length) {
+                        var popupState = tropicalRoutePendingPopupState ||
+                            _captureTropicalOpenPopup();
+                        tropicalRoutePendingPopupState = null;
                         _drawTropicalRouteStorms(false);
+                        _restoreTropicalOpenPopup(popupState);
                     }
                 }, 0);
             });
