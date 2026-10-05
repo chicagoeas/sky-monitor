@@ -33,3 +33,34 @@ jobs:
           VAPID_EMAIL: ${{ secrets.VAPID_EMAIL }}
           PIRATE_WEATHER_KEY: ${{ secrets.PIRATE_WEATHER_KEY }}
         run: node notify.mjs
+
+      - name: Report workflow status to Uptime Kuma
+        if: ${{ always() }}
+        env:
+          UPTIME_KUMA_PUSH_URL: ${{ secrets.UPTIME_KUMA_PUSH_URL }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ -z "$UPTIME_KUMA_PUSH_URL" ]; then
+            echo "::warning::UPTIME_KUMA_PUSH_URL is not configured; skipping Uptime Kuma heartbeat."
+            exit 0
+          fi
+
+          case "$JOB_STATUS" in
+            success) STATUS="up" ;;
+            *) STATUS="down" ;;
+          esac
+
+          # Kuma's copied URL includes default query parameters; replace them
+          # so this heartbeat reports the real Actions result.
+          PUSH_URL="${UPTIME_KUMA_PUSH_URL%%\?*}"
+          RUN_MSG="Weather Notifications run ${GITHUB_RUN_NUMBER}: ${JOB_STATUS}"
+
+          curl --fail --silent --show-error \
+            --connect-timeout 5 \
+            --max-time 15 \
+            --retry 2 \
+            --retry-delay 2 \
+            --get "$PUSH_URL" \
+            --data-urlencode "status=$STATUS" \
+            --data-urlencode "msg=$RUN_MSG" \
+            --data-urlencode "ping="
