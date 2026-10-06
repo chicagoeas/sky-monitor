@@ -1285,6 +1285,19 @@
             font: 0.82em/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
             overflow-wrap: anywhere; user-select: text;
         }
+        .skymonitor-feedback-turnstile {
+            display: none; margin: 2px 0 12px; padding: 12px 10px 8px;
+            border: 1px solid rgba(79,195,247,0.2); border-radius: 10px;
+            background: rgba(2,12,19,0.48);
+        }
+        .skymonitor-feedback-turnstile.is-visible { display: block; }
+        .skymonitor-feedback-turnstile-label {
+            margin: 0 0 8px; color: #a9c1cf; font-size: 0.72em; line-height: 1.4;
+            text-align: center;
+        }
+        .skymonitor-feedback-turnstile-widget {
+            display: flex; justify-content: center; min-height: 65px;
+        }
         .skymonitor-feedback-actions {
             display: flex; justify-content: flex-end; gap: 9px; margin-top: 18px;
         }
@@ -2515,6 +2528,11 @@
                               name="description" maxlength="3500" required
                               placeholder="What happened? Include any details that may help."></textarea>
                 </label>
+                <div class="skymonitor-feedback-turnstile" id="skymonitor-feedback-turnstile"
+                     aria-hidden="true">
+                    <p class="skymonitor-feedback-turnstile-label">Complete the Cloudflare check to send your report.</p>
+                    <div class="skymonitor-feedback-turnstile-widget" id="skymonitor-feedback-turnstile-widget"></div>
+                </div>
                 <p id="skymonitor-feedback-status" role="status" aria-live="polite"></p>
                 <div class="skymonitor-feedback-actions">
                     <button class="skymonitor-feedback-button skymonitor-feedback-cancel"
@@ -4726,7 +4744,12 @@
     let _skyMonitorFeedbackKind = 'bug';
     let _skyMonitorFeedbackAlertId = '';
     let _skyMonitorFeedbackSending = false;
-    let _skyMonitorFeedbackPendingAfterVerification = false;
+    let _skyMonitorFeedbackTurnstileWidgetId = null;
+    let _skyMonitorFeedbackTurnstileToken = '';
+    let _skyMonitorFeedbackChallengeVisible = false;
+    let _skyMonitorFeedbackTurnstileNeedsReset = true;
+    let _skyMonitorFeedbackTurnstileRetryTimer = null;
+    let _skyMonitorFeedbackSubmissionComplete = false;
 
     function openSkyMonitorBugReport(event) {
         if (event) event.preventDefault();
@@ -4774,6 +4797,19 @@
         description.value = '';
         status.textContent = '';
         status.style.color = '';
+        _skyMonitorFeedbackTurnstileToken = '';
+        _skyMonitorFeedbackChallengeVisible = false;
+        _skyMonitorFeedbackTurnstileNeedsReset = true;
+        _skyMonitorFeedbackSubmissionComplete = false;
+        var turnstileChallenge = document.getElementById('skymonitor-feedback-turnstile');
+        if (turnstileChallenge) {
+            turnstileChallenge.classList.remove('is-visible');
+            turnstileChallenge.setAttribute('aria-hidden', 'true');
+        }
+        if (_skyMonitorFeedbackTurnstileRetryTimer !== null) {
+            window.clearTimeout(_skyMonitorFeedbackTurnstileRetryTimer);
+            _skyMonitorFeedbackTurnstileRetryTimer = null;
+        }
         submit.disabled = false;
         submit.textContent = 'Send report';
         modal.style.display = 'flex';
@@ -4788,23 +4824,123 @@
         var gate = document.getElementById('turnstile-gate');
         if (modal) modal.style.display = 'none';
         _skyMonitorFeedbackAlertId = '';
-        _skyMonitorFeedbackPendingAfterVerification = false;
+        _skyMonitorFeedbackTurnstileToken = '';
+        _skyMonitorFeedbackChallengeVisible = false;
+        _skyMonitorFeedbackTurnstileNeedsReset = true;
+        if (_skyMonitorFeedbackTurnstileRetryTimer !== null) {
+            window.clearTimeout(_skyMonitorFeedbackTurnstileRetryTimer);
+            _skyMonitorFeedbackTurnstileRetryTimer = null;
+        }
+        var turnstileChallenge = document.getElementById('skymonitor-feedback-turnstile');
+        if (turnstileChallenge) {
+            turnstileChallenge.classList.remove('is-visible');
+            turnstileChallenge.setAttribute('aria-hidden', 'true');
+        }
         setModalOpen(!!(gate && gate.style.display === 'flex'));
     }
 
-    async function submitSkyMonitorFeedback(event) {
+    function showSkyMonitorFeedbackTurnstile() {
+        var modal = document.getElementById('skymonitor-feedback-modal');
+        var challenge = document.getElementById('skymonitor-feedback-turnstile');
+        var status = document.getElementById('skymonitor-feedback-status');
+        if (!modal || modal.style.display !== 'flex' || !challenge) return;
+
+        if (!_skyMonitorFeedbackChallengeVisible) {
+            _skyMonitorFeedbackChallengeVisible = true;
+            _skyMonitorFeedbackTurnstileNeedsReset = true;
+            challenge.classList.add('is-visible');
+            challenge.setAttribute('aria-hidden', 'false');
+        }
+
+        if (typeof turnstile === 'undefined') {
+            status.textContent = 'Loading Cloudflare verification...';
+            status.style.color = '#9eb2bf';
+            if (_skyMonitorFeedbackTurnstileRetryTimer === null) {
+                _skyMonitorFeedbackTurnstileRetryTimer = window.setTimeout(function() {
+                    _skyMonitorFeedbackTurnstileRetryTimer = null;
+                    showSkyMonitorFeedbackTurnstile();
+                }, 650);
+            }
+            return;
+        }
+
+        if (_skyMonitorFeedbackTurnstileRetryTimer !== null) {
+            window.clearTimeout(_skyMonitorFeedbackTurnstileRetryTimer);
+            _skyMonitorFeedbackTurnstileRetryTimer = null;
+        }
+
+        if (_skyMonitorFeedbackTurnstileWidgetId === null) {
+            try {
+                _skyMonitorFeedbackTurnstileWidgetId = turnstile.render(
+                    '#skymonitor-feedback-turnstile-widget',
+                    {
+                        sitekey: TURNSTILE_SITE_KEY,
+                        theme: 'dark',
+                        size: window.innerWidth <= 390 ? 'compact' : 'normal',
+                        action: 'report_gate',
+                        appearance: 'always',
+                        callback: function(token) {
+                            if (!token || !_skyMonitorFeedbackChallengeVisible || _skyMonitorFeedbackSending) return;
+                            _skyMonitorFeedbackTurnstileToken = token;
+                            var submit = document.getElementById('skymonitor-feedback-submit');
+                            if (submit) {
+                                submit.disabled = true;
+                                submit.textContent = 'Sending...';
+                            }
+                            if (status) {
+                                status.textContent = 'Verification complete. Sending your report...';
+                                status.style.color = 'var(--success)';
+                            }
+                            submitSkyMonitorFeedbackRequest(token);
+                        },
+                        'expired-callback': function() {
+                            _skyMonitorFeedbackTurnstileToken = '';
+                            _skyMonitorFeedbackTurnstileNeedsReset = true;
+                            if (!_skyMonitorFeedbackSending && status) {
+                                status.textContent = 'Verification expired. Complete the check again.';
+                                status.style.color = 'var(--warning)';
+                            }
+                        },
+                        'error-callback': function() {
+                            _skyMonitorFeedbackTurnstileToken = '';
+                            _skyMonitorFeedbackTurnstileNeedsReset = true;
+                            if (!_skyMonitorFeedbackSending && status) {
+                                status.textContent = 'Cloudflare verification had a problem. Tap Send report to retry.';
+                                status.style.color = 'var(--warning)';
+                            }
+                        }
+                    }
+                );
+                _skyMonitorFeedbackTurnstileNeedsReset = false;
+            } catch (error) {
+                status.textContent = 'Could not load Cloudflare verification. Tap Send report to retry.';
+                status.style.color = 'var(--warning)';
+            }
+            return;
+        }
+
+        if (_skyMonitorFeedbackTurnstileNeedsReset) {
+            try {
+                turnstile.reset(_skyMonitorFeedbackTurnstileWidgetId);
+                _skyMonitorFeedbackTurnstileNeedsReset = false;
+            } catch (error) {
+                status.textContent = 'Could not reset Cloudflare verification. Tap Send report to retry.';
+                status.style.color = 'var(--warning)';
+            }
+        }
+    }
+
+    function submitSkyMonitorFeedback(event) {
         event.preventDefault();
-        if (_skyMonitorFeedbackSending) return;
+        if (_skyMonitorFeedbackSending || _skyMonitorFeedbackSubmissionComplete) return;
 
         var isAlertReport = _skyMonitorFeedbackKind === 'custom-alert';
         var titleInput = document.getElementById('skymonitor-feedback-title-input');
         var descriptionInput = document.getElementById('skymonitor-feedback-description');
         var status = document.getElementById('skymonitor-feedback-status');
-        var submit = document.getElementById('skymonitor-feedback-submit');
         var title = titleInput.value.trim();
         var description = descriptionInput.value.trim();
-        var alertId = _skyMonitorFeedbackAlertId;
-        if ((!isAlertReport && !title) || !description || (isAlertReport && !alertId)) {
+        if ((!isAlertReport && !title) || !description || (isAlertReport && !_skyMonitorFeedbackAlertId)) {
             status.textContent = isAlertReport
                 ? 'Add a description before sending this report.'
                 : 'Add a title and description before sending this report.';
@@ -4812,33 +4948,51 @@
             return;
         }
 
-        _skyMonitorFeedbackSending = true;
-        submit.disabled = true;
-        submit.textContent = 'Verifying...';
-        status.textContent = 'Preparing your report...';
-        status.style.color = '#9eb2bf';
-        var turnstileToken;
-        try {
-            turnstileToken = await getTurnstileTokenForReport();
-        } catch (verificationError) {
-            status.textContent = 'Verification could not be renewed. Please try again.';
-            status.style.color = 'var(--warning)';
-            _skyMonitorFeedbackSending = false;
-            submit.disabled = false;
-            submit.textContent = 'Send report';
-            return;
-        }
-        if (!turnstileToken) {
-            _skyMonitorFeedbackPendingAfterVerification = true;
-            _skyMonitorFeedbackSending = false;
-            submit.disabled = false;
-            submit.textContent = 'Send report';
-            status.textContent = 'Complete the verification to send your report.';
+        if (!_skyMonitorFeedbackChallengeVisible) {
+            status.textContent = 'Complete the Cloudflare check below to send your report.';
             status.style.color = '#9eb2bf';
+            showSkyMonitorFeedbackTurnstile();
             return;
         }
 
-        submit.textContent = 'Sending...';
+        if (!_skyMonitorFeedbackTurnstileToken) {
+            status.textContent = 'Complete the Cloudflare check below to send your report.';
+            status.style.color = '#9eb2bf';
+            showSkyMonitorFeedbackTurnstile();
+        }
+    }
+
+    async function submitSkyMonitorFeedbackRequest(turnstileToken) {
+        if (_skyMonitorFeedbackSending || !turnstileToken) return;
+
+        var isAlertReport = _skyMonitorFeedbackKind === 'custom-alert';
+        var title = document.getElementById('skymonitor-feedback-title-input').value.trim();
+        var description = document.getElementById('skymonitor-feedback-description').value.trim();
+        var alertId = _skyMonitorFeedbackAlertId;
+        var status = document.getElementById('skymonitor-feedback-status');
+        var submit = document.getElementById('skymonitor-feedback-submit');
+        if ((!isAlertReport && !title) || !description || (isAlertReport && !alertId)) {
+            _skyMonitorFeedbackTurnstileToken = '';
+            _skyMonitorFeedbackTurnstileNeedsReset = true;
+            if (status) {
+                status.textContent = 'Complete the required report details before sending.';
+                status.style.color = 'var(--warning)';
+            }
+            showSkyMonitorFeedbackTurnstile();
+            return;
+        }
+
+        _skyMonitorFeedbackSending = true;
+        _skyMonitorFeedbackTurnstileToken = '';
+        if (submit) {
+            submit.disabled = true;
+            submit.textContent = 'Sending...';
+        }
+        if (status) {
+            status.textContent = 'Verification complete. Sending your report...';
+            status.style.color = 'var(--success)';
+        }
+
         var payload = {
             kind: _skyMonitorFeedbackKind,
             description: description,
@@ -4849,6 +5003,7 @@
 
         var controller = new AbortController();
         var timeoutId = window.setTimeout(function() { controller.abort(); }, 15000);
+        var shouldResetTurnstile = false;
         try {
             var response = await fetch(REPORTS_FEEDBACK_WORKER_URL, {
                 method: 'POST',
@@ -4859,29 +5014,49 @@
             var result = {};
             try { result = await response.json(); } catch (parseError) {}
             if (!response.ok) {
-                invalidateTurnstile();
-                status.textContent = response.status === 403
-                    ? 'Verification expired. Please send the report again.'
-                    : (result.error || 'Could not send your report. Please try again.');
-                status.style.color = 'var(--warning)';
+                shouldResetTurnstile = true;
+                _skyMonitorFeedbackTurnstileNeedsReset = true;
+                if (status) {
+                    status.textContent = response.status === 403
+                        ? 'Verification expired. Complete the Cloudflare check again.'
+                        : (result.error || 'Could not send your report. Complete the check to retry.');
+                    status.style.color = 'var(--warning)';
+                }
                 return;
             }
 
-            invalidateTurnstile();
-            status.textContent = 'Report sent. Thank you for helping improve SkyMonitor.';
-            status.style.color = 'var(--success)';
+            _skyMonitorFeedbackSubmissionComplete = true;
+            _skyMonitorFeedbackChallengeVisible = false;
+            _skyMonitorFeedbackTurnstileNeedsReset = true;
+            var challenge = document.getElementById('skymonitor-feedback-turnstile');
+            if (challenge) {
+                challenge.classList.remove('is-visible');
+                challenge.setAttribute('aria-hidden', 'true');
+            }
+            if (status) {
+                status.textContent = 'Report sent. Thank you for helping improve SkyMonitor.';
+                status.style.color = 'var(--success)';
+            }
             window.setTimeout(closeSkyMonitorFeedback, 1500);
         } catch (error) {
-            invalidateTurnstile();
-            status.textContent = error && error.name === 'AbortError'
-                ? 'Sending took too long. Please try again.'
-                : 'Could not send your report. Check your connection and try again.';
-            status.style.color = 'var(--warning)';
+            shouldResetTurnstile = true;
+            _skyMonitorFeedbackTurnstileNeedsReset = true;
+            if (status) {
+                status.textContent = error && error.name === 'AbortError'
+                    ? 'Sending took too long. Complete the Cloudflare check to retry.'
+                    : 'Could not send your report. Check your connection and complete the check to retry.';
+                status.style.color = 'var(--warning)';
+            }
         } finally {
             window.clearTimeout(timeoutId);
             _skyMonitorFeedbackSending = false;
-            submit.disabled = false;
-            submit.textContent = 'Send report';
+            if (submit) {
+                submit.disabled = _skyMonitorFeedbackSubmissionComplete;
+                submit.textContent = _skyMonitorFeedbackSubmissionComplete ? 'Sent' : 'Send report';
+            }
+            if (shouldResetTurnstile && _skyMonitorFeedbackChallengeVisible) {
+                showSkyMonitorFeedbackTurnstile();
+            }
         }
     }
 
@@ -5028,27 +5203,11 @@
                         _turnstileTokenIssuedAt = Date.now();
                     _turnstileVerified = true;
                     localStorage.setItem('turnstile_verified', 'true');
-                    var resumeFeedbackSubmission = _skyMonitorFeedbackPendingAfterVerification;
-                    _skyMonitorFeedbackPendingAfterVerification = false;
                     if (statusEl) {
                         statusEl.textContent = 'Access granted.';
                         statusEl.style.color = 'var(--success)';
                     }
                     setTimeout(function() { closeTurnstileGate(false); }, 450);
-                    if (resumeFeedbackSubmission) {
-                        var feedbackStatus = document.getElementById('skymonitor-feedback-status');
-                        if (feedbackStatus) {
-                            feedbackStatus.textContent = 'Verification complete. Sending your report...';
-                            feedbackStatus.style.color = 'var(--success)';
-                        }
-                        setTimeout(function() {
-                            var feedbackModal = document.getElementById('skymonitor-feedback-modal');
-                            var feedbackForm = document.getElementById('skymonitor-feedback-form');
-                            if (feedbackModal && feedbackModal.style.display === 'flex' && feedbackForm) {
-                                feedbackForm.requestSubmit();
-                            }
-                        }, 600);
-                    }
                 },
                 'expired-callback': function() {
                     invalidateTurnstile();
@@ -5071,7 +5230,6 @@
         var feedbackModal = document.getElementById('skymonitor-feedback-modal');
         setModalOpen(!!(feedbackModal && feedbackModal.style.display === 'flex'));
         if (goHome) {
-            _skyMonitorFeedbackPendingAfterVerification = false;
             // If verification was requested before leaving fullscreen, X
             // cancels that exit and keeps the user on the radar route.
             if (_turnstilePendingRadarExit) {
