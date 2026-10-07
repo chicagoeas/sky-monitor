@@ -5332,6 +5332,9 @@
             localStorage.setItem('skymonitor_daylight_state', JSON.stringify(savedAtmosphere));
         } catch (e) {}
 
+        _syncReportingMapBasemap(isDay);
+        _scheduleReportingMapDayNightUpdate();
+
         if (hasWarningTheme) return;
         if (!localRiseTime || !localSetTime) {
             if (isDay) body.style.background = 'linear-gradient(180deg, #1a3a5a 0%, #07131d 100%)';
@@ -5344,6 +5347,48 @@
         if (isGoldenHourMorn || isGoldenHourEve) body.style.background = 'linear-gradient(180deg, #e65100 0%, #07131d 100%)';
         else if (isDay) body.style.background = 'linear-gradient(180deg, #1a3a5a 0%, #07131d 100%)';
         else body.style.background = 'linear-gradient(180deg, #07131d 0%, #000000 100%)';
+    }
+
+    function _scheduleReportingMapDayNightUpdate() {
+        if (reportingMapDayNightTimer) {
+            clearTimeout(reportingMapDayNightTimer);
+            reportingMapDayNightTimer = null;
+        }
+        // Polar-day/night locations have no sunrise or sunset transition.
+        const now = Date.now();
+        const sunWindow = _reportingMapSunWindow(now);
+        if (!sunWindow) return;
+        const nextTransition = now < sunWindow.sunrise
+            ? sunWindow.sunrise
+            : sunWindow.sunset;
+        reportingMapDayNightTimer = setTimeout(function() {
+            const transitionTime = Date.now();
+            const currentSunWindow = _reportingMapSunWindow(transitionTime);
+            if (!currentSunWindow) return;
+            const isDay = transitionTime > currentSunWindow.sunrise &&
+                transitionTime < currentSunWindow.sunset;
+            isNightAtStation = !isDay;
+            _syncReportingMapBasemap(isDay);
+            _scheduleReportingMapDayNightUpdate();
+        }, Math.max(1000, nextTransition - now + 1000));
+    }
+
+    function _reportingMapSunWindow(now) {
+        if (!localRiseTime || !localSetTime) return null;
+        const oneDayMs = 86400000;
+        let sunrise = localRiseTime;
+        let sunset = localSetTime;
+        // Weather data supplies today's timestamps. Shift copies forward when
+        // the page remains open overnight, without changing other forecast logic.
+        while (now > sunset) {
+            sunrise += oneDayMs;
+            sunset += oneDayMs;
+        }
+        while (now < sunrise - oneDayMs) {
+            sunrise -= oneDayMs;
+            sunset -= oneDayMs;
+        }
+        return { sunrise: sunrise, sunset: sunset };
     }
 
     // v1.0.4 FIX: Button BEFORE text div; proper HTML bullet rendering
@@ -14457,6 +14502,10 @@
 
     // ——— v1.0.4 NEW: REPORTING MAP ———
     let reportingMap = null;
+    let reportingMapDayBaseLayer = null;
+    let reportingMapNightBaseLayer = null;
+    let reportingMapLabelsLayer = null;
+    let reportingMapDayNightTimer = null;
     let tropicalRouteMap = null;
     let tropicalRouteBaseLayer = null;
     let tropicalRouteLabelsLayer = null;
@@ -19675,6 +19724,25 @@
         });
     }
 
+    function _syncReportingMapBasemap(isDay) {
+        if (!reportingMap || !reportingMapDayBaseLayer ||
+            !reportingMapNightBaseLayer || !reportingMapLabelsLayer) return;
+
+        const desiredBaseLayer = isDay ? reportingMapDayBaseLayer : reportingMapNightBaseLayer;
+        const alternateBaseLayer = isDay ? reportingMapNightBaseLayer : reportingMapDayBaseLayer;
+        if (reportingMap.hasLayer(alternateBaseLayer)) reportingMap.removeLayer(alternateBaseLayer);
+        if (!reportingMap.hasLayer(desiredBaseLayer)) desiredBaseLayer.addTo(reportingMap);
+
+        // Match the tropical tracker's CARTO dark_all + Voyager label treatment.
+        if (isDay) {
+            if (reportingMap.hasLayer(reportingMapLabelsLayer)) {
+                reportingMap.removeLayer(reportingMapLabelsLayer);
+            }
+        } else if (!reportingMap.hasLayer(reportingMapLabelsLayer)) {
+            reportingMapLabelsLayer.addTo(reportingMap);
+        }
+    }
+
     function initReportingMap() {
         if (reportingMap) {
             reportingMap.invalidateSize();
@@ -19744,6 +19812,9 @@
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
+        const reportingBasemapPane = reportingMap.createPane('reporting-basemap');
+        reportingBasemapPane.style.zIndex = 180;
+        reportingBasemapPane.style.pointerEvents = 'none';
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
         // IEM Local Storm Reports are SVG circle markers. Keep them above
@@ -19758,19 +19829,24 @@
         });
         reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
-        // Layer 1 — physical geography only (no labels), sits below radar
-        L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
+        // Daytime basemap — preserve the existing CARTO Voyager appearance.
+        reportingMapDayBaseLayer = L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
             attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com">CARTO</a>',
-            subdomains: 'abcd', maxZoom: 19, noWrap: true
-        }).addTo(reportingMap);
+            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'reporting-basemap'
+        });
+        // Nighttime basemap matches the tropical tracker: CARTO dark_all with
+        // the Voyager labels layer composited above radar and other overlays.
+        reportingMapNightBaseLayer = L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
+            attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com">CARTO</a>',
+            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'reporting-basemap'
+        });
+        reportingMapLabelsLayer = L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
+            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'overlayPane'
+        });
+        _syncReportingMapBasemap(!isNightAtStation);
 
         // Layer 2 — LibreWXR live composite; historical mode swaps in IEM.
         setReportingRadarLayerForLocation();
-
-        // Layer 3 — roads + labels only (transparent background), floats above overlays
-        L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
-            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'overlayPane'
-        }).addTo(reportingMap);
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
         customSkyAlertLayer = L_ref.layerGroup();
