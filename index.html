@@ -19733,13 +19733,15 @@
         if (reportingMap.hasLayer(alternateBaseLayer)) reportingMap.removeLayer(alternateBaseLayer);
         if (!reportingMap.hasLayer(desiredBaseLayer)) desiredBaseLayer.addTo(reportingMap);
 
-        // Match the tropical tracker's CARTO dark_all + Voyager label treatment.
+        // Voyager's daytime basemap is the no-label variant, so it needs its
+        // separate label overlay. At night, keep CARTO dark_all by itself;
+        // that matches the tropical tracker when satellite mode is off.
         if (isDay) {
-            if (reportingMap.hasLayer(reportingMapLabelsLayer)) {
-                reportingMap.removeLayer(reportingMapLabelsLayer);
+            if (!reportingMap.hasLayer(reportingMapLabelsLayer)) {
+                reportingMapLabelsLayer.addTo(reportingMap);
             }
-        } else if (!reportingMap.hasLayer(reportingMapLabelsLayer)) {
-            reportingMapLabelsLayer.addTo(reportingMap);
+        } else if (reportingMap.hasLayer(reportingMapLabelsLayer)) {
+            reportingMap.removeLayer(reportingMapLabelsLayer);
         }
     }
 
@@ -19815,6 +19817,9 @@
         const reportingBasemapPane = reportingMap.createPane('reporting-basemap');
         reportingBasemapPane.style.zIndex = 180;
         reportingBasemapPane.style.pointerEvents = 'none';
+        const reportingLabelsPane = reportingMap.createPane('reporting-map-labels');
+        reportingLabelsPane.style.zIndex = 390;
+        reportingLabelsPane.style.pointerEvents = 'none';
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
         // IEM Local Storm Reports are SVG circle markers. Keep them above
@@ -19841,7 +19846,7 @@
             subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'reporting-basemap'
         });
         reportingMapLabelsLayer = L_ref.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png?key=cb1_2ehr_1_46de56c8f59b2315b9ea2d11', {
-            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'overlayPane'
+            subdomains: 'abcd', maxZoom: 19, noWrap: true, pane: 'reporting-map-labels'
         });
         _syncReportingMapBasemap(!isNightAtStation);
 
