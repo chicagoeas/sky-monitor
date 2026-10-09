@@ -934,10 +934,6 @@
             text-align: center; text-transform: uppercase; margin-bottom: 20px;
             animation: pulse 1.5s infinite;
         }
-        #safety-checklist.extreme-wind-checklist {
-            background: #c62828 !important; color: #fff !important;
-            border-color: #fff !important;
-        }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,23,68,0.7); } 70% { box-shadow: 0 0 0 15px rgba(255,23,68,0); } 100% { box-shadow: 0 0 0 0 rgba(255,23,68,0); } }
         @keyframes severePulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 
@@ -8771,7 +8767,7 @@
                 return !endMs || isNaN(endMs) || endMs > Date.now();
             });
             const alertViewState = captureAlertViewState();
-            stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; checklist.classList.remove('extreme-wind-checklist'); banner.style.display = 'none'; banner.classList.remove('emergency-banner');
+            stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
                 let topAlert = data.features.reduce(function(prev, current) {
@@ -8798,7 +8794,7 @@
                 banner.style.display = 'block';
                 const isTopPDSTornado = isTopPDS && evtLowerTop.includes('tornado warning');
                 let bannerTextPrefix;
-                if (isTopExtremeWind) bannerTextPrefix = 'EXTREME WIND WARNING! THIS IS AN EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION!';
+                if (isTopExtremeWind) bannerTextPrefix = 'EXTREME WIND WARNING';
                 else if (isTopTorEmergency) bannerTextPrefix = '\uD83D\uDEA8 TORNADO EMERGENCY';
                 else if (isTopFFE) bannerTextPrefix = '\uD83D\uDEA8 FLASH FLOOD EMERGENCY';
                 else if (isTopPDSTornado) bannerTextPrefix = '\uD83D\uDEA8 PDS TORNADO WARNING';
@@ -8806,9 +8802,8 @@
                 else if (isDestructiveSVR) bannerTextPrefix = '\u26A0\uFE0F DESTRUCTIVE SEVERE';
                 else bannerTextPrefix = isEmergency ? '\uD83D\uDEA8 ' + topEventName : '\u26A0\uFE0F ' + topEventName;
                 if (isTopExtremeWind) {
-                    banner.classList.remove('emergency-banner');
-                    banner.style.background = '#c62828';
-                    banner.style.color = '#fff';
+                    banner.classList.add('emergency-banner');
+                    banner.style.background = '';
                 }
                 else if (isTopTorEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
                 else if (isTopFFE) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
@@ -8818,27 +8813,8 @@
                 else if (isEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
                 else banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
 
-                if (isTopExtremeWind) {
-                    // Keep the requested EWW banner text fixed; the alert card
-                    // still shows its expiry, and this timer only hides the
-                    // banner once the warning expires.
-                    banner.innerText = bannerTextPrefix;
-                    const expTimeStr = topP.ends || topP.expires;
-                    const _onsetRawTop = topP.onset || topP.effective;
-                    const _onsetMsTop = _onsetRawTop ? new Date(_onsetRawTop).getTime() : 0;
-                    const _isActiveNow = !_onsetMsTop || _onsetMsTop <= Date.now();
-                    if (expTimeStr && _isActiveNow) {
-                        const expTime = new Date(expTimeStr).getTime();
-                        const _iv = setInterval(function() {
-                            if (alertIntervalGen !== _myAlertGen) { clearInterval(_iv); return; }
-                            if (expTime - Date.now() <= 0) {
-                                banner.style.display = 'none';
-                                clearInterval(_iv);
-                            }
-                        }, 1000);
-                        alertIntervalId = _iv;
-                    }
-                } else if (evtLowerTop.includes('warning') || isEmergency) {
+                if (isTopExtremeWind) banner.innerText = bannerTextPrefix;
+                if (evtLowerTop.includes('warning') || isEmergency) {
                     const expTimeStr = topP.ends || topP.expires;
                     const _onsetRawTop = topP.onset || topP.effective;
                     const _onsetMsTop = _onsetRawTop ? new Date(_onsetRawTop).getTime() : 0;
@@ -9154,10 +9130,6 @@
             if (checklistText) {
                 checklist.innerText = checklistText;
                 checklist.style.display = 'block';
-                checklist.classList.toggle(
-                    'extreme-wind-checklist',
-                    checklistText.indexOf('EXTREME WIND WARNING!') === 0
-                );
             }
             } else {
                 stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
@@ -17038,10 +17010,6 @@
             customChecklistChoice.checklist.priority > (window.activeAlertChecklistPriority || 0)) {
             checklist.innerText = customChecklistChoice.checklist.text;
             checklist.style.display = 'block';
-            checklist.classList.toggle(
-                'extreme-wind-checklist',
-                customChecklistChoice.checklist.theme === 'theme-eww'
-            );
             document.body.classList.add(customChecklistChoice.checklist.theme);
             checklist.setAttribute('data-custom-skymonitor', 'true');
         }
@@ -17063,14 +17031,20 @@
                     'SkyMonitor Alert'
                 );
                 if (bannerChoice.threat.family === 'extremeWind') {
-                    bannerHeadline = 'EXTREME WIND WARNING! THIS IS AN EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION!';
+                    bannerHeadline = 'EXTREME WIND WARNING';
                 }
                 var bannerColor = bannerChoice.threat.color ||
                     customSkyAlertSeverityColor(bannerProps);
                 banner.style.display = 'block';
-                banner.style.background = bannerColor;
-                banner.style.color = customSkyAlertTextColor(bannerColor);
-                banner.classList.remove('emergency-banner');
+                if (bannerChoice.threat.family === 'extremeWind') {
+                    banner.classList.add('emergency-banner');
+                    banner.style.background = '';
+                    banner.style.color = '#fff';
+                } else {
+                    banner.style.background = bannerColor;
+                    banner.style.color = customSkyAlertTextColor(bannerColor);
+                    banner.classList.remove('emergency-banner');
+                }
                 banner.innerText = bannerHeadline;
                 banner.setAttribute('data-custom-skymonitor', 'true');
             }
