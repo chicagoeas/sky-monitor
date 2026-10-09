@@ -934,6 +934,10 @@
             text-align: center; text-transform: uppercase; margin-bottom: 20px;
             animation: pulse 1.5s infinite;
         }
+        #safety-checklist.extreme-wind-checklist {
+            background: #c62828 !important; color: #fff !important;
+            border-color: #fff !important;
+        }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255,23,68,0.7); } 70% { box-shadow: 0 0 0 15px rgba(255,23,68,0); } 100% { box-shadow: 0 0 0 0 rgba(255,23,68,0); } }
         @keyframes severePulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 
@@ -6333,14 +6337,13 @@
         var torPoss = ((ap.tornadoPossible            && ap.tornadoPossible[0])            || '').toUpperCase();
         var sevBonus = { 'Extreme': 40, 'Severe': 30, 'Moderate': 20, 'Minor': 10 }[p.severity] || 0;
 
-        // ── TIER 0: Absolute top — nothing outranks an Extreme Wind Warning ──
-        // Extreme Wind Warnings are exceptionally rare and mean destructive,
-        // hurricane-force winds are imminent within minutes. They must sort
-        // above every other alert type, including tornado emergencies.
+        // Civil/authority alerts retain the absolute top priority. Extreme
+        // Wind Warnings outrank every other weather alert, including tornado
+        // emergencies, but never displace a civil alert.
+        if (isCivilAlertEventName(evt))                                                        return 30000;
         if (evt.includes('extreme wind warning'))                                              return 20000;
 
-        // ── TIER 1: Life-threatening emergencies ─────────────────────────
-        // Civil/authority emergencies are the absolute top — issued by officials for imminent threats
+        // ── TIER 1: Other life-threatening emergencies ────────────────────
         if (EMERGENCY_TYPES.some(function(em) { return evt.includes(em); }))                   return 16000;
         if (evt.includes('tornado warning')  && desc.includes('TORNADO EMERGENCY'))            return 15000;
         if (evt.includes('flash flood')      && desc.includes('FLASH FLOOD EMERGENCY'))        return 14000;
@@ -8768,7 +8771,7 @@
                 return !endMs || isNaN(endMs) || endMs > Date.now();
             });
             const alertViewState = captureAlertViewState();
-            stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; banner.style.display = 'none'; banner.classList.remove('emergency-banner');
+            stack.innerHTML = ''; document.body.classList.remove('theme-tor','theme-svr','theme-ffw','emergency-banner'); checklist.style.display = 'none'; checklist.classList.remove('extreme-wind-checklist'); banner.style.display = 'none'; banner.classList.remove('emergency-banner');
 
             if (data.features && data.features.length > 0) {
                 let topAlert = data.features.reduce(function(prev, current) {
@@ -8780,6 +8783,7 @@
                 const paramsTop = topP.parameters || {};
                 const tornadoStatus = paramsTop.tornadoDetection?.[0];
                 const damageThreat = paramsTop.thunderstormDamageThreat?.[0];
+                const isTopExtremeWind = evtLowerTop.includes('extreme wind warning');
                 const isConfirmedTornado = evtLowerTop.includes('tornado warning') && tornadoStatus && tornadoStatus.includes('OBSERVED');
                 const isDestructiveSVR = evtLowerTop.includes('severe thunderstorm warning') && damageThreat && damageThreat.includes('DESTRUCTIVE');
                 const topDesc = topP.description ? topP.description.toUpperCase() : '';
@@ -8794,13 +8798,19 @@
                 banner.style.display = 'block';
                 const isTopPDSTornado = isTopPDS && evtLowerTop.includes('tornado warning');
                 let bannerTextPrefix;
-                if (isTopTorEmergency) bannerTextPrefix = '\uD83D\uDEA8 TORNADO EMERGENCY';
+                if (isTopExtremeWind) bannerTextPrefix = 'EXTREME WIND WARNING! THIS IS AN EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION!';
+                else if (isTopTorEmergency) bannerTextPrefix = '\uD83D\uDEA8 TORNADO EMERGENCY';
                 else if (isTopFFE) bannerTextPrefix = '\uD83D\uDEA8 FLASH FLOOD EMERGENCY';
                 else if (isTopPDSTornado) bannerTextPrefix = '\uD83D\uDEA8 PDS TORNADO WARNING';
                 else if (isConfirmedTornado) bannerTextPrefix = '\uD83D\uDEA8 CONFIRMED TORNADO';
                 else if (isDestructiveSVR) bannerTextPrefix = '\u26A0\uFE0F DESTRUCTIVE SEVERE';
                 else bannerTextPrefix = isEmergency ? '\uD83D\uDEA8 ' + topEventName : '\u26A0\uFE0F ' + topEventName;
-                if (isTopTorEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
+                if (isTopExtremeWind) {
+                    banner.classList.remove('emergency-banner');
+                    banner.style.background = '#c62828';
+                    banner.style.color = '#fff';
+                }
+                else if (isTopTorEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
                 else if (isTopFFE) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
                 else if (isTopPDSTornado) banner.style.background = '#880e4f';
                 else if (isConfirmedTornado) banner.style.background = '#7f0000';
@@ -8808,7 +8818,27 @@
                 else if (isEmergency) { banner.classList.add('emergency-banner'); banner.style.background = ''; }
                 else banner.style.background = isTopPDS ? '#880e4f' : (topP.severity === 'Extreme' ? 'var(--danger)' : '#ff9100');
 
-                if (evtLowerTop.includes('warning') || isEmergency) {
+                if (isTopExtremeWind) {
+                    // Keep the requested EWW banner text fixed; the alert card
+                    // still shows its expiry, and this timer only hides the
+                    // banner once the warning expires.
+                    banner.innerText = bannerTextPrefix;
+                    const expTimeStr = topP.ends || topP.expires;
+                    const _onsetRawTop = topP.onset || topP.effective;
+                    const _onsetMsTop = _onsetRawTop ? new Date(_onsetRawTop).getTime() : 0;
+                    const _isActiveNow = !_onsetMsTop || _onsetMsTop <= Date.now();
+                    if (expTimeStr && _isActiveNow) {
+                        const expTime = new Date(expTimeStr).getTime();
+                        const _iv = setInterval(function() {
+                            if (alertIntervalGen !== _myAlertGen) { clearInterval(_iv); return; }
+                            if (expTime - Date.now() <= 0) {
+                                banner.style.display = 'none';
+                                clearInterval(_iv);
+                            }
+                        }, 1000);
+                        alertIntervalId = _iv;
+                    }
+                } else if (evtLowerTop.includes('warning') || isEmergency) {
                     const expTimeStr = topP.ends || topP.expires;
                     const _onsetRawTop = topP.onset || topP.effective;
                     const _onsetMsTop = _onsetRawTop ? new Date(_onsetRawTop).getTime() : 0;
@@ -9017,6 +9047,7 @@
                     const isTorEmergency = desc.includes('TORNADO EMERGENCY');
                     const isPDS = desc.includes('PARTICULARLY DANGEROUS SITUATION') || desc.includes('FLASH FLOOD EMERGENCY');
                     const isLocalEmergency = EMERGENCY_TYPES.some(function(em) { return evt.includes(em); });
+                    const isCivilAuthorityAlert = isCivilAlertEventName(evt);
                     let icon = 'https://www.weather.gov/bundles/templating/images/top_news/important.png';
                     for (const key in ALERT_ICONS) { if (evt.includes(key)) { icon = ALERT_ICONS[key]; break; } }
                     // For Air Quality Alerts, pick smoke vs. haze icon based on alert text.
@@ -9035,7 +9066,8 @@
 
                     if (isLocalEmergency) {
                         highestTheme = 'theme-tor';
-                        if (checklistPriority < 5) {
+                        const localEmergencyChecklistPriority = isCivilAuthorityAlert ? 7 : 5;
+                        if (checklistPriority < localEmergencyChecklistPriority) {
                             if (evt.includes('evacuation')) checklistText = 'EVACUATE IMMEDIATELY! FOLLOW LOCAL GUIDANCE!';
                             else if (evt.includes('fire warning')) checklistText = 'WILDFIRE IN YOUR AREA! FOLLOW LOCAL GUIDANCE!';
                             else if (evt.includes('child abduction emergency')) checklistText = 'AMBER ALERT! FOLLOW LOCAL GUIDANCE!';
@@ -9043,7 +9075,12 @@
                             else if (evt.includes('earthquake warning')) checklistText = 'EARTHQUAKE! FOLLOW LOCAL GUIDANCE!';
                             else if (evt.includes('911 telephone')) checklistText = '911 TELEPHONE OUTAGE! FOLLOW LOCAL GUIDANCE!';
                             else checklistText = 'CIVIL EMERGENCY! MONITOR LOCAL MEDIA FOR INSTRUCTIONS!';
-                            checklistPriority = 5;
+                            checklistPriority = localEmergencyChecklistPriority;
+                        }
+                    } else if (evt.includes('extreme wind warning')) {
+                        if (checklistPriority < 6) {
+                            checklistText = 'EXTREME WIND WARNING! THIS IS AN EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION!';
+                            checklistPriority = 6;
                         }
                     } else if (evt.includes('tornado warning')) {
                         highestTheme = 'theme-tor';
@@ -9114,7 +9151,14 @@
 
                 if (highestTheme) document.body.classList.add(highestTheme);
             window.activeAlertChecklistPriority = checklistPriority;
-            if (checklistText) { checklist.innerText = checklistText; checklist.style.display = 'block'; }
+            if (checklistText) {
+                checklist.innerText = checklistText;
+                checklist.style.display = 'block';
+                checklist.classList.toggle(
+                    'extreme-wind-checklist',
+                    checklistText.indexOf('EXTREME WIND WARNING!') === 0
+                );
+            }
             } else {
                 stack.innerHTML = "<div style='opacity:0.5; padding:20px;'>No active hazards.</div>";
             }
@@ -16781,9 +16825,9 @@
             // action-oriented message below.
             family = 'civil'; score = 16;
             label = 'SkyMonitor ' + (nwsEventLabel || 'Civil Emergency');
-            color = '#b71c1c'; hazardCategory = 'other'; bannerScore = 16000;
+            color = '#b71c1c'; hazardCategory = 'other'; bannerScore = 30000;
         } else if (/\bEWW\b|EXTREME WIND WARNING/.test(classSignals)) {
-            family = 'extremeWind'; score = 8; label = 'SkyMonitor Extreme Wind Warning'; color = '#ff9100';
+            family = 'extremeWind'; score = 8; label = 'SkyMonitor Extreme Wind Warning'; color = '#c62828';
             hazardCategory = 'wind'; bannerScore = 20000; flags.extremeWindWarning = true;
         } else if (/\bHWW\b|HIGH WIND WARNING/.test(classSignals)) {
             family = 'highWind'; score = 5; label = 'SkyMonitor High Wind Warning'; color = '#ffb300';
@@ -16828,7 +16872,7 @@
         } else return null;
         return {
             family: family, score: score, label: label,
-            color: customSkyAlertSeverityColor(props), feature: feature,
+            color: family === 'extremeWind' ? '#c62828' : customSkyAlertSeverityColor(props), feature: feature,
             bannerScore: bannerScore,
             hazardCategory: hazardCategory,
             flags: flags,
@@ -16923,7 +16967,14 @@
             else if (/\bSPW\b|SHELTER IN PLACE/.test(signals)) civilText = 'SHELTER IN PLACE NOW!';
             else if (/\bEQW\b|EARTHQUAKE WARNING/.test(signals)) civilText = 'EARTHQUAKE! FOLLOW LOCAL GUIDANCE!';
             else if (/\bTOE\b|911 TELEPHONE OUTAGE/.test(signals)) civilText = '911 TELEPHONE OUTAGE! FOLLOW LOCAL GUIDANCE!';
-            return { text: civilText, priority: 5, theme: 'theme-tor' };
+            return { text: civilText, priority: 7, theme: 'theme-tor' };
+        }
+        if (threatInfo.family === 'extremeWind') {
+            return {
+                text: 'EXTREME WIND WARNING! THIS IS AN EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION!',
+                priority: 6,
+                theme: 'theme-eww'
+            };
         }
         if (threatInfo.family === 'tornado') {
             if (threatInfo.score >= 20 || /TORNADO EMERGENCY/.test(qualifiers)) {
@@ -16987,6 +17038,10 @@
             customChecklistChoice.checklist.priority > (window.activeAlertChecklistPriority || 0)) {
             checklist.innerText = customChecklistChoice.checklist.text;
             checklist.style.display = 'block';
+            checklist.classList.toggle(
+                'extreme-wind-checklist',
+                customChecklistChoice.checklist.theme === 'theme-eww'
+            );
             document.body.classList.add(customChecklistChoice.checklist.theme);
             checklist.setAttribute('data-custom-skymonitor', 'true');
         }
@@ -17007,6 +17062,9 @@
                     ['headline', 'title', 'name', 'message'],
                     'SkyMonitor Alert'
                 );
+                if (bannerChoice.threat.family === 'extremeWind') {
+                    bannerHeadline = 'EXTREME WIND WARNING! THIS IS AN EXTREMELY DANGEROUS AND LIFE-THREATENING SITUATION!';
+                }
                 var bannerColor = bannerChoice.threat.color ||
                     customSkyAlertSeverityColor(bannerProps);
                 banner.style.display = 'block';
