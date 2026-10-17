@@ -14664,6 +14664,7 @@
     let tropicalRouteDisturbanceLayer = null;
     let tropicalRouteDisturbances = [];
     let tropicalJtwcTextCache = Object.create(null);
+    let tropicalNHCTextCache = Object.create(null);
     let tropicalNHCJsonpSequence = 0;
     let tropicalRouteLoadToken = 0;
     let tropicalRouteRefreshTimer = null;
@@ -21741,7 +21742,9 @@
             lat: latLng.lat,
             lon: latLng.lng,
             content: popup.getContent(),
-            options: Object.assign({}, popup.options || {})
+            options: Object.assign({}, popup.options || {}),
+            nhcBasin: popup._skyMonitorNHCTextBasin || null,
+            jtwcStorm: popup._skyMonitorJTWCStorm || null
         };
     }
 
@@ -21752,10 +21755,17 @@
             tropicalRouteMap.getCenter().lng
         );
         var options = Object.assign({}, state.options, { autoPan: false });
-        L.popup(options)
+        var popup = L.popup(options)
             .setLatLng([state.lat, longitude])
             .setContent(state.content)
             .openOn(tropicalRouteMap);
+        if (state.nhcBasin) {
+            popup._skyMonitorNHCTextBasin = state.nhcBasin;
+            _loadTropicalNHCText(popup, state.nhcBasin);
+        } else if (state.jtwcStorm) {
+            popup._skyMonitorJTWCStorm = state.jtwcStorm;
+            _loadTropicalJTWCText(popup, state.jtwcStorm);
+        }
     }
 
     function _normalizeTropicalNHCOutlook(data) {
@@ -21851,6 +21861,106 @@
         return 'https://www.nhc.noaa.gov/text/MIATWOAT.shtml';
     }
 
+    function _tropicalNHCProductCode(basin) {
+        basin = String(basin || '').toLowerCase();
+        if (/central|cpac/.test(basin)) return 'ACPN50';
+        if (/pacific|east|epac/.test(basin)) return 'ABPZ20';
+        return 'ABNT20';
+    }
+
+    function _fetchTropicalNHCOutlookText(basin) {
+        var productCode = _tropicalNHCProductCode(basin);
+        if (tropicalNHCTextCache[productCode]) {
+            return Promise.resolve(tropicalNHCTextCache[productCode]);
+        }
+        var request = _weatherFetch(
+            'https://api.weather.gov/products/types/TWO',
+            {
+                cache: 'no-store',
+                headers: { Accept: 'application/ld+json, application/json' }
+            },
+            12000
+        ).then(function(response) {
+            if (!response.ok) throw new Error('NHC outlook product list returned ' + response.status);
+            return response.json();
+        }).then(function(data) {
+            var products = data && Array.isArray(data['@graph']) ? data['@graph'] : [];
+            var product = products.filter(function(item) {
+                return item && item.wmoCollectiveId === productCode && item.id;
+            }).sort(function(a, b) {
+                return new Date(b.issuanceTime).getTime() - new Date(a.issuanceTime).getTime();
+            })[0];
+            if (!product) throw new Error('No current NHC outlook product was found for ' + productCode);
+            return _weatherFetch(
+                'https://api.weather.gov/products/' + encodeURIComponent(product.id),
+                {
+                    cache: 'no-store',
+                    headers: { Accept: 'application/ld+json, application/json' }
+                },
+                12000
+            ).then(function(response) {
+                if (!response.ok) throw new Error('NHC outlook text returned ' + response.status);
+                return response.json();
+            });
+        }).then(function(product) {
+            var text = String(product && product.productText || '').trim();
+            if (!text) throw new Error('The current NHC outlook product contains no text');
+            tropicalNHCTextCache[productCode] = text;
+            return text;
+        }).catch(function(error) {
+            delete tropicalNHCTextCache[productCode];
+            throw error;
+        });
+        tropicalNHCTextCache[productCode] = request;
+        return request;
+    }
+
+    function _loadTropicalPopupText(popup, loadingText, failureText, fetchText) {
+        var popupElement = popup && popup.getElement && popup.getElement();
+        var textElement = popupElement &&
+            popupElement.querySelector('.tropical-disturbance-actual-text');
+        if (!textElement) return;
+        textElement.textContent = loadingText;
+        Promise.resolve().then(fetchText).then(function(text) {
+            if (popup.isOpen && !popup.isOpen()) return;
+            var currentElement = popup.getElement && popup.getElement();
+            var currentText = currentElement &&
+                currentElement.querySelector('.tropical-disturbance-actual-text');
+            if (currentText) {
+                currentText.textContent = text;
+                if (popup.update) popup.update();
+            }
+        }).catch(function() {
+            if (popup.isOpen && !popup.isOpen()) return;
+            var currentElement = popup.getElement && popup.getElement();
+            var currentText = currentElement &&
+                currentElement.querySelector('.tropical-disturbance-actual-text');
+            if (currentText) {
+                currentText.textContent = failureText;
+                if (popup.update) popup.update();
+            }
+        });
+    }
+
+    function _loadTropicalNHCText(popup, basin) {
+        _loadTropicalPopupText(
+            popup,
+            'Loading the latest NHC tropical outlook…',
+            'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.',
+            function() { return _fetchTropicalNHCOutlookText(basin); }
+        );
+    }
+
+    function _loadTropicalJTWCText(popup, storm) {
+        var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
+        _loadTropicalPopupText(
+            popup,
+            'Loading the latest JTWC regional advisory…',
+            'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.',
+            function() { return _fetchTropicalJTWCAdvisory(advisoryUrl); }
+        );
+    }
+
     function _tropicalJTWCAdvisoryUrl(storm) {
         var basin = String(storm && (storm.basin || '') || '').toUpperCase();
         var longitude = _tropicalFinite(storm && (
@@ -21892,8 +22002,16 @@
             var probability = String(properties.prob7day || 'Not specified');
             var probability2Day = String(properties.prob2day || 'Not specified');
             var updateTime = _tropicalFinite(properties.idp_filedate);
-            var updateLabel = updateTime != null
-                ? new Date(updateTime).toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+            var updateDate = updateTime != null ? new Date(updateTime) : null;
+            var updateLabel = updateDate && !isNaN(updateDate.getTime())
+                ? updateDate.toLocaleString(undefined, {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    timeZoneName: 'short'
+                }) + ' (local)'
                 : '';
             return '<div class="tropical-disturbance-popup">' +
                 '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · 7-day outlook</div>' +
@@ -21909,6 +22027,7 @@
                 '<a class="tropical-disturbance-popup-link" href="' +
                     escapeHtml(_tropicalNHCOutlookTextUrl(basin)) +
                     '" target="_blank" rel="noopener noreferrer">Read the official NHC outlook text ↗</a>' +
+                '<pre class="tropical-disturbance-actual-text">Loading the latest NHC tropical outlook…</pre>' +
                 '</div>';
         }
 
@@ -21996,6 +22115,11 @@
                     closeButton: true,
                     maxWidth: 370
                 });
+                zone.on('popupopen', function(event) {
+                    var popup = event.popup;
+                    popup._skyMonitorNHCTextBasin = basin;
+                    _loadTropicalNHCText(popup, basin);
+                });
                 if (zone.getBounds().isValid()) bounds.extend(zone.getBounds());
                 return;
             }
@@ -22018,35 +22142,8 @@
             zone.bindPopup(popupHtml, { closeButton: true, maxWidth: 390 });
             zone.on('popupopen', function(event) {
                 var popup = event.popup;
-                var popupElement = popup.getElement && popup.getElement();
-                var textElement = popupElement &&
-                    popupElement.querySelector('.tropical-disturbance-actual-text');
-                if (!textElement) return;
-                var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
-                if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
-                    textElement.textContent = tropicalJtwcTextCache[advisoryUrl];
-                    return;
-                }
-                textElement.textContent = 'Loading the latest JTWC regional advisory…';
-                _fetchTropicalJTWCAdvisory(advisoryUrl).then(function(text) {
-                    if (!popup.isOpen()) return;
-                    var currentElement = popup.getElement && popup.getElement();
-                    var currentText = currentElement &&
-                        currentElement.querySelector('.tropical-disturbance-actual-text');
-                    if (currentText) {
-                        currentText.textContent = text;
-                        if (popup.update) popup.update();
-                    }
-                }).catch(function() {
-                    if (!popup.isOpen()) return;
-                    var currentElement = popup.getElement && popup.getElement();
-                    var currentText = currentElement &&
-                        currentElement.querySelector('.tropical-disturbance-actual-text');
-                    if (currentText) {
-                        currentText.textContent = 'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.';
-                        if (popup.update) popup.update();
-                    }
-                });
+                popup._skyMonitorJTWCStorm = storm;
+                _loadTropicalJTWCText(popup, storm);
             });
             var centerMarker = L.circleMarker(
                 [current.lat, current.lon + worldOffset],
@@ -22281,7 +22378,10 @@
         var token = ++tropicalRouteLoadToken;
         var status = document.getElementById('tropical-route-status');
         if (status) status.textContent = '';
-        if (forceRefresh) tropicalJtwcTextCache = Object.create(null);
+        if (forceRefresh) {
+            tropicalJtwcTextCache = Object.create(null);
+            tropicalNHCTextCache = Object.create(null);
+        }
         try {
             var feedResults = await Promise.allSettled([
                 _fetchTropicalNHC(forceRefresh),
