@@ -560,6 +560,95 @@
             color: #8298a8;
             font-size: 0.84em;
         }
+        .tropical-disturbance-legend {
+            position: absolute;
+            z-index: 680;
+            right: 12px;
+            bottom: calc(30px + env(safe-area-inset-bottom));
+            display: grid;
+            gap: 6px;
+            padding: 9px 11px;
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 10px;
+            background: rgba(5,16,26,0.88);
+            box-shadow: 0 5px 18px rgba(0,0,0,0.32);
+            color: #e6eef4;
+            font-size: 0.66rem;
+            line-height: 1.2;
+            pointer-events: none;
+            backdrop-filter: blur(10px);
+        }
+        .tropical-disturbance-legend[hidden] { display: none; }
+        .tropical-disturbance-legend-row {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            white-space: nowrap;
+        }
+        .tropical-disturbance-swatch {
+            width: 17px;
+            height: 9px;
+            box-sizing: border-box;
+            border: 2px solid #fb7185;
+            border-radius: 999px;
+            background: rgba(244,63,94,0.2);
+        }
+        .tropical-disturbance-swatch.jtwc {
+            border-color: #d8b4fe;
+            border-style: dashed;
+            background: rgba(192,132,252,0.22);
+        }
+        .tropical-disturbance-popup-kicker {
+            color: #9eb3c2;
+            font-size: 0.64rem;
+            font-weight: 900;
+            letter-spacing: 0.8px;
+            text-transform: uppercase;
+        }
+        .tropical-disturbance-popup-title {
+            margin: 3px 0 7px;
+            color: #f8d66d;
+            font-size: 0.95rem;
+            font-weight: 900;
+        }
+        .tropical-disturbance-popup-meta {
+            color: #d1dce4;
+            font-size: 0.76rem;
+            line-height: 1.45;
+        }
+        .tropical-disturbance-popup-note {
+            margin-top: 7px;
+            color: #91a5b4;
+            font-size: 0.7rem;
+            line-height: 1.4;
+        }
+        .tropical-disturbance-popup-link {
+            display: inline-block;
+            margin-top: 9px;
+            color: #7dd3fc;
+            font-size: 0.74rem;
+            font-weight: 800;
+            text-decoration: none;
+        }
+        .tropical-disturbance-popup-link:hover,
+        .tropical-disturbance-popup-link:focus-visible {
+            color: #bae6fd;
+            text-decoration: underline;
+        }
+        .tropical-disturbance-actual-text {
+            display: block;
+            max-height: 210px;
+            overflow: auto;
+            margin: 8px 0 0;
+            padding: 8px;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 7px;
+            background: rgba(0,0,0,0.22);
+            color: #dce8ef;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            font: 0.64rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
         .tropical-forecast-icon-wrap {
             background: transparent;
             border: 0;
@@ -2204,7 +2293,7 @@
                     style="background:rgba(79,195,247,0.15); border:1px solid var(--primary); color:var(--primary); padding:4px 10px; border-radius:6px; font-size:0.8em; cursor:pointer;">&#9881;&#65039;</button>
         </header>
         <div id="tropical-route-map-wrap">
-            <div id="tropical-route-map" aria-label="Interactive tropical storm map"></div>
+            <div id="tropical-route-map" aria-label="Interactive tropical storm and disturbance map"></div>
             <div id="tropical-route-settings-panel" hidden>
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-size:0.82em; color:#ccc;">&#128225; Satellite Overlay</span>
@@ -2219,6 +2308,11 @@
                 <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomOut()" aria-label="Zoom out">−</button>
             </div>
             <div id="tropical-route-status" role="status" aria-live="polite"></div>
+            <div id="tropical-route-disturbance-legend" class="tropical-disturbance-legend" hidden
+                 aria-label="Disturbance map legend">
+                <div class="tropical-disturbance-legend-row"><span class="tropical-disturbance-swatch"></span>NHC outlook area</div>
+                <div class="tropical-disturbance-legend-row"><span class="tropical-disturbance-swatch jtwc"></span>JTWC invest area (approx.)</div>
+            </div>
             <div id="tropical-route-details" hidden>
                 <div class="tropical-route-detail-kicker">SELECTED SYSTEM</div>
                 <h3 id="tropical-route-detail-title">Tropical system</h3>
@@ -14567,6 +14661,10 @@
     let tropicalRouteMapMode = localStorage.getItem(TROPICAL_SATELLITE_PREF_KEY) === '1'
         ? 'satellite'
         : 'map';
+    let tropicalRouteDisturbanceLayer = null;
+    let tropicalRouteDisturbances = [];
+    let tropicalJtwcTextCache = Object.create(null);
+    let tropicalNHCJsonpSequence = 0;
     let tropicalRouteLoadToken = 0;
     let tropicalRouteRefreshTimer = null;
     let lsrLayer = null;
@@ -21660,6 +21758,317 @@
             .openOn(tropicalRouteMap);
     }
 
+    function _normalizeTropicalNHCOutlook(data) {
+        if (data && data.error) {
+            throw new Error(data.error.message || 'NHC outlook service returned an error');
+        }
+        if (data && data.type === 'FeatureCollection' && Array.isArray(data.features)) {
+            return data;
+        }
+        if (!data || !Array.isArray(data.features)) {
+            throw new Error('NHC outlook service returned no feature collection');
+        }
+        return {
+            type: 'FeatureCollection',
+            features: data.features.map(function(feature) {
+                var geometry = feature.geometry || null;
+                if (geometry && Array.isArray(geometry.rings)) {
+                    geometry = { type: 'Polygon', coordinates: geometry.rings };
+                }
+                return {
+                    type: 'Feature',
+                    id: feature.id != null ? feature.id :
+                        (feature.attributes && feature.attributes.objectid),
+                    geometry: geometry,
+                    properties: feature.properties || feature.attributes || {}
+                };
+            }).filter(function(feature) {
+                return feature.geometry && feature.geometry.coordinates;
+            })
+        };
+    }
+
+    function _fetchTropicalNHCOutlookJsonp() {
+        return new Promise(function(resolve, reject) {
+            var callbackName = '__skyMonitorNHCOutlook' + (++tropicalNHCJsonpSequence);
+            var script = document.createElement('script');
+            var settled = false;
+            var timer = setTimeout(function() {
+                finish(new Error('NHC outlook JSONP request timed out'));
+            }, 12000);
+            function finish(error, data) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                script.onerror = null;
+                if (script.parentNode) script.parentNode.removeChild(script);
+                try { delete window[callbackName]; } catch (ignore) {
+                    window[callbackName] = undefined;
+                }
+                if (error) reject(error);
+                else resolve(data);
+            }
+            window[callbackName] = function(data) {
+                try {
+                    finish(null, _normalizeTropicalNHCOutlook(data));
+                } catch (error) {
+                    finish(error);
+                }
+            };
+            script.async = true;
+            script.onerror = function() {
+                finish(new Error('NHC outlook JSONP request failed'));
+            };
+            script.src = 'https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/' +
+                'NHC_tropical_weather/MapServer/3/query?where=1%3D1&outFields=*&' +
+                'returnGeometry=true&outSR=4326&f=json&callback=' + callbackName;
+            document.head.appendChild(script);
+        });
+    }
+
+    async function _fetchTropicalNHCOutlook() {
+        var url = 'https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/' +
+            'NHC_tropical_weather/MapServer/3/query?where=1%3D1&outFields=*&' +
+            'returnGeometry=true&outSR=4326&f=geojson';
+        try {
+            var response = await _weatherFetch(url, {
+                cache: 'no-store',
+                headers: { Accept: 'application/geo+json, application/json' }
+            }, 12000);
+            if (!response.ok) throw new Error('NHC outlook service returned ' + response.status);
+            return _normalizeTropicalNHCOutlook(await response.json());
+        } catch (error) {
+            // NOAA's ArcGIS service allows JSONP as a fallback for previews or
+            // hosts that are not on its browser CORS allow-list.
+            return _fetchTropicalNHCOutlookJsonp();
+        }
+    }
+
+    function _tropicalNHCOutlookTextUrl(basin) {
+        basin = String(basin || '').toLowerCase();
+        if (/central|cpac/.test(basin)) return 'https://www.nhc.noaa.gov/text/MIATWOCP.shtml';
+        if (/pacific|east|epac/.test(basin)) return 'https://www.nhc.noaa.gov/text/MIATWOEP.shtml';
+        return 'https://www.nhc.noaa.gov/text/MIATWOAT.shtml';
+    }
+
+    function _tropicalJTWCAdvisoryUrl(storm) {
+        var basin = String(storm && (storm.basin || '') || '').toUpperCase();
+        var longitude = _tropicalFinite(storm && (
+            storm.longitudeNumeric ?? storm.longitude ?? storm.lon
+        ));
+        var southernIndianOcean = basin === 'SH' && longitude != null &&
+            longitude >= 20 && longitude <= 135;
+        return basin === 'IO' || southernIndianOcean
+            ? 'https://www.metoc.navy.mil/jtwc/products/abioweb.txt'
+            : 'https://www.metoc.navy.mil/jtwc/products/abpwweb.txt';
+    }
+
+    function _fetchTropicalJTWCAdvisory(url) {
+        if (tropicalJtwcTextCache[url]) {
+            return Promise.resolve(tropicalJtwcTextCache[url]);
+        }
+        var request = _weatherFetch(url, {
+            cache: 'no-store',
+            headers: { Accept: 'text/plain' }
+        }, 12000).then(function(response) {
+            if (!response.ok) throw new Error('JTWC advisory returned ' + response.status);
+            return response.text();
+        }).then(function(text) {
+            tropicalJtwcTextCache[url] = text;
+            return text;
+        }).catch(function(error) {
+            delete tropicalJtwcTextCache[url];
+            throw error;
+        });
+        tropicalJtwcTextCache[url] = request;
+        return request;
+    }
+
+    function _tropicalDisturbancePopupHtml(disturbance) {
+        if (disturbance.kind === 'NHC') {
+            var properties = disturbance.properties || {};
+            var basin = String(properties.basin || 'Tropical');
+            var risk = String(properties.risk7day || 'Outlook').replace(/_/g, ' ');
+            var probability = String(properties.prob7day || 'Not specified');
+            var probability2Day = String(properties.prob2day || 'Not specified');
+            var updateTime = _tropicalFinite(properties.idp_filedate);
+            var updateLabel = updateTime != null
+                ? new Date(updateTime).toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+                : '';
+            return '<div class="tropical-disturbance-popup">' +
+                '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · 7-day outlook</div>' +
+                '<div class="tropical-disturbance-popup-title">' + escapeHtml(risk) +
+                    ' potential development area</div>' +
+                '<div class="tropical-disturbance-popup-meta">' +
+                    '<b>7-day:</b> ' + escapeHtml(probability) +
+                    ' &nbsp; <b>2-day:</b> ' + escapeHtml(probability2Day) +
+                    '<br><b>Basin:</b> ' + escapeHtml(basin) +
+                    (updateLabel ? '<br><b>Outlook issued:</b> ' + escapeHtml(updateLabel) : '') +
+                '</div>' +
+                '<div class="tropical-disturbance-popup-note">Shaded boundary is the NHC’s published potential-development region, not a storm track.</div>' +
+                '<a class="tropical-disturbance-popup-link" href="' +
+                    escapeHtml(_tropicalNHCOutlookTextUrl(basin)) +
+                    '" target="_blank" rel="noopener noreferrer">Read the official NHC outlook text ↗</a>' +
+                '</div>';
+        }
+
+        var storm = disturbance.storm || {};
+        var current = _tropicalCurrentPoint(storm);
+        var id = String(storm.id || '');
+        var investMatch = id.match(/^(?:[A-Z]{2})?(9[0-9])/i) || id.match(/(9[0-9])/);
+        var label = 'JTWC Invest' + (investMatch ? ' ' + investMatch[1] : '');
+        var latitude = current ? Math.abs(current.lat).toFixed(1) + (current.lat < 0 ? '°S' : '°N') : '—';
+        var longitude = current ? Math.abs(current.lon).toFixed(1) + (current.lon < 0 ? '°W' : '°E') : '—';
+        var validTime = storm.validTime ? new Date(storm.validTime) : null;
+        var validLabel = validTime && !isNaN(validTime.getTime())
+            ? validTime.toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+            : '';
+        var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
+        return '<div class="tropical-disturbance-popup">' +
+            '<div class="tropical-disturbance-popup-kicker">Joint Typhoon Warning Center · invest</div>' +
+            '<div class="tropical-disturbance-popup-title">' + escapeHtml(label) + '</div>' +
+            '<div class="tropical-disturbance-popup-meta">' +
+                '<b>Published center:</b> ' + escapeHtml(latitude + ', ' + longitude) +
+                (validLabel ? '<br><b>Position time:</b> ' + escapeHtml(validLabel) : '') +
+            '</div>' +
+            '<div class="tropical-disturbance-popup-note">JTWC publishes a center point here, not an official area polygon. The dashed oval is an approximate viewing area around that point. The advisory below is regional and may not name this invest separately.</div>' +
+            '<a class="tropical-disturbance-popup-link" href="' + escapeHtml(advisoryUrl) +
+                '" target="_blank" rel="noopener noreferrer">Open official JTWC text ↗</a>' +
+            '<pre class="tropical-disturbance-actual-text">Loading the latest JTWC regional advisory…</pre>' +
+            '</div>';
+    }
+
+    function _tropicalInvestZoneRing(current, worldOffset) {
+        var ring = [];
+        var previousLongitude = current.lon;
+        var radiusEastNm = 240;
+        var radiusNorthNm = 105;
+        var cosine = Math.max(0.2, Math.abs(Math.cos(current.lat * Math.PI / 180)));
+        for (var i = 0; i <= 72; i++) {
+            var angle = i / 72 * Math.PI * 2;
+            var latitude = current.lat + Math.sin(angle) * radiusNorthNm / 60;
+            var longitude = current.lon +
+                Math.cos(angle) * radiusEastNm / (60 * cosine);
+            longitude = _tropicalMapLongitudeNear(longitude, previousLongitude);
+            previousLongitude = longitude;
+            ring.push([latitude, longitude + worldOffset]);
+        }
+        return ring;
+    }
+
+    function _drawTropicalDisturbances(bounds) {
+        if (!tropicalRouteMap || !window.L) return;
+        if (tropicalRouteDisturbanceLayer) {
+            tropicalRouteRouteClearLayer(tropicalRouteDisturbanceLayer);
+        } else {
+            tropicalRouteDisturbanceLayer = L.layerGroup().addTo(tropicalRouteMap);
+        }
+        tropicalRouteDisturbances.forEach(function(disturbance) {
+            if (disturbance.kind === 'NHC') {
+                var feature = disturbance.feature;
+                var geometry = feature && feature.geometry;
+                var coordinates = geometry && geometry.coordinates;
+                if (!coordinates || !coordinates.length) return;
+                var polygons = String(geometry.type || '').toLowerCase() === 'multipolygon'
+                    ? coordinates
+                    : [coordinates];
+                var mapPolygons = polygons.map(function(polygon) {
+                    return polygon.map(function(ring) {
+                        return _tropicalMapConeRing(ring);
+                    });
+                });
+                var properties = disturbance.properties || {};
+                var risk = String(properties.risk7day || '').toLowerCase();
+                var probability = parseFloat(String(properties.prob7day || '').replace('%', ''));
+                var color = /high/.test(risk) || probability >= 60 ? '#fb4f68' :
+                    (/medium/.test(risk) || probability >= 30 ? '#fb923c' :
+                        (/low/.test(risk) || probability > 0 ? '#f8c35a' : '#7dd3fc'));
+                var zone = L.polygon(mapPolygons.length === 1 ? mapPolygons[0] : mapPolygons, {
+                    pane: 'tropical-disturbance-pane',
+                    color: color,
+                    fillColor: color,
+                    fillOpacity: 0.24,
+                    opacity: 0.96,
+                    weight: 2,
+                    interactive: true
+                }).addTo(tropicalRouteDisturbanceLayer);
+                zone.bindPopup(_tropicalDisturbancePopupHtml(disturbance), {
+                    closeButton: true,
+                    maxWidth: 370
+                });
+                if (zone.getBounds().isValid()) bounds.extend(zone.getBounds());
+                return;
+            }
+
+            var storm = disturbance.storm;
+            var current = _tropicalCurrentPoint(storm);
+            if (!current) return;
+            var worldOffset = _tropicalMapWorldOffset(current.lon);
+            var popupHtml = _tropicalDisturbancePopupHtml(disturbance);
+            var zone = L.polygon([_tropicalInvestZoneRing(current, worldOffset)], {
+                pane: 'tropical-disturbance-pane',
+                color: '#d8b4fe',
+                fillColor: '#a855f7',
+                fillOpacity: 0.22,
+                opacity: 0.95,
+                weight: 2,
+                dashArray: '8,6',
+                interactive: true
+            }).addTo(tropicalRouteDisturbanceLayer);
+            zone.bindPopup(popupHtml, { closeButton: true, maxWidth: 390 });
+            zone.on('popupopen', function(event) {
+                var popup = event.popup;
+                var popupElement = popup.getElement && popup.getElement();
+                var textElement = popupElement &&
+                    popupElement.querySelector('.tropical-disturbance-actual-text');
+                if (!textElement) return;
+                var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
+                if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
+                    textElement.textContent = tropicalJtwcTextCache[advisoryUrl];
+                    return;
+                }
+                textElement.textContent = 'Loading the latest JTWC regional advisory…';
+                _fetchTropicalJTWCAdvisory(advisoryUrl).then(function(text) {
+                    if (!popup.isOpen()) return;
+                    var currentElement = popup.getElement && popup.getElement();
+                    var currentText = currentElement &&
+                        currentElement.querySelector('.tropical-disturbance-actual-text');
+                    if (currentText) {
+                        currentText.textContent = text;
+                        if (popup.update) popup.update();
+                    }
+                }).catch(function() {
+                    if (!popup.isOpen()) return;
+                    var currentElement = popup.getElement && popup.getElement();
+                    var currentText = currentElement &&
+                        currentElement.querySelector('.tropical-disturbance-actual-text');
+                    if (currentText) {
+                        currentText.textContent = 'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.';
+                        if (popup.update) popup.update();
+                    }
+                });
+            });
+            var centerMarker = L.circleMarker(
+                [current.lat, current.lon + worldOffset],
+                {
+                    pane: 'tropical-disturbance-pane',
+                    radius: 4,
+                    color: '#ffffff',
+                    fillColor: '#d8b4fe',
+                    fillOpacity: 1,
+                    weight: 1.5
+                }
+            ).addTo(tropicalRouteDisturbanceLayer);
+            centerMarker.bindPopup(popupHtml, { closeButton: true, maxWidth: 390 });
+            centerMarker.on('popupopen', function(event) {
+                zone.fire('popupopen', event);
+            });
+            if (zone.getBounds().isValid()) bounds.extend(zone.getBounds());
+        });
+        var legend = document.getElementById('tropical-route-disturbance-legend');
+        if (legend) legend.hidden = tropicalRouteDisturbances.length === 0;
+    }
+
     function _drawTropicalRouteStorm(storm, stormIndex, bounds, focusBounds, focusIndex) {
         if (!tropicalRouteMap || !window.L || !storm) return;
         var current = _tropicalCurrentPoint(storm);
@@ -21734,6 +22143,7 @@
         else tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
         var bounds = L.latLngBounds([]);
         var focusBounds = focusIndex != null ? L.latLngBounds([]) : null;
+        _drawTropicalDisturbances(bounds);
         tropicalRouteStorms.forEach(function(storm, index) {
             _drawTropicalRouteStorm(storm, index, bounds, focusBounds, focusIndex);
         });
@@ -21871,20 +22281,24 @@
         var token = ++tropicalRouteLoadToken;
         var status = document.getElementById('tropical-route-status');
         if (status) status.textContent = '';
+        if (forceRefresh) tropicalJtwcTextCache = Object.create(null);
         try {
             var feedResults = await Promise.allSettled([
                 _fetchTropicalNHC(forceRefresh),
-                _fetchTropicalJTWC(forceRefresh)
+                _fetchTropicalJTWC(forceRefresh),
+                _fetchTropicalNHCOutlook()
             ]);
             if (token !== tropicalRouteLoadToken) return;
-            var raw = [];
-            var payloads = await Promise.all(feedResults.map(function(result) {
+            var payloads = await Promise.all(feedResults.slice(0, 2).map(function(result) {
                 return result.status === 'fulfilled'
                     ? result.value.json().catch(function() { return null; })
                     : Promise.resolve(null);
             }));
             var nhcPayload = payloads[0];
             var jtwcPayload = payloads[1];
+            var nhcOutlook = feedResults[2].status === 'fulfilled'
+                ? feedResults[2].value
+                : { type: 'FeatureCollection', features: [] };
             var nhcStorms = nhcPayload
                 ? (nhcPayload.activeStorms || nhcPayload.cycloneMessages ||
                     (Array.isArray(nhcPayload) ? nhcPayload : []))
@@ -21893,13 +22307,37 @@
                 ? (jtwcPayload.activeStorms ||
                     (Array.isArray(jtwcPayload) ? jtwcPayload : []))
                 : [];
-            raw = nhcStorms.map(function(storm) {
+            var raw = nhcStorms.map(function(storm) {
                 return Object.assign({}, storm, { _source: 'NHC' });
             }).concat(jtwcStorms.map(function(storm) {
                 return Object.assign({}, storm, { _source: 'JTWC', source: 'JTWC' });
             })).filter(function(storm) {
                 return !_tropicalIsDisturbance(storm);
             });
+            var nhcDisturbances = (nhcOutlook.features || []).map(function(feature) {
+                var properties = feature.properties || feature.attributes || {};
+                var probability7Day = parseFloat(String(properties.prob7day || '').replace('%', ''));
+                var probability2Day = parseFloat(String(properties.prob2day || '').replace('%', ''));
+                return {
+                    kind: 'NHC',
+                    feature: feature,
+                    properties: properties,
+                    probability7Day: probability7Day,
+                    probability2Day: probability2Day
+                };
+            }).filter(function(disturbance) {
+                var geometry = disturbance.feature && disturbance.feature.geometry;
+                return geometry && Array.isArray(geometry.coordinates) &&
+                    (disturbance.probability7Day > 0 || disturbance.probability2Day > 0);
+            });
+            var jtwcDisturbances = jtwcStorms.map(function(storm) {
+                return Object.assign({}, storm, { _source: 'JTWC', source: 'JTWC' });
+            }).filter(function(storm) {
+                return _tropicalIsDisturbance(storm) && _tropicalCurrentPoint(storm);
+            }).map(function(storm) {
+                return { kind: 'JTWC', storm: storm };
+            });
+            tropicalRouteDisturbances = nhcDisturbances.concat(jtwcDisturbances);
             var userLat = parseFloat(lat), userLon = parseFloat(lon);
             tropicalRouteStorms = raw.map(function(storm) {
                 var current = _tropicalCurrentPoint(storm);
@@ -21918,11 +22356,22 @@
             _renderTropicalStormPicker();
             if (!tropicalRouteStorms.length) {
                 tropicalRouteSelectedIndex = null;
-                if (status) status.textContent = 'No active tropical systems are currently published by the National Hurricane Center or Joint Typhoon Warning Center.';
+                if (status) {
+                    status.textContent = tropicalRouteDisturbances.length
+                        ? 'No named storms are active; published tropical disturbance areas are shown.'
+                        : 'No active tropical systems or disturbance areas are currently published by the NHC or JTWC.';
+                }
                 var details = document.getElementById('tropical-route-details');
                 if (details) details.hidden = true;
-                if (tropicalRouteStormLayer) tropicalRouteRouteClearLayer(tropicalRouteStormLayer);
-                if (tropicalRouteMap) tropicalRouteMap.setView([20, -60], 3, { animate: false });
+                var shouldFitDisturbances = !forceRefresh;
+                if (tropicalRouteInitialViewPending) {
+                    tropicalRouteInitialViewPending = false;
+                    tropicalRoutePendingFocus = null;
+                }
+                _drawTropicalRouteStorms(shouldFitDisturbances);
+                if (!tropicalRouteDisturbances.length && tropicalRouteMap) {
+                    tropicalRouteMap.setView([20, -60], 3, { animate: false });
+                }
                 return;
             }
             if (status) status.textContent = '';
@@ -21962,6 +22411,9 @@
             tropicalRouteMap.createPane('tropical-satellite-pane');
             tropicalRouteMap.getPane('tropical-satellite-pane').style.zIndex = 250;
             tropicalRouteMap.getPane('tropical-satellite-pane').style.pointerEvents = 'none';
+            tropicalRouteMap.createPane('tropical-disturbance-pane');
+            tropicalRouteMap.getPane('tropical-disturbance-pane').style.zIndex = 365;
+            tropicalRouteMap.getPane('tropical-disturbance-pane').style.pointerEvents = 'auto';
             tropicalRouteMap.createPane('tropical-labels-pane');
             tropicalRouteMap.getPane('tropical-labels-pane').style.zIndex = 390;
             tropicalRouteMap.getPane('tropical-labels-pane').style.pointerEvents = 'none';
@@ -21978,6 +22430,7 @@
                 pane: 'tropical-labels-pane',
                 attribution: ''
             });
+            tropicalRouteDisturbanceLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteStormLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteUserLayer = L.layerGroup().addTo(tropicalRouteMap);
             tropicalRouteMap.on('movestart zoomstart', function() {
