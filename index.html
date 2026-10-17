@@ -2348,7 +2348,7 @@
                     </label>
                 </div>
                 <div style="margin-top:7px; color:#91a5b4; font-size:0.68em; line-height:1.4;">
-                    Combines NWS alerts with NHC watch/warning boundaries. NHC publishes these as boundary lines; they identify the alert limit and do not shade the full warning area.
+                    Combines NWS alerts with NHC watch/warning breakpoints. The official NHC GIS feed provides coastal boundary segments, not filled alert-area polygons.
                     <a href="https://www.nhc.noaa.gov/gis/" target="_blank" rel="noopener noreferrer" style="color:#7dd3fc;">NHC GIS data</a>
                 </div>
             </div>
@@ -22555,14 +22555,7 @@
     }
 
     function _tropicalNHCWatchWarningColor(eventName) {
-        var event = String(eventName || '').toLowerCase();
-        if (event.indexOf('hurricane warning') >= 0) return '#fb7185';
-        if (event.indexOf('hurricane watch') >= 0) return '#fbbf24';
-        if (event.indexOf('tropical storm warning') >= 0) return '#ff9100';
-        if (event.indexOf('tropical storm watch') >= 0) return '#facc15';
-        if (event.indexOf('typhoon warning') >= 0) return '#fb7185';
-        if (event.indexOf('typhoon watch') >= 0) return '#fbbf24';
-        return '#f8d66d';
+        return customSkyAlertSeverityColor({ event: String(eventName || '') });
     }
 
     function _tropicalNWSLocalTime(value) {
@@ -22686,11 +22679,38 @@
         return bounds;
     }
 
+    function _tropicalNHCWatchWarningCoordinates(coordinates) {
+        if (!Array.isArray(coordinates)) return '';
+        return coordinates.map(function(pair) {
+            if (!Array.isArray(pair) || pair.length < 2) return '';
+            var longitude = Number(pair[0]);
+            var latitude = Number(pair[1]);
+            if (!isFinite(longitude) || !isFinite(latitude)) return '';
+            var latText = Math.abs(latitude).toFixed(2) + '°' + (latitude < 0 ? 'S' : 'N');
+            var lonText = Math.abs(longitude).toFixed(2) + '°' + (longitude < 0 ? 'W' : 'E');
+            return latText + ' ' + lonText;
+        }).filter(Boolean).join(' → ');
+    }
+
     function _tropicalNHCWatchWarningPopupHtml(line, storm) {
         var eventName = String(line && line.event || 'Tropical watch/warning').trim();
-        var stormName = _tropicalNamedStormTitle(storm);
+        var stormName = String(line && (line.storm || line.stormName) ||
+            _tropicalNamedStormTitle(storm)).trim();
         var product = storm && storm.windWatchesWarnings || {};
-        var advisory = product.advNum ? 'NHC advisory #' + String(product.advNum) : '';
+        var advisoryNumber = String(line && line.advisoryNum || product.advNum || '').trim();
+        var issued = String(line && line.advisoryDate || '').trim() ||
+            _tropicalNWSLocalTime(product.issuance);
+        var breakpointText = _tropicalNHCWatchWarningCoordinates(line && line.coordinates);
+        var metaLines = [
+            '<b>Storm:</b> ' + escapeHtml(stormName)
+        ];
+        if (breakpointText) {
+            metaLines.push('<b>Coastal breakpoints:</b> ' + escapeHtml(breakpointText));
+        }
+        if (issued) metaLines.push('<b>Issued:</b> ' + escapeHtml(issued));
+        if (advisoryNumber) {
+            metaLines.push('<b>NHC advisory:</b> ' + escapeHtml(advisoryNumber));
+        }
         var advisoryUrl = '';
         try {
             var parsedUrl = new URL(String(storm && storm.publicAdvisory && storm.publicAdvisory.url || ''));
@@ -22699,12 +22719,11 @@
             }
         } catch (error) {}
         return '<div class="tropical-disturbance-popup">' +
-            '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · active watch/warning boundary</div>' +
+            '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · official tropical alert</div>' +
             '<div class="tropical-disturbance-popup-title" style="color:' +
                 _tropicalNHCWatchWarningColor(eventName) + '">' + escapeHtml(eventName) + '</div>' +
-            '<div class="tropical-disturbance-popup-meta">' + escapeHtml(stormName) +
-                (advisory ? '<br>' + escapeHtml(advisory) : '') + '</div>' +
-            '<div class="tropical-disturbance-popup-note">This NHC GIS product provides the boundary line. It does not include a filled warning-area polygon.</div>' +
+            '<div class="tropical-disturbance-popup-meta">' + metaLines.join('<br>') + '</div>' +
+            '<div class="tropical-disturbance-popup-note">NHC publishes these warning limits as coastal breakpoint segments, not filled alert-area polygons. The map preserves the official geometry rather than inventing coverage.</div>' +
             (advisoryUrl
                 ? '<a class="tropical-disturbance-popup-link" href="' + escapeHtml(advisoryUrl) +
                     '" target="_blank" rel="noopener noreferrer">Open official NHC advisory ↗</a>'
@@ -22740,9 +22759,9 @@
                 var isWatch = /\bWATCH\b/i.test(eventName);
                 L.polyline(path, {
                     pane: 'tropical-nws-alert-pane',
-                    color: '#06131d',
+                    color: color,
                     weight: 8,
-                    opacity: 0.96,
+                    opacity: 0.22,
                     interactive: false,
                     lineCap: 'round',
                     lineJoin: 'round'
@@ -22750,15 +22769,24 @@
                 L.polyline(path, {
                     pane: 'tropical-nws-alert-pane',
                     color: color,
-                    weight: 4,
-                    opacity: 1,
-                    dashArray: isWatch ? '8,6' : null,
+                    weight: 3,
+                    opacity: 0.98,
+                    dashArray: isWatch ? '7,5' : null,
+                    lineCap: 'round',
+                    lineJoin: 'round',
+                    interactive: false
+                }).addTo(tropicalRouteNHCWatchWarningLayer);
+                L.polyline(path, {
+                    pane: 'tropical-nws-alert-pane',
+                    color: color,
+                    weight: 16,
+                    opacity: 0.01,
                     lineCap: 'round',
                     lineJoin: 'round',
                     interactive: true
                 }).bindPopup(_tropicalNHCWatchWarningPopupHtml(line, storm), {
                     closeButton: true,
-                    maxWidth: 360
+                    maxWidth: 420
                 }).addTo(tropicalRouteNHCWatchWarningLayer);
             });
         });
