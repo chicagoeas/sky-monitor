@@ -21915,14 +21915,19 @@
         return request;
     }
 
-    function _loadTropicalPopupText(popup, loadingText, failureText, fetchText) {
+    function _loadTropicalNHCText(popup, basin) {
         var popupElement = popup && popup.getElement && popup.getElement();
         var textElement = popupElement &&
             popupElement.querySelector('.tropical-disturbance-actual-text');
         if (!textElement) return;
-        textElement.textContent = loadingText;
-        Promise.resolve().then(fetchText).then(function(text) {
-            if (popup.isOpen && !popup.isOpen()) return;
+        var productCode = _tropicalNHCProductCode(basin);
+        if (typeof tropicalNHCTextCache[productCode] === 'string') {
+            textElement.textContent = tropicalNHCTextCache[productCode];
+            return;
+        }
+        textElement.textContent = 'Loading the latest NHC tropical outlook…';
+        _fetchTropicalNHCOutlookText(basin).then(function(text) {
+            if (!popup.isOpen()) return;
             var currentElement = popup.getElement && popup.getElement();
             var currentText = currentElement &&
                 currentElement.querySelector('.tropical-disturbance-actual-text');
@@ -21931,34 +21936,47 @@
                 if (popup.update) popup.update();
             }
         }).catch(function() {
-            if (popup.isOpen && !popup.isOpen()) return;
+            if (!popup.isOpen()) return;
             var currentElement = popup.getElement && popup.getElement();
             var currentText = currentElement &&
                 currentElement.querySelector('.tropical-disturbance-actual-text');
             if (currentText) {
-                currentText.textContent = failureText;
+                currentText.textContent = 'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.';
                 if (popup.update) popup.update();
             }
         });
     }
 
-    function _loadTropicalNHCText(popup, basin) {
-        _loadTropicalPopupText(
-            popup,
-            'Loading the latest NHC tropical outlook…',
-            'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.',
-            function() { return _fetchTropicalNHCOutlookText(basin); }
-        );
-    }
-
     function _loadTropicalJTWCText(popup, storm) {
+        var popupElement = popup && popup.getElement && popup.getElement();
+        var textElement = popupElement &&
+            popupElement.querySelector('.tropical-disturbance-actual-text');
+        if (!textElement) return;
         var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
-        _loadTropicalPopupText(
-            popup,
-            'Loading the latest JTWC regional advisory…',
-            'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.',
-            function() { return _fetchTropicalJTWCAdvisory(advisoryUrl); }
-        );
+        if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
+            textElement.textContent = tropicalJtwcTextCache[advisoryUrl];
+            return;
+        }
+        textElement.textContent = 'Loading the latest JTWC regional advisory…';
+        _fetchTropicalJTWCAdvisory(storm).then(function(text) {
+            if (!popup.isOpen()) return;
+            var currentElement = popup.getElement && popup.getElement();
+            var currentText = currentElement &&
+                currentElement.querySelector('.tropical-disturbance-actual-text');
+            if (currentText) {
+                currentText.textContent = text;
+                if (popup.update) popup.update();
+            }
+        }).catch(function() {
+            if (!popup.isOpen()) return;
+            var currentElement = popup.getElement && popup.getElement();
+            var currentText = currentElement &&
+                currentElement.querySelector('.tropical-disturbance-actual-text');
+            if (currentText) {
+                currentText.textContent = 'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.';
+                if (popup.update) popup.update();
+            }
+        });
     }
 
     function _tropicalJTWCAdvisoryUrl(storm) {
@@ -21973,24 +21991,33 @@
             : 'https://www.metoc.navy.mil/jtwc/products/abpwweb.txt';
     }
 
-    function _fetchTropicalJTWCAdvisory(url) {
-        if (tropicalJtwcTextCache[url]) {
-            return Promise.resolve(tropicalJtwcTextCache[url]);
+    function _fetchTropicalJTWCAdvisory(storm) {
+        var cacheKey = _tropicalJTWCAdvisoryUrl(storm);
+        if (tropicalJtwcTextCache[cacheKey]) {
+            return Promise.resolve(tropicalJtwcTextCache[cacheKey]);
         }
-        var request = _weatherFetch(url, {
+        var basin = String(storm && storm.basin || '').toUpperCase();
+        var current = _tropicalCurrentPoint(storm);
+        var longitude = current ? current.lon : _tropicalFinite(storm && (
+            storm.longitudeNumeric ?? storm.longitude ?? storm.lon
+        ));
+        var requestUrl = WEATHER_WORKER_URL +
+            '/api/weather/jtwc-advisory?basin=' + encodeURIComponent(basin) +
+            (longitude == null ? '' : '&longitude=' + encodeURIComponent(longitude));
+        var request = _weatherFetch(requestUrl, {
             cache: 'no-store',
             headers: { Accept: 'text/plain' }
-        }, 12000).then(function(response) {
-            if (!response.ok) throw new Error('JTWC advisory returned ' + response.status);
+        }, 15000).then(function(response) {
+            if (!response.ok) throw new Error('JTWC advisory proxy returned ' + response.status);
             return response.text();
         }).then(function(text) {
-            tropicalJtwcTextCache[url] = text;
+            tropicalJtwcTextCache[cacheKey] = text;
             return text;
         }).catch(function(error) {
-            delete tropicalJtwcTextCache[url];
+            delete tropicalJtwcTextCache[cacheKey];
             throw error;
         });
-        tropicalJtwcTextCache[url] = request;
+        tropicalJtwcTextCache[cacheKey] = request;
         return request;
     }
 
@@ -22097,6 +22124,7 @@
                     });
                 });
                 var properties = disturbance.properties || {};
+                var basin = String(properties.basin || 'Tropical');
                 var risk = String(properties.risk7day || '').toLowerCase();
                 var probability = parseFloat(String(properties.prob7day || '').replace('%', ''));
                 var color = /high/.test(risk) || probability >= 60 ? '#fb4f68' :
