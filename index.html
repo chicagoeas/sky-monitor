@@ -4234,6 +4234,9 @@
         const panel = document.getElementById('coords-panel');
         localStorage.setItem('input_mode', mode);
         SkyDB.set(SkyDB.S.settings, 'input_mode', mode);
+        if (mode !== 'city' && typeof window._clearBeachLookupContext === 'function') {
+            window._clearBeachLookupContext();
+        }
 
         if (window.SKYMONITOR_INFO_PAGE) {
             renderInfoLocationControls(mode);
@@ -4349,19 +4352,24 @@
             item.addEventListener('mousedown', function(e) {
                 e.preventDefault();
                 var r = _acData[parseInt(item.dataset.idx)];
+                var searchText = cityEl ? cityEl.value.trim() : '';
                 lat = parseFloat(parseFloat(r.lat).toFixed(4));
                 lon = parseFloat(parseFloat(r.lon).toFixed(4));
                 var shortName = r.display_name.split(',')[0].trim();
                 if (cityEl) cityEl.value = shortName;
                 if (window.SKYMONITOR_INFO_PAGE) {
-                    navigateFromInfoPage('city', shortName, {
+                    navigateFromInfoPage('city', searchText || shortName, {
                         lat: lat,
                         lon: lon,
-                        city: shortName
+                        city: shortName,
+                        lookupQuery: searchText + ' ' + r.display_name
                     });
                     return;
                 }
                 localStorage.setItem('waddle_city', shortName);
+                if (typeof window._rememberBeachLookupContext === 'function') {
+                    window._rememberBeachLookupContext(searchText + ' ' + r.display_name, lat, lon);
+                }
                 dd.style.display = 'none';
                 manualUpdateLocation();
             });
@@ -4388,7 +4396,8 @@
                 navigateFromInfoPage('city', query, {
                     lat: infoLat,
                     lon: infoLon,
-                    city: infoCity
+                    city: infoCity,
+                    lookupQuery: query + ' ' + infoResult.display_name
                 });
             } catch (e) {
                 if (searchGeneration !== _citySearchGeneration) return;
@@ -4408,6 +4417,9 @@
                 var shortName = data[0].display_name.split(',')[0].trim();
                 if (cityEl) cityEl.value = shortName;
                 localStorage.setItem('waddle_city', shortName);
+                if (typeof window._rememberBeachLookupContext === 'function') {
+                    window._rememberBeachLookupContext(query + ' ' + data[0].display_name, lat, lon);
+                }
                 const dd = document.getElementById('city-ac-dropdown');
                 if (dd) dd.style.display = 'none';
                 manualUpdateLocation();
@@ -5610,6 +5622,9 @@
             // a previously-searched "Montrose Beach" can't bleed into the new location.
             if (localStorage.getItem('input_mode') === 'coord') {
                 localStorage.setItem('waddle_city', '');
+                if (typeof window._clearBeachLookupContext === 'function') {
+                    window._clearBeachLookupContext();
+                }
             }
         }
         // The weather location and the report location are independent. A
@@ -5690,6 +5705,9 @@
                 if (_cb2) _cb2.value = lat + ', ' + lon;
                 const cityBox = document.getElementById('cityInput');
                 if (cityBox) cityBox.value = '';
+                if (typeof window._clearBeachLookupContext === 'function') {
+                    window._clearBeachLookupContext();
+                }
                 window._locFromGPS = true;
                 _rememberGpsLocation(lat, lon);
                 recalculateReportPinForLocation(lat, lon, true, true);
@@ -5751,6 +5769,13 @@
                 lat = parseFloat(pending.lat);
                 lon = parseFloat(pending.lon);
                 if (pending.city) localStorage.setItem('waddle_city', pending.city);
+                if (typeof window._rememberBeachLookupContext === 'function') {
+                    window._rememberBeachLookupContext(
+                        pending.lookupQuery || [pending.value, pending.city].filter(Boolean).join(' '),
+                        lat,
+                        lon
+                    );
+                }
                 saveLoc();
                 loadAll();
             } else if (pending.value) {
@@ -22810,6 +22835,89 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
+        var _beachRequestSeq = 0;
+        var _BEACH_LOOKUP_QUERY_KEY = 'skymonitor_beach_lookup_query';
+        var _BEACH_LOOKUP_COORDS_KEY = 'skymonitor_beach_lookup_coords';
+
+        function _beachLocationKey(la, lo) {
+            la = Number(la);
+            lo = Number(lo);
+            if (!isFinite(la) || !isFinite(lo)) return '';
+            return la.toFixed(4) + ',' + lo.toFixed(4);
+        }
+
+        window._clearBeachLookupContext = function() {
+            try {
+                localStorage.removeItem(_BEACH_LOOKUP_QUERY_KEY);
+                localStorage.removeItem(_BEACH_LOOKUP_COORDS_KEY);
+            } catch (e) {}
+        };
+
+        window._rememberBeachLookupContext = function(query, la, lo) {
+            var key = _beachLocationKey(la, lo);
+            if (!key) return;
+            try {
+                localStorage.setItem(_BEACH_LOOKUP_QUERY_KEY, String(query || ''));
+                localStorage.setItem(_BEACH_LOOKUP_COORDS_KEY, key);
+            } catch (e) {}
+        };
+
+        function _isBeachLookupForLocation(la, lo) {
+            if (localStorage.getItem('input_mode') !== 'city') return false;
+            var query = '';
+            var queryCoords = '';
+            try {
+                query = localStorage.getItem(_BEACH_LOOKUP_QUERY_KEY) || '';
+                queryCoords = localStorage.getItem(_BEACH_LOOKUP_COORDS_KEY) || '';
+            } catch (e) {}
+            return /\bbeach(?:es)?\b/i.test(query) &&
+                queryCoords === _beachLocationKey(la, lo);
+        }
+
+        function _isBeachEligibleForLocation(la, lo) {
+            return window.isBeachLocation === true || _isBeachLookupForLocation(la, lo);
+        }
+
+        function _isBeachForecastSeason() {
+            var now = new Date();
+            var month = now.getMonth();
+            var day = now.getDate();
+            return (month === 4 && day >= 15) ||
+                (month >= 5 && month <= 7) ||
+                (month === 8 && day <= 30);
+        }
+
+        function _isTaggedBeach(feature) {
+            var cls = String(feature && feature.class || '').toLowerCase();
+            var type = String(feature && feature.type || '').toLowerCase();
+            return (cls === 'natural' && type === 'beach') ||
+                (cls === 'leisure' && type === 'beach_resort');
+        }
+
+        function _isBeachFeatureNearby(feature, la, lo) {
+            var maxDistanceKm = 1.25;
+            var extent = feature && feature.extent;
+            if (Array.isArray(extent) && extent.length >= 4) {
+                var west = Number(extent[0]);
+                var south = Number(extent[1]);
+                var east = Number(extent[2]);
+                var north = Number(extent[3]);
+                if ([west, south, east, north].every(isFinite) && west <= east && south <= north) {
+                    var nearestLon = Math.max(west, Math.min(Number(lo), east));
+                    var nearestLat = Math.max(south, Math.min(Number(la), north));
+                    return _haverKm(Number(la), Number(lo), nearestLat, nearestLon) <= maxDistanceKm;
+                }
+            }
+            var featureLat = Number(feature && feature.lat);
+            var featureLon = Number(feature && feature.lon);
+            return isFinite(featureLat) && isFinite(featureLon) &&
+                _haverKm(Number(la), Number(lo), featureLat, featureLon) <= maxDistanceKm;
+        }
+
+        window._isNearbyTaggedBeach = function(feature, la, lo) {
+            return _isTaggedBeach(feature) && _isBeachFeatureNearby(feature, la, lo);
+        };
+
         function _findNearest(la, lo) {
             var best = null, bestDist = Infinity;
             _NDBC_BUOYS.forEach(function(b) {
@@ -22881,7 +22989,8 @@
             return '#ef4444';
         }
 
-        function _renderBeach(obs, glfText) {
+        function _renderBeach(obs, glfText, isCurrent) {
+            if (isCurrent && !isCurrent()) return;
             var sec   = document.getElementById('beach-section');
             var inner = document.getElementById('beach-inner');
             if (!sec || !inner) return;
@@ -22993,23 +23102,35 @@
                 }
             }
 
+            if (isCurrent && !isCurrent()) return;
             inner.innerHTML = html;
             sec.style.display = 'block';
         }
 
-        window.fetchBeachForecast = async function(la, lo) {
-            // Gate: Nominatim confirmed a beach/shoreline, OR the user's saved
-            // search string contains "beach" (catches "Montrose Beach" etc. even
-            // when the Nominatim reverse-geocode fails or returns a non-beach feature).
-            var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
-            var _beachByQuery = _savedQ.indexOf('beach') !== -1 || _savedQ.indexOf('shore') !== -1;
-            if (!window.isBeachLocation && !window.isWaterLocation && !_beachByQuery) return;
+        window.fetchBeachForecast = async function(la, lo, loadGeneration) {
+            if (!_isBeachForecastSeason()) return;
+            la = Number(la);
+            lo = Number(lo);
+            if (!isFinite(la) || !isFinite(lo)) return;
+            if (loadGeneration == null) loadGeneration = weatherLoadGeneration;
+
+            var requestSeq = ++_beachRequestSeq;
+            var isCurrent = function() {
+                return requestSeq === _beachRequestSeq &&
+                    loadGeneration === weatherLoadGeneration &&
+                    la === Number(lat) && lo === Number(lon) &&
+                    _isBeachForecastSeason() &&
+                    _isBeachEligibleForLocation(la, lo);
+            };
+            if (!isCurrent()) return;
+
             var result = _findNearest(la, lo);
             try {
                 if (result) {
                     // Buoy within 25 miles — use NDBC
                     var buoy = result.buoy;
                     var obs = await _fetchNDBC(buoy.id);
+                    if (!isCurrent()) return;
                     if (!obs) return;
                     if (obs.wvht == null && obs.wtmp == null) return;
                     // If only one field is missing, patch it from Open-Meteo Marine API
@@ -23020,8 +23141,10 @@
                                 '&longitude=' + lo +
                                 '&current=wave_height,sea_surface_temperature'
                              , undefined, 12000);
+                            if (!isCurrent()) return;
                             if (_pRes.ok) {
                                 var _pData = await _pRes.json();
+                                if (!isCurrent()) return;
                                 var _pCur = (_pData && _pData.current) || {};
                                 if (obs.wvht == null && _pCur.wave_height != null)
                                     obs.wvht = _pCur.wave_height;
@@ -23034,7 +23157,8 @@
                     if (_isGL(buoy.id)) {
                         glfText = await _fetchGLF(window.nwsGridOffice || 'MKX');
                     }
-                    _renderBeach(obs, glfText);
+                    if (!isCurrent()) return;
+                    _renderBeach(obs, glfText, isCurrent);
                 } else {
                     // No buoy within 25 miles — fall back to Open-Meteo Marine API
                     var mRes = await _weatherFetch(
@@ -23042,8 +23166,10 @@
                         '&longitude=' + lo +
                         '&current=wave_height,wave_direction,wave_period,sea_surface_temperature'
                         , undefined, 12000);
+                    if (!isCurrent()) return;
                     if (!mRes.ok) return;
                     var mData = await mRes.json();
+                    if (!isCurrent()) return;
                     var cur = (mData && mData.current) || {};
                     var obs = {
                         wvht: cur.wave_height             != null ? cur.wave_height             : null,
@@ -23053,7 +23179,7 @@
                         atmp: null
                     };
                     if (obs.wvht == null && obs.wtmp == null) return;
-                    _renderBeach(obs, null);
+                    _renderBeach(obs, null, isCurrent);
                 }
             } catch(e) { /* best-effort — silently skip on network failure */ }
         };
@@ -23130,33 +23256,21 @@
                 if (loadGeneration === weatherLoadGeneration) window.isWaterLocation = false;
             }
 
-            // Beach detection — reverse geocoding never reliably surfaces a
-            // natural=beach polygon (point features like paths/showers always
-            // rank higher). Use /search with a 1 km viewbox instead: it queries
-            // by name token so "Montrose Beach", "North Avenue Beach", etc. all
-            // match "beach", and the class/type check confirms it is actually a
-            // beach polygon rather than an address result.  0.01° ≈ 1 km, large
-            // enough that even a long beach polygon's centroid falls inside the box.
+            // Beach eligibility is based on a nearby, explicitly tagged OSM
+            // beach feature. A water classification alone is not sufficient.
             try {
-                var _savedQ = (localStorage.getItem('waddle_city') || '').toLowerCase();
-                if (_savedQ.indexOf('beach') !== -1 || _savedQ.indexOf('shore') !== -1) {
-                    window.isBeachLocation = true;
-                } else {
-                    var _d = 0.01; // ~1 km — covers centroids of large beach polygons
-                    var _bchD = await _osmGeocodeFetch('search', {
-                        q: 'beach',
-                        bbox: (loadLon - _d) + ',' + (loadLat - _d) + ',' + (loadLon + _d) + ',' + (loadLat + _d),
-                        limit: 10
+                var _d = 0.01; // Search a tight box; feature extent is distance-checked below.
+                var _bchD = await _osmGeocodeFetch('search', {
+                    q: 'beach',
+                    bbox: (loadLon - _d) + ',' + (loadLat - _d) + ',' + (loadLon + _d) + ',' + (loadLat + _d),
+                    limit: 10
+                });
+                if (loadGeneration !== weatherLoadGeneration) return;
+                if (_bchD) {
+                    window.isBeachLocation = Array.isArray(_bchD) && _bchD.some(function(r) {
+                        return typeof window._isNearbyTaggedBeach === 'function' &&
+                            window._isNearbyTaggedBeach(r, loadLat, loadLon);
                     });
-                    if (loadGeneration !== weatherLoadGeneration) return;
-                    if (_bchD) {
-                        window.isBeachLocation = Array.isArray(_bchD) && _bchD.some(function(r) {
-                            var c = (r.class || '').toLowerCase();
-                            var t = (r.type  || '').toLowerCase();
-                            return (c === 'natural' && t === 'beach') ||
-                                   (c === 'leisure' && t === 'beach_resort');
-                        });
-                    }
                 }
             } catch(e) {
                 if (loadGeneration === weatherLoadGeneration) window.isBeachLocation = false;
@@ -23200,7 +23314,7 @@
 
                     const _aqiAndBeachPromise = Promise.all([
                         Promise.resolve(fetchAQI(loadGeneration, loadLat, loadLon)).catch(function() {}),
-                        Promise.resolve(fetchBeachForecast(loadLat, loadLon)).catch(function() {})
+                        Promise.resolve(fetchBeachForecast(loadLat, loadLon, loadGeneration)).catch(function() {})
                     ]);
                     const _nwsHomePromise = Promise.resolve(fetchNWSChain(loadGeneration, loadLat, loadLon)).then(function(_nwsOk) {
                         // fetchNWSChain normally resolves undefined.  A false
@@ -23244,11 +23358,7 @@
                     await loadCustomSkyThreatAlerts();
                     if (loadGeneration !== weatherLoadGeneration) return;
                     renderCustomSkyHazards();
-                    var _savedQBch = (localStorage.getItem('waddle_city') || '').toLowerCase();
-                    if (window.isBeachLocation || window.isWaterLocation ||
-                        _savedQBch.includes('beach') || _savedQBch.includes('shore')) {
-                        await fetchBeachForecast(loadLat, loadLon);
-                    }
+                    await fetchBeachForecast(loadLat, loadLon, loadGeneration);
                     await fetchRiskLevels();
                     if (activeOutlookCenter === 'nhc') {
                         updateOutlookMap('nhc', null);
