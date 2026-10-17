@@ -622,6 +622,14 @@
         .tropical-nhc-warning-swatch.is-watch {
             border-top-style: dashed;
         }
+        .tropical-forecast-cone-swatch {
+            width: 17px;
+            height: 9px;
+            box-sizing: border-box;
+            border: 1px solid #ffd1dc;
+            border-radius: 2px;
+            background: rgba(192, 86, 119, 0.48);
+        }
         .tropical-nws-alert-text {
             display: block;
             max-height: 250px;
@@ -2348,7 +2356,7 @@
                     </label>
                 </div>
                 <div style="margin-top:7px; color:#91a5b4; font-size:0.68em; line-height:1.4;">
-                    Combines NWS alerts with NHC watch/warning breakpoints. The official NHC GIS feed provides coastal boundary segments, not filled alert-area polygons.
+                    Filled pink area is the NHC 5-day forecast cone, not warning coverage. Colored coastal lines are official NHC watch/warning breakpoints; a segment can have multiple alert types. Click either layer for details.
                     <a href="https://www.nhc.noaa.gov/gis/" target="_blank" rel="noopener noreferrer" style="color:#7dd3fc;">NHC GIS data</a>
                 </div>
             </div>
@@ -2360,6 +2368,7 @@
             <div id="tropical-route-disturbance-legend" class="tropical-disturbance-legend" hidden
                  aria-label="Tropical map legend">
                 <div id="tropical-route-nhc-legend-row" class="tropical-disturbance-legend-row" hidden><span class="tropical-disturbance-swatch"></span>NHC outlook area</div>
+                <div id="tropical-route-nhc-cone-legend-row" class="tropical-disturbance-legend-row" hidden><span class="tropical-forecast-cone-swatch"></span>NHC 5-day forecast cone (not warning coverage)</div>
                 <div id="tropical-route-jtwc-legend-row" class="tropical-disturbance-legend-row" hidden><span class="tropical-disturbance-swatch jtwc"></span>JTWC invest area (approx.)</div>
                 <div id="tropical-route-nhc-warning-legend-rows"></div>
                 <div id="tropical-route-nws-alert-legend-rows"></div>
@@ -22483,6 +22492,7 @@
         var legend = document.getElementById('tropical-route-disturbance-legend');
         if (!legend) return;
         var nhcRow = document.getElementById('tropical-route-nhc-legend-row');
+        var nhcConeRow = document.getElementById('tropical-route-nhc-cone-legend-row');
         var jtwcRow = document.getElementById('tropical-route-jtwc-legend-row');
         var nhcWarningRows = document.getElementById('tropical-route-nhc-warning-legend-rows');
         var nwsRows = document.getElementById('tropical-route-nws-alert-legend-rows');
@@ -22492,7 +22502,12 @@
         var hasJTWC = tropicalRouteDisturbances.some(function(item) {
             return item && item.kind === 'JTWC';
         });
+        var hasNHCCone = tropicalRouteStorms.some(function(storm) {
+            return !_tropicalIsJTWC(storm) && storm && storm.conePgn &&
+                Array.isArray(storm.conePgn.coordinates) && storm.conePgn.coordinates.length > 0;
+        });
         if (nhcRow) nhcRow.hidden = !hasNHC;
+        if (nhcConeRow) nhcConeRow.hidden = !hasNHCCone;
         if (jtwcRow) jtwcRow.hidden = !hasJTWC;
 
         var nhcEventCounts = Object.create(null);
@@ -22550,7 +22565,7 @@
                     '</div>';
             }).join('');
         }
-        legend.hidden = !hasNHC && !hasJTWC &&
+        legend.hidden = !hasNHC && !hasNHCCone && !hasJTWC &&
             nhcEventNames.length === 0 && eventNames.length === 0;
     }
 
@@ -22570,6 +22585,57 @@
             minute: '2-digit',
             timeZoneName: 'short'
         });
+    }
+
+    function _tropicalNHCAdvisoryUrl(storm) {
+        try {
+            var parsedUrl = new URL(String(storm && storm.publicAdvisory && storm.publicAdvisory.url || ''));
+            if (parsedUrl.protocol === 'https:' && parsedUrl.hostname === 'www.nhc.noaa.gov') {
+                return parsedUrl.href;
+            }
+        } catch (error) {}
+        return '';
+    }
+
+    function _tropicalNHCForecastConePopupHtml(storm) {
+        var coneProduct = storm && storm.trackCone || {};
+        var advisory = storm && storm.publicAdvisory || {};
+        var advisoryNumber = String(coneProduct.advNum || advisory.advNum || '').trim();
+        var issued = _tropicalNWSLocalTime(coneProduct.issuance || advisory.issuance);
+        var activeAlertTypes = [];
+        (Array.isArray(storm && storm.watchWarningLines) ? storm.watchWarningLines : [])
+            .forEach(function(line) {
+                var eventName = String(line && line.event || '').trim();
+                if (eventName && activeAlertTypes.indexOf(eventName) === -1) {
+                    activeAlertTypes.push(eventName);
+                }
+            });
+        activeAlertTypes.sort(function(a, b) {
+            return a.localeCompare(b);
+        });
+        var metaLines = [
+            '<b>Storm:</b> ' + escapeHtml(_tropicalNamedStormTitle(storm)),
+            '<b>Forecast:</b> NHC 5-day (120-hour) cone of uncertainty'
+        ];
+        if (issued) metaLines.push('<b>Advisory issued:</b> ' + escapeHtml(issued));
+        if (advisoryNumber) {
+            metaLines.push('<b>NHC advisory:</b> ' + escapeHtml(advisoryNumber));
+        }
+        if (activeAlertTypes.length) {
+            metaLines.push('<b>Active coastal alert types:</b> ' +
+                escapeHtml(activeAlertTypes.join('; ')));
+        }
+        var advisoryUrl = _tropicalNHCAdvisoryUrl(storm);
+        return '<div class="tropical-disturbance-popup">' +
+            '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · forecast product</div>' +
+            '<div class="tropical-disturbance-popup-title" style="color:#f7a2b7">5-Day Forecast Cone</div>' +
+            '<div class="tropical-disturbance-popup-meta">' + metaLines.join('<br>') + '</div>' +
+            '<div class="tropical-disturbance-popup-note">The shaded polygon shows forecast-track uncertainty; it is not a warning footprint. Coastal alert types apply only to the breakpoint segments shown by the colored lines.</div>' +
+            (advisoryUrl
+                ? '<a class="tropical-disturbance-popup-link" href="' + escapeHtml(advisoryUrl) +
+                    '" target="_blank" rel="noopener noreferrer">Open official NHC advisory ↗</a>'
+                : '') +
+            '</div>';
     }
 
     function _tropicalNWSAlertPopupHtml(feature) {
@@ -22692,15 +22758,45 @@
         }).filter(Boolean).join(' → ');
     }
 
-    function _tropicalNHCWatchWarningPopupHtml(line, storm) {
-        var eventName = String(line && line.event || 'Tropical watch/warning').trim();
-        var stormName = String(line && (line.storm || line.stormName) ||
+    function _tropicalNHCWatchWarningGeometryKey(coordinates) {
+        if (!Array.isArray(coordinates) || coordinates.length < 2) return '';
+        var points = coordinates.map(function(pair) {
+            return Number(pair[0]).toFixed(5) + ',' + Number(pair[1]).toFixed(5);
+        });
+        var forward = points.join('|');
+        var reverse = points.slice().reverse().join('|');
+        return forward < reverse ? forward : reverse;
+    }
+
+    function _tropicalNHCAlertPriority(eventName) {
+        var event = String(eventName || '').toLowerCase();
+        if (/\b(?:hurricane|typhoon)\s+warning\b/.test(event)) return 4;
+        if (/\b(?:tropical storm|tropical cyclone)\s+warning\b/.test(event)) return 3;
+        if (/\b(?:hurricane|typhoon)\s+watch\b/.test(event)) return 2;
+        if (/\b(?:tropical storm|tropical cyclone)\s+watch\b/.test(event)) return 1;
+        return 0;
+    }
+
+    function _tropicalNHCWatchWarningPopupHtml(lines, storm) {
+        var alertLines = Array.isArray(lines) ? lines : (lines ? [lines] : []);
+        var firstLine = alertLines[0] || {};
+        var eventNames = [];
+        alertLines.forEach(function(line) {
+            var eventName = String(line && line.event || '').trim();
+            if (eventName && eventNames.indexOf(eventName) === -1) eventNames.push(eventName);
+        });
+        if (!eventNames.length) eventNames.push('Tropical watch/warning');
+        eventNames.sort(function(a, b) {
+            return _tropicalNHCAlertPriority(b) - _tropicalNHCAlertPriority(a) ||
+                a.localeCompare(b);
+        });
+        var stormName = String(firstLine.storm || firstLine.stormName ||
             _tropicalNamedStormTitle(storm)).trim();
         var product = storm && storm.windWatchesWarnings || {};
-        var advisoryNumber = String(line && line.advisoryNum || product.advNum || '').trim();
-        var issued = String(line && line.advisoryDate || '').trim() ||
+        var advisoryNumber = String(firstLine.advisoryNum || product.advNum || '').trim();
+        var issued = String(firstLine.advisoryDate || '').trim() ||
             _tropicalNWSLocalTime(product.issuance);
-        var breakpointText = _tropicalNHCWatchWarningCoordinates(line && line.coordinates);
+        var breakpointText = _tropicalNHCWatchWarningCoordinates(firstLine.coordinates);
         var metaLines = [
             '<b>Storm:</b> ' + escapeHtml(stormName)
         ];
@@ -22711,19 +22807,20 @@
         if (advisoryNumber) {
             metaLines.push('<b>NHC advisory:</b> ' + escapeHtml(advisoryNumber));
         }
-        var advisoryUrl = '';
-        try {
-            var parsedUrl = new URL(String(storm && storm.publicAdvisory && storm.publicAdvisory.url || ''));
-            if (parsedUrl.protocol === 'https:' && parsedUrl.hostname === 'www.nhc.noaa.gov') {
-                advisoryUrl = parsedUrl.href;
-            }
-        } catch (error) {}
+        var advisoryUrl = _tropicalNHCAdvisoryUrl(storm);
+        var eventMarkup = eventNames.map(function(eventName) {
+            return '<div class="tropical-disturbance-popup-title" style="color:' +
+                escapeHtml(_tropicalNHCWatchWarningColor(eventName)) + '">' +
+                escapeHtml(eventName) + '</div>';
+        }).join('');
+        var overlapNote = eventNames.length > 1
+            ? 'This same coastal segment has multiple active NHC designations; all are listed above.'
+            : 'NHC publishes watch/warning limits as coastal breakpoint segments. The filled pink area on this map is the forecast cone, not warning coverage.';
         return '<div class="tropical-disturbance-popup">' +
-            '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · official tropical alert</div>' +
-            '<div class="tropical-disturbance-popup-title" style="color:' +
-                _tropicalNHCWatchWarningColor(eventName) + '">' + escapeHtml(eventName) + '</div>' +
+            '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · official coastal alert</div>' +
+            eventMarkup +
             '<div class="tropical-disturbance-popup-meta">' + metaLines.join('<br>') + '</div>' +
-            '<div class="tropical-disturbance-popup-note">NHC publishes these warning limits as coastal breakpoint segments, not filled alert-area polygons. The map preserves the official geometry rather than inventing coverage.</div>' +
+            '<div class="tropical-disturbance-popup-note">' + escapeHtml(overlapNote) + '</div>' +
             (advisoryUrl
                 ? '<a class="tropical-disturbance-popup-link" href="' + escapeHtml(advisoryUrl) +
                     '" target="_blank" rel="noopener noreferrer">Open official NHC advisory ↗</a>'
@@ -22744,19 +22841,49 @@
             var lines = Array.isArray(storm && storm.watchWarningLines)
                 ? storm.watchWarningLines
                 : [];
+            var groupedLines = Object.create(null);
             lines.forEach(function(line) {
                 var coordinates = Array.isArray(line && line.coordinates)
                     ? line.coordinates.filter(function(pair) {
                         return Array.isArray(pair) && pair.length >= 2 &&
-                            isFinite(Number(pair[0])) && isFinite(Number(pair[1]));
+                            isFinite(Number(pair[0])) && isFinite(Number(pair[1])) &&
+                            Math.abs(Number(pair[0])) <= 180 && Math.abs(Number(pair[1])) <= 90;
                     })
                     : [];
                 if (coordinates.length < 2) return;
-                var path = _tropicalMapConeRing(coordinates);
+                var key = _tropicalNHCWatchWarningGeometryKey(coordinates);
+                if (!key) return;
+                if (!groupedLines[key]) {
+                    groupedLines[key] = { coordinates: coordinates, alerts: [] };
+                }
+                groupedLines[key].alerts.push(Object.assign({}, line, {
+                    coordinates: coordinates
+                }));
+            });
+            Object.keys(groupedLines).forEach(function(key) {
+                var group = groupedLines[key];
+                var path = _tropicalMapConeRing(group.coordinates);
                 if (path.length < 2) return;
-                var eventName = String(line.event || '');
-                var color = _tropicalNHCWatchWarningColor(eventName);
-                var isWatch = /\bWATCH\b/i.test(eventName);
+                var eventNames = [];
+                group.alerts.forEach(function(line) {
+                    var eventName = String(line && line.event || '').trim();
+                    if (eventName && eventNames.indexOf(eventName) === -1) {
+                        eventNames.push(eventName);
+                    }
+                });
+                eventNames.sort(function(a, b) {
+                    return _tropicalNHCAlertPriority(b) - _tropicalNHCAlertPriority(a) ||
+                        a.localeCompare(b);
+                });
+                var primaryEvent = eventNames[0] || '';
+                var color = _tropicalNHCWatchWarningColor(primaryEvent);
+                var hasWarning = eventNames.some(function(eventName) {
+                    return /\bWARNING\b/i.test(eventName);
+                });
+                var hasWatch = eventNames.some(function(eventName) {
+                    return /\bWATCH\b/i.test(eventName);
+                });
+                var isWatch = hasWatch && !hasWarning;
                 L.polyline(path, {
                     pane: 'tropical-nws-alert-pane',
                     color: color,
@@ -22784,7 +22911,7 @@
                     lineCap: 'round',
                     lineJoin: 'round',
                     interactive: true
-                }).bindPopup(_tropicalNHCWatchWarningPopupHtml(line, storm), {
+                }).bindPopup(_tropicalNHCWatchWarningPopupHtml(group.alerts, storm), {
                     closeButton: true,
                     maxWidth: 420
                 }).addTo(tropicalRouteNHCWatchWarningLayer);
@@ -22817,10 +22944,18 @@
         if (!_tropicalIsJTWC(storm) && storm.conePgn &&
             storm.conePgn.coordinates && storm.conePgn.coordinates[0]) {
             var coneRing = _tropicalMapConeRing(storm.conePgn.coordinates[0]);
-            var cone = selectStormOnClick(L.polygon(coneRing, {
-                color: '#f8d66d', fillColor: '#f8d66d', fillOpacity: 0.12,
-                weight: 1.4, opacity: 0.75, dashArray: '5,5', interactive: true
-            })).addTo(tropicalRouteStormLayer);
+            var cone = L.polygon(coneRing, {
+                color: '#f7a2b7',
+                fillColor: '#c05677',
+                fillOpacity: 0.42,
+                weight: 2,
+                opacity: 0.96,
+                interactive: true
+            }).bindPopup(_tropicalNHCForecastConePopupHtml(storm), {
+                closeButton: true,
+                maxWidth: 420
+            });
+            selectStormOnClick(cone).addTo(tropicalRouteStormLayer);
             extendBounds(cone.getBounds());
         }
         if (points.length >= 2) {
