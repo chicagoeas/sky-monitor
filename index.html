@@ -22186,32 +22186,46 @@
         });
     }
 
+    function _setTropicalPopupText(popup, text) {
+        if (!popup) return;
+        var content = popup.getContent && popup.getContent();
+        if (typeof content === 'string' && popup.setContent) {
+            var updatedContent = content.replace(
+                /(<pre class="tropical-disturbance-actual-text">)[\s\S]*?(<\/pre>)/,
+                function(match, openingTag, closingTag) {
+                    return openingTag + escapeHtml(text) + closingTag;
+                }
+            );
+            if (updatedContent !== content) {
+                // Leaflet's update() rebuilds the popup from its saved content.
+                // Keep the saved HTML in sync before asking it to recalculate layout.
+                popup.setContent(updatedContent);
+                return;
+            }
+        }
+        var popupElement = popup.getElement && popup.getElement();
+        var textElement = popupElement &&
+            popupElement.querySelector('.tropical-disturbance-actual-text');
+        if (textElement) textElement.textContent = text;
+    }
+
     function _loadTropicalNHCText(popup, basin) {
         var productCode = _tropicalNHCProductCode(basin);
         _whenTropicalPopupTextReady(popup, function(textElement) {
             if (typeof tropicalNHCTextCache[productCode] === 'string') {
-                textElement.textContent = tropicalNHCTextCache[productCode];
+                _setTropicalPopupText(popup, tropicalNHCTextCache[productCode]);
                 return;
             }
             textElement.textContent = 'Loading the latest NHC tropical outlook…';
             _fetchTropicalNHCOutlookText(basin).then(function(text) {
                 if (!popup.isOpen()) return;
-                var currentElement = popup.getElement && popup.getElement();
-                var currentText = currentElement &&
-                    currentElement.querySelector('.tropical-disturbance-actual-text');
-                if (currentText) {
-                    currentText.textContent = text;
-                    if (popup.update) popup.update();
-                }
+                _setTropicalPopupText(popup, text);
             }).catch(function() {
                 if (!popup.isOpen()) return;
-                var currentElement = popup.getElement && popup.getElement();
-                var currentText = currentElement &&
-                    currentElement.querySelector('.tropical-disturbance-actual-text');
-                if (currentText) {
-                    currentText.textContent = 'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.';
-                    if (popup.update) popup.update();
-                }
+                _setTropicalPopupText(
+                    popup,
+                    'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.'
+                );
             });
         });
     }
@@ -22220,28 +22234,19 @@
         var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
         _whenTropicalPopupTextReady(popup, function(textElement) {
             if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
-                textElement.textContent = tropicalJtwcTextCache[advisoryUrl];
+                _setTropicalPopupText(popup, tropicalJtwcTextCache[advisoryUrl]);
                 return;
             }
             textElement.textContent = 'Loading the latest JTWC regional advisory…';
             _fetchTropicalJTWCAdvisory(storm).then(function(text) {
                 if (!popup.isOpen()) return;
-                var currentElement = popup.getElement && popup.getElement();
-                var currentText = currentElement &&
-                    currentElement.querySelector('.tropical-disturbance-actual-text');
-                if (currentText) {
-                    currentText.textContent = text;
-                    if (popup.update) popup.update();
-                }
+                _setTropicalPopupText(popup, text);
             }).catch(function() {
                 if (!popup.isOpen()) return;
-                var currentElement = popup.getElement && popup.getElement();
-                var currentText = currentElement &&
-                    currentElement.querySelector('.tropical-disturbance-actual-text');
-                if (currentText) {
-                    currentText.textContent = 'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.';
-                    if (popup.update) popup.update();
-                }
+                _setTropicalPopupText(
+                    popup,
+                    'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.'
+                );
             });
         });
     }
