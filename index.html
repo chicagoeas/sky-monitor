@@ -22515,7 +22515,38 @@
         });
     }
 
-    function _tropicalNWSAlertsAtPoint(point) {
+    function _tropicalNWSAlertAreaKeys(feature) {
+        var properties = feature && feature.properties || {};
+        var keys = [];
+        (Array.isArray(properties.affectedZones) ? properties.affectedZones : [])
+            .forEach(function(zone) {
+                var zoneUrl = _tropicalNWSZoneUrl(zone);
+                if (zoneUrl) keys.push('zone:' + zoneUrl.toLowerCase());
+            });
+        String(properties.areaDesc || '').split(/[;,]/).forEach(function(area) {
+            var normalizedArea = area.trim().toLowerCase().replace(/\s+/g, ' ');
+            if (!normalizedArea) return;
+            keys.push('area:' + normalizedArea);
+            var correspondingLandArea = normalizedArea.replace(/\s+coastal waters?$/, '');
+            if (correspondingLandArea && correspondingLandArea !== normalizedArea) {
+                keys.push('area:' + correspondingLandArea);
+            }
+        });
+        return keys;
+    }
+
+    function _tropicalNWSAlertsShareArea(first, second) {
+        var firstKeys = _tropicalNWSAlertAreaKeys(first);
+        var secondKeys = Object.create(null);
+        _tropicalNWSAlertAreaKeys(second).forEach(function(key) {
+            secondKeys[key] = true;
+        });
+        return firstKeys.some(function(key) {
+            return !!secondKeys[key];
+        });
+    }
+
+    function _tropicalNWSAlertsAtPoint(point, selectedFeature) {
         var matches = [];
         var seen = Object.create(null);
         tropicalRouteNWSAlerts.forEach(function(feature) {
@@ -22529,7 +22560,11 @@
                 ].join('|');
             if (seen[identity]) return;
             seen[identity] = true;
-            if (feature && _tropicalNWSPointInGeometry(point, feature.geometry)) {
+            if (feature && (
+                feature === selectedFeature ||
+                _tropicalNWSAlertsShareArea(selectedFeature, feature) ||
+                _tropicalNWSPointInGeometry(point, feature.geometry)
+            )) {
                 matches.push(feature);
             }
         });
@@ -22540,7 +22575,7 @@
         var html = '<div class="tropical-nws-alerts-popup-group">';
         if (features.length > 1) {
             html += '<div style="font-weight:800;color:#9eb3c2;margin:0 0 10px;">' +
-                features.length + ' active NWS alerts at this location</div>';
+                features.length + ' active NWS alerts affect this area</div>';
         }
         features.forEach(function(feature, index) {
             html += '<div' + (index
@@ -22583,7 +22618,7 @@
             alertLayer.on('click', function(event) {
                 var point = event && event.latlng;
                 if (!point) return;
-                var matchingAlerts = _tropicalNWSAlertsAtPoint(point);
+                var matchingAlerts = _tropicalNWSAlertsAtPoint(point, feature);
                 if (!matchingAlerts.length) matchingAlerts = [feature];
                 var maxHeight = Math.min(
                     560,
