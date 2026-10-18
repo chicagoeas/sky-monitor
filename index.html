@@ -644,12 +644,6 @@
             font-size: 0.76rem;
             line-height: 1.45;
         }
-        .tropical-disturbance-popup-note {
-            margin-top: 7px;
-            color: #91a5b4;
-            font-size: 0.7rem;
-            line-height: 1.4;
-        }
         .tropical-disturbance-popup-link {
             display: inline-block;
             margin-top: 9px;
@@ -22173,67 +22167,82 @@
         return request;
     }
 
-    function _loadTropicalNHCText(popup, basin) {
-        var popupElement = popup && popup.getElement && popup.getElement();
+    function _whenTropicalPopupTextReady(popup, onReady, attempts) {
+        if (!popup || !popup.getElement) return;
+        var popupElement = popup.getElement();
         var textElement = popupElement &&
             popupElement.querySelector('.tropical-disturbance-actual-text');
-        if (!textElement) return;
-        var productCode = _tropicalNHCProductCode(basin);
-        if (typeof tropicalNHCTextCache[productCode] === 'string') {
-            textElement.textContent = tropicalNHCTextCache[productCode];
+        if (textElement) {
+            onReady(textElement);
             return;
         }
-        textElement.textContent = 'Loading the latest NHC tropical outlook…';
-        _fetchTropicalNHCOutlookText(basin).then(function(text) {
-            if (!popup.isOpen()) return;
-            var currentElement = popup.getElement && popup.getElement();
-            var currentText = currentElement &&
-                currentElement.querySelector('.tropical-disturbance-actual-text');
-            if (currentText) {
-                currentText.textContent = text;
-                if (popup.update) popup.update();
+        attempts = attempts || 0;
+        if (attempts >= 12) return;
+        var schedule = window.requestAnimationFrame || function(callback) {
+            return window.setTimeout(callback, 16);
+        };
+        schedule(function() {
+            _whenTropicalPopupTextReady(popup, onReady, attempts + 1);
+        });
+    }
+
+    function _loadTropicalNHCText(popup, basin) {
+        var productCode = _tropicalNHCProductCode(basin);
+        _whenTropicalPopupTextReady(popup, function(textElement) {
+            if (typeof tropicalNHCTextCache[productCode] === 'string') {
+                textElement.textContent = tropicalNHCTextCache[productCode];
+                return;
             }
-        }).catch(function() {
-            if (!popup.isOpen()) return;
-            var currentElement = popup.getElement && popup.getElement();
-            var currentText = currentElement &&
-                currentElement.querySelector('.tropical-disturbance-actual-text');
-            if (currentText) {
-                currentText.textContent = 'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.';
-                if (popup.update) popup.update();
-            }
+            textElement.textContent = 'Loading the latest NHC tropical outlook…';
+            _fetchTropicalNHCOutlookText(basin).then(function(text) {
+                if (!popup.isOpen()) return;
+                var currentElement = popup.getElement && popup.getElement();
+                var currentText = currentElement &&
+                    currentElement.querySelector('.tropical-disturbance-actual-text');
+                if (currentText) {
+                    currentText.textContent = text;
+                    if (popup.update) popup.update();
+                }
+            }).catch(function() {
+                if (!popup.isOpen()) return;
+                var currentElement = popup.getElement && popup.getElement();
+                var currentText = currentElement &&
+                    currentElement.querySelector('.tropical-disturbance-actual-text');
+                if (currentText) {
+                    currentText.textContent = 'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.';
+                    if (popup.update) popup.update();
+                }
+            });
         });
     }
 
     function _loadTropicalJTWCText(popup, storm) {
-        var popupElement = popup && popup.getElement && popup.getElement();
-        var textElement = popupElement &&
-            popupElement.querySelector('.tropical-disturbance-actual-text');
-        if (!textElement) return;
         var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
-        if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
-            textElement.textContent = tropicalJtwcTextCache[advisoryUrl];
-            return;
-        }
-        textElement.textContent = 'Loading the latest JTWC regional advisory…';
-        _fetchTropicalJTWCAdvisory(storm).then(function(text) {
-            if (!popup.isOpen()) return;
-            var currentElement = popup.getElement && popup.getElement();
-            var currentText = currentElement &&
-                currentElement.querySelector('.tropical-disturbance-actual-text');
-            if (currentText) {
-                currentText.textContent = text;
-                if (popup.update) popup.update();
+        _whenTropicalPopupTextReady(popup, function(textElement) {
+            if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
+                textElement.textContent = tropicalJtwcTextCache[advisoryUrl];
+                return;
             }
-        }).catch(function() {
-            if (!popup.isOpen()) return;
-            var currentElement = popup.getElement && popup.getElement();
-            var currentText = currentElement &&
-                currentElement.querySelector('.tropical-disturbance-actual-text');
-            if (currentText) {
-                currentText.textContent = 'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.';
-                if (popup.update) popup.update();
-            }
+            textElement.textContent = 'Loading the latest JTWC regional advisory…';
+            _fetchTropicalJTWCAdvisory(storm).then(function(text) {
+                if (!popup.isOpen()) return;
+                var currentElement = popup.getElement && popup.getElement();
+                var currentText = currentElement &&
+                    currentElement.querySelector('.tropical-disturbance-actual-text');
+                if (currentText) {
+                    currentText.textContent = text;
+                    if (popup.update) popup.update();
+                }
+            }).catch(function() {
+                if (!popup.isOpen()) return;
+                var currentElement = popup.getElement && popup.getElement();
+                var currentText = currentElement &&
+                    currentElement.querySelector('.tropical-disturbance-actual-text');
+                if (currentText) {
+                    currentText.textContent = 'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.';
+                    if (popup.update) popup.update();
+                }
+            });
         });
     }
 
@@ -22308,7 +22317,6 @@
                     '<br><b>Basin:</b> ' + escapeHtml(basin) +
                     (updateLabel ? '<br><b>Outlook issued:</b> ' + escapeHtml(updateLabel) : '') +
                 '</div>' +
-                '<div class="tropical-disturbance-popup-note">Shaded boundary is the NHC’s published potential-development region, not a storm track.</div>' +
                 '<a class="tropical-disturbance-popup-link" href="' +
                     escapeHtml(_tropicalNHCOutlookTextUrl(basin)) +
                     '" target="_blank" rel="noopener noreferrer">Read the official NHC outlook text ↗</a>' +
@@ -22342,7 +22350,6 @@
                 '<b>Published center:</b> ' + escapeHtml(latitude + ', ' + longitude) +
                 (validLabel ? '<br><b>Position time:</b> ' + escapeHtml(validLabel) : '') +
             '</div>' +
-            '<div class="tropical-disturbance-popup-note">JTWC publishes a center point here, not an official area polygon. The dashed oval is an approximate viewing area around that point. The advisory below is regional and may not name this invest separately.</div>' +
             '<a class="tropical-disturbance-popup-link" href="' + escapeHtml(advisoryUrl) +
                 '" target="_blank" rel="noopener noreferrer">Open official JTWC text ↗</a>' +
             '<pre class="tropical-disturbance-actual-text">Loading the latest JTWC regional advisory…</pre>' +
