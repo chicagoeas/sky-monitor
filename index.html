@@ -21512,6 +21512,175 @@
         return [];
     }
 
+    function _tropicalNWSMarineZoneHeader(line) {
+        var match = String(line || '').trim().match(/^([A-Z]{3})(\d{3}(?:-\d{3})*)-(\d{6})-$/);
+        if (!match) return null;
+        var prefix = match[1];
+        var zoneNumbers = match[2].split('-');
+        return {
+            zoneIds: zoneNumbers.map(function(number) {
+                return prefix + number;
+            }),
+            validThrough: match[3]
+        };
+    }
+
+    function _tropicalNWSMarineForecastArea(sectionLines) {
+        for (var i = 0; i < sectionLines.length; i++) {
+            var line = String(sectionLines[i] || '').trim();
+            if (!line || /^\$/.test(line) || /^\./.test(line) ||
+                /^\d{1,4}\s+(?:AM|PM)\b/i.test(line) ||
+                !/\bwaters?\b/i.test(line)) continue;
+            return line
+                .replace(/-+$/, '')
+                .split(/-(?=[A-Z])/)
+                .map(function(area) { return area.trim(); })
+                .filter(Boolean)
+                .join('; ');
+        }
+        return '';
+    }
+
+    function _tropicalNWSMarineExpiry(validThrough, issuedAt) {
+        var match = String(validThrough || '').match(/^(\d{2})(\d{2})(\d{2})$/);
+        var issued = new Date(issuedAt || '');
+        if (!match || isNaN(issued.getTime())) return '';
+        var day = Number(match[1]);
+        var hour = Number(match[2]);
+        var minute = Number(match[3]);
+        if (day < 1 || day > 31 || hour > 23 || minute > 59) return '';
+        var expiry = new Date(Date.UTC(
+            issued.getUTCFullYear(),
+            issued.getUTCMonth(),
+            day,
+            hour,
+            minute
+        ));
+        if (expiry.getTime() < issued.getTime() && day < issued.getUTCDate()) {
+            expiry = new Date(Date.UTC(
+                issued.getUTCFullYear(),
+                issued.getUTCMonth() + 1,
+                day,
+                hour,
+                minute
+            ));
+        }
+        return expiry.toISOString();
+    }
+
+    function _tropicalNWSCoastalForecastFeatures(product) {
+        var productText = String(product && product.productText || '');
+        var issuedAt = String(product && product.issuanceTime || '');
+        if (!productText || !issuedAt) return [];
+        var lines = productText.split(/\r?\n/);
+        var eventNames = [
+            'Hurricane Warning',
+            'Hurricane Watch',
+            'Typhoon Warning',
+            'Typhoon Watch',
+            'Tropical Storm Warning',
+            'Tropical Storm Watch'
+        ];
+        var features = [];
+
+        for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            var zoneHeader = _tropicalNWSMarineZoneHeader(lines[lineIndex]);
+            if (!zoneHeader) continue;
+            var sectionLines = [];
+            for (var sectionIndex = lineIndex + 1; sectionIndex < lines.length; sectionIndex++) {
+                if (/^\s*\$\$\s*$/.test(lines[sectionIndex]) ||
+                    _tropicalNWSMarineZoneHeader(lines[sectionIndex])) break;
+                sectionLines.push(lines[sectionIndex]);
+            }
+            var sectionText = sectionLines.join('\n').trim();
+            var areaDesc = _tropicalNWSMarineForecastArea(sectionLines);
+            if (!areaDesc) continue;
+            var eventStates = Object.create(null);
+            sectionLines.forEach(function(statusLine) {
+                var normalizedLine = String(statusLine || '')
+                    .trim()
+                    .replace(/^\.+|\.+$/g, '')
+                    .replace(/\s+/g, ' ')
+                    .toUpperCase();
+                eventNames.forEach(function(eventName) {
+                    var normalizedEvent = eventName.toUpperCase();
+                    if (normalizedLine.indexOf(normalizedEvent) !== 0) return;
+                    var statusText = normalizedLine.slice(normalizedEvent.length);
+                    if (/CANCEL(?:L)?ED\b|NO LONGER IN EFFECT\b/.test(statusText)) {
+                        eventStates[eventName] = 'cancelled';
+                    } else if (/\bIN EFFECT\b/.test(statusText)) {
+                        eventStates[eventName] = 'active';
+                    }
+                });
+            });
+            var expires = _tropicalNWSMarineExpiry(zoneHeader.validThrough, issuedAt);
+            if (expires && new Date(expires).getTime() <= Date.now()) continue;
+            Object.keys(eventStates).forEach(function(eventName) {
+                if (eventStates[eventName] !== 'active') return;
+                var affectedZones = zoneHeader.zoneIds.map(function(zoneId) {
+                    return 'https://api.weather.gov/zones/forecast/' + zoneId;
+                });
+                features.push({
+                    type: 'Feature',
+                    id: 'nws-cwf:' + String(product.id || product.issuanceTime) +
+                        ':' + zoneHeader.zoneIds.join(',') + ':' +
+                        eventName.toLowerCase().replace(/\s+/g, '-'),
+                    geometry: null,
+                    properties: {
+                        event: eventName,
+                        headline: eventName,
+                        areaDesc: areaDesc,
+                        sent: issuedAt,
+                        effective: issuedAt,
+                        expires: expires,
+                        status: 'Actual',
+                        severity: 'Severe',
+                        urgency: 'Immediate',
+                        certainty: 'Observed',
+                        affectedZones: affectedZones,
+                        description: sectionText,
+                        _nwsSource: 'PGUM Coastal Waters Forecast'
+                    }
+                });
+            });
+            lineIndex += sectionLines.length;
+        }
+        return features;
+    }
+
+    async function _fetchTropicalNWSCoastalForecastFeatures() {
+        var listUrl = new URL('https://api.weather.gov/products');
+        listUrl.searchParams.set('type', 'CWF');
+        listUrl.searchParams.set('office', 'PGUM');
+        listUrl.searchParams.set('limit', '1');
+        var listResponse = await _weatherFetch(listUrl.href, {
+            cache: 'no-store',
+            headers: { Accept: 'application/ld+json, application/json' }
+        }, 15000);
+        if (!listResponse.ok) throw new Error('NWS coastal forecast list returned ' + listResponse.status);
+        var productList = await listResponse.json();
+        var latestProduct = productList && Array.isArray(productList['@graph'])
+            ? productList['@graph'][0]
+            : null;
+        var productId = String(latestProduct && latestProduct.id || '');
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(productId)) {
+            return [];
+        }
+        var productResponse = await _weatherFetch(
+            'https://api.weather.gov/products/' + productId,
+            {
+                cache: 'no-store',
+                headers: { Accept: 'application/ld+json, application/json' }
+            },
+            15000
+        );
+        if (!productResponse.ok) {
+            throw new Error('NWS coastal forecast product returned ' + productResponse.status);
+        }
+        var product = await productResponse.json();
+        return _tropicalNWSCoastalForecastFeatures(product);
+    }
+
     async function _fetchTropicalNWSAlerts(forceRefresh) {
         var cached = tropicalRouteNWSAlertCache;
         if (!forceRefresh && cached.payload && cached.expiresAt > Date.now()) {
@@ -21520,6 +21689,8 @@
         if (!forceRefresh && cached.promise) return cached.promise;
 
         var request = (async function() {
+            var coastalForecastPromise = _fetchTropicalNWSCoastalForecastFeatures()
+                .catch(function() { return []; });
             var firstPage = new URL('https://api.weather.gov/alerts/active');
             firstPage.searchParams.set('event', TROPICAL_NWS_ALERT_EVENTS.join(','));
             var nextUrl = firstPage.href;
@@ -21556,6 +21727,17 @@
                     nextUrl = '';
                 }
             }
+            var coastalForecastFeatures = await coastalForecastPromise;
+            coastalForecastFeatures.forEach(function(coastalFeature) {
+                var coastalProperties = coastalFeature && coastalFeature.properties || {};
+                var alreadyInActiveAlerts = sourceFeatures.some(function(activeFeature) {
+                    var activeProperties = activeFeature && activeFeature.properties || {};
+                    return String(activeProperties.event || '').toLowerCase() ===
+                            String(coastalProperties.event || '').toLowerCase() &&
+                        _tropicalNWSAlertsShareArea(activeFeature, coastalFeature);
+                });
+                if (!alreadyInActiveAlerts) sourceFeatures.push(coastalFeature);
+            });
             var zoneUrls = [];
             sourceFeatures.forEach(function(feature) {
                 var properties = feature && feature.properties || {};
@@ -21598,14 +21780,14 @@
                     var affectedZones = Array.isArray(properties.affectedZones)
                         ? properties.affectedZones.map(_tropicalNWSZoneUrl).filter(Boolean)
                         : [];
-                    if (!affectedZones.length ||
-                        affectedZones.some(function(zoneUrl) {
-                            return !geometryByZone[zoneUrl];
-                        })) {
+                    var mappedZones = affectedZones.filter(function(zoneUrl) {
+                        return !!geometryByZone[zoneUrl];
+                    });
+                    if (!mappedZones.length) {
                         unmappedCount++;
                         return null;
                     }
-                    var polygons = affectedZones.reduce(function(all, zoneUrl) {
+                    var polygons = mappedZones.reduce(function(all, zoneUrl) {
                         return all.concat(_tropicalNWSGeometryPolygonParts(geometryByZone[zoneUrl]));
                     }, []);
                     if (!polygons.length) {
@@ -22432,6 +22614,9 @@
         var expires = _tropicalNWSLocalTime(properties.expires || properties.ends);
         var details = String(properties.description || properties.text || '').trim();
         var instruction = String(properties.instruction || '').trim();
+        var kicker = properties._nwsSource
+            ? 'National Weather Service · PGUM Coastal Waters Forecast'
+            : 'National Weather Service · active tropical alert';
         if (instruction) details += (details ? '\n\n' : '') + 'INSTRUCTIONS\n' + instruction;
         if (!details) details = 'The NWS did not include product text in this alert response.';
         var metaLines = [];
@@ -22441,7 +22626,7 @@
         if (expires) metaLines.push('<b>Expires:</b> ' + escapeHtml(expires));
 
         return '<div class="tropical-disturbance-popup">' +
-            '<div class="tropical-disturbance-popup-kicker">National Weather Service · active tropical alert</div>' +
+            '<div class="tropical-disturbance-popup-kicker">' + escapeHtml(kicker) + '</div>' +
             '<div class="tropical-disturbance-popup-title" style="color:' +
                 escapeHtml(color) + '">' + escapeHtml(eventName) + '</div>' +
             (metaLines.length
