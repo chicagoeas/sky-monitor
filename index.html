@@ -24876,7 +24876,7 @@
         if (!isStandalone) {
             alert('On your phone, to receive alerts, add SkyMonitor to your Home Screen first, then reopen the app from the Home Screen icon and try again.'); return;
         }
-        if (!_swReg) { alert('Service worker not ready. Please wait a moment and try again.'); return; }
+        if (!_swReg) { alert('SkyMonitor is still getting ready. Please wait a moment and try again.'); return; }
 
         _swReg.pushManager.getSubscription().then(function(existing) {
             if (existing) {
@@ -24884,10 +24884,10 @@
                     return fetch(SKYMONITOR_API + '/api/push/unsubscribe', { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ endpoint: existing.endpoint }) });
                 }).then(function() {
                     _setNotifBtnState(false);
-                }).catch(function(e) { alert('Failed to disable notifications: ' + e.message); });
+                }).catch(function() { alert('Could not turn off notifications. Please try again in a moment.'); });
             } else {
                 fetch(SKYMONITOR_API + '/api/push/vapid-public-key').then(function(r) {
-                    if (!r.ok) { alert('Step 1 failed: Worker returned ' + r.status + '. Check VAPID_PUBLIC_KEY secret in Cloudflare.'); return null; }
+                    if (!r.ok) { alert('Could not start notification setup (server error ' + r.status + '). Please try again in a moment.'); return null; }
                     return r.json();
                 }).then(function(data) {
                     if (!data) return;
@@ -24897,7 +24897,7 @@
                             userVisibleOnly: true,
                             applicationServerKey: _urlB64ToUint8(data.publicKey)
                         }).catch(function(e) {
-                            alert('Step 2 failed (push subscribe): ' + e.message + '\n\nMake sure you opened SkyMonitor from the Home Screen icon, not Safari.'); throw e;
+                            alert('Could not enable notifications on this device. Please try again in a moment.'); throw e;
                         });
                     });
                 }).then(function(sub) {
@@ -24915,7 +24915,7 @@
                             prefs: getNotifPrefs()
                         })
                     }).catch(function(e) {
-                        alert('Step 3 failed (save to server): ' + e.message + '\n\nThe Worker may still have a CORS issue. Check that you re-pasted the updated worker code.'); throw e;
+                        alert('Notifications could not be fully set up. Please try again in a moment.'); throw e;
                     }).then(function() { _setNotifBtnState(true); });
                 }).catch(function() {});
             }
