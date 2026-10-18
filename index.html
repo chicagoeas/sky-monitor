@@ -560,58 +560,6 @@
             color: #8298a8;
             font-size: 0.84em;
         }
-        .tropical-disturbance-legend {
-            position: absolute;
-            z-index: 680;
-            right: 12px;
-            bottom: calc(30px + env(safe-area-inset-bottom));
-            display: grid;
-            gap: 6px;
-            padding: 9px 11px;
-            border: 1px solid rgba(255,255,255,0.14);
-            border-radius: 10px;
-            background: rgba(5,16,26,0.88);
-            box-shadow: 0 5px 18px rgba(0,0,0,0.32);
-            color: #e6eef4;
-            font-size: 0.66rem;
-            line-height: 1.2;
-            pointer-events: none;
-            backdrop-filter: blur(10px);
-        }
-        .tropical-disturbance-legend[hidden] { display: none; }
-        .tropical-disturbance-legend-row {
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            white-space: nowrap;
-        }
-        .tropical-disturbance-legend-row[hidden] { display: none; }
-        .tropical-disturbance-swatch {
-            width: 17px;
-            height: 9px;
-            box-sizing: border-box;
-            border: 2px solid #fb7185;
-            border-radius: 999px;
-            background: rgba(244,63,94,0.2);
-        }
-        .tropical-disturbance-swatch.jtwc {
-            border-color: #d8b4fe;
-            border-style: dashed;
-            background: rgba(192,132,252,0.22);
-        }
-        .tropical-nws-alert-swatch {
-            width: 17px;
-            height: 9px;
-            box-sizing: border-box;
-            border: 2px solid currentColor;
-            border-radius: 2px;
-            background: currentColor;
-            opacity: 0.9;
-        }
-        .tropical-nws-alert-swatch.is-watch {
-            background: transparent;
-            border-style: dashed;
-        }
         .tropical-nws-alert-text {
             display: block;
             max-height: 250px;
@@ -2325,15 +2273,11 @@
                     </label>
                 </div>
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px;">
-                    <span style="font-size:0.82em; color:#ccc;">Official NWS Tropical Alerts</span>
+                    <span style="font-size:0.82em; color:#ccc;">⚠️ Official NWS Tropical Alerts</span>
                     <label class="ios-toggle">
                         <input type="checkbox" id="tropical-nws-alerts-toggle-cb" onchange="toggleTropicalNWSAlerts()">
                         <span class="ios-toggle-track"></span>
                     </label>
-                </div>
-                <div style="margin-top:7px; color:#91a5b4; font-size:0.68em; line-height:1.4;">
-                    This layer shows official NWS alert polygons. NHC storm tracks and forecast cones are shown separately.
-                    <a href="https://api.weather.gov/" target="_blank" rel="noopener noreferrer" style="color:#7dd3fc;">NWS alerts</a>
                 </div>
             </div>
             <div id="tropical-route-zoom-controls" aria-label="Map zoom controls">
@@ -2341,12 +2285,6 @@
                 <button type="button" onclick="tropicalRouteMap && tropicalRouteMap.zoomOut()" aria-label="Zoom out">−</button>
             </div>
             <div id="tropical-route-status" role="status" aria-live="polite"></div>
-            <div id="tropical-route-disturbance-legend" class="tropical-disturbance-legend" hidden
-                 aria-label="Tropical map legend">
-                <div id="tropical-route-nhc-legend-row" class="tropical-disturbance-legend-row" hidden><span class="tropical-disturbance-swatch"></span>NHC outlook area</div>
-                <div id="tropical-route-jtwc-legend-row" class="tropical-disturbance-legend-row" hidden><span class="tropical-disturbance-swatch jtwc"></span>JTWC invest area (approx.)</div>
-                <div id="tropical-route-nws-alert-legend-rows"></div>
-            </div>
             <div id="tropical-route-details" hidden>
                 <div class="tropical-route-detail-kicker">SELECTED SYSTEM</div>
                 <h3 id="tropical-route-detail-title">Tropical system</h3>
@@ -22468,52 +22406,6 @@
             });
             if (zone.getBounds().isValid()) bounds.extend(zone.getBounds());
         });
-        _updateTropicalRouteLegend();
-    }
-
-    function _updateTropicalRouteLegend() {
-        var legend = document.getElementById('tropical-route-disturbance-legend');
-        if (!legend) return;
-        var nhcRow = document.getElementById('tropical-route-nhc-legend-row');
-        var jtwcRow = document.getElementById('tropical-route-jtwc-legend-row');
-        var nwsRows = document.getElementById('tropical-route-nws-alert-legend-rows');
-        var hasNHC = tropicalRouteDisturbances.some(function(item) {
-            return item && item.kind === 'NHC';
-        });
-        var hasJTWC = tropicalRouteDisturbances.some(function(item) {
-            return item && item.kind === 'JTWC';
-        });
-        if (nhcRow) nhcRow.hidden = !hasNHC;
-        if (jtwcRow) jtwcRow.hidden = !hasJTWC;
-
-        var eventCounts = Object.create(null);
-        if (tropicalRouteNWSAlertsVisible &&
-            tropicalRouteNWSAlertLayer &&
-            tropicalRouteMap &&
-            tropicalRouteMap.hasLayer(tropicalRouteNWSAlertLayer)) {
-            tropicalRouteNWSAlerts.forEach(function(feature) {
-                var properties = feature && feature.properties || {};
-                var eventName = String(properties.event || properties.headline || 'NWS tropical alert').trim();
-                if (!eventName) eventName = 'NWS tropical alert';
-                eventCounts[eventName] = (eventCounts[eventName] || 0) + 1;
-            });
-        }
-        var eventNames = Object.keys(eventCounts).sort(function(a, b) {
-            return a.localeCompare(b);
-        });
-        if (nwsRows) {
-            nwsRows.innerHTML = eventNames.map(function(eventName) {
-                var color = customSkyAlertSeverityColor({ event: eventName });
-                var watchClass = /\bWATCH\b/i.test(eventName) ? ' is-watch' : '';
-                var count = eventCounts[eventName];
-                return '<div class="tropical-disturbance-legend-row">' +
-                    '<span class="tropical-nws-alert-swatch' + watchClass +
-                    '" style="color:' + escapeHtml(color) + '"></span>' +
-                    escapeHtml(eventName) + (count > 1 ? ' (' + count + ')' : '') +
-                    '</div>';
-            }).join('');
-        }
-        legend.hidden = !hasNHC && !hasJTWC && eventNames.length === 0;
     }
 
     function _tropicalNWSLocalTime(value) {
@@ -22632,7 +22524,6 @@
                 bounds.extend(alertLayer.getBounds());
             }
         });
-        _updateTropicalRouteLegend();
         _updateTropicalMapAttribution();
         return bounds;
     }
@@ -22829,7 +22720,6 @@
                 tropicalRouteMap.removeLayer(tropicalRouteNWSAlertLayer);
             }
         }
-        _updateTropicalRouteLegend();
         _updateTropicalMapAttribution();
     }
 
