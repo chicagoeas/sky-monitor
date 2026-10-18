@@ -22425,7 +22425,6 @@
     function _tropicalNWSAlertPopupHtml(feature) {
         var properties = feature && feature.properties || {};
         var eventName = String(properties.event || 'NWS tropical alert');
-        var headline = String(properties.headline || eventName);
         var color = customSkyAlertSeverityColor(properties);
         var area = String(properties.areaDesc || '').trim();
         var sent = _tropicalNWSLocalTime(properties.sent);
@@ -22444,7 +22443,7 @@
         return '<div class="tropical-disturbance-popup">' +
             '<div class="tropical-disturbance-popup-kicker">National Weather Service · active tropical alert</div>' +
             '<div class="tropical-disturbance-popup-title" style="color:' +
-                escapeHtml(color) + '">' + escapeHtml(headline) + '</div>' +
+                escapeHtml(color) + '">' + escapeHtml(eventName) + '</div>' +
             (metaLines.length
                 ? '<div class="tropical-disturbance-popup-meta">' + metaLines.join('<br>') + '</div>'
                 : '') +
@@ -22485,6 +22484,72 @@
         return geometry;
     }
 
+    function _tropicalNWSPointInRing(point, ring) {
+        var longitude = Number(point && point.lng);
+        var latitude = Number(point && point.lat);
+        if (!isFinite(longitude) || !isFinite(latitude) ||
+            !Array.isArray(ring) || ring.length < 3) return false;
+        var inside = false;
+        for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+            var xi = _tropicalMapLongitudeNear(Number(ring[i][0]), longitude);
+            var yi = Number(ring[i][1]);
+            var xj = _tropicalMapLongitudeNear(Number(ring[j][0]), longitude);
+            var yj = Number(ring[j][1]);
+            if (!isFinite(xi) || !isFinite(yi) || !isFinite(xj) || !isFinite(yj)) continue;
+            if ((yi > latitude) !== (yj > latitude) &&
+                longitude < (xj - xi) * (latitude - yi) / (yj - yi) + xi) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    function _tropicalNWSPointInGeometry(point, geometry) {
+        return _tropicalNWSGeometryPolygonParts(geometry).some(function(rings) {
+            if (!Array.isArray(rings) || !rings.length ||
+                !_tropicalNWSPointInRing(point, rings[0])) return false;
+            for (var i = 1; i < rings.length; i++) {
+                if (_tropicalNWSPointInRing(point, rings[i])) return false;
+            }
+            return true;
+        });
+    }
+
+    function _tropicalNWSAlertsAtPoint(point) {
+        var matches = [];
+        var seen = Object.create(null);
+        tropicalRouteNWSAlerts.forEach(function(feature) {
+            var properties = feature && feature.properties || {};
+            var identity = feature && feature.id != null
+                ? 'id:' + String(feature.id)
+                : 'fallback:' + [
+                    properties.event || '',
+                    properties.sent || '',
+                    properties.areaDesc || ''
+                ].join('|');
+            if (seen[identity]) return;
+            seen[identity] = true;
+            if (feature && _tropicalNWSPointInGeometry(point, feature.geometry)) {
+                matches.push(feature);
+            }
+        });
+        return matches;
+    }
+
+    function _tropicalNWSAlertsPopupHtml(features) {
+        var html = '<div class="tropical-nws-alerts-popup-group">';
+        if (features.length > 1) {
+            html += '<div style="font-weight:800;color:#9eb3c2;margin:0 0 10px;">' +
+                features.length + ' active NWS alerts at this location</div>';
+        }
+        features.forEach(function(feature, index) {
+            html += '<div' + (index
+                ? ' style="padding-top:12px;margin-top:12px;border-top:1px solid rgba(255,255,255,0.15);"'
+                : '') + '>' + _tropicalNWSAlertPopupHtml(feature) + '</div>';
+        });
+        return html + '</div>';
+    }
+
     function _drawTropicalNWSAlerts() {
         var bounds = window.L ? L.latLngBounds([]) : null;
         if (!tropicalRouteMap || !window.L) return bounds;
@@ -22515,9 +22580,22 @@
                     dashArray: isWatch ? '7,5' : null
                 }
             });
-            alertLayer.bindPopup(_tropicalNWSAlertPopupHtml(feature), {
-                closeButton: true,
-                maxWidth: 420
+            alertLayer.on('click', function(event) {
+                var point = event && event.latlng;
+                if (!point) return;
+                var matchingAlerts = _tropicalNWSAlertsAtPoint(point);
+                if (!matchingAlerts.length) matchingAlerts = [feature];
+                var maxHeight = Math.min(
+                    560,
+                    Math.max(220, (window.innerHeight || 700) - 160)
+                );
+                L.popup({
+                    closeButton: true,
+                    maxWidth: 420,
+                    maxHeight: maxHeight
+                }).setLatLng(point)
+                    .setContent(_tropicalNWSAlertsPopupHtml(matchingAlerts))
+                    .openOn(tropicalRouteMap);
             });
             alertLayer.addTo(tropicalRouteNWSAlertLayer);
             if (bounds && alertLayer.getBounds && alertLayer.getBounds().isValid()) {
