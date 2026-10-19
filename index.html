@@ -1188,6 +1188,42 @@
         #minute-heading:empty { display:none; }
         #hourly-outlook-title { display:flex; justify-content:space-between; align-items:center; }
         #hourly-outlook-title::after { content:'›'; color:#4b5563; font-size:1.35em; font-weight:400; line-height:1; margin-left:10px; }
+        .hourly-outlook-title-text { flex:1 1 auto; min-width:0; }
+        .twc-hourly-heading {
+            display:flex; align-items:center; justify-content:space-between; gap:8px;
+            margin:0; margin-top:-5px; font-weight:bold;
+        }
+        .hourly-metric-picker { display:inline-flex; flex:0 0 auto; }
+        .hourly-metric-toggle {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:30px; height:28px; min-width:30px; min-height:28px;
+            padding:3px; border:1px solid rgba(79,195,247,0.6); border-radius:7px;
+            background:rgba(79,195,247,0.12); color:#fff; font:inherit;
+            font-size:1.05em; line-height:1; cursor:pointer;
+        }
+        .hourly-metric-toggle:hover, .hourly-metric-toggle:focus-visible {
+            background:rgba(79,195,247,0.24); outline:2px solid rgba(79,195,247,0.55);
+            outline-offset:2px;
+        }
+        #hourly-metric-menu {
+            position:fixed; z-index:10050; width:196px; max-width:calc(100vw - 16px);
+            padding:5px; border:1px solid rgba(79,195,247,0.35); border-radius:10px;
+            background:#10283a; box-shadow:0 12px 30px rgba(0,0,0,0.5);
+        }
+        #hourly-metric-menu[hidden] { display:none; }
+        #hourly-metric-menu button {
+            display:flex; align-items:center; width:100%; min-height:36px;
+            padding:7px 10px; border:0; border-radius:6px; background:transparent;
+            color:#e7edf2; text-align:left; font:inherit; font-size:0.82em;
+            cursor:pointer;
+        }
+        #hourly-metric-menu button:hover, #hourly-metric-menu button:focus-visible {
+            background:rgba(79,195,247,0.16); outline:none;
+        }
+        #hourly-metric-menu button[aria-checked="true"] {
+            background:rgba(79,195,247,0.2); color:#fff; font-weight:800;
+        }
+        .hourly-metric-value { white-space:nowrap; }
         /* Balance the compact outlook vertically against the PWS label above
            and Daily Forecast below. The following spacer is also used by the
            minutely chart, but should be tighter when that chart is hidden. */
@@ -10288,6 +10324,193 @@
             '" style="width:' + size + ';height:' + size + ';object-fit:contain;display:block;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
     }
 
+    const _hourlyMetricOptions = [
+        { key: 'temperature', label: 'Temperature' },
+        { key: 'feelsLike', label: 'Feels Like' },
+        { key: 'humidity', label: 'Humidity' },
+        { key: 'wind', label: 'Wind' },
+        { key: 'dewPoint', label: 'Dew Point' },
+        { key: 'pressure', label: 'Pressure' }
+    ];
+    let _selectedHourlyMetric = 'temperature';
+
+    function _hourlyMetricPickerHtml() {
+        _ensureHourlyMetricMenu();
+        const selected = _hourlyMetricOptions.find(function(option) {
+            return option.key === _selectedHourlyMetric;
+        });
+        const label = selected ? selected.label : 'Temperature';
+        return '<span class="hourly-metric-picker"><button type="button" class="hourly-metric-toggle" ' +
+            'data-hourly-metric-toggle aria-haspopup="menu" aria-expanded="false" ' +
+            'aria-label="Hourly metric: ' + label + '. Choose a different metric" title="Displayed metric: ' + label + '">' +
+            '<span aria-hidden="true">&#127777;&#65039;</span></button></span>';
+    }
+
+    function _ensureHourlyMetricMenu() {
+        if (document.getElementById('hourly-metric-menu')) return;
+        const menu = document.createElement('div');
+        menu.id = 'hourly-metric-menu';
+        menu.setAttribute('role', 'menu');
+        menu.hidden = true;
+        menu.innerHTML = _hourlyMetricOptions.map(function(option) {
+            return '<button type="button" role="menuitemradio" aria-checked="' +
+                (option.key === _selectedHourlyMetric ? 'true' : 'false') +
+                '" data-hourly-metric-value="' + option.key + '">' + option.label + '</button>';
+        }).join('');
+        document.body.appendChild(menu);
+
+        function closeMenu() {
+            menu.hidden = true;
+            document.querySelectorAll('[data-hourly-metric-toggle]').forEach(function(button) {
+                button.setAttribute('aria-expanded', 'false');
+            });
+        }
+        function placeMenu(button) {
+            menu.hidden = false;
+            const rect = button.getBoundingClientRect();
+            const menuRect = menu.getBoundingClientRect();
+            const left = Math.max(8, Math.min(window.innerWidth - menuRect.width - 8, rect.right - menuRect.width));
+            let top = rect.bottom + 6;
+            if (top + menuRect.height > window.innerHeight - 8) top = rect.top - menuRect.height - 6;
+            menu.style.left = left + 'px';
+            menu.style.top = Math.max(8, top) + 'px';
+        }
+        function updateMenuState() {
+            menu.querySelectorAll('[data-hourly-metric-value]').forEach(function(item) {
+                item.setAttribute('aria-checked',
+                    item.getAttribute('data-hourly-metric-value') === _selectedHourlyMetric ? 'true' : 'false');
+            });
+            document.querySelectorAll('[data-hourly-metric-toggle]').forEach(function(button) {
+                const selected = _hourlyMetricOptions.find(function(option) {
+                    return option.key === _selectedHourlyMetric;
+                });
+                const label = selected ? selected.label : 'Temperature';
+                button.setAttribute('aria-label', 'Hourly metric: ' + label + '. Choose a different metric');
+                button.title = 'Displayed metric: ' + label;
+            });
+        }
+
+        document.addEventListener('click', function(event) {
+            const metricOption = event.target.closest && event.target.closest('[data-hourly-metric-value]');
+            if (metricOption && menu.contains(metricOption)) {
+                event.preventDefault();
+                _selectedHourlyMetric = metricOption.getAttribute('data-hourly-metric-value');
+                updateMenuState();
+                _refreshHourlyMetricValues();
+                closeMenu();
+                return;
+            }
+            const toggle = event.target.closest && event.target.closest('[data-hourly-metric-toggle]');
+            if (toggle) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!menu.hidden && toggle.getAttribute('aria-expanded') === 'true') {
+                    closeMenu();
+                } else {
+                    closeMenu();
+                    placeMenu(toggle);
+                    toggle.setAttribute('aria-expanded', 'true');
+                    updateMenuState();
+                    const selectedItem = menu.querySelector('[aria-checked="true"]');
+                    if (selectedItem) selectedItem.focus({ preventScroll: true });
+                }
+                return;
+            }
+            if (!menu.contains(event.target)) closeMenu();
+        });
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && !menu.hidden) {
+                const expanded = document.querySelector('[data-hourly-metric-toggle][aria-expanded="true"]');
+                closeMenu();
+                if (expanded) expanded.focus();
+            }
+        });
+        window.addEventListener('resize', closeMenu);
+        window.addEventListener('scroll', closeMenu, true);
+        updateMenuState();
+    }
+
+    function _hourlyMetricValue(hour, metric, isCurrent) {
+        if (!hour) return '--';
+        const current = isCurrent ? (window.pirateCurrently || {}) : {};
+        function available(value) {
+            return value !== null && value !== undefined && isFinite(Number(value));
+        }
+        function useCurrent(key, fallback) {
+            return isCurrent && available(current[key]) ? current[key] : fallback;
+        }
+        const temperature = useCurrent('temperature',
+            isCurrent && available(window.liveTemp) ? window.liveTemp : hour.temperature);
+        switch (metric) {
+            case 'feelsLike': {
+                const feels = isCurrent && available(window.liveFeelsLike)
+                    ? window.liveFeelsLike : useCurrent('apparentTemperature', hour.apparentTemperature);
+                return available(feels) ? _fmtTemp(feels) : (available(temperature) ? _fmtTemp(temperature) : '--');
+            }
+            case 'humidity': {
+                const humidity = useCurrent('humidity', hour.humidity);
+                if (!available(humidity)) return '--';
+                const percent = Number(humidity) <= 1 ? Number(humidity) * 100 : Number(humidity);
+                return _unitValue(percent, 0) + '%';
+            }
+            case 'wind': {
+                const wind = isCurrent && available(liveWindSpd)
+                    ? liveWindSpd : useCurrent('windSpeed', hour.windSpeed);
+                return available(wind) ? _fmtWind(wind) : '--';
+            }
+            case 'dewPoint': {
+                let dewPoint = useCurrent('dewPoint', hour.dewPoint);
+                if (!available(dewPoint) && available(temperature)) {
+                    const humidity = useCurrent('humidity', hour.humidity);
+                    const rh = available(humidity)
+                        ? (Number(humidity) <= 1 ? Number(humidity) : Number(humidity) / 100)
+                        : 0;
+                    if (rh > 0 && rh <= 1) {
+                        const tempC = (Number(temperature) - 32) * 5 / 9;
+                        const gamma = Math.log(rh) + (17.625 * tempC) / (243.04 + tempC);
+                        const dewC = (243.04 * gamma) / (17.625 - gamma);
+                        dewPoint = dewC * 9 / 5 + 32;
+                    }
+                }
+                return available(dewPoint) ? _fmtTemp(dewPoint) : '--';
+            }
+            case 'pressure': {
+                const pressure = useCurrent('pressure', hour.pressure);
+                return available(pressure) && Number(pressure) > 0 ? _fmtPressure(pressure) : '--';
+            }
+            case 'temperature':
+            default:
+                return available(temperature) ? _fmtTemp(temperature) : '--';
+        }
+    }
+
+    function _refreshHourlyMetricValues() {
+        document.querySelectorAll('.hourly-metric-value').forEach(function(element) {
+            const hour = element._forecastHour;
+            const isCurrent = element._forecastIsCurrent;
+            const value = _hourlyMetricValue(hour, _selectedHourlyMetric, isCurrent);
+            element.textContent = value;
+            const selected = _hourlyMetricOptions.find(function(option) {
+                return option.key === _selectedHourlyMetric;
+            });
+            element.setAttribute('aria-label', (selected ? selected.label : 'Temperature') + ': ' + value);
+            if (_selectedHourlyMetric === 'temperature' || _selectedHourlyMetric === 'feelsLike') {
+                const current = isCurrent ? (window.pirateCurrently || {}) : {};
+                const temp = _selectedHourlyMetric === 'feelsLike'
+                    ? (isCurrent && window.liveFeelsLike != null ? window.liveFeelsLike :
+                        (isCurrent && current.apparentTemperature != null ? current.apparentTemperature :
+                            (hour.apparentTemperature != null ? hour.apparentTemperature : hour.temperature)))
+                    : (isCurrent && current.temperature != null ? current.temperature :
+                        (isCurrent && window.liveTemp != null ? window.liveTemp : hour.temperature));
+                if (temp != null && isFinite(Number(temp))) {
+                    element.style.setProperty('color', colorFeelsLike(Number(temp)), 'important');
+                }
+            } else {
+                element.style.setProperty('color', '#f3d36a', 'important');
+            }
+        });
+    }
+
     function renderHourlyOutlook(hourlyData, timezoneOffset) {
         const wrap = document.getElementById('hourly-outlook');
         const titleEl = document.getElementById('hourly-outlook-title');
@@ -10356,7 +10579,9 @@
             }
         }
         var isTonight = /night/i.test(twcPartName);
-        titleEl.innerText = isTonight ? "Tonight's Outlook" : "Today's Outlook";
+        titleEl.innerHTML = '<span class="hourly-outlook-title-text">' +
+            (isTonight ? "Tonight's Outlook" : "Today's Outlook") +
+            '</span>' + _hourlyMetricPickerHtml();
         if (twcNarrative) {
             // Keep the compact Today/Tonight summary in the same unit system
             // as the TWC detail modal. TWC narratives arrive in US units.
@@ -10376,7 +10601,6 @@
              const chanceHtml = chance > 0
                  ? '<div style="font-size:0.62em; color:#36b9d8; margin-top:2px;">' + chance + '%</div>'
                  : '';
-             const cardTemp = isCurrent && window.liveTemp != null ? window.liveTemp : h.temperature;
              const iconHtml = isCurrent
                   ? _currentTWCOutlookIconHtml()
                  : _twcHourlyIconHtml(h.icon, h.summary, '32px', 'hourly-outlook-icon', h);
@@ -10384,14 +10608,13 @@
                 '<div style="font-size:0.68em; color:#c2c9cf; white-space:nowrap;">' + hourLabel + '</div>' +
                 iconHtml +
                 chanceHtml +
-                  '<div class="hourly-temperature" style="font-size:1.05em; font-weight:800; margin-top:5px;">' + _fmtTemp(cardTemp) + '</div>';
-            // Apply the exact same Fahrenheit-based scale used by tempVal and
-            // feelsVal. Set it after insertion so no card/inherited color rule
-            // can replace the inline temperature color.
-            var outlookTempEl = card.querySelector('.hourly-temperature');
-             if (outlookTempEl) outlookTempEl.style.setProperty('color', colorFeelsLike(Number(cardTemp)), 'important');
+                   '<div class="hourly-metric-value" style="font-size:1.05em; font-weight:800; margin-top:5px;"></div>';
+            const outlookMetricEl = card.querySelector('.hourly-metric-value');
+            outlookMetricEl._forecastHour = h;
+            outlookMetricEl._forecastIsCurrent = isCurrent;
             cardsEl.appendChild(card);
         });
+        _refreshHourlyMetricValues();
         wrap.style.display = '';
     }
 
@@ -10421,14 +10644,15 @@
                  const iconHtml = isCurrent
                      ? _currentTWCOutlookIconHtml('48px')
                      : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h);
-                 const cardTemp = isCurrent && window.liveTemp != null ? window.liveTemp : h.temperature;
                  const cardSummary = isCurrent && currentCondition ? currentCondition : (h.summary || '');
                  const cardPrecip = isCurrent ? _estimateCurrentPrecipChance() : Math.round((h.precipProbability || 0) * 100);
-                 card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div>' + iconHtml + '<div class="hourly-temperature" style="font-size:1.2em; font-weight:bold;">' + _fmtTemp(cardTemp) + '</div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(cardSummary) + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + cardPrecip + '%</div>' + rainLine;
-                var pwTempEl = card.querySelector('.hourly-temperature');
-                 if (pwTempEl) pwTempEl.style.setProperty('color', colorFeelsLike(Number(cardTemp)), 'important');
+                 card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div>' + iconHtml + '<div class="hourly-metric-value" style="font-size:1.2em; font-weight:bold;"></div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(cardSummary) + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + cardPrecip + '%</div>' + rainLine;
+                var pwMetricEl = card.querySelector('.hourly-metric-value');
+                pwMetricEl._forecastHour = h;
+                pwMetricEl._forecastIsCurrent = isCurrent;
                 container.appendChild(card);
             });
+            _refreshHourlyMetricValues();
         }
         if (!usingCustomContainer && dayTabs) {
             dayKeys.forEach(function(key, i) {
@@ -14262,7 +14486,7 @@
             ].filter(Boolean);
             html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + fmtT(lohi[0]) : 'Low: ' + fmtT(lohi[1])) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + fmtRain(qpf[part]) : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
-        html += '<div id="twc-hourly-section"><hr style="margin:14px 0;"><div style="margin:0;margin-top:-5px;font-weight:bold;">Hourly Forecast</div></div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
+        html += '<div id="twc-hourly-section"><hr style="margin:14px 0;"><div class="twc-hourly-heading"><span>Hourly Forecast</span>' + _hourlyMetricPickerHtml() + '</div></div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
 
         document.getElementById('twc-prev-btn').onclick = function(e) { e.stopPropagation(); openTWCDetailModal(data, (dayIdx - 1 + data.dayOfWeek.length) % data.dayOfWeek.length); };
