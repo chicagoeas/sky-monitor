@@ -10430,6 +10430,44 @@
         updateMenuState();
     }
 
+    // Current Conditions may use a QC-selected station/NWS value while the
+    // hourly feed remains model-based. Prefer the finalized live observation
+    // for the Now slot so its reading agrees with the value shown above.
+    function _hourlyCurrentObservationValue(key) {
+        const current = window.pirateCurrently || {};
+        function finite(value) {
+            return value !== null && value !== undefined && isFinite(Number(value));
+        }
+        if (key === 'temperature' && finite(window.liveTemp)) return Number(window.liveTemp);
+        if (key === 'apparentTemperature' && finite(liveFeelsLike)) return Number(liveFeelsLike);
+        if (key === 'windSpeed' && finite(liveWindSpd)) return Number(liveWindSpd);
+        if (key === 'humidity') {
+            const humidityEl = document.getElementById('humVal');
+            const displayedHumidity = humidityEl && (humidityEl.innerText || humidityEl.textContent || '');
+            const match = String(displayedHumidity || '').match(/(-?\d+(?:[.,]\d+)?)\s*%/);
+            if (match) {
+                const percent = Number(match[1].replace(',', '.'));
+                if (isFinite(percent) && percent >= 0 && percent <= 100) return percent / 100;
+            }
+        }
+        if (key === 'pressure') {
+            const pressureEl = document.getElementById('presVal');
+            const displayedPressure = pressureEl && (pressureEl.innerText || pressureEl.textContent || '');
+            const match = String(displayedPressure || '').match(/(-?\d+(?:[.,]\d+)?)/);
+            if (match) {
+                const value = Number(match[1].replace(',', '.'));
+                const unitMatch = String(displayedPressure).match(/inHg|hPa|kPa/i);
+                const unit = unitMatch ? unitMatch[0].toLowerCase() : String(_unitPrefs().pressure || 'hPa').toLowerCase();
+                if (isFinite(value) && value > 0) {
+                    if (unit === 'inhg') return value / 0.0295299831;
+                    if (unit === 'kpa') return value * 10;
+                    return value;
+                }
+            }
+        }
+        return finite(current[key]) ? Number(current[key]) : null;
+    }
+
     function _hourlyMetricValue(hour, metric, isCurrent) {
         if (!hour) return '--';
         const current = isCurrent ? (window.pirateCurrently || {}) : {};
@@ -10437,14 +10475,14 @@
             return value !== null && value !== undefined && isFinite(Number(value));
         }
         function useCurrent(key, fallback) {
-            return isCurrent && available(current[key]) ? current[key] : fallback;
+            if (!isCurrent) return fallback;
+            const observation = _hourlyCurrentObservationValue(key);
+            return available(observation) ? observation : (available(current[key]) ? current[key] : fallback);
         }
-        const temperature = useCurrent('temperature',
-            isCurrent && available(window.liveTemp) ? window.liveTemp : hour.temperature);
+        const temperature = useCurrent('temperature', hour.temperature);
         switch (metric) {
             case 'feelsLike': {
-                const feels = isCurrent && available(window.liveFeelsLike)
-                    ? window.liveFeelsLike : useCurrent('apparentTemperature', hour.apparentTemperature);
+                const feels = useCurrent('apparentTemperature', hour.apparentTemperature);
                 return available(feels) ? _fmtTemp(feels) : (available(temperature) ? _fmtTemp(temperature) : '--');
             }
             case 'humidity': {
@@ -10454,8 +10492,7 @@
                 return _unitValue(percent, 0) + '%';
             }
             case 'wind': {
-                const wind = isCurrent && available(liveWindSpd)
-                    ? liveWindSpd : useCurrent('windSpeed', hour.windSpeed);
+                const wind = useCurrent('windSpeed', hour.windSpeed);
                 return available(wind) ? _fmtWind(wind) : '--';
             }
             case 'dewPoint': {
@@ -10474,7 +10511,21 @@
 
     function _hourlyDewPointF(hour, isCurrent, temperature) {
         const current = isCurrent ? (window.pirateCurrently || {}) : {};
-        let dewPoint = isCurrent && current.dewPoint != null ? current.dewPoint : hour.dewPoint;
+        let dewPoint = hour.dewPoint;
+        if (isCurrent) {
+            const observedTemperature = _hourlyCurrentObservationValue('temperature');
+            const observedHumidity = _hourlyCurrentObservationValue('humidity');
+            if (observedTemperature != null && observedHumidity != null) {
+                temperature = observedTemperature;
+                const rh = Number(observedHumidity);
+                if (rh > 0 && rh <= 1) {
+                    const tempC = (Number(temperature) - 32) * 5 / 9;
+                    const gamma = Math.log(rh) + (17.625 * tempC) / (243.04 + tempC);
+                    return ((243.04 * gamma) / (17.625 - gamma)) * 9 / 5 + 32;
+                }
+            }
+            if (current.dewPoint != null && isFinite(Number(current.dewPoint))) dewPoint = current.dewPoint;
+        }
         if (dewPoint != null && isFinite(Number(dewPoint))) return Number(dewPoint);
         if (temperature == null || !isFinite(Number(temperature))) return null;
         const humidity = isCurrent && current.humidity != null ? current.humidity : hour.humidity;
@@ -10498,27 +10549,33 @@
             });
             element.setAttribute('aria-label', (selected ? selected.label : 'Temperature') + ': ' + value);
             if (_selectedHourlyMetric === 'temperature' || _selectedHourlyMetric === 'feelsLike') {
-                const current = isCurrent ? (window.pirateCurrently || {}) : {};
-                const temp = _selectedHourlyMetric === 'feelsLike'
-                    ? (isCurrent && window.liveFeelsLike != null ? window.liveFeelsLike :
-                        (isCurrent && current.apparentTemperature != null ? current.apparentTemperature :
-                            (hour.apparentTemperature != null ? hour.apparentTemperature : hour.temperature)))
-                    : (isCurrent && current.temperature != null ? current.temperature :
-                        (isCurrent && window.liveTemp != null ? window.liveTemp : hour.temperature));
+                let temp;
+                if (isCurrent) {
+                    temp = _hourlyCurrentObservationValue(
+                        _selectedHourlyMetric === 'feelsLike' ? 'apparentTemperature' : 'temperature');
+                    if (temp == null && _selectedHourlyMetric === 'feelsLike') {
+                        temp = _hourlyCurrentObservationValue('temperature');
+                    }
+                } else {
+                    temp = _selectedHourlyMetric === 'feelsLike'
+                        ? (hour.apparentTemperature != null ? hour.apparentTemperature : hour.temperature)
+                        : hour.temperature;
+                }
                 if (temp != null && isFinite(Number(temp))) {
                     element.style.setProperty('color', colorFeelsLike(Number(temp)), 'important');
                 }
             } else if (_selectedHourlyMetric === 'humidity') {
-                const current = isCurrent ? (window.pirateCurrently || {}) : {};
-                const humidity = isCurrent && current.humidity != null ? current.humidity : hour.humidity;
+                const humidity = isCurrent
+                    ? _hourlyCurrentObservationValue('humidity')
+                    : hour.humidity;
                 if (humidity != null && isFinite(Number(humidity))) {
                     const percent = Number(humidity) <= 1 ? Number(humidity) * 100 : Number(humidity);
                     element.style.setProperty('color', colorHumidity(percent), 'important');
                 }
             } else if (_selectedHourlyMetric === 'dewPoint') {
-                const current = isCurrent ? (window.pirateCurrently || {}) : {};
-                const temp = isCurrent && current.temperature != null ? current.temperature :
-                    (isCurrent && window.liveTemp != null ? window.liveTemp : hour.temperature);
+                const temp = isCurrent
+                    ? _hourlyCurrentObservationValue('temperature')
+                    : hour.temperature;
                 const dewPoint = _hourlyDewPointF(hour, isCurrent, temp);
                 if (dewPoint != null && isFinite(Number(dewPoint))) {
                     element.style.setProperty('color', colorFeelsLike(Number(dewPoint)), 'important');
