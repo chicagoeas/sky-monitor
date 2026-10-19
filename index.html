@@ -10459,19 +10459,7 @@
                 return available(wind) ? _fmtWind(wind) : '--';
             }
             case 'dewPoint': {
-                let dewPoint = useCurrent('dewPoint', hour.dewPoint);
-                if (!available(dewPoint) && available(temperature)) {
-                    const humidity = useCurrent('humidity', hour.humidity);
-                    const rh = available(humidity)
-                        ? (Number(humidity) <= 1 ? Number(humidity) : Number(humidity) / 100)
-                        : 0;
-                    if (rh > 0 && rh <= 1) {
-                        const tempC = (Number(temperature) - 32) * 5 / 9;
-                        const gamma = Math.log(rh) + (17.625 * tempC) / (243.04 + tempC);
-                        const dewC = (243.04 * gamma) / (17.625 - gamma);
-                        dewPoint = dewC * 9 / 5 + 32;
-                    }
-                }
+                const dewPoint = _hourlyDewPointF(hour, isCurrent, temperature);
                 return available(dewPoint) ? _fmtTemp(dewPoint) : '--';
             }
             case 'pressure': {
@@ -10484,8 +10472,23 @@
         }
     }
 
-    function _refreshHourlyMetricValues() {
-        document.querySelectorAll('.hourly-metric-value').forEach(function(element) {
+    function _hourlyDewPointF(hour, isCurrent, temperature) {
+        const current = isCurrent ? (window.pirateCurrently || {}) : {};
+        let dewPoint = isCurrent && current.dewPoint != null ? current.dewPoint : hour.dewPoint;
+        if (dewPoint != null && isFinite(Number(dewPoint))) return Number(dewPoint);
+        if (temperature == null || !isFinite(Number(temperature))) return null;
+        const humidity = isCurrent && current.humidity != null ? current.humidity : hour.humidity;
+        if (humidity == null || !isFinite(Number(humidity))) return null;
+        const rh = Number(humidity) <= 1 ? Number(humidity) : Number(humidity) / 100;
+        if (rh <= 0 || rh > 1) return null;
+        const tempC = (Number(temperature) - 32) * 5 / 9;
+        const gamma = Math.log(rh) + (17.625 * tempC) / (243.04 + tempC);
+        return ((243.04 * gamma) / (17.625 - gamma)) * 9 / 5 + 32;
+    }
+
+    function _refreshHourlyMetricValues(root) {
+        const scope = root || document;
+        scope.querySelectorAll('.hourly-metric-value').forEach(function(element) {
             const hour = element._forecastHour;
             const isCurrent = element._forecastIsCurrent;
             const value = _hourlyMetricValue(hour, _selectedHourlyMetric, isCurrent);
@@ -10505,8 +10508,23 @@
                 if (temp != null && isFinite(Number(temp))) {
                     element.style.setProperty('color', colorFeelsLike(Number(temp)), 'important');
                 }
+            } else if (_selectedHourlyMetric === 'humidity') {
+                const current = isCurrent ? (window.pirateCurrently || {}) : {};
+                const humidity = isCurrent && current.humidity != null ? current.humidity : hour.humidity;
+                if (humidity != null && isFinite(Number(humidity))) {
+                    const percent = Number(humidity) <= 1 ? Number(humidity) * 100 : Number(humidity);
+                    element.style.setProperty('color', colorHumidity(percent), 'important');
+                }
+            } else if (_selectedHourlyMetric === 'dewPoint') {
+                const current = isCurrent ? (window.pirateCurrently || {}) : {};
+                const temp = isCurrent && current.temperature != null ? current.temperature :
+                    (isCurrent && window.liveTemp != null ? window.liveTemp : hour.temperature);
+                const dewPoint = _hourlyDewPointF(hour, isCurrent, temp);
+                if (dewPoint != null && isFinite(Number(dewPoint))) {
+                    element.style.setProperty('color', colorFeelsLike(Number(dewPoint)), 'important');
+                }
             } else {
-                element.style.setProperty('color', '#f3d36a', 'important');
+                element.style.setProperty('color', '#e2e8f0', 'important');
             }
         });
     }
@@ -10652,7 +10670,7 @@
                 pwMetricEl._forecastIsCurrent = isCurrent;
                 container.appendChild(card);
             });
-            _refreshHourlyMetricValues();
+            _refreshHourlyMetricValues(container);
         }
         if (!usingCustomContainer && dayTabs) {
             dayKeys.forEach(function(key, i) {
