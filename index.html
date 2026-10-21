@@ -14217,23 +14217,167 @@
             lead = lead.charAt(0).toUpperCase() + lead.slice(1);
             return lead + ' ' + likelihood + ' ' + daypartLabel(j) + '.';
         }
+        function weatherText(j) {
+            return (wxPart(j) + ' ' + narrPart(j)).replace(/\s+/g, ' ').trim();
+        }
+        function hasPositiveWeatherSignal(source, pattern) {
+            var re = new RegExp(pattern.source, 'gi');
+            var match;
+            while ((match = re.exec(source)) !== null) {
+                var sentenceStart = Math.max(
+                    source.lastIndexOf('.', match.index),
+                    source.lastIndexOf('!', match.index),
+                    source.lastIndexOf('?', match.index)
+                ) + 1;
+                var prefix = source.slice(sentenceStart, match.index);
+                if (/\b(?:no|not|without|unlikely|little|low)\b(?:\s+\w+){0,5}\s*$/i.test(prefix)) {
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
         function rainLikelihood(chance) {
             return Number(chance) >= 70 ? 'likely' : 'possible';
         }
-        var s1 = null, s2 = null;
+        function rainSummary() {
+            var rainDaySet = [];
+            for (var i = 0; i < n; i++) {
+                if (maxPrecipChance(i) >= 30) rainDaySet.push(i);
+            }
+            if (rainDaySet.length === 1) {
+                var di = rainDaySet[0];
+                var dayRain = pcPart(di * 2) >= 30;
+                var nightRain = pcPart(di * 2 + 1) >= 30;
+                var rainLbl = (!dayRain && nightRain) ? daypartLabel(di * 2 + 1) : dayLabel(di);
+                return 'Rain ' + rainLikelihood(maxPrecipChance(di)) + ' ' + rainLbl + '.';
+            }
+            if (rainDaySet.length === 2) {
+                var firstChance = maxPrecipChance(rainDaySet[0]);
+                var secondChance = maxPrecipChance(rainDaySet[1]);
+                var multiLikelihood = Math.min(firstChance, secondChance) >= 70 ? 'likely' : 'possible';
+                return 'Rain ' + multiLikelihood + ' ' + dayLabel(rainDaySet[0]) +
+                    ' and ' + dayLabel(rainDaySet[1]) + '.';
+            }
+            if (rainDaySet.length >= 3) {
+                return 'Unsettled and rainy pattern through ' + dayLabel(rainDaySet[rainDaySet.length - 1]) + '.';
+            }
+            return null;
+        }
+        var s1 = null, s2 = null, s1IsFog = false;
 
-        // ── Priority 1: Snow ─────────────────────────────────────────────────
+        // ── Priority 1: explicit severe-weather signals ──────────────────────
+        // Use TWC's daypart phrase and narrative, but ignore negated mentions.
+        for (var j = 0; j < n * 2 && !s1; j++) {
+            var severeText = weatherText(j);
+            var severeLabel = null;
+            if (hasPositiveWeatherSignal(severeText, /\btornado(?:es)?\b/)) {
+                severeLabel = 'Tornadoes possible';
+            } else if (hasPositiveWeatherSignal(severeText, /\bflash flood(?:ing|s)?\b/)) {
+                severeLabel = 'Flash flooding possible';
+            } else if (hasPositiveWeatherSignal(severeText, /\bsevere\s+(?:thunderstorms?|t-?storms?)\b/)) {
+                severeLabel = 'Severe thunderstorms possible';
+            } else if (hasPositiveWeatherSignal(severeText, /\bdamaging\s+winds?\b/)) {
+                severeLabel = 'Damaging winds possible';
+            } else if (hasPositiveWeatherSignal(severeText, /\blarge\s+hail\b/)) {
+                severeLabel = 'Large hail possible';
+            } else if (hasPositiveWeatherSignal(severeText, /\bsevere weather\b/)) {
+                severeLabel = 'Severe weather possible';
+            }
+            if (severeLabel) s1 = severeLabel + ' ' + daypartLabel(j) + '.';
+        }
+
+        // ── Priority 2: dense, freezing, or widespread fog ───────────────────
+        // Fog is a headline only when TWC signals a visibility-impacting event.
+        var fogLabel = null, fogStartJ = -1, fogEndJ = -1;
+        for (var j = 0; j < n * 2 && !s1 && fogStartJ < 0; j++) {
+            var fogText = weatherText(j);
+            if (hasPositiveWeatherSignal(fogText, /\b(?:dense|freezing|widespread)\s+fog\b/)) {
+                fogLabel = hasPositiveWeatherSignal(fogText, /\bfreezing\s+fog\b/)
+                    ? 'Freezing fog'
+                    : hasPositiveWeatherSignal(fogText, /\bdense\s+fog\b/)
+                        ? 'Dense fog'
+                        : 'Widespread fog';
+                fogStartJ = j;
+                fogEndJ = j;
+                s1IsFog = true;
+            }
+        }
+        if (fogStartJ >= 0) {
+            for (var fj = fogStartJ + 1; fj < n * 2; fj++) {
+                var nextFogText = weatherText(fj);
+                if (!hasPositiveWeatherSignal(nextFogText, /\b(?:dense|freezing|widespread)\s+fog\b/)) break;
+                fogEndJ = fj;
+            }
+            function fogTimeLabel(j, source) {
+                if (j % 2 === 0 && /\bmorning\b/i.test(source)) {
+                    var dayIndex = Math.floor(j / 2);
+                    if (dayIndex === 0) return 'this morning';
+                    if (dayIndex === 1) return 'tomorrow morning';
+                    return (days[dayIndex] || ('day ' + (dayIndex + 1))) + ' morning';
+                }
+                return daypartLabel(j);
+            }
+            var fogStartLabel = fogTimeLabel(fogStartJ, weatherText(fogStartJ));
+            var fogEndLabel = fogTimeLabel(fogEndJ, weatherText(fogEndJ));
+            var fogTimeRange = fogEndJ > fogStartJ
+                ? fogStartLabel + ' into ' + fogEndLabel
+                : fogStartLabel;
+            s1 = fogLabel + ' possible ' + fogTimeRange + '.';
+        }
+
+        // ── Priority 3: icing and sleet ──────────────────────────────────────
+        for (var j = 0; j < n * 2 && !s1; j++) {
+            var iceText = weatherText(j);
+            if (hasPositiveWeatherSignal(iceText, /\bfreezing rain\b|\bblack ice\b|\bicy roads?\b|\bice pellets?\b|\bsleet\b/)) {
+                var iceLabel = hasPositiveWeatherSignal(iceText, /\bfreezing rain\b|\bblack ice\b|\bicy roads?\b/)
+                    ? 'Icy conditions possible'
+                    : hasPositiveWeatherSignal(iceText, /\bsleet\b/)
+                        ? 'Sleet possible'
+                        : 'Ice pellets possible';
+                s1 = iceLabel + ' ' + daypartLabel(j) + '.';
+            }
+        }
+
+        // ── Priority 4: Snow ────────────────────────────────────────────────
         for (var j = 0; j < n * 2 && !s1; j++) {
             var snow = snowPart(j);
-            var wx   = wxPart(j);
-            if (snow >= 0.1 || wx.includes('snow') || wx.includes('blizzard') || wx.includes('flurr')) {
+            var snowText = weatherText(j);
+            if (snow >= 0.1 || hasPositiveWeatherSignal(snowText, /\bsnow\b|\bblizzard\b|\bflurr(?:y|ies)\b/)) {
                 var daySnow = totalSnow(Math.floor(j / 2));
-                var label = daySnow >= 2 ? 'Heavy snow' : daySnow >= 0.1 ? 'Snow' : 'Snow showers';
+                var label = hasPositiveWeatherSignal(snowText, /\bblizzard\b/)
+                    ? 'Blizzard conditions'
+                    : daySnow >= 2 ? 'Heavy snow' : daySnow >= 0.1 ? 'Snow' : 'Snow showers';
                 s1 = label + ' expected ' + daypartLabel(j) + (daySnow >= 0.5 ? ' (' + fmtSnow(daySnow) + ' possible).' : '.');
             }
         }
 
-        // ── Priority 2: Thunderstorms (≥30% chance) ─────────────────────────
+        // ── Priority 5: Dangerous heat or cold ──────────────────────────────
+        // Combine explicit TWC wording with conservative heat-index / wind-chill
+        // thresholds. TWC temperatures here are in the app's native °F units.
+        for (var j = 0; j < n * 2 && !s1; j++) {
+            var extremeText = weatherText(j);
+            var heatIndex = dp.temperatureHeatIndex?.[j];
+            var windChill = dp.temperatureWindChill?.[j];
+            var dangerousHeat = hasPositiveWeatherSignal(extremeText, /\b(?:dangerously hot|dangerous heat|extreme heat|excessive heat)\b/) ||
+                (heatIndex != null && isFinite(Number(heatIndex)) && Number(heatIndex) >= 105);
+            var dangerousCold = hasPositiveWeatherSignal(extremeText, /\b(?:dangerously cold|dangerous cold|extreme cold|dangerous wind chills?)\b/) ||
+                (windChill != null && isFinite(Number(windChill)) && Number(windChill) <= -15);
+            if (dangerousHeat) s1 = 'Dangerous heat possible ' + daypartLabel(j) + '.';
+            else if (dangerousCold) s1 = 'Dangerous cold possible ' + daypartLabel(j) + '.';
+        }
+
+        // ── Priority 6: high winds ──────────────────────────────────────────
+        for (var j = 0; j < n * 2 && !s1; j++) {
+            var windText = weatherText(j);
+            var gust = dp.windGust?.[j];
+            if (hasPositiveWeatherSignal(windText, /\b(?:high|strong|damaging)\s+winds?\b/) ||
+                (gust != null && isFinite(Number(gust)) && Number(gust) >= 50)) {
+                s1 = 'Strong winds possible ' + daypartLabel(j) + '.';
+            }
+        }
+
+        // ── Priority 7: Thunderstorms (≥30% chance) ─────────────────────────
         for (var j = 0; j < n * 2 && !s1; j++) {
             var wx = wxPart(j);
             var narr = narrPart(j);
@@ -14244,7 +14388,7 @@
             }
         }
 
-        // ── Priority 3: Heavy rain — driven by TWC narrative keyword + PoP ──
+        // ── Priority 8: Heavy rain — driven by TWC narrative keyword + PoP ──
         // Only flag "heavy rain" when TWC explicitly says so in the day/night
         // narrative (e.g. "Potential for heavy rainfall."). QPF alone can reach
         // 1"+ from prolonged moderate rain with no heavy-rain signal at all.
@@ -14257,26 +14401,15 @@
             }
         }
 
-        // ── Priority 4: Rain / showers (≥30% chance) ────────────────────────
+        // ── Priority 9: Rain / showers (≥30% chance) ────────────────────────
         // Multi-day cases stay at day level; single-day case pinpoints day vs night.
-        if (!s1) {
-            var rainDaySet = [];
-            for (var i = 0; i < n; i++) { if (maxPrecipChance(i) >= 30) rainDaySet.push(i); }
-            if (rainDaySet.length === 1) {
-                var di = rainDaySet[0];
-                var dayRain   = pcPart(di * 2)     >= 30;
-                var nightRain = pcPart(di * 2 + 1) >= 30;
-                // Use night-specific label only when rain is exclusively at night
-                var rainLbl = (!dayRain && nightRain) ? daypartLabel(di * 2 + 1) : dayLabel(di);
-                s1 = 'Rain ' + rainLikelihood(maxPrecipChance(di)) + ' ' + rainLbl + '.';
-            } else if (rainDaySet.length === 2) {
-                var firstChance = maxPrecipChance(rainDaySet[0]);
-                var secondChance = maxPrecipChance(rainDaySet[1]);
-                var multiLikelihood = Math.min(firstChance, secondChance) >= 70 ? 'likely' : 'possible';
-                s1 = 'Rain ' + multiLikelihood + ' ' + dayLabel(rainDaySet[0]) + ' and ' + dayLabel(rainDaySet[1]) + '.';
-            } else if (rainDaySet.length >= 3) {
-                s1 = 'Unsettled and rainy pattern through ' + dayLabel(rainDaySet[rainDaySet.length - 1]) + '.';
-            }
+        var rainText = rainSummary();
+        if (!s1 && rainText) s1 = rainText;
+        else if (s1IsFog && rainText) {
+            s1 = s1.replace(/\.$/, '; ' + rainText.charAt(0).toLowerCase() + rainText.slice(1));
+        } else if (s1IsFog) {
+            var fogSentence = s1.charAt(0).toLowerCase() + s1.slice(1);
+            s1 = 'Mostly dry through ' + dayLabel(n - 1) + '; ' + fogSentence;
         }
 
         // ── Temperature trend (used as s2 if s1 exists, or s1 as last resort) ──
