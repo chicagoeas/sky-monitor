@@ -3460,6 +3460,9 @@
     let lat = 41.8781, lon = -87.6298;
     var _liveWatchId = null;
     let localRiseTime = 0, localSetTime = 0;
+    let stationTimeZone = '';
+    let stationTimeZoneNameFormatter = null;
+    let stationTimeZoneFormatterZone = '';
     let alertIntervalId = null;
     let alertIntervalGen = 0;
     let spcIntervalId = null;
@@ -9572,6 +9575,9 @@
             window._fastNwsAlerts = fastPayload.nwsAlerts || null;
             window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
+            stationTimeZone = typeof d.timezone === 'string' ? d.timezone.trim() : '';
+            stationTimeZoneNameFormatter = null;
+            stationTimeZoneFormatterZone = '';
             // Wait only within the existing PWS budget; a slower station lookup
             // must not hold the official observation chain hostage.
             const wuStations = await wuStationsPromise;
@@ -10814,6 +10820,39 @@
         if (dayKeys.length > 0) renderDay(dayKeys[0]);
     }
 
+    function _stationTimezoneAbbreviation(timestampMs) {
+        if (stationTimeZone && typeof Intl !== 'undefined' &&
+            typeof Intl.DateTimeFormat === 'function') {
+            if (stationTimeZoneFormatterZone !== stationTimeZone) {
+                stationTimeZoneNameFormatter = null;
+                stationTimeZoneFormatterZone = stationTimeZone;
+                try {
+                    stationTimeZoneNameFormatter = new Intl.DateTimeFormat('en-US', {
+                        timeZone: stationTimeZone,
+                        timeZoneName: 'short'
+                    });
+                } catch (e) {}
+            }
+            if (stationTimeZoneNameFormatter) {
+                try {
+                    var parts = stationTimeZoneNameFormatter.formatToParts(new Date(timestampMs));
+                    var zonePart = parts.find(function(part) { return part.type === 'timeZoneName'; });
+                    if (zonePart && zonePart.value) return zonePart.value;
+                } catch (e) {}
+            }
+        }
+
+        // If a provider supplies only a numeric offset, show it explicitly
+        // rather than guessing an abbreviation from the browser's timezone.
+        var offsetMinutes = Math.round(Number(stationTzOffset) / 60);
+        if (!Number.isFinite(offsetMinutes)) return '';
+        var sign = offsetMinutes < 0 ? '-' : '+';
+        var absMinutes = Math.abs(offsetMinutes);
+        var hours = String(Math.floor(absMinutes / 60)).padStart(2, '0');
+        var minutes = absMinutes % 60;
+        return 'UTC' + sign + hours + (minutes ? ':' + String(minutes).padStart(2, '0') : '');
+    }
+
     function updateStationClock() {
         const clockElem = document.getElementById('station-clock');
         if (!clockElem) return;
@@ -10825,7 +10864,9 @@
         const s = stationTime.getSeconds().toString().padStart(2, '0');
         const ampm = h >= 12 ? 'PM' : 'AM';
         h = h % 12; h = h ? h : 12;
-        clockElem.innerText = h + ':' + m + ':' + s + ' ' + ampm;
+        const timezoneAbbreviation = _stationTimezoneAbbreviation(now.getTime());
+        clockElem.innerText = h + ':' + m + ':' + s + ' ' + ampm +
+            (timezoneAbbreviation ? ' (' + timezoneAbbreviation + ')' : '');
     }
     setInterval(updateStationClock, 1000);
 
