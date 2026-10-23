@@ -22683,20 +22683,33 @@
     }
 
     async function _fetchTropicalNHCOutlook() {
-        var url = 'https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/' +
-            'NHC_tropical_weather/MapServer/3/query?where=1%3D1&outFields=*&' +
-            'returnGeometry=true&outSR=4326&f=geojson';
+        var workerUrl = WEATHER_WORKER_URL + '/api/weather/nhc-outlook';
         try {
-            var response = await _weatherFetch(url, {
+            var response = await _weatherFetch(workerUrl, {
                 cache: 'no-store',
                 headers: { Accept: 'application/geo+json, application/json' }
             }, 12000);
-            if (!response.ok) throw new Error('NHC outlook service returned ' + response.status);
+            if (!response.ok) throw new Error('NHC outlook worker returned ' + response.status);
             return _normalizeTropicalNHCOutlook(await response.json());
-        } catch (error) {
-            // NOAA's ArcGIS service allows JSONP as a fallback for previews or
-            // hosts that are not on its browser CORS allow-list.
-            return _fetchTropicalNHCOutlookJsonp();
+        } catch (workerError) {
+            // The older ArcGIS layer normalizes Pacific longitudes to +/-180
+            // and can collapse the outlook into a line. Keep it only as a
+            // graceful fallback if the KMZ-backed Worker route is unavailable.
+            var url = 'https://mapservices.weather.noaa.gov/tropical/rest/services/tropical/' +
+                'NHC_tropical_weather/MapServer/3/query?where=1%3D1&outFields=*&' +
+                'returnGeometry=true&outSR=4326&f=geojson';
+            try {
+                var response = await _weatherFetch(url, {
+                    cache: 'no-store',
+                    headers: { Accept: 'application/geo+json, application/json' }
+                }, 12000);
+                if (!response.ok) throw new Error('NHC outlook service returned ' + response.status);
+                return _normalizeTropicalNHCOutlook(await response.json());
+            } catch (error) {
+                // NOAA's ArcGIS service allows JSONP as a final fallback on
+                // hosts that are not on its browser CORS allow-list.
+                return _fetchTropicalNHCOutlookJsonp();
+            }
         }
     }
 
