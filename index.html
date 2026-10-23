@@ -3463,6 +3463,10 @@
     let stationTimeZone = '';
     let stationTimeZoneNameFormatter = null;
     let stationTimeZoneFormatterZone = '';
+    let stationTimeZoneLocationKey = '';
+    let stationTimeZoneLookupStartedKey = '';
+    let stationTimeZoneLookupRetryAfter = 0;
+    const STATION_TIME_ZONE_CACHE_KEY = 'skymonitor_station_timezone_v1';
     let alertIntervalId = null;
     let alertIntervalGen = 0;
     let spcIntervalId = null;
@@ -9575,9 +9579,19 @@
             window._fastNwsAlerts = fastPayload.nwsAlerts || null;
             window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
-            stationTimeZone = typeof d.timezone === 'string' ? d.timezone.trim() : '';
-            stationTimeZoneNameFormatter = null;
-            stationTimeZoneFormatterZone = '';
+            var pirateZone = _normalizeStationIanaTimeZone(d.timezone);
+            var pirateZoneLocationKey = _stationTimezoneLocationKey(requestLat, requestLon);
+            if (pirateZone) {
+                _setStationTimeZone(pirateZone, pirateZoneLocationKey);
+            } else {
+                if (stationTimeZoneLocationKey !== pirateZoneLocationKey) {
+                    stationTimeZone = '';
+                    stationTimeZoneLocationKey = '';
+                    stationTimeZoneNameFormatter = null;
+                    stationTimeZoneFormatterZone = '';
+                }
+                _resolveStationTimeZone(requestLat, requestLon);
+            }
             // Wait only within the existing PWS budget; a slower station lookup
             // must not hold the official observation chain hostage.
             const wuStations = await wuStationsPromise;
@@ -10820,6 +10834,95 @@
         if (dayKeys.length > 0) renderDay(dayKeys[0]);
     }
 
+    function _stationTimezoneLocationKey(latitude, longitude) {
+        var parsedLat = Number(latitude);
+        var parsedLon = Number(longitude);
+        if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon) ||
+            parsedLat < -90 || parsedLat > 90 || parsedLon < -180 || parsedLon > 180) {
+            return '';
+        }
+        return parsedLat.toFixed(3) + ',' + parsedLon.toFixed(3);
+    }
+
+    function _normalizeStationIanaTimeZone(value) {
+        if (typeof value !== 'string') return '';
+        var zone = value.trim();
+        if (!zone || /^(?:GMT|UTC)[+-]/i.test(zone)) return '';
+        try {
+            new Intl.DateTimeFormat('en-US', { timeZone: zone });
+            return zone;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function _setStationTimeZone(zone, locationKey) {
+        var normalizedZone = _normalizeStationIanaTimeZone(zone);
+        if (!normalizedZone || !locationKey ||
+            locationKey !== _stationTimezoneLocationKey(lat, lon)) {
+            return false;
+        }
+        stationTimeZone = normalizedZone;
+        stationTimeZoneLocationKey = locationKey;
+        stationTimeZoneNameFormatter = null;
+        stationTimeZoneFormatterZone = '';
+        try {
+            localStorage.setItem(STATION_TIME_ZONE_CACHE_KEY, JSON.stringify({
+                locationKey: locationKey,
+                timeZone: normalizedZone,
+                updatedAt: Date.now()
+            }));
+        } catch (e) {}
+        updateStationClock();
+        return true;
+    }
+
+    function _cachedStationTimeZone(locationKey) {
+        try {
+            var cached = JSON.parse(localStorage.getItem(STATION_TIME_ZONE_CACHE_KEY) || 'null');
+            if (!cached || cached.locationKey !== locationKey) return '';
+            var age = Date.now() - Number(cached.updatedAt);
+            if (!Number.isFinite(age) || age < 0 || age > 180 * 24 * 60 * 60 * 1000) return '';
+            return _normalizeStationIanaTimeZone(cached.timeZone);
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function _resolveStationTimeZone(latitude, longitude) {
+        var locationKey = _stationTimezoneLocationKey(latitude, longitude);
+        if (!locationKey) return;
+        if (stationTimeZoneLocationKey === locationKey &&
+            _normalizeStationIanaTimeZone(stationTimeZone)) {
+            return;
+        }
+        var cachedZone = _cachedStationTimeZone(locationKey);
+        if (cachedZone) {
+            _setStationTimeZone(cachedZone, locationKey);
+            return;
+        }
+        if (stationTimeZoneLookupStartedKey === locationKey &&
+            Date.now() < stationTimeZoneLookupRetryAfter) {
+            return;
+        }
+        stationTimeZoneLookupStartedKey = locationKey;
+        stationTimeZoneLookupRetryAfter = Date.now() + 5 * 60 * 1000;
+
+        var url = 'https://api.open-meteo.com/v1/forecast?latitude=' +
+            encodeURIComponent(Number(latitude)) + '&longitude=' +
+            encodeURIComponent(Number(longitude)) +
+            '&current=temperature_2m&timezone=auto&forecast_days=1';
+        _weatherFetch(url, undefined, 12000).then(function(response) {
+            if (!response.ok) throw new Error('Timezone lookup failed: ' + response.status);
+            return response.json();
+        }).then(function(data) {
+            var resolvedZone = _normalizeStationIanaTimeZone(data && data.timezone);
+            if (resolvedZone && _setStationTimeZone(resolvedZone, locationKey)) {
+                stationTimeZoneLookupRetryAfter = 0;
+            }
+        }).catch(function() {});
+    }
+
     function _stationTimezoneAbbreviation(timestampMs) {
         if (stationTimeZone && typeof Intl !== 'undefined' &&
             typeof Intl.DateTimeFormat === 'function') {
@@ -10829,7 +10932,7 @@
                 try {
                     stationTimeZoneNameFormatter = new Intl.DateTimeFormat('en-US', {
                         timeZone: stationTimeZone,
-                        timeZoneName: 'short'
+                        timeZoneName: 'long'
                     });
                 } catch (e) {}
             }
@@ -10837,7 +10940,37 @@
                 try {
                     var parts = stationTimeZoneNameFormatter.formatToParts(new Date(timestampMs));
                     var zonePart = parts.find(function(part) { return part.type === 'timeZoneName'; });
-                    if (zonePart && zonePart.value) return zonePart.value;
+                    if (zonePart && zonePart.value) {
+                        var fullName = zonePart.value.trim();
+                        if (/^(?:GMT|UTC)[+-]/i.test(fullName)) return fullName;
+                        var nameKey = fullName.toLowerCase();
+                        var knownAbbreviations = {
+                            'coordinated universal time': 'UTC',
+                            'central european standard time': 'CET',
+                            'eastern european standard time': 'EET',
+                            'western european standard time': 'WET',
+                            'nepal time': 'NPT',
+                            'hong kong time': 'HKT',
+                            'indochina time': 'ICT',
+                            'brasilia standard time': 'BRT',
+                            'brasilia summer time': 'BRST',
+                            'brasília standard time': 'BRT',
+                            'brasília summer time': 'BRST',
+                            'argentina standard time': 'ART',
+                            'alaska standard time': 'AKST',
+                            'alaska daylight time': 'AKDT',
+                            'chatham standard time': 'CHAST',
+                            'chatham daylight time': 'CHADT'
+                        };
+                        if (knownAbbreviations[nameKey]) return knownAbbreviations[nameKey];
+                        var nameWords = fullName.match(/[A-Za-z]+/g) || [];
+                        if (nameWords.length > 1) {
+                            return nameWords.map(function(word) {
+                                return word.charAt(0);
+                            }).join('').toUpperCase();
+                        }
+                        return fullName;
+                    }
                 } catch (e) {}
             }
         }
