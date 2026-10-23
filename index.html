@@ -5448,6 +5448,11 @@
             var savedAtmosphere = JSON.parse(localStorage.getItem('skymonitor_daylight_state') || '{}');
             savedAtmosphere.isDay = !!isDay;
             savedAtmosphere.moonPhase = normalizeMoonPhase(moonPhaseVal);
+            savedAtmosphere.sunriseMs = Number(localRiseTime) || 0;
+            savedAtmosphere.sunsetMs = Number(localSetTime) || 0;
+            savedAtmosphere.polarState = window._polarState || null;
+            savedAtmosphere.latitude = Number(lat);
+            savedAtmosphere.longitude = Number(lon);
             savedAtmosphere.updatedAt = Date.now();
             localStorage.setItem('skymonitor_daylight_state', JSON.stringify(savedAtmosphere));
         } catch (e) {}
@@ -5509,6 +5514,64 @@
             sunset -= oneDayMs;
         }
         return { sunrise: sunrise, sunset: sunset };
+    }
+
+    function _restoreReportingMapDayNightState() {
+        var saved = {};
+        try {
+            saved = JSON.parse(localStorage.getItem('skymonitor_daylight_state') || '{}');
+        } catch (e) {
+            return false;
+        }
+        var now = Date.now();
+        var updatedAt = Number(saved.updatedAt);
+        var age = now - updatedAt;
+        if (!Number.isFinite(updatedAt) || age < 0) return false;
+
+        // A saved solar window is useful for the initial map paint only when
+        // it belongs to approximately the same saved weather location.
+        var hasSavedLocation = Number.isFinite(saved.latitude) &&
+            Number.isFinite(saved.longitude);
+        if (hasSavedLocation &&
+            (Math.abs(saved.latitude - lat) > 0.35 ||
+                Math.abs(saved.longitude - lon) > 0.35)) {
+            return false;
+        }
+
+        var cacheMaxAge = 36 * 60 * 60 * 1000;
+        if (age > cacheMaxAge) return false;
+
+        if (saved.polarState === 'day' || saved.polarState === 'night') {
+            window._polarState = saved.polarState;
+            localRiseTime = 0;
+            localSetTime = 0;
+            isNightAtStation = saved.polarState === 'night';
+            _scheduleReportingMapDayNightUpdate();
+            return true;
+        }
+
+        var sunrise = Number(saved.sunriseMs);
+        var sunset = Number(saved.sunsetMs);
+        if (Number.isFinite(sunrise) && Number.isFinite(sunset) &&
+            sunrise > 0 && sunset > sunrise) {
+            localRiseTime = sunrise;
+            localSetTime = sunset;
+            window._polarState = null;
+            var sunWindow = _reportingMapSunWindow(now);
+            if (!sunWindow) return false;
+            isNightAtStation = !(now > sunWindow.sunrise && now < sunWindow.sunset);
+            _scheduleReportingMapDayNightUpdate();
+            return true;
+        }
+
+        // Older clients stored only isDay. Trust that boolean briefly, then
+        // let the fresh enrichment request below establish the current state.
+        if (!hasSavedLocation && age > 5 * 60 * 1000) return false;
+        if (age <= 5 * 60 * 1000 && typeof saved.isDay === 'boolean') {
+            isNightAtStation = !saved.isDay;
+            return true;
+        }
+        return false;
     }
 
     // v1.0.4 FIX: Button BEFORE text div; proper HTML bullet rendering
@@ -25846,6 +25909,12 @@
             if (window.SKYMONITOR_TROPICAL_PAGE) {
                 initTropicalRoute();
             } else if (window.SKYMONITOR_RADAR_PAGE) {
+                // The standalone map intentionally skips loadAll(), so load
+                // its small sunrise/sunset dependency directly. Restore a
+                // recent same-location solar window first to avoid a daytime
+                // basemap flash while the fresh weather enrichment arrives.
+                _restoreReportingMapDayNightState();
+                fetchOpenWeather().catch(function() {});
                 var radarNav = document.getElementById('nav-reporting');
                 if (radarNav) window.switchTab('reporting', radarNav);
             } else {
