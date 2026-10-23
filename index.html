@@ -22547,6 +22547,37 @@
         return points.map(function(point) { return [point[0], point[1] + offset]; });
     }
 
+    function _tropicalIsCollapsedAntimeridianRing(sourceRing, mappedRing) {
+        if (!Array.isArray(sourceRing) || !Array.isArray(mappedRing) ||
+            !sourceRing.length || !mappedRing.length) return false;
+        var sourceMin = Infinity;
+        var sourceMax = -Infinity;
+        var mappedMin = Infinity;
+        var mappedMax = -Infinity;
+        var hasEastDateline = false;
+        var hasWestDateline = false;
+        sourceRing.forEach(function(pair) {
+            var longitude = Number(pair && pair[0]);
+            if (!isFinite(longitude)) return;
+            sourceMin = Math.min(sourceMin, longitude);
+            sourceMax = Math.max(sourceMax, longitude);
+            if (longitude >= 179.999) hasEastDateline = true;
+            if (longitude <= -179.999) hasWestDateline = true;
+        });
+        mappedRing.forEach(function(point) {
+            var longitude = Number(point && point[1]);
+            if (!isFinite(longitude)) return;
+            mappedMin = Math.min(mappedMin, longitude);
+            mappedMax = Math.max(mappedMax, longitude);
+        });
+        // NOAA's Pacific outlook can encode a world-spanning ring using both
+        // +180 and -180. They are the same meridian, so unwrapping collapses
+        // the polygon to a pole-to-pole line at the map's world-copy seam.
+        return hasEastDateline && hasWestDateline &&
+            sourceMax - sourceMin > 359.999 &&
+            mappedMax - mappedMin < 0.000001;
+    }
+
     function _captureTropicalOpenPopup() {
         if (!tropicalRouteMap || !tropicalRouteMap._popup ||
             !tropicalRouteMap.hasLayer(tropicalRouteMap._popup)) return null;
@@ -22959,10 +22990,26 @@
                     ? coordinates
                     : [coordinates];
                 var mapPolygons = polygons.map(function(polygon) {
-                    return polygon.map(function(ring) {
-                        return _tropicalMapConeRing(ring);
-                    });
+                    if (!Array.isArray(polygon) || !polygon.length) return null;
+                    var outerRing = _tropicalMapConeRing(polygon[0]);
+                    if (_tropicalIsCollapsedAntimeridianRing(polygon[0], outerRing)) {
+                        return null;
+                    }
+                    var mappedPolygon = [outerRing];
+                    for (var ringIndex = 1; ringIndex < polygon.length; ringIndex++) {
+                        var innerRing = _tropicalMapConeRing(polygon[ringIndex]);
+                        if (!_tropicalIsCollapsedAntimeridianRing(
+                            polygon[ringIndex],
+                            innerRing
+                        )) {
+                            mappedPolygon.push(innerRing);
+                        }
+                    }
+                    return mappedPolygon;
+                }).filter(function(polygon) {
+                    return polygon && polygon.length && polygon[0].length >= 4;
                 });
+                if (!mapPolygons.length) return;
                 var properties = disturbance.properties || {};
                 var basin = String(properties.basin || 'Tropical');
                 var risk = String(properties.risk7day || '').toLowerCase();
