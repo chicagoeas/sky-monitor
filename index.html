@@ -21001,6 +21001,15 @@
         return promise;
     }
 
+    function normalizeNwsRadarWfo(value) {
+        const normalized = String(value || '').trim().toUpperCase();
+        // VTEC uses four-character K-prefix offices (for example KEPZ),
+        // while the IEM GeoJSON `wfo` property and feature id use EPZ.
+        return /^K[A-Z0-9]{3}$/.test(normalized)
+            ? normalized.slice(1)
+            : normalized;
+    }
+
     function parseNwsRadarVtecIdentity(value) {
         const match = String(value || '').match(
             /(?:^|\/)[A-Z]\.[A-Z]{3}\.([A-Z0-9]{3,4})\.([A-Z]{2})\.([A-Z])\.(\d{1,4})\.(\d{6}T\d{4}Z)-/i
@@ -21008,7 +21017,7 @@
         if (!match) return null;
         const yearPart = Number(match[5].slice(0, 2));
         return {
-            wfo: match[1].toUpperCase(),
+            wfo: normalizeNwsRadarWfo(match[1]),
             phenomena: match[2].toUpperCase(),
             significance: match[3].toUpperCase(),
             eventid: match[4].padStart(4, '0'),
@@ -21038,7 +21047,7 @@
                 found.eventid === wanted.eventid && found.year === wanted.year;
         })) return true;
 
-        const wfo = String(props.wfo || props.office || '').trim().toUpperCase();
+        const wfo = normalizeNwsRadarWfo(props.wfo || props.office || '');
         const phenomena = String(props.phenomena || '').trim().toUpperCase();
         const significance = String(props.significance || '').trim().toUpperCase();
         const rawEventId = props.eventid != null ? props.eventid
