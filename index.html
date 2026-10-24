@@ -12390,24 +12390,47 @@
                 Promise.resolve(updateWeatherStory(wfo)).catch(function() {})
             ]);
 
-            // HWO is also optional and has a list request followed by a product
-            // request. Run it in the background so a slow product cannot hold
-            // the current conditions behind "LOADING LOCATION...".
+            // HWO is optional. LOT and IWX use their hosted plain-text products;
+            // other offices continue using the NWS product feed. Keep it in the
+            // background so it cannot delay current conditions.
             (async function() {
                 try {
-                    const hwoRes = await _weatherFetch('https://api.weather.gov/products/types/HWO/locations/' + wfo,
-                        requestSignal ? { signal: requestSignal } : undefined, 15000);
-                    const hwoList = await hwoRes.json();
-                    if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-                    if (hwoList['@graph'] && hwoList['@graph'].length > 0) {
-                        const hwoDataRes = await _weatherFetch(hwoList['@graph'][0]['@id'],
-                            requestSignal ? { signal: requestSignal } : undefined, 15000);
-                        const hwoData = await hwoDataRes.json();
+                    let text = '';
+                    const hwoOptions = requestSignal ? { signal: requestSignal } : undefined;
+                    if (wfo === 'LOT' || wfo === 'IWX') {
+                        const hwoUrl = wfo === 'LOT'
+                            ? 'https://hwo.skymonitor.app/LOT.txt'
+                            : 'https://hwo.skymonitor.app/IWX.txt';
+                        const hwoRes = await _weatherFetch(hwoUrl, hwoOptions, 15000);
+                        if (!hwoRes.ok) throw new Error('HWO text request failed: ' + hwoRes.status);
+                        text = (await hwoRes.text()).trim();
+                    } else {
+                        const hwoRes = await _weatherFetch(
+                            'https://api.weather.gov/products/types/HWO/locations/' + wfo,
+                            hwoOptions,
+                            15000
+                        );
+                        const hwoList = await hwoRes.json();
                         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-                        const text = (hwoData.productText || '').trim();
-                        if (text) { document.getElementById('cli-text').innerText = text; document.getElementById('hwo-section').style.display = localStorage.getItem('data_complexity') === 'specific' ? 'block' : 'none'; }
-                        else document.getElementById('hwo-section').style.display = 'none';
-                    } else document.getElementById('hwo-section').style.display = 'none';
+                        if (hwoList['@graph'] && hwoList['@graph'].length > 0) {
+                            const hwoDataRes = await _weatherFetch(
+                                hwoList['@graph'][0]['@id'],
+                                hwoOptions,
+                                15000
+                            );
+                            const hwoData = await hwoDataRes.json();
+                            if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+                            text = (hwoData.productText || '').trim();
+                        }
+                    }
+                    if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+                    if (text) {
+                        document.getElementById('cli-text').innerText = text;
+                        document.getElementById('hwo-section').style.display =
+                            localStorage.getItem('data_complexity') === 'specific' ? 'block' : 'none';
+                    } else {
+                        document.getElementById('hwo-section').style.display = 'none';
+                    }
                 } catch(e) { document.getElementById('hwo-section').style.display = 'none'; }
             })();
 
