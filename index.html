@@ -1650,6 +1650,52 @@
             background: #0b1e2d; color: #fff; border: 1px solid #334;
             padding: 8px 12px; border-radius: 8px; width: 100%; box-sizing: border-box; font-size: 0.9em;
         }
+        .report-image-control { position: relative; }
+        #report-notes { padding-right: 50px !important; }
+        #report-image-button {
+            position: absolute; right: 8px; bottom: 8px; width: 34px; height: 34px;
+            display: inline-flex; align-items: center; justify-content: center;
+            border: 2px solid #1685ff; border-radius: 7px;
+            background: rgba(0,96,210,0.22); color: #e8f4ff;
+            font-size: 19px; line-height: 1; cursor: pointer;
+        }
+        #report-image-button:hover, #report-image-button:focus-visible {
+            background: rgba(0,128,255,0.42); border-color: #7ec4ff;
+            outline: none;
+        }
+        #report-image-preview {
+            display: none; align-items: center; gap: 8px; margin-top: 6px;
+            padding: 6px 9px; border: 1px solid rgba(79,195,247,0.28);
+            border-radius: 7px; color: #c9eaff; font-size: 0.76em;
+            overflow-wrap: anywhere;
+        }
+        #report-image-preview-name { min-width: 0; flex: 1; }
+        #report-image-remove {
+            flex: 0 0 auto; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 5px; padding: 3px 7px; color: #fff;
+            background: rgba(255,255,255,0.08); cursor: pointer;
+        }
+        .reporting-popup-image-thumb {
+            display: block; width: 64px; height: 48px; object-fit: cover;
+            border-radius: 5px; border: 1px solid rgba(255,255,255,0.24);
+            cursor: zoom-in;
+        }
+        .report-image-lightbox {
+            position: fixed; inset: 0; z-index: 20000; display: flex;
+            align-items: center; justify-content: center; padding: 20px;
+            background: rgba(0,0,0,0.92); box-sizing: border-box;
+        }
+        .report-image-lightbox img {
+            display: block; max-width: 100%; max-height: 100%;
+            object-fit: contain; border-radius: 5px;
+        }
+        .report-image-lightbox-close {
+            position: absolute; top: max(12px, env(safe-area-inset-top));
+            right: max(12px, env(safe-area-inset-right)); width: 42px; height: 42px;
+            border: 1px solid rgba(255,255,255,0.35); border-radius: 50%;
+            background: rgba(0,0,0,0.55); color: #fff; font-size: 28px;
+            line-height: 1; cursor: pointer;
+        }
         .report-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
         #report-cat-grid .report-category-icon {
             width: 24px; height: 24px; display: block; flex: 0 0 24px;
@@ -3263,7 +3309,15 @@
                     <button onclick="clearReportCategory()" style="background:transparent; border:1px solid rgba(255,255,255,0.15); color:#888; padding:3px 12px; border-radius:6px; font-size:0.72em; cursor:pointer; display:block; margin:0 auto;">&#8592; Back</button>
                 </div>
                 <div id="report-type-display" style="display:none; text-align:center; padding:8px 12px; background:rgba(79,195,247,0.08); border-radius:8px; border:1px solid rgba(79,195,247,0.3); font-size:0.85em; color:var(--primary);"></div>
-                <textarea id="report-notes" placeholder="Optional notes (location details, conditions, etc.)" class="report-form-input" style="resize:vertical; min-height:60px;"></textarea>
+                <div class="report-image-control">
+                    <textarea id="report-notes" placeholder="Optional notes (location details, conditions, etc.)" class="report-form-input" style="resize:vertical; min-height:60px;"></textarea>
+                    <input id="report-image-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onchange="selectReportImage(this)" hidden>
+                    <button id="report-image-button" type="button" aria-label="Attach a weather photo" title="Attach an image" onclick="document.getElementById('report-image-input').click()">📷</button>
+                </div>
+                <div id="report-image-preview" aria-live="polite">
+                    <span aria-hidden="true">📷</span><span id="report-image-preview-name"></span>
+                    <button id="report-image-remove" type="button" onclick="clearReportImage()">Remove</button>
+                </div>
                 <button onclick="submitUserReport()" style="background:var(--primary); color:#07131d; border:none; padding:10px; border-radius:8px; font-weight:bold; cursor:pointer; font-size:0.9em;">SUBMIT REPORT</button>
                 <div id="report-status" style="font-size:0.8em; color:#888; text-align:center; display:none;"></div>
             </div>
@@ -15535,6 +15589,7 @@
     let reportPinIcon = null;
     let privacySnapGeneration = 0;
     let selectedReportType = '';
+    let selectedReportImage = null;
     const REPORT_SUBMISSION_ID_STORAGE_KEY = 'skymonitor_pending_report_submission_id';
     var _pendingReportSubmissionId = '';
 
@@ -16265,6 +16320,102 @@
                 + escapeHtml(row[1]) + '</span></p>';
         }).join('');
     }
+
+    const REPORT_IMAGE_MAX_BYTES = 7 * 1024 * 1024;
+    function selectReportImage(input) {
+        const file = input && input.files && input.files[0];
+        if (!file) return;
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+        if (!allowedTypes.includes(file.type)) {
+            alert('Choose a JPG, PNG, WebP, or GIF image.');
+            input.value = '';
+            return;
+        }
+        if (file.size > REPORT_IMAGE_MAX_BYTES) {
+            alert('Images must be 7 MB or smaller.');
+            input.value = '';
+            return;
+        }
+        selectedReportImage = file;
+        const preview = document.getElementById('report-image-preview');
+        const name = document.getElementById('report-image-preview-name');
+        if (name) name.textContent = file.name + ' · ' + (file.size / 1024 / 1024).toFixed(1) + ' MB';
+        if (preview) preview.style.display = 'flex';
+    }
+    window.selectReportImage = selectReportImage;
+
+    function clearReportImage() {
+        selectedReportImage = null;
+        const input = document.getElementById('report-image-input');
+        const preview = document.getElementById('report-image-preview');
+        if (input) input.value = '';
+        if (preview) preview.style.display = 'none';
+    }
+    window.clearReportImage = clearReportImage;
+
+    function reportImageDetailMarkup(status, imageUrl) {
+        if (status === 'pending') {
+            return '<p><b>Image</b><span class="reporting-popup-pre">(Admin approval pending)</span></p>';
+        }
+        if (status !== 'approved' || !imageUrl) return '';
+        try {
+            const image = new URL(imageUrl, REPORTS_WORKER_URL);
+            const worker = new URL(REPORTS_WORKER_URL);
+            if (image.origin !== worker.origin || image.pathname !== worker.pathname + '/image') return '';
+            return '<p class="reporting-popup-image-row"><b>Image</b><span class="reporting-popup-pre">'
+                + '<button type="button" style="padding:0;border:0;background:none;"'
+                + ' data-report-image-url="' + escapeHtml(image.href) + '"'
+                + ' aria-label="View approved report image" title="View image"'
+                + ' onclick="event.stopPropagation();openReportImageModal(this.dataset.reportImageUrl)">'
+                + '<img class="reporting-popup-image-thumb" src="' + escapeHtml(image.href)
+                + '" alt="Approved weather report image" loading="lazy"></button></span></p>';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function openReportImageModal(imageUrl) {
+        let image;
+        try {
+            image = new URL(imageUrl, REPORTS_WORKER_URL);
+            const worker = new URL(REPORTS_WORKER_URL);
+            if (image.origin !== worker.origin || image.pathname !== worker.pathname + '/image') return;
+        } catch (error) {
+            return;
+        }
+        const previous = document.getElementById('report-image-lightbox');
+        if (previous) previous.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'report-image-lightbox';
+        overlay.className = 'report-image-lightbox';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+        overlay.setAttribute('aria-label', 'Approved report image');
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'report-image-lightbox-close';
+        close.setAttribute('aria-label', 'Close image');
+        close.textContent = '×';
+        const fullImage = document.createElement('img');
+        fullImage.src = image.href;
+        fullImage.alt = 'Approved weather report image';
+        overlay.appendChild(close);
+        overlay.appendChild(fullImage);
+        function closeModal() {
+            overlay.remove();
+            document.removeEventListener('keydown', onKeyDown);
+        }
+        function onKeyDown(event) {
+            if (event.key === 'Escape') closeModal();
+        }
+        close.addEventListener('click', closeModal);
+        overlay.addEventListener('click', function(event) {
+            if (event.target === overlay) closeModal();
+        });
+        document.addEventListener('keydown', onKeyDown);
+        document.body.appendChild(overlay);
+    }
+    window.openReportImageModal = openReportImageModal;
 
     function formatNwsIssuedBy(senderName, wfo) {
         var value = String(senderName || wfo || '').trim();
@@ -21618,7 +21769,7 @@
                             ['Location', r.location || r.city || ''],
                             ['Notes', r.notes || '(No notes provided)'],
                             ['Submitted by', r.username || r.reporter || r.source || 'SkyMonitor user']
-                        ])
+                        ]) + reportImageDetailMarkup(r.imageStatus, r.imageUrl)
                     });
                 });
             }
@@ -21635,6 +21786,7 @@
         const btn = document.querySelector('#reporting-tab button[onclick="submitUserReport()"]');
         const status = document.getElementById('report-status');
         const submissionId = getPendingReportSubmissionId();
+        const includesImage = !!selectedReportImage;
         const reportBody = {
             lat: reportLat != null ? reportLat : parseFloat(lat),
             lon: reportLon != null ? reportLon : parseFloat(lon),
@@ -21666,17 +21818,39 @@
             }
 
             reportBody.turnstileToken = reportTurnstileToken;
+            let requestBody = JSON.stringify(reportBody);
+            let requestHeaders = { 'Content-Type': 'application/json' };
+            if (selectedReportImage) {
+                const multipart = new FormData();
+                multipart.append('report', JSON.stringify(reportBody));
+                multipart.append('image', selectedReportImage, selectedReportImage.name);
+                requestBody = multipart;
+                requestHeaders = {};
+            }
             const res = await _weatherFetch(REPORTS_WORKER_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(reportBody)
-            }, 15000);
+                headers: requestHeaders,
+                body: requestBody
+            }, includesImage ? 45000 : 15000);
             if (res.ok) {
-                clearReportCategory();
-                document.getElementById('report-notes').value = '';
-                clearPendingReportSubmissionId(submissionId);
+                const result = await res.json().catch(function() { return {}; });
+                const imageNotificationRetry = includesImage && result.imageReviewNotified === false;
+                if (!imageNotificationRetry) {
+                    clearReportCategory();
+                    document.getElementById('report-notes').value = '';
+                    clearReportImage();
+                    clearPendingReportSubmissionId(submissionId);
+                }
                 invalidateTurnstile();
-                if (status) { status.textContent = '\u2713 Report submitted! Thank you.'; status.style.color = 'var(--success)'; setTimeout(function() { status.style.display = 'none'; }, 4000); }
+                if (status) {
+                    status.textContent = includesImage
+                        ? (imageNotificationRetry
+                            ? '\u2713 Report saved privately, but the admin notification failed. Tap Submit again to retry.'
+                            : '\u2713 Report submitted. The image is pending admin approval.')
+                        : '\u2713 Report submitted! Thank you.';
+                    status.style.color = imageNotificationRetry ? 'var(--warning)' : 'var(--success)';
+                    setTimeout(function() { status.style.display = 'none'; }, 6000);
+                }
                 setTimeout(loadReportingMapData, 1500);
             } else {
                 // The Worker uses 403 specifically when Turnstile rejects or
@@ -21708,9 +21882,14 @@
                         status.textContent = 'A previous attempt was accepted, but these report details changed. Tap Submit again to send the updated report.';
                         status.style.color = 'var(--warning)';
                     }
-                } else if (status) {
-                    status.textContent = 'Report failed. Please try again.';
-                    status.style.color = 'var(--danger)';
+                } else {
+                    const reportError = await res.json().catch(function() { return null; });
+                    if (status) {
+                        status.textContent = reportError && reportError.error
+                            ? reportError.error
+                            : 'Report failed. Please try again.';
+                        status.style.color = 'var(--danger)';
+                    }
                 }
             }
         } catch(e) {
