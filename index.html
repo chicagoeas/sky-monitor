@@ -5356,7 +5356,8 @@
 
     // Report tokens are one-use. The first visit uses the visible widget;
     // trusted returning machines silently mint a fresh token for each POST.
-    function getTurnstileTokenForReport() {
+    function getTurnstileTokenForReport(retryCount) {
+        var tokenRetryCount = Number.isInteger(retryCount) ? retryCount : 0;
         if (_turnstileToken && Date.now() - _turnstileTokenIssuedAt < 120000) {
             return Promise.resolve(_turnstileToken);
         }
@@ -5368,6 +5369,14 @@
         return new Promise(function(resolve, reject) {
             _turnstileSilentWaiters.push({ resolve: resolve, reject: reject });
             _requestSilentTurnstileToken();
+        }).catch(function(error) {
+            // Transient Turnstile widget/network errors often clear on a fresh
+            // execution. Retry token acquisition once before asking the user.
+            if (tokenRetryCount < 1 && _turnstileVerified) {
+                invalidateTurnstile();
+                return getTurnstileTokenForReport(tokenRetryCount + 1);
+            }
+            throw error;
         });
     }
 
@@ -21777,6 +21786,39 @@
     }
     window.loadMapReports = loadMapReports;
 
+    async function sendUserReportAttempt(reportBody, reportImage) {
+        const reportTurnstileToken = await getTurnstileTokenForReport();
+        if (!reportTurnstileToken) return null;
+
+        const requestReportBody = Object.assign({}, reportBody, {
+            turnstileToken: reportTurnstileToken
+        });
+        let requestBody = JSON.stringify(requestReportBody);
+        let requestHeaders = { 'Content-Type': 'application/json' };
+        if (reportImage) {
+            const multipart = new FormData();
+            multipart.append('report', JSON.stringify(requestReportBody));
+            multipart.append('image', reportImage, reportImage.name);
+            requestBody = multipart;
+            requestHeaders = {};
+        }
+        return _weatherFetch(REPORTS_WORKER_URL, {
+            method: 'POST',
+            headers: requestHeaders,
+            body: requestBody
+        }, reportImage ? 45000 : 15000);
+    }
+
+    async function isTurnstileVerificationFailure(response) {
+        if (!response || (response.status !== 403 && response.status !== 502)) return false;
+        const result = await response.clone().json().catch(function() { return null; });
+        return !!(result && (
+            result.error === 'Turnstile verification required.' ||
+            result.error === 'Bot detected — report rejected.' ||
+            result.error === 'Turnstile verification unavailable.'
+        ));
+    }
+
     async function submitUserReport() {
         const type = selectedReportType;
         if (!type) { alert('Please select a report type.'); return; }
@@ -21786,7 +21828,8 @@
         const btn = document.querySelector('#reporting-tab button[onclick="submitUserReport()"]');
         const status = document.getElementById('report-status');
         const submissionId = getPendingReportSubmissionId();
-        const includesImage = !!selectedReportImage;
+        const reportImage = selectedReportImage;
+        const includesImage = !!reportImage;
         const reportBody = {
             lat: reportLat != null ? reportLat : parseFloat(lat),
             lon: reportLon != null ? reportLon : parseFloat(lon),
@@ -21802,9 +21845,9 @@
             status.style.color = '#888';
         }
         try {
-            let reportTurnstileToken;
+            let res;
             try {
-                reportTurnstileToken = await getTurnstileTokenForReport();
+                res = await sendUserReportAttempt(reportBody, reportImage);
             } catch (verificationError) {
                 if (status) {
                     status.textContent = 'Verification could not be renewed. Please try submitting again.';
@@ -21812,26 +21855,32 @@
                 }
                 return;
             }
-            if (!reportTurnstileToken) {
+            if (!res) {
                 if (status) status.style.display = 'none';
                 return;
             }
 
-            reportBody.turnstileToken = reportTurnstileToken;
-            let requestBody = JSON.stringify(reportBody);
-            let requestHeaders = { 'Content-Type': 'application/json' };
-            if (selectedReportImage) {
-                const multipart = new FormData();
-                multipart.append('report', JSON.stringify(reportBody));
-                multipart.append('image', selectedReportImage, selectedReportImage.name);
-                requestBody = multipart;
-                requestHeaders = {};
+            if (await isTurnstileVerificationFailure(res)) {
+                // The Worker verifies tokens before storing a report. If a
+                // token was rejected or Siteverify was temporarily unavailable,
+                // mint a fresh token and retry this submission once.
+                invalidateTurnstile();
+                _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
+                try {
+                    const retryResponse = await sendUserReportAttempt(reportBody, reportImage);
+                    if (!retryResponse) {
+                        if (status) status.style.display = 'none';
+                        return;
+                    }
+                    res = retryResponse;
+                } catch (verificationError) {
+                    if (status) {
+                        status.textContent = 'Verification could not be renewed. Please try submitting again.';
+                        status.style.color = 'var(--warning)';
+                    }
+                    return;
+                }
             }
-            const res = await _weatherFetch(REPORTS_WORKER_URL, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: requestBody
-            }, includesImage ? 45000 : 15000);
             if (res.ok) {
                 const result = await res.json().catch(function() { return {}; });
                 const imageNotificationRetry = includesImage && result.imageReviewNotified === false;
@@ -21846,13 +21895,11 @@
                 }
                 invalidateTurnstile();
                 if (status) {
-                    status.textContent = includesImage
-                        ? (imageNotificationRetry
-                            ? '\u2713 Report posted; image is pending admin review, but the admin notification failed'
-                                + imageNotificationDetail
-                                + '. Check the report bot settings, then tap Submit again.'
-                            : '\u2713 Report submitted. The image is pending admin approval.')
-                        : '\u2713 Report submitted! Thank you.';
+                    status.textContent = imageNotificationRetry
+                        ? 'Report submitted, but the admin notification failed'
+                            + imageNotificationDetail
+                            + '. Check the report bot settings, then tap Submit again.'
+                        : 'Report submitted. Thank you!';
                     status.style.color = imageNotificationRetry ? 'var(--warning)' : 'var(--success)';
                     setTimeout(function() { status.style.display = 'none'; }, 6000);
                 }
