@@ -3450,8 +3450,29 @@
     // lookup until the reporting map has finished loading.
     const CUSTOM_SKY_DEEP_LINK_ID =
         new URLSearchParams(window.location.search).get('alert')?.trim() || '';
+    // NWR archive links identify an official NWS warning by its VTEC and
+    // include the issuance time for a matching historical radar frame.
+    const NWS_RADAR_DEEP_LINK_VTEC =
+        new URLSearchParams(window.location.search).get('nwsVtec')?.trim() || '';
+    const NWS_RADAR_DEEP_LINK_AT =
+        new URLSearchParams(window.location.search).get('nwsAt')?.trim() || '';
+    function nwsVtecIssuedTimeMs(value) {
+        const match = String(value || '').match(/\.(\d{6})T(\d{4})Z-/);
+        if (!match) return 0;
+        const yearPart = Number(match[1].slice(0, 2));
+        const year = yearPart >= 70 ? 1900 + yearPart : 2000 + yearPart;
+        const month = Number(match[1].slice(2, 4)) - 1;
+        const day = Number(match[1].slice(4, 6));
+        const hour = Number(match[2].slice(0, 2));
+        const minute = Number(match[2].slice(2, 4));
+        const timestamp = Date.UTC(year, month, day, hour, minute);
+        return isFinite(timestamp) ? timestamp : 0;
+    }
+    const NWS_RADAR_DEEP_LINK_TIME_MS =
+        (NWS_RADAR_DEEP_LINK_AT ? Date.parse(NWS_RADAR_DEEP_LINK_AT) : NaN) ||
+        nwsVtecIssuedTimeMs(NWS_RADAR_DEEP_LINK_VTEC);
     function customSkyDeepLinkOwnsReportingViewport() {
-        return !!CUSTOM_SKY_DEEP_LINK_ID &&
+        return (!!CUSTOM_SKY_DEEP_LINK_ID || !!NWS_RADAR_DEEP_LINK_VTEC) &&
             !!window.SKYMONITOR_RADAR_PAGE &&
             !reportingMapManualRefresh;
     }
@@ -5405,7 +5426,8 @@
             // /radar/historical after the archive lookup. It already has its
             // target alert/time context, so do not interrupt it with the
             // generic date picker. The clock button still opens it normally.
-            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE && !CUSTOM_SKY_DEEP_LINK_ID) {
+            if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE &&
+                !CUSTOM_SKY_DEEP_LINK_ID && !NWS_RADAR_DEEP_LINK_VTEC) {
                 setTimeout(function() { openHistoricalRadarPicker(); }, 180);
             }
             if (window._pendingCustomSkyMDKey) {
@@ -15464,11 +15486,14 @@
     let radarSingleSiteProduct = localStorage.getItem('report_radar_product') || '';
     let radarSingleSiteProductFamily =
         localStorage.getItem('report_radar_product_family') || '';
-    let alertsVisible = localStorage.getItem('report_alerts_on') !== '0';
+    let alertsVisible = NWS_RADAR_DEEP_LINK_VTEC
+        ? true
+        : localStorage.getItem('report_alerts_on') !== '0';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
         ? true
         : localStorage.getItem('report_custom_sky_alerts') === '1';
     let customSkyDeepLinkHandled = false;
+    let nwsRadarDeepLinkHandled = false;
     let customSkyDeepLinkEntry = null;
     // Keep the archive feature that activated historical mode available for
     // subsequent frame reloads. The live feed is active-only and may omit the
@@ -20413,7 +20438,8 @@
                     syncReportingMapLayers();
                     ensureReportPinMarker();
                 }
-                if (historicalRoute && !historicalRadarState.active && !CUSTOM_SKY_DEEP_LINK_ID) {
+                if (historicalRoute && !historicalRadarState.active &&
+                    !CUSTOM_SKY_DEEP_LINK_ID && !NWS_RADAR_DEEP_LINK_VTEC) {
                     openHistoricalRadarPicker();
                 }
             }, 80);
@@ -20975,6 +21001,102 @@
         return promise;
     }
 
+    function parseNwsRadarVtecIdentity(value) {
+        const match = String(value || '').match(
+            /(?:^|\/)[A-Z]\.[A-Z]{3}\.([A-Z0-9]{3,4})\.([A-Z]{2})\.([A-Z])\.(\d{1,4})\.(\d{6}T\d{4}Z)-/i
+        );
+        if (!match) return null;
+        const yearPart = Number(match[5].slice(0, 2));
+        return {
+            wfo: match[1].toUpperCase(),
+            phenomena: match[2].toUpperCase(),
+            significance: match[3].toUpperCase(),
+            eventid: match[4].padStart(4, '0'),
+            year: yearPart >= 70 ? 1900 + yearPart : 2000 + yearPart
+        };
+    }
+
+    function nwsRadarAlertMatchesDeepLink(props) {
+        const wanted = parseNwsRadarVtecIdentity(NWS_RADAR_DEEP_LINK_VTEC);
+        if (!wanted || !props) return false;
+
+        const vtecValues = [];
+        const parameters = props.parameters || {};
+        [props.VTEC, props.vtec, parameters.VTEC].forEach(function(value) {
+            if (typeof value === 'string' && value.trim()) vtecValues.push(value.trim());
+            else if (Array.isArray(value)) {
+                value.forEach(function(item) {
+                    if (typeof item === 'string' && item.trim()) vtecValues.push(item.trim());
+                });
+            }
+        });
+        if (vtecValues.some(function(value) {
+            const found = parseNwsRadarVtecIdentity(value);
+            return found && found.wfo === wanted.wfo &&
+                found.phenomena === wanted.phenomena &&
+                found.significance === wanted.significance &&
+                found.eventid === wanted.eventid && found.year === wanted.year;
+        })) return true;
+
+        const wfo = String(props.wfo || props.office || '').trim().toUpperCase();
+        const phenomena = String(props.phenomena || '').trim().toUpperCase();
+        const significance = String(props.significance || '').trim().toUpperCase();
+        const rawEventId = props.eventid != null ? props.eventid
+            : (props.event_id != null ? props.event_id : props.etn);
+        if (!wfo || !phenomena || !significance || rawEventId == null ||
+            wfo !== wanted.wfo || phenomena !== wanted.phenomena ||
+            significance !== wanted.significance ||
+            String(rawEventId).trim().padStart(4, '0') !== wanted.eventid) {
+            return false;
+        }
+
+        const featureDate = parseReportDate(
+            props.issue || props.polygon_begin || props.polygon_start || props.begin
+        );
+        const featureYear = Number(props.year) ||
+            (featureDate && isFinite(featureDate.getTime())
+                ? featureDate.getUTCFullYear()
+                : 0);
+        return !featureYear || featureYear === wanted.year;
+    }
+
+    function openDeepLinkedNwsRadarAlert() {
+        if (!NWS_RADAR_DEEP_LINK_VTEC || nwsRadarDeepLinkHandled ||
+            !reportingMap || !window.L || !alertPolygonLayer) return false;
+        const entry = reportingPopupEntries.find(function(item) {
+            return item.source === 'nws' &&
+                nwsRadarAlertMatchesDeepLink(item.nwsAlertProperties);
+        });
+        if (!entry || !entry.layer || !entry.layer.getBounds) return false;
+        const bounds = entry.layer.getBounds();
+        if (!bounds.isValid()) return false;
+
+        nwsRadarDeepLinkHandled = true;
+        alertsVisible = true;
+        localStorage.setItem('report_alerts_on', '1');
+        const toggle = document.getElementById('alerts-toggle-cb');
+        if (toggle) toggle.checked = true;
+        if (!reportingMap.hasLayer(alertPolygonLayer)) alertPolygonLayer.addTo(reportingMap);
+        if (entry.layer.setStyle) {
+            entry.layer.setStyle({
+                color: '#ffffff',
+                weight: 6,
+                opacity: 1,
+                fillOpacity: 0.42
+            });
+            if (entry.layer.bringToFront) entry.layer.bringToFront();
+        }
+        reportingMap.fitBounds(bounds, {
+            padding: [30, 30],
+            maxZoom: 11,
+            animate: false
+        });
+        setTimeout(function() {
+            openReportingPopup(entry, bounds.getCenter(), entry);
+        }, 120);
+        return true;
+    }
+
     async function loadHistoricalNwsAlerts(timestampMs, L_ref, requestId) {
         if (!alertPolygonLayer || !L_ref || !isFinite(Number(timestampMs))) return;
         alertPolygonLayer.clearLayers();
@@ -21039,6 +21161,7 @@
                     source: 'nws',
                     isPolygon: true,
                     color: color,
+                    nwsAlertProperties: props,
                      popupKey: String(props.product_id || props.href ||
                          [phenomena, props.wfo, props.eventid, props.polygon_begin].join('|')),
                     title: escapeHtml(eventName),
@@ -21055,6 +21178,7 @@
                 });
                 polygon.addTo(alertPolygonLayer);
             });
+            openDeepLinkedNwsRadarAlert();
         } catch (e) {
             if (requestId === historicalRadarRequestId) {
                 console.warn('[SkyMonitor] Historical IEM warnings failed:', e);
@@ -21235,6 +21359,7 @@
                             source: 'nws',
                             isPolygon: true,
                             color: color,
+                            nwsAlertProperties: f.properties,
                              popupKey: [
                                  f.properties.product_identifier || f.properties.id ||
                                      f.properties.href || '',
@@ -21260,6 +21385,7 @@
                         });
                         _poly.addTo(alertPolygonLayer);
                     });
+                    openDeepLinkedNwsRadarAlert();
                 }
             } catch (e) {
                 console.warn('[SkyMonitor] NWS map alerts failed:', e);
@@ -26133,13 +26259,27 @@
                 if (reportingMap) {
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
+                    const linkedHistoricalTime = NWS_RADAR_DEEP_LINK_TIME_MS;
+                    const linkedHistoricalTimeValid =
+                        isFinite(linkedHistoricalTime) &&
+                        linkedHistoricalTime >= HISTORICAL_RADAR_EARLIEST_MS &&
+                        linkedHistoricalTime < Date.now();
+                    if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE &&
+                        NWS_RADAR_DEEP_LINK_VTEC && linkedHistoricalTimeValid) {
+                        activateOnDemandHistoricalRadar(linkedHistoricalTime);
+                    }
                     loadReportingMapData();
                 }
                 // Direct custom-alert links can arrive at /radar/historical
                 // after an expired-alert lookup. Do not show the manual date
                 // picker for that flow; it remains available from the clock
                 // controls once the map is open.
-                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE && !CUSTOM_SKY_DEEP_LINK_ID) {
+                if (window.SKYMONITOR_HISTORICAL_RADAR_PAGE &&
+                    !CUSTOM_SKY_DEEP_LINK_ID &&
+                    !(NWS_RADAR_DEEP_LINK_VTEC &&
+                        isFinite(NWS_RADAR_DEEP_LINK_TIME_MS) &&
+                        NWS_RADAR_DEEP_LINK_TIME_MS >= HISTORICAL_RADAR_EARLIEST_MS &&
+                        NWS_RADAR_DEEP_LINK_TIME_MS < Date.now())) {
                     openHistoricalRadarPicker();
                 }
             }, 80);
