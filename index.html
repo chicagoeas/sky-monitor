@@ -5436,7 +5436,7 @@
                 },
                 'error-callback': function() {
                     invalidateTurnstile();
-                    if (statusEl) statusEl.textContent = 'Cloudflare verification failed. Please try again.';
+                    if (statusEl) statusEl.textContent = 'Verification failed. Please try again. (Code: RPT-403-VERIFY)';
                 }
             });
         } else {
@@ -21809,10 +21809,61 @@
         }, reportImage ? 45000 : 15000);
     }
 
+    const REPORT_ERROR_MESSAGES = Object.freeze({
+        'RPT-400-INPUT': 'Report details could not be validated. Check the report type and location.',
+        'RPT-403-VERIFY': 'Verification failed. Please try again.',
+        'RPT-409-CONFLICT': 'This submission conflicts with an earlier attempt. Please submit again.',
+        'RPT-500-SERVER': 'The report service encountered an error. Please try again.',
+        'RPT-502-VERIFY': 'The verification service is temporarily unavailable. Please try again.',
+        'RPT-502-REVIEW': 'Report submitted, but the photo could not be queued for review.',
+        'RPT-502-SERVER': 'The report service could not complete the request. Please try again.',
+        'RPT-503-VERIFY': 'Verification is temporarily unavailable. Please try again later.',
+        'RPT-503-REVIEW': 'Photo submissions are temporarily unavailable. Please try again later.',
+        'RPT-503-IMAGE': 'Photo upload is temporarily unavailable. Please try again.',
+        'RPT-503-MODERATION': 'Report submission is temporarily unavailable. Please try again.',
+        'RPT-503-STORAGE': 'Report submission is temporarily unavailable. Please try again.',
+        'RPT-503-SERVER': 'The report service is temporarily unavailable. Please try again.',
+        'RPT-504-TIMEOUT': 'No confirmation arrived in time. Retrying the same report is safe; edited details may need a new submission.'
+    });
+
+    function getReportErrorText(errorPayload, statusCode) {
+        const code = String(errorPayload && errorPayload.errorCode || '');
+        if (Object.prototype.hasOwnProperty.call(REPORT_ERROR_MESSAGES, code)) {
+            const message = REPORT_ERROR_MESSAGES[code];
+            return message + ' (Code: ' + code + ')';
+        }
+
+        const safeMessages = [
+            'The image upload is invalid.',
+            'Images must be between 1 byte and 7 MB.',
+            'Use a JPG, PNG, WebP, or GIF image.',
+            'The file contents do not match a supported image type.'
+        ];
+        const message = String(errorPayload && errorPayload.error || '');
+        if (safeMessages.includes(message)) return message;
+
+        const fallbackCode = statusCode === 400
+            ? 'RPT-400-INPUT'
+            : statusCode === 403
+                ? 'RPT-403-VERIFY'
+                : statusCode === 409
+                    ? 'RPT-409-CONFLICT'
+                    : statusCode === 504
+                        ? 'RPT-504-TIMEOUT'
+                        : statusCode === 503
+                            ? 'RPT-503-SERVER'
+                            : statusCode === 502
+                                ? 'RPT-502-SERVER'
+                                : 'RPT-500-SERVER';
+        return REPORT_ERROR_MESSAGES[fallbackCode] + ' (Code: ' + fallbackCode + ')';
+    }
+
     async function isTurnstileVerificationFailure(response) {
         if (!response || (response.status !== 403 && response.status !== 502)) return false;
         const result = await response.clone().json().catch(function() { return null; });
         return !!(result && (
+            result.errorCode === 'RPT-403-VERIFY' ||
+            result.errorCode === 'RPT-502-VERIFY' ||
             result.error === 'Turnstile verification required.' ||
             result.error === 'Bot detected — report rejected.' ||
             result.error === 'Turnstile verification unavailable.'
@@ -21850,7 +21901,7 @@
                 res = await sendUserReportAttempt(reportBody, reportImage);
             } catch (verificationError) {
                 if (status) {
-                    status.textContent = 'Verification could not be renewed. Please try submitting again.';
+                    status.textContent = 'Verification failed. Please try again. (Code: RPT-403-VERIFY)';
                     status.style.color = 'var(--warning)';
                 }
                 return;
@@ -21875,7 +21926,7 @@
                     res = retryResponse;
                 } catch (verificationError) {
                     if (status) {
-                        status.textContent = 'Verification could not be renewed. Please try submitting again.';
+                        status.textContent = 'Verification failed. Please try again. (Code: RPT-403-VERIFY)';
                         status.style.color = 'var(--warning)';
                     }
                     return;
@@ -21884,9 +21935,11 @@
             if (res.ok) {
                 const result = await res.json().catch(function() { return {}; });
                 const imageNotificationRetry = includesImage && result.imageReviewNotified === false;
-                const imageNotificationDetail = result.imageReviewError
-                    ? ' (' + result.imageReviewError + ')'
-                    : '';
+                const returnedReviewCode = String(result.imageReviewErrorCode || '');
+                const imageReviewCode = Object.prototype.hasOwnProperty.call(
+                    REPORT_ERROR_MESSAGES,
+                    returnedReviewCode
+                ) ? returnedReviewCode : 'RPT-502-REVIEW';
                 if (!imageNotificationRetry) {
                     clearReportCategory();
                     document.getElementById('report-notes').value = '';
@@ -21896,15 +21949,15 @@
                 invalidateTurnstile();
                 if (status) {
                     status.textContent = imageNotificationRetry
-                        ? 'Report submitted, but the admin notification failed'
-                            + imageNotificationDetail
-                            + '. Check the report bot settings, then tap Submit again.'
+                        ? (REPORT_ERROR_MESSAGES[imageReviewCode] || REPORT_ERROR_MESSAGES['RPT-502-REVIEW'])
+                            + ' (Code: ' + imageReviewCode + '). Tap Submit again to retry.'
                         : '\u2713 Report submitted. Thank you!';
                     status.style.color = imageNotificationRetry ? 'var(--warning)' : 'var(--success)';
                     setTimeout(function() { status.style.display = 'none'; }, 6000);
                 }
                 setTimeout(loadReportingMapData, 1500);
             } else {
+                const reportError = await res.clone().json().catch(function() { return null; });
                 // The Worker uses 403 specifically when Turnstile rejects or
                 // has expired. Re-open the visible gate so the user can
                 // recover without guessing why the submission failed.
@@ -21916,30 +21969,26 @@
                     // challenged again on the next visit.
                     _turnstileVerified = localStorage.getItem('turnstile_verified') === 'true';
                     if (status) {
-                        status.textContent = 'Report verification could not be refreshed. Please try submitting again.';
+                        status.textContent = getReportErrorText(reportError, res.status);
                         status.style.color = 'var(--warning)';
                     }
                 } else if (res.status === 422) {
-                    var moderationResult = await res.json().catch(function() { return null; });
                     if (status) {
-                        status.textContent = moderationResult &&
-                            moderationResult.code === 'INAPPROPRIATE_REPORT_WORD'
+                        status.textContent = reportError &&
+                            reportError.code === 'INAPPROPRIATE_REPORT_WORD'
                             ? 'You cannot send reports that contain inappropriate words.'
-                            : 'Report failed. Please try again.';
+                            : getReportErrorText(reportError, res.status);
                         status.style.color = 'var(--danger)';
                     }
                 } else if (res.status === 409) {
                     clearPendingReportSubmissionId(submissionId);
                     if (status) {
-                        status.textContent = 'A previous attempt was accepted, but these report details changed. Tap Submit again to send the updated report.';
+                        status.textContent = getReportErrorText(reportError, res.status);
                         status.style.color = 'var(--warning)';
                     }
                 } else {
-                    const reportError = await res.json().catch(function() { return null; });
                     if (status) {
-                        status.textContent = reportError && reportError.error
-                            ? reportError.error
-                            : 'Report failed. Please try again.';
+                        status.textContent = getReportErrorText(reportError, res.status);
                         status.style.color = 'var(--danger)';
                     }
                 }
@@ -21951,7 +22000,7 @@
                 status.textContent = _isOffline
                     ? 'You cannot send reports when offline. Please reconnect and retry.'
                     : timedOut
-                        ? 'No confirmation received. Retrying the same report is safe; edited details may need a new submission.'
+                        ? REPORT_ERROR_MESSAGES['RPT-504-TIMEOUT'] + ' (Code: RPT-504-TIMEOUT)'
                         : 'Report failed. Please try again.';
                 status.style.color = 'var(--warning)';
             }
