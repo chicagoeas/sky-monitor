@@ -4481,7 +4481,7 @@
                     loadAll();
                 }
             }, function() {
-                panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">GPS access denied</span>';
+                panel.innerHTML = '<span style="color:#ff1744; font-size:0.8em;">Location permission denied. Check browser settings.</span>';
             }, { enableHighAccuracy: true, maximumAge: 30000 });
         } else {
             const savedCity = localStorage.getItem('waddle_city') || '';
@@ -4572,6 +4572,16 @@
         });
     }
 
+    function citySearchFailureText(error) {
+        if (error && error.message === 'No city result') {
+            return 'No results found. Check the spelling and try a nearby city or ZIP code.';
+        }
+        return getSiteErrorText(
+            'LOC-502-SEARCH',
+            'Location search is temporarily unavailable. Please try again shortly.'
+        );
+    }
+
     async function runCitySearch() {
         const cityEl = document.getElementById('cityInput');
         const query = cityEl ? cityEl.value.trim() : '';
@@ -4597,7 +4607,7 @@
                 });
             } catch (e) {
                 if (searchGeneration !== _citySearchGeneration) return;
-                alert('No results found. Ensure you have not misspelled anything.');
+                alert(citySearchFailureText(e));
             }
             return;
         }
@@ -4619,10 +4629,10 @@
                 const dd = document.getElementById('city-ac-dropdown');
                 if (dd) dd.style.display = 'none';
                 manualUpdateLocation();
-            } else { alert('No results found. Ensure you have not misspelled anything.'); }
+            } else { alert('No results found. Check the spelling and try a nearby city or ZIP code.'); }
         } catch(e) {
             if (searchGeneration !== _citySearchGeneration) return;
-            alert('No results found. Ensure you have not misspelled anything.');
+            alert(citySearchFailureText(e));
         }
     }
 
@@ -5117,7 +5127,7 @@
                             _skyMonitorFeedbackTurnstileToken = '';
                             _skyMonitorFeedbackTurnstileNeedsReset = true;
                             if (!_skyMonitorFeedbackSending && status) {
-                                status.textContent = 'Cloudflare verification had a problem. Tap Send report to retry.';
+                                status.textContent = getSiteErrorText('FBK-502-UPSTREAM');
                                 status.style.color = 'var(--warning)';
                             }
                         }
@@ -5125,7 +5135,7 @@
                 );
                 _skyMonitorFeedbackTurnstileNeedsReset = false;
             } catch (error) {
-                status.textContent = 'Could not load Cloudflare verification. Tap Send report to retry.';
+                status.textContent = getSiteErrorText('FBK-503-UNAVAILABLE');
                 status.style.color = 'var(--warning)';
             }
             return;
@@ -5136,7 +5146,7 @@
                 turnstile.reset(_skyMonitorFeedbackTurnstileWidgetId);
                 _skyMonitorFeedbackTurnstileNeedsReset = false;
             } catch (error) {
-                status.textContent = 'Could not reset Cloudflare verification. Tap Send report to retry.';
+                status.textContent = getSiteErrorText('FBK-503-UNAVAILABLE');
                 status.style.color = 'var(--warning)';
             }
         }
@@ -5230,8 +5240,8 @@
                 _skyMonitorFeedbackTurnstileNeedsReset = true;
                 if (status) {
                     status.textContent = response.status === 403
-                        ? 'Verification expired. Complete the Cloudflare check again.'
-                        : (result.error || 'Could not send your report. Complete the check to retry.');
+                        ? getSiteErrorText('FBK-403-VERIFY')
+                        : feedbackErrorText(response.status, result.errorCode);
                     status.style.color = 'var(--warning)';
                 }
                 return;
@@ -5255,8 +5265,8 @@
             _skyMonitorFeedbackTurnstileNeedsReset = true;
             if (status) {
                 status.textContent = error && error.name === 'AbortError'
-                    ? 'Sending took too long. Complete the Cloudflare check to retry.'
-                    : 'Could not send your report. Check your connection and complete the check to retry.';
+                    ? getSiteErrorText('FBK-504-TIMEOUT')
+                    : feedbackErrorText(0, '');
                 status.style.color = 'var(--warning)';
             }
         } finally {
@@ -5981,7 +5991,9 @@
                 _rememberGpsLocation(lat, lon);
                 recalculateReportPinForLocation(lat, lon, true, true);
                 updateLocation();
-            }, function() { alert('GPS Access Denied'); });
+            }, function() {
+                alert('Location access was denied. Allow it in your browser settings or enter a city or coordinates.');
+            });
         }
     }
 
@@ -14494,12 +14506,12 @@
             // enrichment request failed while the primary weather is online.
             if (!_isOffline) {
                 var unavailable = document.getElementById('twc-daily-forecast');
-                if (unavailable) unavailable.innerHTML = "<div style='opacity:0.6'>Forecast temporarily unavailable.</div>";
+                if (unavailable) unavailable.textContent = getSiteErrorText('WX-503-UNAVAILABLE');
                 return;
             }
             SkyDB.get(SkyDB.S.weather, 'twc_forecast').then(function(cached) {
                 if (cached && cached.data) renderTWCForecast(cached.data);
-                else document.getElementById('twc-daily-forecast').innerHTML = "<div style='opacity:0.6'>Forecast unavailable.</div>";
+                else document.getElementById('twc-daily-forecast').textContent = 'Forecast unavailable while offline.';
             });
         }
     }
@@ -14947,7 +14959,8 @@
         window.twcForecastData = data;
         const cont = document.getElementById('twc-daily-forecast'); cont.innerHTML = '';
         if (!data || !Array.isArray(data.dayOfWeek) || !data.dayOfWeek.length || !data.daypart || !Array.isArray(data.daypart[0].iconCode)) {
-            cont.innerHTML = "<div style='opacity:0.7'>Forecast unavailable</div>"; return;
+            cont.textContent = getSiteErrorText('WX-503-UNAVAILABLE');
+            return;
         }
         const daypart = data.daypart[0];
         // Store today's daytime max feels-like for use in Outdoor Score
@@ -16435,7 +16448,9 @@
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
         const url = 'https://api.weather.gov/alerts/active?point='
             + encodeURIComponent(latlng.lat.toFixed(4) + ',' + latlng.lng.toFixed(4));
-        const unavailable = '<span style="opacity:0.72;">Full alert text is temporarily unavailable. Try refreshing the map.</span>';
+        const unavailable = '<span style="opacity:0.72;">' +
+            escapeHtml(getSiteErrorText('ALERT-502-UPSTREAM', 'Full alert text is temporarily unavailable. Try refreshing the map.')) +
+            '</span>';
         try {
             const res = await fetch(url, { headers: { 'Accept': 'application/geo+json' } });
             if (!res.ok) return unavailable;
@@ -18431,7 +18446,7 @@
                  activateHistoricalRadarForAlert(historicalDeepLinkFeature);
              }
         } catch (e) {
-            setCustomSkyAlertsStatus('Failed to fetch', '#ffb74d');
+            setCustomSkyAlertsStatus(getSiteErrorText('ALERT-502-UPSTREAM'), '#ffb74d');
         }
     }
 
@@ -18700,7 +18715,7 @@
             if (requestId !== liveRadarRequestId ||
                 historicalRadarState.active) return;
             liveRadarInitialLoadComplete = false;
-            _setHistoricalRadarStatus('Live radar unavailable; retrying\u2026', '#ffb74d');
+            _setHistoricalRadarStatus(getSiteErrorText('RAD-502-UPSTREAM') + ' Retrying…', '#ffb74d');
             console.warn('[SkyMonitor] LibreWXR radar failed:', error);
         });
     }
@@ -18889,7 +18904,7 @@
                  singleSiteRadarProducts = [];
                  setSingleSiteRadarProductOptions([]);
                  _ensureLiveRadarLayer();
-                 setSingleSiteRadarStatus('Products unavailable; mosaic active');
+                 setSingleSiteRadarStatus('Products unavailable; mosaic active (Code: RAD-502-UPSTREAM)');
              });
          }
 
@@ -19212,7 +19227,7 @@
              nextLayer.on('tileerror', function() {
                  if (requestId !== historicalRadarLayerRequestId ||
                      !historicalRadarState.active) return;
-                 _setHistoricalRadarStatus('Radar frame unavailable. Try the adjacent frame.', '#ffb74d');
+                 _setHistoricalRadarStatus(getSiteErrorText('RAD-502-UPSTREAM') + ' Try the adjacent frame.', '#ffb74d');
              });
              historicalRadarLayerTransition = {
                  requestId: requestId,
@@ -19275,7 +19290,7 @@
                   // available and starts a new, independent tile request.
                   _markHistoricalRadarLoadingPart('radar', loadToken);
                   _setHistoricalRadarStatus(
-                      'Radar frame unavailable. Try the adjacent frame.',
+                      getSiteErrorText('RAD-502-UPSTREAM') + ' Try the adjacent frame.',
                       '#ffb74d'
                   );
               }, HISTORICAL_RADAR_TRANSITION_TIMEOUT_MS);
@@ -20456,7 +20471,7 @@
             singleSiteRadarLocationKey = '';
             _clearSingleSiteRadarSites();
             _ensureLiveRadarLayer();
-            setSingleSiteRadarStatus('Unavailable; mosaic active');
+            setSingleSiteRadarStatus('Unavailable; mosaic active (Code: RAD-502-UPSTREAM)');
         });
         updateUSOnlyLayerLabels();
     }
@@ -20706,7 +20721,7 @@
             const rawLo = pos.coords.longitude;
             recalculateReportPinForLocation(rawLa, rawLo, true, true);
         }, function() {
-            alert('Could not get your location. Check browser permissions.');
+            alert('Location could not be determined. Check browser permissions or enter a city or coordinates.');
         }, { enableHighAccuracy: true, timeout: 8000 });
     }
 
@@ -20774,7 +20789,7 @@
         }).catch(function() {
             // Never fall back to raw coordinates. The existing offset pin is
             // safer than showing the user's exact location if lookup fails.
-            if (showError) alert('Could not resolve a privacy-safe neighborhood or city center. Your report pin was not moved.');
+            if (showError) alert(getSiteErrorText('LOC-502-PRIVACY'));
             return false;
         });
     }
@@ -21116,7 +21131,7 @@
             ['Issued by', formatNwsIssuedBy('', props.wfo)],
             ['Valid through', reportingAlertExpiryValue(props)
                 ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(props)) : ''],
-            ['Alert text', 'The archived NWS text product is temporarily unavailable.']
+            ['Alert text', 'The archived NWS text product is temporarily unavailable. (Code: ALERT-502-UPSTREAM)']
         ]);
         const promise = (async function() {
             const productMatch = productId.match(/^(\d{4})/);
@@ -21823,14 +21838,89 @@
         'RPT-503-MODERATION': 'Report submission is temporarily unavailable. Please try again.',
         'RPT-503-STORAGE': 'Report submission is temporarily unavailable. Please try again.',
         'RPT-503-SERVER': 'The report service is temporarily unavailable. Please try again.',
-        'RPT-504-TIMEOUT': 'No confirmation arrived in time. Retrying the same report is safe; edited details may need a new submission.'
+        'RPT-504-TIMEOUT': 'No confirmation arrived in time. Retrying the same report is safe; edited details may need a new submission.',
+        'RPT-429-RATE-LIMIT': 'Too many report attempts were made. Wait a moment, then try again.'
     });
+
+    // Site codes follow FEATURE-HTTP-REASON. Existing RPT-* codes keep their
+    // established names; simple validation and offline guidance stay uncoded.
+    const SITE_ERROR_FEATURE_NAMES = Object.freeze({
+        WX: 'Weather data',
+        ALERT: 'Alert data',
+        GEO: 'Geographic data',
+        NOTIF: 'Notification setup',
+        FBK: 'Feedback',
+        ADMIN: 'The alert editor'
+    });
+    const SITE_ERROR_MESSAGES = Object.freeze({
+        'LOC-502-SEARCH': 'Location search is temporarily unavailable. Please try again shortly.',
+        'LOC-502-PRIVACY': 'A privacy-safe area could not be found. Your report pin was not moved.',
+        'RAD-502-UPSTREAM': 'Radar data is temporarily unavailable. Please try again shortly.',
+        'RAD-503-IMAGERY': 'Satellite imagery is temporarily unavailable. Please try again later.',
+        'TRP-503-FEEDS': 'Tropical storm data is temporarily unavailable. Please try again later.',
+        'FBK-400-INPUT': 'Check the required details and try again.',
+        'FBK-403-VERIFY': 'Verification expired. Complete the Cloudflare check again.',
+        'FBK-500-SERVER': 'Feedback could not be sent. Please try again.',
+        'FBK-502-UPSTREAM': 'Feedback could not be sent right now. Please try again shortly.',
+        'FBK-503-UNAVAILABLE': 'Feedback is temporarily unavailable. Please try again later.',
+        'FBK-504-TIMEOUT': 'Sending took too long. Complete the Cloudflare check and try again.'
+    });
+
+    function getSiteErrorText(errorCode, fallbackText) {
+        const code = String(errorCode || '');
+        if (Object.prototype.hasOwnProperty.call(REPORT_ERROR_MESSAGES, code)) {
+            return REPORT_ERROR_MESSAGES[code] + ' (Code: ' + code + ')';
+        }
+        if (Object.prototype.hasOwnProperty.call(SITE_ERROR_MESSAGES, code)) {
+            return SITE_ERROR_MESSAGES[code] + ' (Code: ' + code + ')';
+        }
+        const match = code.match(/^(WX|ALERT|GEO|NOTIF|FBK|ADMIN)-(\d{3})-([A-Z-]+)$/);
+        if (match) {
+            const status = Number(match[2]);
+            const expectedReason = status === 429 ? 'RATE-LIMIT'
+                : status === 502 ? 'UPSTREAM'
+                    : status === 503 ? 'UNAVAILABLE'
+                        : status === 504 ? 'TIMEOUT'
+                            : status >= 500 && status < 600 ? 'SERVER' : '';
+            if (expectedReason && match[3] === expectedReason) {
+                const label = SITE_ERROR_FEATURE_NAMES[match[1]];
+                const message = status === 429
+                    ? label + ' is busy. Wait a moment and try again.'
+                    : status === 502
+                        ? 'A ' + label.toLowerCase() + ' source is temporarily unavailable. Please try again shortly.'
+                        : status === 503
+                            ? label + ' is temporarily unavailable. Please try again later.'
+                            : status === 504
+                                ? 'The ' + label.toLowerCase() + ' request took too long. Check your connection and try again.'
+                                : label + ' could not complete the request. Please try again.';
+                return message + ' (Code: ' + code + ')';
+            }
+        }
+        return fallbackText || 'This action could not be completed. Please try again.';
+    }
+
+    function feedbackErrorText(statusCode, errorCode) {
+        const code = String(errorCode || '');
+        if (/^FBK-(?:429|5\d{2})-[A-Z-]+$/.test(code)) {
+            return getSiteErrorText(code);
+        }
+        const fallbackCode = statusCode === 400 ? 'FBK-400-INPUT'
+            : statusCode === 403 ? 'FBK-403-VERIFY'
+                : statusCode === 504 ? 'FBK-504-TIMEOUT'
+                    : statusCode === 503 ? 'FBK-503-UNAVAILABLE'
+                        : statusCode === 500 ? 'FBK-500-SERVER'
+                            : 'FBK-502-UPSTREAM';
+        return getSiteErrorText(fallbackCode);
+    }
 
     function getReportErrorText(errorPayload, statusCode) {
         const code = String(errorPayload && errorPayload.errorCode || '');
         if (Object.prototype.hasOwnProperty.call(REPORT_ERROR_MESSAGES, code)) {
             const message = REPORT_ERROR_MESSAGES[code];
             return message + ' (Code: ' + code + ')';
+        }
+        if (/^RPT-5\d{2}-SERVER$/.test(code)) {
+            return 'The report service could not complete the request. Please try again. (Code: ' + code + ')';
         }
 
         const safeMessages = [
@@ -21846,6 +21936,8 @@
             ? 'RPT-400-INPUT'
             : statusCode === 403
                 ? 'RPT-403-VERIFY'
+                : statusCode === 429
+                    ? 'RPT-429-RATE-LIMIT'
                 : statusCode === 409
                     ? 'RPT-409-CONFLICT'
                     : statusCode === 504
@@ -21854,7 +21946,9 @@
                             ? 'RPT-503-SERVER'
                             : statusCode === 502
                                 ? 'RPT-502-SERVER'
-                                : 'RPT-500-SERVER';
+                                : statusCode >= 500 && statusCode < 600
+                                    ? 'RPT-' + statusCode + '-SERVER'
+                                    : 'RPT-500-SERVER';
         return REPORT_ERROR_MESSAGES[fallbackCode] + ' (Code: ' + fallbackCode + ')';
     }
 
@@ -22001,7 +22095,7 @@
                     ? 'You cannot send reports when offline. Please reconnect and retry.'
                     : timedOut
                         ? REPORT_ERROR_MESSAGES['RPT-504-TIMEOUT'] + ' (Code: RPT-504-TIMEOUT)'
-                        : 'Report failed. Please try again.';
+                        : REPORT_ERROR_MESSAGES['RPT-502-SERVER'] + ' (Code: RPT-502-SERVER)';
                 status.style.color = 'var(--warning)';
             }
         } finally {
@@ -23093,7 +23187,7 @@
             console.warn('[SkyMonitor tropical tracker] LibreWXR satellite failed:', error);
             var status = document.getElementById('tropical-route-status');
             if (status && tropicalRouteMapMode === 'satellite') {
-                status.textContent = 'LibreWXR satellite imagery is temporarily unavailable.';
+                status.textContent = getSiteErrorText('RAD-503-IMAGERY');
             }
         }).finally(function() {
             tropicalRouteSatelliteLoadPromise = null;
@@ -24340,7 +24434,7 @@
                                 : 'No named storms are active; NWS tropical alerts are available in map layers.')
                             : 'No active tropical systems or disturbance areas are currently published by the NHC or JTWC.');
                     if (tropicalRouteNWSAlertsUnavailable) {
-                        status.textContent += ' The NWS tropical alert feed is temporarily unavailable.';
+                        status.textContent += ' ' + getSiteErrorText('ALERT-502-UPSTREAM');
                     } else if (tropicalRouteNWSAlertsUnmappedCount) {
                         status.textContent += ' ' + tropicalRouteNWSAlertsUnmappedCount +
                             (tropicalRouteNWSAlertsUnmappedCount === 1
@@ -24374,12 +24468,12 @@
             }
             if (status) {
                 status.textContent = tropicalRouteNWSAlertsUnavailable
-                    ? 'The NWS tropical alert feed is temporarily unavailable.'
+                    ? getSiteErrorText('ALERT-502-UPSTREAM')
                     : (tropicalRouteNWSAlertsUnmappedCount
                         ? tropicalRouteNWSAlertsUnmappedCount +
                             (tropicalRouteNWSAlertsUnmappedCount === 1
-                                ? ' NWS alert boundary could not be retrieved.'
-                                : ' NWS alert boundaries could not be retrieved.')
+                                ? ' NWS alert boundary could not be retrieved. (Code: ALERT-502-UPSTREAM)'
+                                : ' NWS alert boundaries could not be retrieved. (Code: ALERT-502-UPSTREAM)')
                         : '');
             }
             var focusIndex = null;
@@ -24398,7 +24492,7 @@
             _drawTropicalNWSAlerts();
         } catch (error) {
             console.warn('[SkyMonitor tropical tracker] load failed:', error);
-            if (status) status.textContent = 'Tropical data is temporarily unavailable. Retry to check the official NHC and JTWC feeds.';
+            if (status) status.textContent = getSiteErrorText('TRP-503-FEEDS');
         }
     }
 
@@ -25041,7 +25135,7 @@
         if (numEl) { numEl.innerText = '--'; numEl.style.color = '#888'; }
         if (catEl) { catEl.innerText = 'Unavailable'; catEl.style.color = '#888'; }
         if (pollEl) pollEl.innerText = 'Source: ' + (sourceLabel || 'AirNow');
-        if (healthEl) healthEl.innerText = message || 'Air quality data is temporarily unavailable.';
+        if (healthEl) healthEl.innerText = message || getSiteErrorText('WX-503-UNAVAILABLE');
     }
 
     // AQI is proxied through the weather Worker. AirNow remains authoritative
@@ -25108,7 +25202,7 @@
         } catch(e) {
             console.warn('[SkyMonitor AQI] Open-Meteo fallback failed:', e);
             if (_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) {
-                _renderAQIUnavailable('AirNow and Open-Meteo are temporarily unavailable.', 'Open-Meteo');
+                _renderAQIUnavailable(getSiteErrorText('WX-503-UNAVAILABLE'), 'Open-Meteo');
             }
         }
     }
@@ -26113,8 +26207,10 @@
             ptr_pulling = false; ptrActive = true;
             ptrIndicator.innerText = '\u21BB Refreshing...';
             loadAll().then(function() {
-                if (_isOffline) {
-                    ptrIndicator.innerText = '\u2717 Refresh failed';
+                if (_isOffline || window._syncLoadFailed) {
+                    ptrIndicator.innerText = _isOffline
+                        ? 'Offline — showing saved data'
+                        : 'Some data could not be refreshed. (Code: WX-502-UPSTREAM)';
                     ptrIndicator.style.background = 'rgba(255,82,82,0.2)';
                     ptrIndicator.style.borderColor = '#ff5252';
                     ptrIndicator.style.color = '#ff5252';
@@ -26239,6 +26335,32 @@
         var prefsBtn = document.getElementById('notif-prefs-btn');
         if (prefsBtn) prefsBtn.style.display = enabled ? 'inline-block' : 'none';
     }
+
+    function pushErrorText(error) {
+        var code = String(error && error.errorCode || '');
+        if (/^NOTIF-(?:429|5\d{2})-[A-Z-]+$/.test(code)) {
+            return getSiteErrorText(code);
+        }
+        var status = Number(error && error.status);
+        var fallbackCode = status === 504 ? 'NOTIF-504-TIMEOUT'
+            : status === 503 ? 'NOTIF-503-UNAVAILABLE'
+                : status === 502 ? 'NOTIF-502-UPSTREAM'
+                    : status === 500 ? 'NOTIF-500-SERVER'
+                        : 'NOTIF-502-UPSTREAM';
+        return getSiteErrorText(fallbackCode);
+    }
+
+    function readPushResponse(response) {
+        return response.json().catch(function() { return {}; }).then(function(payload) {
+            if (!response.ok) {
+                throw {
+                    status: response.status,
+                    errorCode: payload && payload.errorCode
+                };
+            }
+            return payload;
+        });
+    }
     
     function togglePushNotifications() {
         var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -26259,23 +26381,23 @@
         _swReg.pushManager.getSubscription().then(function(existing) {
             if (existing) {
                 existing.unsubscribe().then(function() {
-                    return fetch(SKYMONITOR_API + '/api/push/unsubscribe', { method: 'DELETE', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ endpoint: existing.endpoint }) });
+                    return fetch(SKYMONITOR_API + '/api/push/unsubscribe', {
+                        method: 'DELETE',
+                        headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({ endpoint: existing.endpoint })
+                    }).then(readPushResponse);
                 }).then(function() {
                     _setNotifBtnState(false);
-                }).catch(function() { alert('Could not turn off notifications. Please try again in a moment.'); });
+                }).catch(function(error) { alert(pushErrorText(error)); });
             } else {
-                fetch(SKYMONITOR_API + '/api/push/vapid-public-key').then(function(r) {
-                    if (!r.ok) { alert('Could not start notification setup (server error ' + r.status + '). Please try again in a moment.'); return null; }
-                    return r.json();
-                }).then(function(data) {
-                    if (!data) return;
+                fetch(SKYMONITOR_API + '/api/push/vapid-public-key')
+                .then(readPushResponse)
+                .then(function(data) {
                     return Notification.requestPermission().then(function(perm) {
                         if (perm !== 'granted') { alert('Notification permission was denied. Check your browser or phone notification settings for SkyMonitor.'); return; }
                         return _swReg.pushManager.subscribe({
                             userVisibleOnly: true,
                             applicationServerKey: _urlB64ToUint8(data.publicKey)
-                        }).catch(function(e) {
-                            alert('Could not enable notifications on this device. Please try again in a moment.'); throw e;
                         });
                     });
                 }).then(function(sub) {
@@ -26292,11 +26414,13 @@
                             gpsCountryCode: window._gpsCountryCode || '',
                             prefs: getNotifPrefs()
                         })
-                    }).catch(function(e) {
-                        alert('Notifications could not be fully set up. Please try again in a moment.'); throw e;
-                    }).then(function() { _setNotifBtnState(true); });
-                }).catch(function() {});
+                    }).then(readPushResponse).then(function() { _setNotifBtnState(true); });
+                }).catch(function(error) {
+                    alert(pushErrorText(error));
+                });
             }
+        }).catch(function(error) {
+            alert(pushErrorText(error));
         });
     }
 
