@@ -2587,7 +2587,7 @@
             <p>As you have already noticed from using the site, SkyMonitor uses your current location ONLY if you provide us access to it (you can still use SkyMonitor perfectly fine even if you deny location permissions), and we use your current location to provide you with the most accurate, precise information for your exact location. This is especially important on SkyMonitor, as we use the Weather Underground PWS network, which has many PWS (Personal Weather Stations) around the world. You can check out the official web page for WU’s PWS network here: <a href="https://www.wunderground.com/pws/overview" target="_blank" rel="noopener noreferrer">https://www.wunderground.com/pws/overview</a>. WU has a massive network of PWS’s, and there is most likely one in your city, if not even down the street. This is one of the major benefits of using SkyMonitor, as every time you check the current conditions, you are seeing real observations from physical weather stations around the globe, not just model estimates or far-away airport observations. (Though it should be noted that the current weather, for example, whether it’s sunny, cloudy, or rainy, does use either your nearest airport or a model estimate, as WU PWS’s do not provide that kind of information.)</p>
 
             <h3>What other features on the site use your location?</h3>
-            <p>The other two features on SkyMonitor that use your location data are push notifications and user reporting. These are both optional features, as is location access in general, but it’s important for you to know as the user what kind of your data is being sent to us, especially on the internet nowadays. When you enable push notifications (which can ONLY be done if you have added the website to your home screen on your phone; this can NOT be done through the web browser), every time you open SkyMonitor, we ping your location to check if there are any notifications that need to be sent to you. SkyMonitor is designed to use your location when the site is open. It does not intentionally request continuous background location updates. When you submit a user report, your exact location is not published as the report location. SkyMonitor adjusts the report marker before submission. SkyMonitor will automatically change the report location to anywhere within around 500 feet (or 150 meters) of your location. There is also a separate feature called “Privacy Mode” that you can enable, which will instead send reports from the center of your nearest named neighborhood or community area when one is available, otherwise the center of the containing city or town, for extra privacy. It should also be noted that you can clearly see where your report pin is placed on the map, and you can move it to your liking. You will then be prompted to choose a category for the user report, and you can optionally add any extra information about the report you are making in the text box provided.</p>
+            <p>The other two features on SkyMonitor that use your location data are push notifications and user reporting. These are both optional features, as is location access in general, but it’s important for you to know as the user what kind of your data is being sent to us, especially on the internet nowadays. When you enable push notifications (which can ONLY be done if you have added the website to your home screen on your phone; this can NOT be done through the web browser), every time you open SkyMonitor, we ping your location to check if there are any notifications that need to be sent to you. SkyMonitor is designed to use your location when the site is open. It does not intentionally request continuous background location updates. When you submit a user report, your exact location is not published as the report location. SkyMonitor adjusts the report marker before submission. SkyMonitor will automatically change the report location to anywhere within around 500 feet (or 150 meters) of your location. There is also a separate feature called “Privacy Mode” that you can enable, which will instead send reports from the center of your nearest named neighborhood or community area when one is available, otherwise the center of the containing city or town, for extra privacy. The report pin is shown on the map so you can review its privacy-adjusted location; it cannot be moved manually. You will then be prompted to choose a category for the user report, and you can optionally add any extra information about the report you are making in the text box provided.</p>
 
             <h3>What does SkyMonitor store on your browser?</h3>
             <p>SkyMonitor stores your settings, selected locations, notification preferences, and cached weather information on your browser. The reason we store this is so that every time you visit SkyMonitor from the same device, you won’t have to change your settings to how you like them every time. We also cache weather information, as SkyMonitor can actually be used completely offline, provided you have added it to your home screen on your phone. No other data is ever stored on your browser by SkyMonitor.</p>
@@ -18422,10 +18422,6 @@
                         reportingPopupEntries[reportingPopupEntries.length - 1]
                     );
                 }
-                polygon.on('dblclick', function(e) {
-                    L_ref.DomEvent.stop(e);
-                    setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-                });
                 polygon.addTo(customSkyAlertLayer);
                 renderedCount++;
             });
@@ -18494,7 +18490,7 @@
         if (!reportPinIcon) {
             reportPinIcon = window.L.divIcon({
                 className: '',
-                html: '<div style="width:16px;height:16px;background:#4fc3f7;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #4fc3f7,0 2px 8px rgba(0,0,0,0.7);cursor:grab;"></div>',
+                html: '<div style="width:16px;height:16px;background:#4fc3f7;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 2px #4fc3f7,0 2px 8px rgba(0,0,0,0.7);cursor:default;"></div>',
                 iconSize: [16, 16],
                 iconAnchor: [8, 8]
             });
@@ -18502,9 +18498,8 @@
         return reportPinIcon;
     }
 
-    // The report pin is independent from the data layers. LSR/custom-alert
-    // refreshes clear and re-add their own layers, so all map transitions must
-    // be safe to repeat and must repair a detached pin.
+    // The report pin is non-draggable and is positioned only by GPS/Find Me or
+    // Privacy Mode. Data-layer refreshes must safely restore its map layer.
     function ensureReportPinMarker() {
         if (!reportingMap || !window.L || reportLat == null || reportLon == null) return false;
         if (!isFinite(Number(reportLat)) || !isFinite(Number(reportLon))) return false;
@@ -18522,20 +18517,10 @@
         }
         reportPinMarker = window.L.marker([Number(reportLat), Number(reportLon)], {
             icon: _getReportPinIcon(),
-            draggable: true,
+            draggable: false,
             zIndexOffset: 1000,
             pane: 'reportPinPane'
         }).bindTooltip('Report location', { permanent: false }).addTo(reportingMap);
-        reportPinMarker.on('dragend', function(e) {
-            const pos = e.target.getLatLng();
-            const nextLat = parseFloat(pos.lat.toFixed(5));
-            const nextLon = parseFloat(pos.lng.toFixed(5));
-            reportLat = nextLat;
-            reportLon = nextLon;
-            localStorage.setItem('skymonitor_report_pin_lat', String(reportLat));
-            localStorage.setItem('skymonitor_report_pin_lon', String(reportLon));
-            updatePinCoordsDisplay();
-        });
         return true;
     }
 
@@ -20721,7 +20706,7 @@
             const rawLo = pos.coords.longitude;
             recalculateReportPinForLocation(rawLa, rawLo, true, true);
         }, function() {
-            alert('Location could not be determined. Check browser permissions or enter a city or coordinates.');
+            alert('Location could not be determined. Check your browser location permissions and try again.');
         }, { enableHighAccuracy: true, timeout: 8000 });
     }
 
@@ -20974,12 +20959,8 @@
         });
         reportingMap.addLayer(userReportLayer);
 
-        const isMobile = window.matchMedia('(pointer: coarse)').matches;
-        
-
-        // Only GPS-sourced locations get an automatic report pin. Manual users
-        // can still place one explicitly with a double-click or by dragging a
-        // pin after one has been created.
+        // Only GPS-sourced locations get an automatic report pin. Map gestures
+        // never change a report location; use Find Me to refresh it.
         if (reportLat != null && reportLon != null) ensureReportPinMarker();
         window._reportPinInitialized = true;
 
@@ -20987,18 +20968,6 @@
         if (firstReportMapInit && gpsSourcedAtInit && privacyEnabledAtInit && _privacyCb && _privacyCb.checked) {
             moveReportPinToPrivacyCenter(rawLat, rawLon, false);
         }
-
-        // Double-click/double-tap to move pin — manual timer is more reliable than native dblclick on mobile
-        let _dblTapTimer = null;
-        reportingMap.on('click', function(e) {
-            if (_dblTapTimer) {
-                clearTimeout(_dblTapTimer);
-                _dblTapTimer = null;
-                setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-            } else {
-                _dblTapTimer = setTimeout(function() { _dblTapTimer = null; }, 350);
-            }
-        });
 
         syncReportingMapLayers();
         ensureReportPinMarker();
@@ -21379,10 +21348,6 @@
                         return loadHistoricalNwsDetails(props);
                     }
                 });
-                polygon.on('dblclick', function(e) {
-                    L_ref.DomEvent.stop(e);
-                    setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-                });
                 polygon.addTo(alertPolygonLayer);
             });
             openDeepLinkedNwsRadarAlert();
@@ -21534,10 +21499,6 @@
                                 ['Instructions', popupCopy.instructions]
                             ])
                         });
-                        polygon.on('dblclick', function(e) {
-                            L_ref.DomEvent.stop(e);
-                            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
-                        });
                         polygon.addTo(alertPolygonLayer);
                     });
                 }
@@ -21585,10 +21546,6 @@
                                     f.properties.wfo || ''
                                 );
                             }
-                        });
-                        _poly.on('dblclick', function(e) {
-                            L_ref.DomEvent.stop(e);
-                            setReportPin(parseFloat(e.latlng.lat.toFixed(5)), parseFloat(e.latlng.lng.toFixed(5)));
                         });
                         _poly.addTo(alertPolygonLayer);
                     });
