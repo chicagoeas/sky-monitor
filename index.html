@@ -22054,9 +22054,16 @@
                 // The Worker uses 403 specifically when Turnstile rejects or
                 // has expired. Re-open the visible gate so the user can
                 // recover without guessing why the submission failed.
-                var needsVerification = res.status === 403;
-                invalidateTurnstile();
-                if (needsVerification) {
+                var blockedByIp = reportError &&
+                    reportError.errorCode === 'RPT-403-IP-BLOCKED';
+                var needsVerification = res.status === 403 && !blockedByIp;
+                if (!blockedByIp) invalidateTurnstile();
+                if (blockedByIp) {
+                    if (status) {
+                        status.textContent = 'You are not allowed to issue reports. Please contact us at contact@skymonitor.app if you think this is an error.';
+                        status.style.color = 'var(--danger)';
+                    }
+                } else if (needsVerification) {
                     // Do not erase the device-level verification just because
                     // a one-use renewal token failed. The user should not be
                     // challenged again on the next visit.
