@@ -9018,43 +9018,53 @@
 
         try {
             let data = null;
-            const alertUrl = 'https://api.weather.gov/alerts/active?point=' + lat + ',' + lon;
-            let lastAlertError = null;
-            // NWS alert data is safety-critical. Retry the authoritative point
-            // query before allowing the refresh to finish. cache:no-store also
-            // prevents a browser/service-worker response from masking a new
-            // warning at the selected location.
-            for (let alertAttempt = 0; alertAttempt < 3; alertAttempt++) {
+            const requestSignal = window._weatherRequestController
+                ? window._weatherRequestController.signal
+                : undefined;
+            const alertUrl = WEATHER_WORKER_URL + '/api/weather/nws-alerts?lat=' +
+                encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon);
+            const directAlertUrl = 'https://api.weather.gov/alerts/active?point=' +
+                encodeURIComponent(lat) + ',' + encodeURIComponent(lon);
+            let workerAlertError = null;
+            try {
+                // The edge route returns a very short-lived cached result when
+                // available and caps its upstream NWS wait at five seconds.
+                const res = await _weatherFetch(alertUrl, {
+                    cache: 'no-store',
+                    signal: requestSignal
+                }, 6500);
+                if (!res.ok) throw new Error('NWS alert worker ' + res.status);
+                data = await res.json();
+                if (!data || !Array.isArray(data.features)) {
+                    throw new Error('NWS alerts response missing features');
+                }
+            } catch (alertErr) {
+                workerAlertError = alertErr;
+                if (requestSignal && requestSignal.aborted) throw alertErr;
+                // Keep a direct NOAA path if the edge route itself is down.
+                // This is one bounded fallback, rather than three serial
+                // 12-second attempts that could hold the Severe view for 40s.
                 try {
-                    // api.weather.gov rejects unknown query parameters with 400.
-                    // cache:no-store below already prevents a stale browser or
-                    // service-worker response, so no custom cache-busting
-                    // parameter is needed here.
-                    const res = await _weatherFetch(alertUrl, {
+                    const res = await _weatherFetch(directAlertUrl, {
                         cache: 'no-store',
-                        signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
-                    }, 12000);
-                    if (!res.ok) throw new Error('NWS alerts ' + res.status);
-                    const candidate = await res.json();
-                    if (!candidate || !Array.isArray(candidate.features)) {
+                        signal: requestSignal
+                    }, 7000);
+                    if (!res.ok) {
+                        throw new Error('NWS alerts ' + res.status +
+                            (workerAlertError ? ' after edge request failed' : ''));
+                    }
+                    data = await res.json();
+                    if (!data || !Array.isArray(data.features)) {
                         throw new Error('NWS alerts response missing features');
                     }
-                    data = candidate;
-                    lastAlertError = null;
-                    break;
-                } catch (alertErr) {
-                    lastAlertError = alertErr;
-                    if (window._weatherRequestController &&
-                        window._weatherRequestController.signal.aborted) throw alertErr;
-                    if (alertAttempt < 2) {
-                        await new Promise(function(resolve) {
-                            setTimeout(resolve, 750 * (alertAttempt + 1));
-                        });
-                    }
+                } catch (directAlertError) {
+                    if (requestSignal && requestSignal.aborted) throw directAlertError;
+                    console.warn('[SkyMonitor] NWS alert requests failed:', directAlertError);
+                    return await _tryInternationalAlertFallback(stack, banner, checklist);
                 }
             }
             if (!data) {
-                console.warn('[SkyMonitor] NWS alerts did not finish after retries:', lastAlertError);
+                console.warn('[SkyMonitor] NWS alerts did not finish:', workerAlertError);
                 // NWS is the first provider in the chain. If it cannot
                 // answer, try the international providers before preserving
                 // the previous display.
@@ -25863,6 +25873,21 @@
                     }).catch(function() {
                         loadFailed = true;
                     });
+                    // Start safety-critical alert loading as soon as location
+                    // coverage is known; optional AQI, beach, and forecast feeds
+                    // must not sit in front of the NWS alert cards.
+                    const _alertsPromise = _nwsHomePromise.then(function() {
+                        if (loadGeneration !== weatherLoadGeneration) return false;
+                        return fetchAlerts();
+                    }).then(function(alertsOk) {
+                        if (alertsOk === true &&
+                            loadGeneration === weatherLoadGeneration) {
+                            computeThreatLevel();
+                        }
+                        return alertsOk;
+                    }).catch(function() {
+                        return false;
+                    });
                     const _openWeatherPromise = Promise.resolve(fetchOpenWeather()).catch(function() {});
                     const _twcPromise = Promise.resolve(fetchTWCForecast()).catch(function() {});
 
@@ -25889,15 +25914,16 @@
                     // this is outside the US, replace any US result.
                     if (window.isOutsideUS) await _fetchAQIFromOpenMeteo(loadLat, loadLon, loadGeneration);
 
-                    const _alertsOk = await fetchAlerts();
+                    const _alertsOk = await _alertsPromise;
                     if (_alertsOk !== true) loadFailed = true;
+                    const _riskLevelsPromise = Promise.resolve(fetchRiskLevels()).catch(function() {});
                     // Re-render beach data after alerts so BHS/rip-current
                     // banners are included when applicable.
                     await loadCustomSkyThreatAlerts();
                     if (loadGeneration !== weatherLoadGeneration) return;
                     renderCustomSkyHazards();
                     await fetchBeachForecast(loadLat, loadLon, loadGeneration);
-                    await fetchRiskLevels();
+                    await _riskLevelsPromise;
                     if (activeOutlookCenter === 'nhc') {
                         updateOutlookMap('nhc', null);
                         startNHCCountdown();
