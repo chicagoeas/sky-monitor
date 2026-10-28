@@ -2466,7 +2466,7 @@
                 <button id="opt-unit-custom" class="btn-opt" onclick="openCustomUnits()">CUSTOM</button>
             </div>
         </div>
-        <div class="settings-row" id="notif-settings-row">
+        <div class="settings-row" id="notif-settings-row" style="display:none;">
             <span class="settings-label">Alert Notifications</span>
             <div style="display:flex; gap:6px; align-items:center;">
                 <button id="notif-toggle-btn" onclick="togglePushNotifications()" style="flex:1; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; transition:0.2s; background:rgba(255,255,255,0.08); color:white;">&#128276; Enable Notifications</button>
@@ -3612,6 +3612,14 @@
     window.meteoAlarmAlerts = [];
     window.environmentCanadaAlerts = [];
     window.locationCountryCode = '';
+    window._locationCountryCoordsKey = '';
+    function _locationCountryKeyFor(latitude, longitude) {
+        // Country eligibility should not flicker from small live-GPS changes.
+        // The location is still reverse-geocoded on refresh; this coarse key
+        // only controls whether the previously resolved country is cleared.
+        return (Math.round(Number(latitude) * 10) / 10).toFixed(1) + ',' +
+            (Math.round(Number(longitude) * 10) / 10).toFixed(1);
+    }
     window.locationState = '';
     window.wuDeviates = false;
     window.chartInstances = {};
@@ -4920,7 +4928,6 @@
         }
         localStorage.setItem('unit_system', val);
         syncUnitControls();
-        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         loadAll();
     }
 
@@ -4939,7 +4946,6 @@
         localStorage.setItem('unit_' + key, value);
         localStorage.setItem('unit_system', 'custom');
         syncUnitControls();
-        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         loadAll();
     }
 
@@ -5952,7 +5958,7 @@
         document.getElementById('alert-banner').style.display = 'none';
         document.getElementById('alert-stack').innerHTML = '';
         stopWeatherFX();
-        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
+        _lastPirateAttempt = 0; _lastPirateLat = null; _lastPirateLon = null;
         // Clear stale PWS data immediately so previous location's station never bleeds through
         window.isWaterLocation = false;
         window.wuData = null; window.wuNeighborData = [];
@@ -7797,6 +7803,8 @@
             if (reverseCode) {
                 code = String(reverseCode).trim().toUpperCase();
                 window.locationCountryCode = code;
+                window._locationCountryCoordsKey = _locationCountryKeyFor(lat, lon);
+                _updateNotificationProviderVisibility();
             }
         } catch (e) {}
         return code;
@@ -9626,7 +9634,10 @@
         blip.style.transform = 'translate(' + (radius * Math.cos(angleRad)) + 'px, ' + (radius * Math.sin(angleRad)) + 'px)';
     }
 
-    var _lastPirateFetch = 0;
+    // PirateWeather is a fallback/model feed, not the live severe-alert feed.
+    // Cap normal refreshes at 15 minutes despite GPS drift; allow a 5-minute
+    // refresh only after meaningful travel (5 km or more).
+    var _lastPirateAttempt = 0;
     var _lastPirateLat = null;
     var _lastPirateLon = null;
     window._pirateLoadFailed = false;
@@ -9636,8 +9647,20 @@
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
         const now = Date.now();
-        const locationChanged = (requestLat !== _lastPirateLat || requestLon !== _lastPirateLon);
-        if (!locationChanged && now - _lastPirateFetch < 300000 && !_isOffline) return; // throttle to 5 min (bypass when offline so coming back online clears the flag)
+        var movedKm = 0;
+        if (_lastPirateLat !== null && _lastPirateLon !== null) {
+            var meanLatRad = ((requestLat + _lastPirateLat) / 2) * Math.PI / 180;
+            var northKm = (requestLat - _lastPirateLat) * 111.32;
+            var eastKm = (requestLon - _lastPirateLon) * 111.32 * Math.cos(meanLatRad);
+            movedKm = Math.sqrt(northKm * northKm + eastKm * eastKm);
+        }
+        var minimumIntervalMs = movedKm >= 5 ? 300000 : 900000;
+        if (now - _lastPirateAttempt < minimumIntervalMs) return;
+        // Record attempts, not only successes, so provider failures cannot
+        // trigger another quota-consuming request on every minute refresh.
+        _lastPirateAttempt = now;
+        _lastPirateLat = requestLat;
+        _lastPirateLon = requestLon;
         window._pirateLoadFailed = false;
         window._pwsQcTemperatureReference = null;
         const pwsCountryPromise = (async function() {
@@ -9706,12 +9729,6 @@
             // must not hold the official observation chain hostage.
             const wuStations = await wuStationsPromise;
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-            // Mark the throttle only after the PirateWeather response has been
-            // validated. If rendering or the request fails, the next refresh
-            // must be allowed to retry immediately.
-            _lastPirateFetch = Date.now();
-            _lastPirateLat = requestLat;
-            _lastPirateLon = requestLon;
             applyPwsStations(wuStations, loadGeneration);
             // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
             const curr = d.currently;
@@ -9940,11 +9957,9 @@
             lastSyncTime = new Date(); localStorage.setItem('sm_last_sync', lastSyncTime.getTime());
         } catch(e) {
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-            // Do not throttle a failed attempt. This is especially important
-            // on mobile, where a transient suspended-network request is common.
-            _lastPirateFetch = 0;
-            _lastPirateLat = null;
-            _lastPirateLon = null;
+            // Keep the cooldown after failures. Open-Meteo is the immediate
+            // fallback; retrying PirateWeather every minute would burn quota
+            // while the provider is unavailable.
             // PirateWeather failed — try Open-Meteo as a live backup
             try {
                 // Match PirateWeather's single-render behavior: keep the
@@ -11685,6 +11700,8 @@
 
         window.isOutsideUS = true;
         window.locationCountryCode = 'CA';
+        window._locationCountryCoordsKey = _locationCountryKeyFor(lat, lon);
+        _updateNotificationProviderVisibility();
         updateUSOnlyLayerLabels();
         // Set the international/UI labels without painting a second
         // observation source. The shared PWS QC pass below must decide which
@@ -25738,6 +25755,7 @@
         const loadGeneration = ++weatherLoadGeneration;
         const loadLat = lat;
         const loadLon = lon;
+        const loadLocationKey = _locationCountryKeyFor(loadLat, loadLon);
         if (window._weatherRequestController) window._weatherRequestController.abort();
         window._weatherRequestController = new AbortController();
         _enrichmentPromise = null;
@@ -25750,7 +25768,11 @@
         // Reset beach state every load so a previous beach result never bleeds into a new search.
         window.isBeachLocation = false;
         window.isWaterLocation = false;
-        window.locationCountryCode = '';
+        if (window._locationCountryCoordsKey !== loadLocationKey) {
+            window.locationCountryCode = '';
+            window._locationCountryCoordsKey = '';
+            _updateNotificationProviderVisibility();
+        }
         window.locationState = '';
         _syncOutlookCenterAvailability();
         var _bSec = document.getElementById('beach-section');
@@ -25784,7 +25806,9 @@
                     window.locationCountryCode = String(
                         _nomD.country_code || _nomD.countryCode || ''
                     ).toUpperCase();
+                    window._locationCountryCoordsKey = loadLocationKey;
                     _syncOutlookCenterAvailability();
+                    _updateNotificationProviderVisibility();
                     if (_nomD.address && _nomD.address.state) {
                         _setWeatherLocationState(_nomD.address.state);
                     }
@@ -26065,7 +26089,7 @@
                         gpsLat: window._gpsLat,
                         gpsLon: window._gpsLon,
                         gpsCountryCode: window._gpsCountryCode || '',
-                        prefs: getNotifPrefs()
+                        prefs: getEffectiveNotifPrefs()
                     })
                 }).catch(function() {});
             }
@@ -26360,6 +26384,7 @@
     }
     
     function togglePushNotifications() {
+        if (!_isPushNotificationLocationSupported()) return;
         var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
         var isStandalone = (window.navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -26409,7 +26434,7 @@
                             gpsLat: window._gpsLat,
                             gpsLon: window._gpsLon,
                             gpsCountryCode: window._gpsCountryCode || '',
-                            prefs: getNotifPrefs()
+                            prefs: getEffectiveNotifPrefs()
                         })
                     }).then(readPushResponse).then(function() { _setNotifBtnState(true); });
                 }).catch(function(error) {
@@ -26443,6 +26468,27 @@
         SM:true, TR:true, UA:true, VA:true, XK:true
     };
 
+    function _isPushNotificationLocationSupported() {
+        var code = String(window.locationCountryCode || '').trim().toUpperCase();
+        return ['US', 'PR', 'GU', 'AS', 'MP', 'VI', 'CA'].indexOf(code) !== -1 ||
+            Boolean(_METEOALARM_NOTIFICATION_COUNTRIES[code]);
+    }
+
+    function getEffectiveNotifPrefs() {
+        var prefs = getNotifPrefs();
+        if (_isPushNotificationLocationSupported()) return prefs;
+        // Keep an existing push subscription dormant outside supported alert
+        // coverage. The original preferences remain local and resume if the
+        // selected weather location returns to a supported region.
+        prefs.alertEnabled = false;
+        prefs.spcOutlookEnabled = false;
+        prefs.spcMdEnabled = false;
+        prefs.wpcOutlookEnabled = false;
+        prefs.wpcMpdEnabled = false;
+        prefs.customAlertsEnabled = false;
+        return prefs;
+    }
+
     function _gpsIsClearlyOutsideUS() {
         var code = String(window._gpsCountryCode || '').toUpperCase();
         if (code) return code !== 'US';
@@ -26457,6 +26503,17 @@
     }
 
     function _updateNotificationProviderVisibility() {
+        var notificationsSupported = _isPushNotificationLocationSupported();
+        var notificationRow = document.getElementById('notif-settings-row');
+        var notificationModal = document.getElementById('notif-prefs-modal');
+        if (notificationRow) notificationRow.style.display = notificationsSupported ? '' : 'none';
+        if (!notificationsSupported && notificationModal) notificationModal.style.display = 'none';
+        var previousSupport = window._pushNotificationLocationSupported;
+        window._pushNotificationLocationSupported = notificationsSupported;
+        if (previousSupport !== undefined && previousSupport !== notificationsSupported) {
+            syncPushLocation();
+        }
+
         var advanced = document.getElementById('us-advanced-notifications');
         var note = document.getElementById('us-advanced-notifications-note');
         var outsideUS = _gpsIsClearlyOutsideUS();
@@ -26520,6 +26577,7 @@
 
     function openNotifPrefs() {
         _updateNotificationProviderVisibility();
+        if (!_isPushNotificationLocationSupported()) return;
         var prefs = getNotifPrefs();
         document.getElementById('pref-alert-enabled').checked = prefs.alertEnabled;
         document.getElementById('pref-spc-outlook').checked   = prefs.spcOutlookEnabled;
