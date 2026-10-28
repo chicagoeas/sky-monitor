@@ -3551,9 +3551,9 @@
     let fxAnimationId = null;
     let particles = [];
     let lastPressureMb = null;
-    // Restore last sync time once at startup so the timer shows "X ago" immediately
-    var _sm_init_ts = localStorage.getItem('sm_last_sync');
-    let lastSyncTime = _sm_init_ts ? new Date(+_sm_init_ts) : null;
+    // The status is session-relative on startup: do not show an hours-old
+    // timestamp from a previous visit while this visit is still loading.
+    let lastSyncTime = new Date();
     let _isOffline = false;
     let liveWindSpd = 0;
     let livePrecipInt = 0;
@@ -4067,12 +4067,14 @@
         const diff = Math.max(0, Math.floor((new Date() - lastSyncTime) / 1000));
         const timeStr = formatSyncAge(diff);
         const el = document.getElementById('sync-time-display');
+        if (!el) return;
         if (_isOffline) {
             el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
         } else {
             el.innerText = 'UPDATED: ' + timeStr;
         }
     }
+    updateTimestamp();
     setInterval(updateTimestamp, 1000);
 
     function toggleSettingsWindow() {
@@ -5958,7 +5960,6 @@
         document.getElementById('alert-banner').style.display = 'none';
         document.getElementById('alert-stack').innerHTML = '';
         stopWeatherFX();
-        _lastPirateAttempt = 0; _lastPirateLat = null; _lastPirateLon = null;
         // Clear stale PWS data immediately so previous location's station never bleeds through
         window.isWaterLocation = false;
         window.wuData = null; window.wuNeighborData = [];
@@ -9634,33 +9635,46 @@
         blip.style.transform = 'translate(' + (radius * Math.cos(angleRad)) + 'px, ' + (radius * Math.sin(angleRad)) + 'px)';
     }
 
-    // PirateWeather is a fallback/model feed, not the live severe-alert feed.
-    // Cap normal refreshes at 15 minutes despite GPS drift; allow a 5-minute
-    // refresh only after meaningful travel (5 km or more).
-    var _lastPirateAttempt = 0;
-    var _lastPirateLat = null;
-    var _lastPirateLon = null;
+    // PirateWeather is cached and rate-limited by the Worker. Keep a short-lived
+    // in-page success so routine minute refreshes do not even need to call it,
+    // but never throttle a load that has no usable data to display.
+    var _lastPirateSuccessAt = 0;
+    var _lastPirateSuccessLat = null;
+    var _lastPirateSuccessLon = null;
+    var _lastPirateSuccessLocationKey = '';
+    function _pirateLocationBucketKey(latitude, longitude) {
+        // Match the Worker cache's two-decimal coordinate bucket.
+        return (Math.round(Number(latitude) * 100) / 100).toFixed(2) + ',' +
+            (Math.round(Number(longitude) * 100) / 100).toFixed(2);
+    }
     window._pirateLoadFailed = false;
-    async function fetchPirate(loadGeneration, requestLat, requestLon) {
+    async function fetchPirate(loadGeneration, requestLat, requestLon, forceRefresh) {
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
         requestLat = requestLat == null ? lat : requestLat;
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
         const now = Date.now();
         var movedKm = 0;
-        if (_lastPirateLat !== null && _lastPirateLon !== null) {
-            var meanLatRad = ((requestLat + _lastPirateLat) / 2) * Math.PI / 180;
-            var northKm = (requestLat - _lastPirateLat) * 111.32;
-            var eastKm = (requestLon - _lastPirateLon) * 111.32 * Math.cos(meanLatRad);
+        if (_lastPirateSuccessLat !== null && _lastPirateSuccessLon !== null) {
+            var meanLatRad = ((requestLat + _lastPirateSuccessLat) / 2) * Math.PI / 180;
+            var northKm = (requestLat - _lastPirateSuccessLat) * 111.32;
+            var eastKm = (requestLon - _lastPirateSuccessLon) * 111.32 * Math.cos(meanLatRad);
             movedKm = Math.sqrt(northKm * northKm + eastKm * eastKm);
         }
         var minimumIntervalMs = movedKm >= 5 ? 300000 : 900000;
-        if (now - _lastPirateAttempt < minimumIntervalMs) return;
-        // Record attempts, not only successes, so provider failures cannot
-        // trigger another quota-consuming request on every minute refresh.
-        _lastPirateAttempt = now;
-        _lastPirateLat = requestLat;
-        _lastPirateLon = requestLon;
+        var locationKey = _pirateLocationBucketKey(requestLat, requestLon);
+        var hasRecentDataForLocation =
+            !!window.pirateCurrently &&
+            _lastPirateSuccessLocationKey === locationKey &&
+            _lastPirateSuccessAt > 0 &&
+            now - _lastPirateSuccessAt < minimumIntervalMs;
+        if (!forceRefresh && hasRecentDataForLocation) {
+            window._pirateLoadFailed = false;
+            return;
+        }
+        // The Worker cache—not an attempt-based browser timer—protects the
+        // PirateWeather quota. A failed/aborted request must be retried when
+        // this page has no successful data for the requested location.
         window._pirateLoadFailed = false;
         window._pwsQcTemperatureReference = null;
         const pwsCountryPromise = (async function() {
@@ -9734,6 +9748,10 @@
             const curr = d.currently;
             window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
+            _lastPirateSuccessAt = Date.now();
+            _lastPirateSuccessLat = requestLat;
+            _lastPirateSuccessLon = requestLon;
+            _lastPirateSuccessLocationKey = locationKey;
             // Sanitize PirateWeather sentinel values (-999 = broken data from known PW bugs)
             var _uvWasBad = curr.uvIndex != null && curr.uvIndex < 0;
             if (_uvWasBad) curr.uvIndex = null;
@@ -25751,7 +25769,7 @@
     })();
     // ─────────────────────────────────────────────────────────────────────────────
 
-    async function _loadAllOnce(isInitialLoad) {
+    async function _loadAllOnce(isInitialLoad, forcePirateRefresh) {
         const loadGeneration = ++weatherLoadGeneration;
         const loadLat = lat;
         const loadLon = lon;
@@ -25778,7 +25796,11 @@
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
-        if (sync) sync.style.opacity = '1';
+        if (sync) {
+            sync.style.opacity = '1';
+            sync.textContent = '\u25CF UPDATING';
+            sync.style.color = '';
+        }
         // Reset this load's bookkeeping before any provider callbacks can
         // increment it.  Previously a slow mobile/Safari repair request from
         // an older load could leave the shared counter non-zero forever.
@@ -25787,10 +25809,17 @@
         window._syncLoadComplete = false;
         window._syncLoadFailed = false;
         window._maybeHideSync = function() {
-            if (window._syncMinDone &&
-                window._syncLoadComplete &&
-                window._syncPending <= 0 &&
-                sync) sync.style.opacity = '0';
+            if (!window._syncMinDone ||
+                !window._syncLoadComplete ||
+                window._syncPending > 0 ||
+                !sync) return;
+            if (window._syncLoadFailed) {
+                sync.textContent = '\u26A0 WEATHER INCOMPLETE';
+                sync.style.color = '#ff5252';
+                sync.style.opacity = '1';
+            } else {
+                sync.style.opacity = '0';
+            }
         };
         if (isInitialLoad) _resetCurrentObservationFields();
         try {
@@ -25850,7 +25879,7 @@
             })();
             window._locationClassificationPromise = _locationClassificationPromise;
 
-            await fetchPirate(loadGeneration, loadLat, loadLon);
+            await fetchPirate(loadGeneration, loadLat, loadLon, forcePirateRefresh);
             if (loadGeneration !== weatherLoadGeneration) return;
             // Everything below is enrichment. Run it after the primary view
             // is usable, and keep failures local to the feature that failed.
@@ -26025,13 +26054,20 @@
         window._syncLoadComplete = false;
         window._syncLoadFailed = loadFailed;
         window._maybeHideSync = function() {
-            if (window._syncMinDone &&
-                window._syncLoadComplete &&
-                window._syncPending <= 0 &&
-                sync) sync.style.opacity = '0';
+            if (!window._syncMinDone ||
+                !window._syncLoadComplete ||
+                window._syncPending > 0 ||
+                !sync) return;
+            if (window._syncLoadFailed) {
+                sync.textContent = '\u26A0 WEATHER INCOMPLETE';
+                sync.style.color = '#ff5252';
+                sync.style.opacity = '1';
+            } else {
+                sync.style.opacity = '0';
+            }
         };
-        // UPDATING is an activity indicator, not a failure banner.  A
-        // secondary provider failure should not make it permanent.
+        // Hide the activity indicator after a successful refresh. If the
+        // required weather chain failed, leave a clear warning instead.
         window._syncLoadComplete = true;
         setTimeout(function() {
             if (loadGeneration !== weatherLoadGeneration) return;
@@ -26058,7 +26094,7 @@
         const isInitialLoad = !weatherLoadHasStarted || isExplicitLocationLoad;
         weatherLoadHasStarted = true;
         weatherLoadedLocationKey = key;
-        const promise = _loadAllOnce(isInitialLoad);
+        const promise = _loadAllOnce(isInitialLoad, isExplicitLocationLoad);
         _loadAllPromise = promise;
         _loadAllKey = key;
         promise.then(function() {
