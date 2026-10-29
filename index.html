@@ -15867,6 +15867,12 @@
 
     function setReportType(type) {
         selectedReportType = type;
+        const notesInput = document.getElementById('report-notes');
+        if (notesInput) {
+            notesInput.placeholder = type === 'Other'
+                ? 'Report notes'
+                : 'Optional notes (location details, conditions, etc.)';
+        }
         document.getElementById('report-subcat-wrap').style.display = 'none';
         const display = document.getElementById('report-type-display');
         display.style.display = 'flex';
@@ -15880,6 +15886,8 @@
 
     function clearReportCategory() {
         selectedReportType = '';
+        const notesInput = document.getElementById('report-notes');
+        if (notesInput) notesInput.placeholder = 'Optional notes (location details, conditions, etc.)';
         document.getElementById('report-subcat-wrap').style.display = 'none';
         document.getElementById('report-type-display').style.display = 'none';
         document.querySelectorAll('#report-cat-grid button').forEach(function(b) {
@@ -21862,6 +21870,7 @@
 
     const REPORT_ERROR_MESSAGES = Object.freeze({
         'RPT-400-INPUT': 'Report details could not be validated. Check the report type and location.',
+        'RPT-400-OTHER-NOTES': 'Reports with the other report type require notes.',
         'RPT-403-VERIFY': 'Verification failed. Please try again.',
         'RPT-409-CONFLICT': 'This submission conflicts with an earlier attempt. Please submit again.',
         'RPT-500-SERVER': 'The report service encountered an error. Please try again.',
@@ -22080,11 +22089,19 @@
     async function submitUserReport() {
         const type = selectedReportType;
         if (!type) { alert('Please select a report type.'); return; }
+        const notes = document.getElementById('report-notes').value.trim();
+        const status = document.getElementById('report-status');
+        if (type === 'Other' && !notes) {
+            if (status) {
+                status.style.display = 'block';
+                status.textContent = 'Reports with the other report type require notes.';
+                status.style.color = 'var(--warning)';
+            }
+            return;
+        }
         if (submitUserReport._inFlight) return;
         submitUserReport._inFlight = true;
-        const notes = document.getElementById('report-notes').value.trim();
         const btn = document.querySelector('#reporting-tab button[onclick="submitUserReport()"]');
-        const status = document.getElementById('report-status');
         const submissionId = getPendingReportSubmissionId();
         const reportImage = selectedReportImage;
         const includesImage = !!reportImage;
