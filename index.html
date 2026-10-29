@@ -2466,7 +2466,7 @@
                 <button id="opt-unit-custom" class="btn-opt" onclick="openCustomUnits()">CUSTOM</button>
             </div>
         </div>
-        <div class="settings-row" id="notif-settings-row">
+        <div class="settings-row" id="notif-settings-row" style="display:none;">
             <span class="settings-label">Alert Notifications</span>
             <div style="display:flex; gap:6px; align-items:center;">
                 <button id="notif-toggle-btn" onclick="togglePushNotifications()" style="flex:1; padding:10px; border:none; border-radius:8px; font-size:0.75em; font-weight:900; cursor:pointer; letter-spacing:1px; transition:0.2s; background:rgba(255,255,255,0.08); color:white;">&#128276; Enable Notifications</button>
@@ -2646,7 +2646,7 @@
             When this is enabled, nearby live user reports and SkyMonitor custom alerts <a class="custom-alerts-help" href="/about-custom-alerts" aria-label="Learn about SkyMonitor custom alerts" title="Learn about SkyMonitor custom alerts">?</a> will be taken into account with Threat Level, and for custom alerts, will also make it clear when a custom alert is issued for your exact location.
         </p>
         <p style="font-size:0.78em; line-height:1.6; color:#ff9100; margin:14px 0 0 0; font-weight:700;">
-            DISCLAIMER: SkyMonitor reports and custom alerts are not officially supported, so mistakes can be made. Be sure to report custom alerts using the report button if you think they are inaccurate or misleading.
+            DISCLAIMER: SkyMonitor reports and custom alerts are not official data, so mistakes can be made. Be sure to report custom alerts using the report button if you think they are inaccurate or misleading.
         </p>
     </div>
     </div>
@@ -2911,7 +2911,7 @@
             <div id="threat-desc" style="font-size:0.8em; color:#aaa; line-height:1.5;">No significant hazards at this time.</div>
             <div id="threat-factors" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:6px;"></div>
             <div style="font-size:0.52em; color:#444; margin-top:10px; border-top:1px solid rgba(255,255,255,0.05); padding-top:7px;">
-                Experimental data. Do NOT use this data for emergency purposes, and do NOT rely solely on this data. 
+                Unofficial data. Do not rely solely on this data in any situation. 
             </div>
         </div>
 
@@ -3551,9 +3551,9 @@
     let fxAnimationId = null;
     let particles = [];
     let lastPressureMb = null;
-    // Restore last sync time once at startup so the timer shows "X ago" immediately
-    var _sm_init_ts = localStorage.getItem('sm_last_sync');
-    let lastSyncTime = _sm_init_ts ? new Date(+_sm_init_ts) : null;
+    // The status is session-relative on startup: do not show an hours-old
+    // timestamp from a previous visit while this visit is still loading.
+    let lastSyncTime = new Date();
     let _isOffline = false;
     let liveWindSpd = 0;
     let livePrecipInt = 0;
@@ -3612,6 +3612,14 @@
     window.meteoAlarmAlerts = [];
     window.environmentCanadaAlerts = [];
     window.locationCountryCode = '';
+    window._locationCountryCoordsKey = '';
+    function _locationCountryKeyFor(latitude, longitude) {
+        // Country eligibility should not flicker from small live-GPS changes.
+        // The location is still reverse-geocoded on refresh; this coarse key
+        // only controls whether the previously resolved country is cleared.
+        return (Math.round(Number(latitude) * 10) / 10).toFixed(1) + ',' +
+            (Math.round(Number(longitude) * 10) / 10).toFixed(1);
+    }
     window.locationState = '';
     window.wuDeviates = false;
     window.chartInstances = {};
@@ -4059,12 +4067,14 @@
         const diff = Math.max(0, Math.floor((new Date() - lastSyncTime) / 1000));
         const timeStr = formatSyncAge(diff);
         const el = document.getElementById('sync-time-display');
+        if (!el) return;
         if (_isOffline) {
             el.innerHTML = '<span style="color:#ff5252;font-weight:900;">OFFLINE:</span> ' + timeStr;
         } else {
             el.innerText = 'UPDATED: ' + timeStr;
         }
     }
+    updateTimestamp();
     setInterval(updateTimestamp, 1000);
 
     function toggleSettingsWindow() {
@@ -4920,7 +4930,6 @@
         }
         localStorage.setItem('unit_system', val);
         syncUnitControls();
-        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         loadAll();
     }
 
@@ -4939,7 +4948,6 @@
         localStorage.setItem('unit_' + key, value);
         localStorage.setItem('unit_system', 'custom');
         syncUnitControls();
-        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         loadAll();
     }
 
@@ -5952,7 +5960,6 @@
         document.getElementById('alert-banner').style.display = 'none';
         document.getElementById('alert-stack').innerHTML = '';
         stopWeatherFX();
-        _lastPirateFetch = 0; _lastPirateLat = null; _lastPirateLon = null;
         // Clear stale PWS data immediately so previous location's station never bleeds through
         window.isWaterLocation = false;
         window.wuData = null; window.wuNeighborData = [];
@@ -7797,6 +7804,8 @@
             if (reverseCode) {
                 code = String(reverseCode).trim().toUpperCase();
                 window.locationCountryCode = code;
+                window._locationCountryCoordsKey = _locationCountryKeyFor(lat, lon);
+                _updateNotificationProviderVisibility();
             }
         } catch (e) {}
         return code;
@@ -9018,43 +9027,53 @@
 
         try {
             let data = null;
-            const alertUrl = 'https://api.weather.gov/alerts/active?point=' + lat + ',' + lon;
-            let lastAlertError = null;
-            // NWS alert data is safety-critical. Retry the authoritative point
-            // query before allowing the refresh to finish. cache:no-store also
-            // prevents a browser/service-worker response from masking a new
-            // warning at the selected location.
-            for (let alertAttempt = 0; alertAttempt < 3; alertAttempt++) {
+            const requestSignal = window._weatherRequestController
+                ? window._weatherRequestController.signal
+                : undefined;
+            const alertUrl = WEATHER_WORKER_URL + '/api/weather/nws-alerts?lat=' +
+                encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon);
+            const directAlertUrl = 'https://api.weather.gov/alerts/active?point=' +
+                encodeURIComponent(lat) + ',' + encodeURIComponent(lon);
+            let workerAlertError = null;
+            try {
+                // The edge route returns a very short-lived cached result when
+                // available and caps its upstream NWS wait at five seconds.
+                const res = await _weatherFetch(alertUrl, {
+                    cache: 'no-store',
+                    signal: requestSignal
+                }, 6500);
+                if (!res.ok) throw new Error('NWS alert worker ' + res.status);
+                data = await res.json();
+                if (!data || !Array.isArray(data.features)) {
+                    throw new Error('NWS alerts response missing features');
+                }
+            } catch (alertErr) {
+                workerAlertError = alertErr;
+                if (requestSignal && requestSignal.aborted) throw alertErr;
+                // Keep a direct NOAA path if the edge route itself is down.
+                // This is one bounded fallback, rather than three serial
+                // 12-second attempts that could hold the Severe view for 40s.
                 try {
-                    // api.weather.gov rejects unknown query parameters with 400.
-                    // cache:no-store below already prevents a stale browser or
-                    // service-worker response, so no custom cache-busting
-                    // parameter is needed here.
-                    const res = await _weatherFetch(alertUrl, {
+                    const res = await _weatherFetch(directAlertUrl, {
                         cache: 'no-store',
-                        signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
-                    }, 12000);
-                    if (!res.ok) throw new Error('NWS alerts ' + res.status);
-                    const candidate = await res.json();
-                    if (!candidate || !Array.isArray(candidate.features)) {
+                        signal: requestSignal
+                    }, 7000);
+                    if (!res.ok) {
+                        throw new Error('NWS alerts ' + res.status +
+                            (workerAlertError ? ' after edge request failed' : ''));
+                    }
+                    data = await res.json();
+                    if (!data || !Array.isArray(data.features)) {
                         throw new Error('NWS alerts response missing features');
                     }
-                    data = candidate;
-                    lastAlertError = null;
-                    break;
-                } catch (alertErr) {
-                    lastAlertError = alertErr;
-                    if (window._weatherRequestController &&
-                        window._weatherRequestController.signal.aborted) throw alertErr;
-                    if (alertAttempt < 2) {
-                        await new Promise(function(resolve) {
-                            setTimeout(resolve, 750 * (alertAttempt + 1));
-                        });
-                    }
+                } catch (directAlertError) {
+                    if (requestSignal && requestSignal.aborted) throw directAlertError;
+                    console.warn('[SkyMonitor] NWS alert requests failed:', directAlertError);
+                    return await _tryInternationalAlertFallback(stack, banner, checklist);
                 }
             }
             if (!data) {
-                console.warn('[SkyMonitor] NWS alerts did not finish after retries:', lastAlertError);
+                console.warn('[SkyMonitor] NWS alerts did not finish:', workerAlertError);
                 // NWS is the first provider in the chain. If it cannot
                 // answer, try the international providers before preserving
                 // the previous display.
@@ -9616,18 +9635,46 @@
         blip.style.transform = 'translate(' + (radius * Math.cos(angleRad)) + 'px, ' + (radius * Math.sin(angleRad)) + 'px)';
     }
 
-    var _lastPirateFetch = 0;
-    var _lastPirateLat = null;
-    var _lastPirateLon = null;
+    // PirateWeather is cached and rate-limited by the Worker. Keep a short-lived
+    // in-page success so routine minute refreshes do not even need to call it,
+    // but never throttle a load that has no usable data to display.
+    var _lastPirateSuccessAt = 0;
+    var _lastPirateSuccessLat = null;
+    var _lastPirateSuccessLon = null;
+    var _lastPirateSuccessLocationKey = '';
+    function _pirateLocationBucketKey(latitude, longitude) {
+        // Match the Worker cache's two-decimal coordinate bucket.
+        return (Math.round(Number(latitude) * 100) / 100).toFixed(2) + ',' +
+            (Math.round(Number(longitude) * 100) / 100).toFixed(2);
+    }
     window._pirateLoadFailed = false;
-    async function fetchPirate(loadGeneration, requestLat, requestLon) {
+    async function fetchPirate(loadGeneration, requestLat, requestLon, forceRefresh) {
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
         requestLat = requestLat == null ? lat : requestLat;
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
         const now = Date.now();
-        const locationChanged = (requestLat !== _lastPirateLat || requestLon !== _lastPirateLon);
-        if (!locationChanged && now - _lastPirateFetch < 300000 && !_isOffline) return; // throttle to 5 min (bypass when offline so coming back online clears the flag)
+        var movedKm = 0;
+        if (_lastPirateSuccessLat !== null && _lastPirateSuccessLon !== null) {
+            var meanLatRad = ((requestLat + _lastPirateSuccessLat) / 2) * Math.PI / 180;
+            var northKm = (requestLat - _lastPirateSuccessLat) * 111.32;
+            var eastKm = (requestLon - _lastPirateSuccessLon) * 111.32 * Math.cos(meanLatRad);
+            movedKm = Math.sqrt(northKm * northKm + eastKm * eastKm);
+        }
+        var minimumIntervalMs = movedKm >= 5 ? 300000 : 900000;
+        var locationKey = _pirateLocationBucketKey(requestLat, requestLon);
+        var hasRecentDataForLocation =
+            !!window.pirateCurrently &&
+            _lastPirateSuccessLocationKey === locationKey &&
+            _lastPirateSuccessAt > 0 &&
+            now - _lastPirateSuccessAt < minimumIntervalMs;
+        if (!forceRefresh && hasRecentDataForLocation) {
+            window._pirateLoadFailed = false;
+            return;
+        }
+        // The Worker cache—not an attempt-based browser timer—protects the
+        // PirateWeather quota. A failed/aborted request must be retried when
+        // this page has no successful data for the requested location.
         window._pirateLoadFailed = false;
         window._pwsQcTemperatureReference = null;
         const pwsCountryPromise = (async function() {
@@ -9696,17 +9743,15 @@
             // must not hold the official observation chain hostage.
             const wuStations = await wuStationsPromise;
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-            // Mark the throttle only after the PirateWeather response has been
-            // validated. If rendering or the request fails, the next refresh
-            // must be allowed to retry immediately.
-            _lastPirateFetch = Date.now();
-            _lastPirateLat = requestLat;
-            _lastPirateLon = requestLon;
             applyPwsStations(wuStations, loadGeneration);
             // fetchWUMulti returns [primary, ...neighbors]; neighbors feed the QC median check.
             const curr = d.currently;
             window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
+            _lastPirateSuccessAt = Date.now();
+            _lastPirateSuccessLat = requestLat;
+            _lastPirateSuccessLon = requestLon;
+            _lastPirateSuccessLocationKey = locationKey;
             // Sanitize PirateWeather sentinel values (-999 = broken data from known PW bugs)
             var _uvWasBad = curr.uvIndex != null && curr.uvIndex < 0;
             if (_uvWasBad) curr.uvIndex = null;
@@ -9930,11 +9975,9 @@
             lastSyncTime = new Date(); localStorage.setItem('sm_last_sync', lastSyncTime.getTime());
         } catch(e) {
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
-            // Do not throttle a failed attempt. This is especially important
-            // on mobile, where a transient suspended-network request is common.
-            _lastPirateFetch = 0;
-            _lastPirateLat = null;
-            _lastPirateLon = null;
+            // Keep the cooldown after failures. Open-Meteo is the immediate
+            // fallback; retrying PirateWeather every minute would burn quota
+            // while the provider is unavailable.
             // PirateWeather failed — try Open-Meteo as a live backup
             try {
                 // Match PirateWeather's single-render behavior: keep the
@@ -11675,6 +11718,8 @@
 
         window.isOutsideUS = true;
         window.locationCountryCode = 'CA';
+        window._locationCountryCoordsKey = _locationCountryKeyFor(lat, lon);
+        _updateNotificationProviderVisibility();
         updateUSOnlyLayerLabels();
         // Set the international/UI labels without painting a second
         // observation source. The shared PWS QC pass below must decide which
@@ -22009,9 +22054,16 @@
                 // The Worker uses 403 specifically when Turnstile rejects or
                 // has expired. Re-open the visible gate so the user can
                 // recover without guessing why the submission failed.
-                var needsVerification = res.status === 403;
-                invalidateTurnstile();
-                if (needsVerification) {
+                var blockedByIp = reportError &&
+                    reportError.errorCode === 'RPT-403-IP-BLOCKED';
+                var needsVerification = res.status === 403 && !blockedByIp;
+                if (!blockedByIp) invalidateTurnstile();
+                if (blockedByIp) {
+                    if (status) {
+                        status.textContent = 'You are not allowed to issue reports. Please contact us at contact@skymonitor.app if you think this is an error.';
+                        status.style.color = 'var(--danger)';
+                    }
+                } else if (needsVerification) {
                     // Do not erase the device-level verification just because
                     // a one-use renewal token failed. The user should not be
                     // challenged again on the next visit.
@@ -25724,10 +25776,11 @@
     })();
     // ─────────────────────────────────────────────────────────────────────────────
 
-    async function _loadAllOnce(isInitialLoad) {
+    async function _loadAllOnce(isInitialLoad, forcePirateRefresh) {
         const loadGeneration = ++weatherLoadGeneration;
         const loadLat = lat;
         const loadLon = lon;
+        const loadLocationKey = _locationCountryKeyFor(loadLat, loadLon);
         if (window._weatherRequestController) window._weatherRequestController.abort();
         window._weatherRequestController = new AbortController();
         _enrichmentPromise = null;
@@ -25740,13 +25793,21 @@
         // Reset beach state every load so a previous beach result never bleeds into a new search.
         window.isBeachLocation = false;
         window.isWaterLocation = false;
-        window.locationCountryCode = '';
+        if (window._locationCountryCoordsKey !== loadLocationKey) {
+            window.locationCountryCode = '';
+            window._locationCountryCoordsKey = '';
+            _updateNotificationProviderVisibility();
+        }
         window.locationState = '';
         _syncOutlookCenterAvailability();
         var _bSec = document.getElementById('beach-section');
         if (_bSec) _bSec.style.display = 'none';
         const sync = document.getElementById('sync-indicator');
-        if (sync) sync.style.opacity = '1';
+        if (sync) {
+            sync.style.opacity = '1';
+            sync.textContent = '\u25CF UPDATING';
+            sync.style.color = '';
+        }
         // Reset this load's bookkeeping before any provider callbacks can
         // increment it.  Previously a slow mobile/Safari repair request from
         // an older load could leave the shared counter non-zero forever.
@@ -25755,10 +25816,17 @@
         window._syncLoadComplete = false;
         window._syncLoadFailed = false;
         window._maybeHideSync = function() {
-            if (window._syncMinDone &&
-                window._syncLoadComplete &&
-                window._syncPending <= 0 &&
-                sync) sync.style.opacity = '0';
+            if (!window._syncMinDone ||
+                !window._syncLoadComplete ||
+                window._syncPending > 0 ||
+                !sync) return;
+            if (window._syncLoadFailed) {
+                sync.textContent = '\u26A0 WEATHER INCOMPLETE';
+                sync.style.color = '#ff5252';
+                sync.style.opacity = '1';
+            } else {
+                sync.style.opacity = '0';
+            }
         };
         if (isInitialLoad) _resetCurrentObservationFields();
         try {
@@ -25774,7 +25842,9 @@
                     window.locationCountryCode = String(
                         _nomD.country_code || _nomD.countryCode || ''
                     ).toUpperCase();
+                    window._locationCountryCoordsKey = loadLocationKey;
                     _syncOutlookCenterAvailability();
+                    _updateNotificationProviderVisibility();
                     if (_nomD.address && _nomD.address.state) {
                         _setWeatherLocationState(_nomD.address.state);
                     }
@@ -25816,7 +25886,7 @@
             })();
             window._locationClassificationPromise = _locationClassificationPromise;
 
-            await fetchPirate(loadGeneration, loadLat, loadLon);
+            await fetchPirate(loadGeneration, loadLat, loadLon, forcePirateRefresh);
             if (loadGeneration !== weatherLoadGeneration) return;
             // Everything below is enrichment. Run it after the primary view
             // is usable, and keep failures local to the feature that failed.
@@ -25863,6 +25933,21 @@
                     }).catch(function() {
                         loadFailed = true;
                     });
+                    // Start safety-critical alert loading as soon as location
+                    // coverage is known; optional AQI, beach, and forecast feeds
+                    // must not sit in front of the NWS alert cards.
+                    const _alertsPromise = _nwsHomePromise.then(function() {
+                        if (loadGeneration !== weatherLoadGeneration) return false;
+                        return fetchAlerts();
+                    }).then(function(alertsOk) {
+                        if (alertsOk === true &&
+                            loadGeneration === weatherLoadGeneration) {
+                            computeThreatLevel();
+                        }
+                        return alertsOk;
+                    }).catch(function() {
+                        return false;
+                    });
                     const _openWeatherPromise = Promise.resolve(fetchOpenWeather()).catch(function() {});
                     const _twcPromise = Promise.resolve(fetchTWCForecast()).catch(function() {});
 
@@ -25889,15 +25974,16 @@
                     // this is outside the US, replace any US result.
                     if (window.isOutsideUS) await _fetchAQIFromOpenMeteo(loadLat, loadLon, loadGeneration);
 
-                    const _alertsOk = await fetchAlerts();
+                    const _alertsOk = await _alertsPromise;
                     if (_alertsOk !== true) loadFailed = true;
+                    const _riskLevelsPromise = Promise.resolve(fetchRiskLevels()).catch(function() {});
                     // Re-render beach data after alerts so BHS/rip-current
                     // banners are included when applicable.
                     await loadCustomSkyThreatAlerts();
                     if (loadGeneration !== weatherLoadGeneration) return;
                     renderCustomSkyHazards();
                     await fetchBeachForecast(loadLat, loadLon, loadGeneration);
-                    await fetchRiskLevels();
+                    await _riskLevelsPromise;
                     if (activeOutlookCenter === 'nhc') {
                         updateOutlookMap('nhc', null);
                         startNHCCountdown();
@@ -25975,13 +26061,20 @@
         window._syncLoadComplete = false;
         window._syncLoadFailed = loadFailed;
         window._maybeHideSync = function() {
-            if (window._syncMinDone &&
-                window._syncLoadComplete &&
-                window._syncPending <= 0 &&
-                sync) sync.style.opacity = '0';
+            if (!window._syncMinDone ||
+                !window._syncLoadComplete ||
+                window._syncPending > 0 ||
+                !sync) return;
+            if (window._syncLoadFailed) {
+                sync.textContent = '\u26A0 WEATHER INCOMPLETE';
+                sync.style.color = '#ff5252';
+                sync.style.opacity = '1';
+            } else {
+                sync.style.opacity = '0';
+            }
         };
-        // UPDATING is an activity indicator, not a failure banner.  A
-        // secondary provider failure should not make it permanent.
+        // Hide the activity indicator after a successful refresh. If the
+        // required weather chain failed, leave a clear warning instead.
         window._syncLoadComplete = true;
         setTimeout(function() {
             if (loadGeneration !== weatherLoadGeneration) return;
@@ -26008,7 +26101,7 @@
         const isInitialLoad = !weatherLoadHasStarted || isExplicitLocationLoad;
         weatherLoadHasStarted = true;
         weatherLoadedLocationKey = key;
-        const promise = _loadAllOnce(isInitialLoad);
+        const promise = _loadAllOnce(isInitialLoad, isExplicitLocationLoad);
         _loadAllPromise = promise;
         _loadAllKey = key;
         promise.then(function() {
@@ -26039,7 +26132,7 @@
                         gpsLat: window._gpsLat,
                         gpsLon: window._gpsLon,
                         gpsCountryCode: window._gpsCountryCode || '',
-                        prefs: getNotifPrefs()
+                        prefs: getEffectiveNotifPrefs()
                     })
                 }).catch(function() {});
             }
@@ -26334,6 +26427,7 @@
     }
     
     function togglePushNotifications() {
+        if (!_isPushNotificationLocationSupported()) return;
         var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
         var isStandalone = (window.navigator.standalone === true) || window.matchMedia('(display-mode: standalone)').matches;
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -26383,7 +26477,7 @@
                             gpsLat: window._gpsLat,
                             gpsLon: window._gpsLon,
                             gpsCountryCode: window._gpsCountryCode || '',
-                            prefs: getNotifPrefs()
+                            prefs: getEffectiveNotifPrefs()
                         })
                     }).then(readPushResponse).then(function() { _setNotifBtnState(true); });
                 }).catch(function(error) {
@@ -26417,6 +26511,27 @@
         SM:true, TR:true, UA:true, VA:true, XK:true
     };
 
+    function _isPushNotificationLocationSupported() {
+        var code = String(window.locationCountryCode || '').trim().toUpperCase();
+        return ['US', 'PR', 'GU', 'AS', 'MP', 'VI', 'CA'].indexOf(code) !== -1 ||
+            Boolean(_METEOALARM_NOTIFICATION_COUNTRIES[code]);
+    }
+
+    function getEffectiveNotifPrefs() {
+        var prefs = getNotifPrefs();
+        if (_isPushNotificationLocationSupported()) return prefs;
+        // Keep an existing push subscription dormant outside supported alert
+        // coverage. The original preferences remain local and resume if the
+        // selected weather location returns to a supported region.
+        prefs.alertEnabled = false;
+        prefs.spcOutlookEnabled = false;
+        prefs.spcMdEnabled = false;
+        prefs.wpcOutlookEnabled = false;
+        prefs.wpcMpdEnabled = false;
+        prefs.customAlertsEnabled = false;
+        return prefs;
+    }
+
     function _gpsIsClearlyOutsideUS() {
         var code = String(window._gpsCountryCode || '').toUpperCase();
         if (code) return code !== 'US';
@@ -26431,6 +26546,17 @@
     }
 
     function _updateNotificationProviderVisibility() {
+        var notificationsSupported = _isPushNotificationLocationSupported();
+        var notificationRow = document.getElementById('notif-settings-row');
+        var notificationModal = document.getElementById('notif-prefs-modal');
+        if (notificationRow) notificationRow.style.display = notificationsSupported ? '' : 'none';
+        if (!notificationsSupported && notificationModal) notificationModal.style.display = 'none';
+        var previousSupport = window._pushNotificationLocationSupported;
+        window._pushNotificationLocationSupported = notificationsSupported;
+        if (previousSupport !== undefined && previousSupport !== notificationsSupported) {
+            syncPushLocation();
+        }
+
         var advanced = document.getElementById('us-advanced-notifications');
         var note = document.getElementById('us-advanced-notifications-note');
         var outsideUS = _gpsIsClearlyOutsideUS();
@@ -26494,6 +26620,7 @@
 
     function openNotifPrefs() {
         _updateNotificationProviderVisibility();
+        if (!_isPushNotificationLocationSupported()) return;
         var prefs = getNotifPrefs();
         document.getElementById('pref-alert-enabled').checked = prefs.alertEnabled;
         document.getElementById('pref-spc-outlook').checked   = prefs.spcOutlookEnabled;
