@@ -15725,7 +15725,7 @@
         'Winter Weather':         { src: '/icons/wu/16.svg' },
         'Snow':                   { src: '/icons/wu/16.svg' },
         'Heavy Snow':             { src: '/icons/wu/16.svg' },
-        'Ice / Freezing Rain':    { src: '/icons/wu/10.svg' },
+        'Ice / Freezing Rain':    { src: 'https://skymonitor.app/icons/wu/10.svg' },
         'Blizzard Conditions':    { src: '/icons/wu/15.svg' },
         'Lightning Strike':       { emoji: '\u26A1' },
         'Lightning':              { emoji: '\u26A1' },
@@ -21618,13 +21618,35 @@
         return label || 'LSR';
     }
 
-    function normalizeIemLsrMagnitude(value) {
+    function normalizeIemLsrMagnitude(value, reportType) {
         const magnitude = String(value || '').replace(/\s+/g, ' ').trim();
         // Some legacy records expose the casualty code in magnitude as well
         // as in typetext. Do not render it as if it were a measurement.
-        return /^\d+\s*(?:F|FATAL(?:ITY|ITIES)?|INJ(?:URY|URIES)?)$/i.test(magnitude)
-            ? ''
-            : magnitude;
+        if (/^\d+\s*(?:F|FATAL(?:ITY|ITIES)?|INJ(?:URY|URIES)?)$/i.test(magnitude)) {
+            return '';
+        }
+        // IEM visibility reports can encode miles as "M" or "E" (including
+        // both when an estimated value has a separate unit marker). Show the
+        // unambiguous unit in the popup rather than exposing those codes.
+        const visibilityMeasurement = magnitude.match(
+            /^(\d+(?:\.\d+)?)(?:\s+(?:M|E|MI|MILE|MILES))+$/i
+        );
+        if (/\b(?:fog|visibility|vis)\b/i.test(String(reportType || '')) &&
+            visibilityMeasurement) {
+            return visibilityMeasurement[1] + ' MI';
+        }
+        return magnitude;
+    }
+
+    function normalizeIemLsrSource(value) {
+        const source = String(value || '').replace(/\s+/g, ' ').trim();
+        if (/^Department of Hig(?:hways)?$/i.test(source)) {
+            return 'Department of Highways';
+        }
+        if (/^Park\/Forest Servi(?:ce)?$/i.test(source)) {
+            return 'Park/Forest Service';
+        }
+        return source;
     }
 
     async function loadMapReports() {
@@ -21672,7 +21694,7 @@
                 });
             if (lsrData) {
                     const LSR_ICON_TYPES = { tornado:'Tornado / Funnel Cloud', funnel:'Tornado / Funnel Cloud', hail:'Hail', wind:'Wind Damage', wnd:'Wind Damage', tstm:'Thunderstorm', flood:'Flooding', snow:'Heavy Snow', rain:'Rain', ice:'Ice / Freezing Rain', lightning:'Lightning Strike', fire:'Fire', dust:'Dust Storm', fog:'Fog', trop:'Tropical Cyclone', cyclone:'Tropical Cyclone' };
-                 const LSR_COLORS = { tornado:'#ff1744', funnel:'#90a4ae', hail:'#e0f7fa', wind:'#ff9100', wnd:'#ff9100', tstm:'#ffeb3b', flood:'#00e676', snow:'#b0bec5', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa', lightning:'#90a4ae', dust:'#c8a800', fog:'#90a4ae', trop:'#e040fb', cyclone:'#e040fb' };
+                 const LSR_COLORS = { tornado:'#ff1744', funnel:'#90a4ae', hail:'#e0f7fa', wind:'#ff9100', wnd:'#ff9100', tstm:'#ffeb3b', flood:'#00e676', snow:'#ffffff', rain:'#4fc3f7', fire:'#ff5722', ice:'#81d4fa', lightning:'#90a4ae', dust:'#c8a800', fog:'#90a4ae', trop:'#e040fb', cyclone:'#e040fb' };
                 // IEM uses several abbreviated storm-report type names. Resolve
                 // the wind reports explicitly before the broad fallback matching
                 // below so WND/TSTM substrings cannot assign the wrong icon/color.
@@ -21699,7 +21721,10 @@
                      const typeKey = rawLsrType.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
                     const exactStyle = LSR_EXACT_STYLES[typeKey];
                     const matchKey = Object.keys(LSR_ICON_TYPES).find(function(k) { return typeKey.includes(k); });
-                    const lsrType = exactStyle ? exactStyle.icon : (matchKey && LSR_ICON_TYPES[matchKey]);
+                    const isFreezingPrecip = /\bfreezing (?:rain|drizzle)\b|\bfz(?:ra|dz)\b/.test(typeKey);
+                    const lsrType = exactStyle ? exactStyle.icon : (isFreezingPrecip
+                        ? 'Ice / Freezing Rain'
+                        : (matchKey && LSR_ICON_TYPES[matchKey]));
                     const lsrIcon = lsrType
                         ? reportIconMarkup(lsrType, 'reporting-popup-icon')
                         : reportIconMarkup('Other', 'reporting-popup-icon');
@@ -21720,7 +21745,7 @@
                      const magnitudeWithUnit = unitValue && magnitudeText.toLowerCase().indexOf(unitValue.toLowerCase()) === -1
                         ? magnitudeText + ' ' + unitValue
                         : magnitudeText;
-                     const displayMagnitude = normalizeIemLsrMagnitude(magnitudeWithUnit);
+                     const displayMagnitude = normalizeIemLsrMagnitude(magnitudeWithUnit, lsrTypeLabel);
                       const mag = displayMagnitude ? ' \u2014 ' + displayMagnitude : '';
                     const marker = L_ref.circleMarker([la, lo], { pane: 'lsr-reports', radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
                         .addTo(lsrLayer);
@@ -21737,7 +21762,7 @@
                         meta: escapeHtml(props.city || 'Unknown location') + (validStr ? ' \u00B7 ' + escapeHtml(validStr) : ''),
                          detail: reportingPopupDetailRows([
                              ['County / state', [props.county, props.st].filter(Boolean).join(', ')],
-                             ['Source', props.source || ''],
+                             ['Source', normalizeIemLsrSource(props.source)],
                              ['Remark', props.remark || '(No remark)']
                          ])
                     });
