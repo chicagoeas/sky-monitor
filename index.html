@@ -21884,9 +21884,11 @@
         GEO: 'Geographic data',
         NOTIF: 'Notification setup',
         FBK: 'Feedback',
-        ADMIN: 'Alert editor'
+        ADMIN: 'Alert editor',
+        APP: 'Application'
     });
     const SITE_ERROR_MESSAGES = Object.freeze({
+        'APP-500-CLIENT': 'An unexpected application error occurred. Try the action again; if the problem continues, refresh the page.',
         'LOC-502-SEARCH': 'Location search is temporarily unavailable. Please try again shortly.',
         'LOC-502-PRIVACY': 'A privacy-safe area could not be found. Your report pin was not moved.',
         'RAD-502-UPSTREAM': 'Radar data is temporarily unavailable. Please try again shortly.',
@@ -21932,6 +21934,81 @@
         }
         return fallbackText || 'This action could not be completed. Please try again.';
     }
+
+    const skyMonitorErrorNoticeTimes = new Map();
+    let skyMonitorErrorNoticeTimer = 0;
+
+    function showSkyMonitorErrorNotice(errorCode) {
+        const code = String(errorCode || 'APP-500-CLIENT');
+        const now = Date.now();
+        const lastShown = skyMonitorErrorNoticeTimes.get(code) || 0;
+        // A recurring outage should not keep interrupting the same user.
+        if (lastShown && now - lastShown < 120000) return false;
+        skyMonitorErrorNoticeTimes.set(code, now);
+        if (skyMonitorErrorNoticeTimes.size > 24) {
+            const oldestCode = skyMonitorErrorNoticeTimes.keys().next().value;
+            skyMonitorErrorNoticeTimes.delete(oldestCode);
+        }
+
+        const host = document.body || document.documentElement;
+        let notice = document.getElementById('sky-monitor-error-notice');
+        if (!notice) {
+            notice = document.createElement('div');
+            notice.id = 'sky-monitor-error-notice';
+            notice.setAttribute('role', 'alert');
+            notice.setAttribute('aria-live', 'assertive');
+            notice.setAttribute('aria-atomic', 'true');
+            notice.style.cssText = 'position:fixed;z-index:2147483000;left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom, 0px));max-width:560px;margin:0 auto;display:none;align-items:flex-start;gap:12px;padding:12px 14px;border:1px solid rgba(255,110,110,.72);border-radius:10px;background:#35191c;color:#fff;box-shadow:0 8px 28px rgba(0,0,0,.38);font:600 14px/1.45 system-ui,sans-serif;box-sizing:border-box;';
+            host.appendChild(notice);
+        }
+
+        const message = document.createElement('span');
+        message.style.cssText = 'flex:1;min-width:0;';
+        message.textContent = getSiteErrorText(code);
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.textContent = 'Dismiss';
+        dismiss.setAttribute('aria-label', 'Dismiss error notice');
+        dismiss.style.cssText = 'flex:0 0 auto;margin:-2px -4px 0 0;padding:4px 6px;border:0;background:transparent;color:#ffd6d6;font:700 12px/1.2 system-ui,sans-serif;cursor:pointer;';
+        dismiss.onclick = function() {
+            window.clearTimeout(skyMonitorErrorNoticeTimer);
+            notice.style.display = 'none';
+            notice.setAttribute('aria-hidden', 'true');
+        };
+        notice.textContent = '';
+        notice.appendChild(message);
+        notice.appendChild(dismiss);
+        notice.dataset.errorCode = code;
+        notice.style.display = 'flex';
+        notice.setAttribute('aria-hidden', 'false');
+        window.clearTimeout(skyMonitorErrorNoticeTimer);
+        skyMonitorErrorNoticeTimer = window.setTimeout(function() {
+            if (notice.dataset.errorCode === code) {
+                notice.style.display = 'none';
+                notice.setAttribute('aria-hidden', 'true');
+            }
+        }, 15000);
+        return true;
+    }
+
+    // Catch only uncaught same-origin script errors. Expected request aborts,
+    // cross-origin script failures, and resource-load events are not user errors.
+    window.addEventListener('error', function(event) {
+        if (!event || (!event.error && !event.message) ||
+            event.message === 'Script error.' ||
+            (event.error && event.error.name === 'AbortError')) return;
+        if (event.filename) {
+            try {
+                if (new URL(event.filename, window.location.href).origin !== window.location.origin) return;
+            } catch (error) {}
+        }
+        showSkyMonitorErrorNotice('APP-500-CLIENT');
+    });
+    window.addEventListener('unhandledrejection', function(event) {
+        const reason = event && event.reason;
+        if (reason && (reason.name === 'AbortError' || reason.code === 20)) return;
+        showSkyMonitorErrorNotice('APP-500-CLIENT');
+    });
 
     function feedbackErrorText(statusCode, errorCode) {
         const code = String(errorCode || '');
@@ -25825,6 +25902,7 @@
         window._fastNwsAlertsAttempted = false;
         twcMaxFeelsLike = null;
         var loadFailed = false;
+        var loadFailureCode = '';
         // Reset beach state every load so a previous beach result never bleeds into a new search.
         window.isBeachLocation = false;
         window.isWaterLocation = false;
@@ -25850,18 +25928,14 @@
         window._syncMinDone = false;
         window._syncLoadComplete = false;
         window._syncLoadFailed = false;
+        window._syncErrorCode = '';
         window._maybeHideSync = function() {
             if (!window._syncMinDone ||
                 !window._syncLoadComplete ||
                 window._syncPending > 0 ||
                 !sync) return;
-            if (window._syncLoadFailed) {
-                sync.textContent = '\u26A0 WEATHER INCOMPLETE';
-                sync.style.color = '#ff5252';
-                sync.style.opacity = '1';
-            } else {
-                sync.style.opacity = '0';
-            }
+            if (window._syncLoadFailed) sync.textContent = '';
+            sync.style.opacity = '0';
         };
         if (isInitialLoad) _resetCurrentObservationFields();
         try {
@@ -25952,7 +26026,10 @@
                     // Location classification is best-effort enrichment. It
                     // must not hold the primary weather chain hostage if the
                     // geocoder is slow or never resolves on a mobile network.
-                    if (window._pirateLoadFailed) loadFailed = true;
+                    if (window._pirateLoadFailed) {
+                        loadFailed = true;
+                        loadFailureCode = loadFailureCode || 'WX-502-UPSTREAM';
+                    }
                     if (loadGeneration !== weatherLoadGeneration) { _markHomeDataReady(); return; }
 
                     const _aqiAndBeachPromise = Promise.all([
@@ -25964,9 +26041,13 @@
                         // result means every current-observation source failed;
                         // keep UPDATING visible instead of presenting a blank
                         // card as if the refresh completed successfully.
-                        if (_nwsOk === false) loadFailed = true;
+                        if (_nwsOk === false) {
+                            loadFailed = true;
+                            loadFailureCode = loadFailureCode || 'WX-502-UPSTREAM';
+                        }
                     }).catch(function() {
                         loadFailed = true;
+                        loadFailureCode = loadFailureCode || 'WX-502-UPSTREAM';
                     });
                     // Start safety-critical alert loading as soon as location
                     // coverage is known; optional AQI, beach, and forecast feeds
@@ -25981,6 +26062,7 @@
                         }
                         return alertsOk;
                     }).catch(function() {
+                        loadFailureCode = loadFailureCode || 'ALERT-502-UPSTREAM';
                         return false;
                     });
                     const _openWeatherPromise = Promise.resolve(fetchOpenWeather()).catch(function() {});
@@ -25999,7 +26081,10 @@
                     if (loadGeneration === weatherLoadGeneration) {
                         var _homeTempEl = document.getElementById('tempVal');
                         if (_homeTempEl && _homeTempEl.innerText === '--') {
-                            if (!_renderLocalObservationFallback()) loadFailed = true;
+                            if (!_renderLocalObservationFallback()) {
+                                loadFailed = true;
+                                loadFailureCode = loadFailureCode || 'WX-503-UNAVAILABLE';
+                            }
                         }
                     }
                     _markHomeDataReady();
@@ -26010,7 +26095,10 @@
                     if (window.isOutsideUS) await _fetchAQIFromOpenMeteo(loadLat, loadLon, loadGeneration);
 
                     const _alertsOk = await _alertsPromise;
-                    if (_alertsOk !== true) loadFailed = true;
+                    if (_alertsOk !== true) {
+                        loadFailed = true;
+                        loadFailureCode = loadFailureCode || 'ALERT-502-UPSTREAM';
+                    }
                     const _riskLevelsPromise = Promise.resolve(fetchRiskLevels()).catch(function() {});
                     // Re-render beach data after alerts so BHS/rip-current
                     // banners are included when applicable.
@@ -26047,6 +26135,7 @@
                     }
                 } catch(e) {
                     loadFailed = true;
+                    loadFailureCode = loadFailureCode || 'APP-500-CLIENT';
                     _markHomeDataReady();
                     console.warn('[SkyMonitor] Optional enrichment failed:', e);
                 }
@@ -26071,9 +26160,13 @@
                     );
                 } catch (fallbackError) {
                     loadFailed = true;
+                    loadFailureCode = loadFailureCode || 'WX-502-UPSTREAM';
                 }
                 if (loadGeneration !== weatherLoadGeneration) return;
-                if (_homeTempEl.innerText === '--') loadFailed = true;
+                if (_homeTempEl.innerText === '--') {
+                    loadFailed = true;
+                    loadFailureCode = loadFailureCode || 'WX-503-UNAVAILABLE';
+                }
             }
             // The home observation is the authoritative refresh. Optional
             // enrichment must finish (or hit its own request deadline) before
@@ -26088,6 +26181,7 @@
             }
         } catch(e) {
             loadFailed = true;
+            loadFailureCode = loadFailureCode || 'APP-500-CLIENT';
         }
         // A newer location load owns the indicator. An older, slower request
         // must never hide the newer request's UPDATING state.
@@ -26095,21 +26189,23 @@
         window._syncMinDone = false;
         window._syncLoadComplete = false;
         window._syncLoadFailed = loadFailed;
+        window._syncErrorCode = loadFailed &&
+            (typeof navigator === 'undefined' || navigator.onLine !== false)
+            ? (loadFailureCode || 'WX-502-UPSTREAM')
+            : '';
+        if (window._syncErrorCode) {
+            showSkyMonitorErrorNotice(window._syncErrorCode);
+        }
         window._maybeHideSync = function() {
             if (!window._syncMinDone ||
                 !window._syncLoadComplete ||
                 window._syncPending > 0 ||
                 !sync) return;
-            if (window._syncLoadFailed) {
-                sync.textContent = '\u26A0 WEATHER INCOMPLETE';
-                sync.style.color = '#ff5252';
-                sync.style.opacity = '1';
-            } else {
-                sync.style.opacity = '0';
-            }
+            if (window._syncLoadFailed) sync.textContent = '';
+            sync.style.opacity = '0';
         };
-        // Hide the activity indicator after a successful refresh. If the
-        // required weather chain failed, leave a clear warning instead.
+        // Clear the activity indicator after the load settles. A failed
+        // refresh is reported by the dismissible, coded notice above.
         window._syncLoadComplete = true;
         setTimeout(function() {
             if (loadGeneration !== weatherLoadGeneration) return;
@@ -26309,7 +26405,8 @@
                 if (_isOffline || window._syncLoadFailed) {
                     ptrIndicator.innerText = _isOffline
                         ? 'Offline — showing saved data'
-                        : 'Some data could not be refreshed. (Code: WX-502-UPSTREAM)';
+                        : 'Some data could not be refreshed. (Code: ' +
+                            (window._syncErrorCode || 'WX-502-UPSTREAM') + ')';
                     ptrIndicator.style.background = 'rgba(255,82,82,0.2)';
                     ptrIndicator.style.borderColor = '#ff5252';
                     ptrIndicator.style.color = '#ff5252';
