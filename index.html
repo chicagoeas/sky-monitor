@@ -15062,6 +15062,79 @@
         }
     }
 
+    function attachMobileSwipeToClose(modal, surface, closeModal) {
+        if (!modal || !surface || surface._mobileSwipeCloseAttached) return;
+        surface._mobileSwipeCloseAttached = true;
+
+        var gesture = null;
+        function isMobileViewport() {
+            if (!window.matchMedia) return window.innerWidth <= 820;
+            return window.matchMedia('(max-width: 820px)').matches ||
+                window.matchMedia('(pointer: coarse)').matches;
+        }
+        function scrollableAtTarget(target) {
+            var node = target;
+            while (node && node !== modal) {
+                var style = window.getComputedStyle(node);
+                var overflowY = style && style.overflowY;
+                if ((overflowY === 'auto' || overflowY === 'scroll') &&
+                    node.scrollHeight > node.clientHeight + 1) {
+                    return node;
+                }
+                if (node === surface) break;
+                node = node.parentElement;
+            }
+            return surface;
+        }
+
+        surface.addEventListener('touchstart', function(event) {
+            gesture = null;
+            if (!isMobileViewport() || event.touches.length !== 1) return;
+            var touch = event.touches[0];
+            var scrollElement = scrollableAtTarget(event.target);
+            if (Number(scrollElement.scrollTop) > 2) return;
+            gesture = {
+                x: touch.clientX,
+                y: touch.clientY,
+                startedAt: Date.now()
+            };
+        }, { passive: true });
+
+        surface.addEventListener('touchmove', function(event) {
+            if (!gesture || !isMobileViewport() || event.touches.length !== 1) {
+                gesture = null;
+                return;
+            }
+            var touch = event.touches[0];
+            var dx = touch.clientX - gesture.x;
+            var dy = touch.clientY - gesture.y;
+            if (dy < -12 || (Math.abs(dx) > 24 && Math.abs(dx) >= Math.abs(dy))) {
+                gesture = null;
+            }
+        }, { passive: true });
+
+        surface.addEventListener('touchend', function(event) {
+            if (!gesture || !isMobileViewport() ||
+                !event.changedTouches || !event.changedTouches.length) {
+                gesture = null;
+                return;
+            }
+            var touch = event.changedTouches[0];
+            var dx = touch.clientX - gesture.x;
+            var dy = touch.clientY - gesture.y;
+            var duration = Date.now() - gesture.startedAt;
+            var shouldClose = dy >= 72 &&
+                dy > Math.abs(dx) * 1.2 &&
+                duration <= 1400;
+            gesture = null;
+            if (shouldClose && modal.style.display !== 'none') closeModal();
+        }, { passive: true });
+
+        surface.addEventListener('touchcancel', function() {
+            gesture = null;
+        }, { passive: true });
+    }
+
     let _twcData = null;
 
     function openTWCDetailModal(data, dayIdx) {
@@ -15078,6 +15151,11 @@
             modal.onclick = function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } };
         }
         modal.style.display = 'flex';
+        attachMobileSwipeToClose(
+            modal,
+            document.getElementById('twc-modal-inner'),
+            function() { modal.style.display = 'none'; setModalOpen(false); }
+        );
 
         const daypart = data.daypart[0];
         const base = dayIdx * 2;
@@ -15228,6 +15306,11 @@
             modal.onclick = function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } };
         }
         modal.style.display = 'flex';
+        attachMobileSwipeToClose(
+            modal,
+            document.getElementById('comfort-modal-inner'),
+            function() { modal.style.display = 'none'; setModalOpen(false); }
+        );
         const offsetHours = window.pirateTimezoneOffset || 0;
         const currentUnix = Math.floor(Date.now() / 1000);
         const days = {};
@@ -15295,6 +15378,11 @@
             modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } });
         }
         modal.style.display = 'flex';
+        attachMobileSwipeToClose(
+            modal,
+            document.getElementById('uv-modal-inner'),
+            function() { modal.style.display = 'none'; setModalOpen(false); }
+        );
         const offsetHours = window.pirateTimezoneOffset || 0; const currentUnix = Math.floor(Date.now() / 1000);
         const days = {};
         window.pirateHourlyData.forEach(function(h) {
@@ -15363,6 +15451,11 @@
             modal.addEventListener('click', function(e) { if (e.target === modal) { modal.style.display = 'none'; setModalOpen(false); } });
         }
         modal.style.display = 'flex';
+        attachMobileSwipeToClose(
+            modal,
+            document.getElementById('flood-modal-inner'),
+            function() { modal.style.display = 'none'; setModalOpen(false); }
+        );
 
         // Re-evaluate onset/expiry timestamps when the modal opens so a
         // scheduled watch cannot remain labeled "in effect" after the clock
