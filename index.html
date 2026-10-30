@@ -1181,6 +1181,105 @@
         .nav-item { color: #888; cursor: pointer; display: flex; flex-direction: column; align-items: center; font-size: 1.1em; transition: 0.3s; }
         .nav-item span { font-size: 0.5em; text-transform: uppercase; margin-top: 4px; }
         .nav-item.active { color: var(--primary); }
+        @media (max-width: 767px), (pointer: coarse) {
+            .bottom-nav {
+                position: fixed;
+                left: 50%;
+                right: auto;
+                bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+                width: min(340px, calc(100vw - 28px));
+                height: 68px;
+                box-sizing: border-box;
+                align-items: stretch;
+                justify-content: space-between;
+                gap: 2px;
+                padding: 5px 6px;
+                overflow: visible;
+                border: 1px solid rgba(255,255,255,0.2);
+                border-radius: 999px;
+                background: linear-gradient(145deg, rgba(51,55,62,0.78), rgba(16,19,25,0.78));
+                -webkit-backdrop-filter: blur(24px) saturate(1.65);
+                backdrop-filter: blur(24px) saturate(1.65);
+                box-shadow: 0 10px 30px rgba(0,0,0,0.42),
+                    inset 0 1px 0 rgba(255,255,255,0.18),
+                    inset 0 -1px 0 rgba(0,0,0,0.24);
+                transform: translateX(-50%);
+                isolation: isolate;
+                touch-action: none;
+            }
+            .bottom-nav::before {
+                content: "";
+                position: absolute;
+                z-index: 0;
+                top: 5px;
+                bottom: 5px;
+                left: 0;
+                width: var(--nav-indicator-width, 0px);
+                border: 1px solid rgba(255,255,255,0.22);
+                border-radius: 999px;
+                box-sizing: border-box;
+                background: linear-gradient(145deg, rgba(255,255,255,0.22), rgba(255,255,255,0.07) 48%, rgba(255,255,255,0.12));
+                box-shadow: 0 3px 12px rgba(0,0,0,0.25),
+                    inset 0 1px 0 rgba(255,255,255,0.28),
+                    inset 0 -1px 0 rgba(255,255,255,0.06);
+                -webkit-backdrop-filter: blur(16px) saturate(1.8);
+                backdrop-filter: blur(16px) saturate(1.8);
+                transform: translate3d(var(--nav-indicator-x, 6px), 0, 0);
+                transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), width 180ms ease;
+                pointer-events: none;
+            }
+            .bottom-nav::after {
+                content: "";
+                position: absolute;
+                z-index: 1;
+                top: 1px;
+                left: 16%;
+                width: 68%;
+                height: 1px;
+                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.52), transparent);
+                pointer-events: none;
+            }
+            .bottom-nav .nav-item {
+                position: relative;
+                z-index: 2;
+                flex: 1 1 0;
+                min-width: 0;
+                min-height: 56px;
+                justify-content: center;
+                gap: 1px;
+                padding: 4px 2px;
+                border-radius: 999px;
+                font-size: 1.25em;
+                transition: color 180ms ease, transform 180ms ease, text-shadow 180ms ease;
+                -webkit-tap-highlight-color: transparent;
+                user-select: none;
+            }
+            .bottom-nav .nav-item span {
+                margin-top: 1px;
+                font-size: 0.5em;
+                font-weight: 700;
+                letter-spacing: 0.1px;
+                text-transform: none;
+            }
+            .bottom-nav .nav-item.active,
+            .bottom-nav .nav-item.nav-preview {
+                color: var(--primary);
+                text-shadow: 0 0 12px color-mix(in srgb, var(--primary) 48%, transparent);
+            }
+            .bottom-nav .nav-item.nav-preview {
+                transform: scale(1.04);
+            }
+            .bottom-nav.is-dragging::before {
+                transition: none;
+            }
+            .bottom-nav.is-dragging .nav-item {
+                transition: none;
+            }
+            .bottom-nav.is-dragging .nav-item.active:not(.nav-preview) {
+                color: rgba(255,255,255,0.68);
+                text-shadow: none;
+            }
+        }
         .spc-btn-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0; }
         .sky-hd { display:flex; justify-content:space-between; align-items:center; font-weight:700; color:#f1f5f9; font-size:0.92em; margin-bottom:12px; letter-spacing:0.2px; }
         .sky-hd::after { content:'›'; color:#4b5563; font-size:1.15em; font-weight:400; }
@@ -26442,7 +26541,8 @@
 
     function isInsideHorizontalScroll(el) {
         while (el && el !== document.body) {
-            if (el.classList && el.classList.contains('forecast-scroll')) return true;
+            if (el.classList &&
+                (el.classList.contains('forecast-scroll') || el.classList.contains('bottom-nav'))) return true;
             const style = window.getComputedStyle(el);
             const overflowX = style.overflowX;
             if ((overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth) return true;
@@ -26473,7 +26573,8 @@
         swipeLocked = isInsideHorizontalScroll(e.target);
         touchOnMap = !!e.target.closest('#reporting-map');
         touchOnScrollableContent = isInsideVerticalScroll(e.target);
-        ptrBlocked = !!window._modalOpen || touchOnScrollableContent;
+        ptrBlocked = !!window._modalOpen || touchOnScrollableContent ||
+            !!e.target.closest('.bottom-nav');
         ptr_pulling = false;
     }, { passive: true });
 
@@ -26546,6 +26647,158 @@
         currentTabIdx = tabs.indexOf(tabId);
         if (currentTabIdx < 0) currentTabIdx = 0;
     };
+
+    // Mobile-only liquid-glass tab lens. Dragging starts from the currently
+    // selected tab, previews the tab under the finger, and switches on release.
+    (function initMobileGlassNav() {
+        var nav = document.querySelector('.bottom-nav');
+        if (!nav) return;
+        var items = Array.prototype.slice.call(nav.querySelectorAll('.nav-item'));
+        if (!items.length) return;
+
+        var drag = null;
+        var suppressDragClickUntil = 0;
+
+        function isMobileNav() {
+            return !!(window.matchMedia &&
+                window.matchMedia('(max-width: 767px), (pointer: coarse)').matches);
+        }
+
+        function activeItem() {
+            return nav.querySelector('.nav-item.active') || items[0];
+        }
+
+        function moveLens(item) {
+            if (!item) return;
+            var navRect = nav.getBoundingClientRect();
+            var itemRect = item.getBoundingClientRect();
+            var borderLeft = parseFloat(window.getComputedStyle(nav).borderLeftWidth) || 0;
+            nav.style.setProperty('--nav-indicator-x',
+                Math.round(itemRect.left - navRect.left - borderLeft) + 'px');
+            nav.style.setProperty('--nav-indicator-width', Math.round(itemRect.width) + 'px');
+        }
+
+        function syncLens() {
+            if (drag && drag.moved) return;
+            moveLens(activeItem());
+        }
+
+        function itemAtX(clientX) {
+            var nearest = null;
+            var nearestDistance = Infinity;
+            items.forEach(function(item) {
+                var rect = item.getBoundingClientRect();
+                if (clientX >= rect.left && clientX <= rect.right) {
+                    nearest = item;
+                    nearestDistance = 0;
+                    return;
+                }
+                var distance = Math.min(Math.abs(clientX - rect.left), Math.abs(clientX - rect.right));
+                if (distance < nearestDistance) {
+                    nearest = item;
+                    nearestDistance = distance;
+                }
+            });
+            return nearest;
+        }
+
+        function clearPreview() {
+            items.forEach(function(item) { item.classList.remove('nav-preview'); });
+            nav.classList.remove('is-dragging');
+        }
+
+        function finishDrag(commit, clientX) {
+            if (!drag) return;
+            var state = drag;
+            drag = null;
+            var destination = state.moved ? (itemAtX(clientX) || state.previewItem) : null;
+            clearPreview();
+
+            if (commit && state.moved && destination && destination.id) {
+                var tabId = destination.id.replace(/^nav-/, '');
+                if (destination !== activeItem() && typeof window.switchTab === 'function') {
+                    suppressDragClickUntil = Date.now() + 450;
+                    window.switchTab(tabId, destination);
+                }
+            }
+            requestAnimationFrame(syncLens);
+        }
+
+        nav.addEventListener('pointerdown', function(event) {
+            if (!isMobileNav() || event.pointerType !== 'touch' || !event.isPrimary) return;
+            var selected = activeItem();
+            if (!event.target.closest || event.target.closest('.nav-item') !== selected) return;
+
+            drag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                moved: false,
+                cancelled: false,
+                previewItem: selected
+            };
+            try { nav.setPointerCapture(event.pointerId); } catch (e) {}
+        });
+
+        nav.addEventListener('pointermove', function(event) {
+            if (!drag || event.pointerId !== drag.pointerId || drag.cancelled) return;
+            var dx = event.clientX - drag.startX;
+            var dy = event.clientY - drag.startY;
+
+            if (!drag.moved) {
+                if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) {
+                    drag.cancelled = true;
+                    return;
+                }
+                if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.15) return;
+                drag.moved = true;
+                nav.classList.add('is-dragging');
+            }
+
+            var preview = itemAtX(event.clientX);
+            if (preview && preview !== drag.previewItem) {
+                drag.previewItem = preview;
+                items.forEach(function(item) {
+                    item.classList.toggle('nav-preview', item === preview);
+                });
+                moveLens(preview);
+            }
+            event.preventDefault();
+        });
+
+        nav.addEventListener('pointerup', function(event) {
+            if (!drag || event.pointerId !== drag.pointerId) return;
+            var wasDragging = drag.moved;
+            finishDrag(!drag.cancelled, event.clientX);
+            if (wasDragging) event.preventDefault();
+        });
+
+        nav.addEventListener('pointercancel', function(event) {
+            if (!drag || event.pointerId !== drag.pointerId) return;
+            finishDrag(false, drag.startX);
+        });
+
+        nav.addEventListener('lostpointercapture', function(event) {
+            if (!drag || event.pointerId !== drag.pointerId) return;
+            finishDrag(false, drag.startX);
+        });
+
+        nav.addEventListener('click', function(event) {
+            if (Date.now() > suppressDragClickUntil) return;
+            suppressDragClickUntil = 0;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }, true);
+
+        if (window.MutationObserver) {
+            var navObserver = new MutationObserver(syncLens);
+            items.forEach(function(item) {
+                navObserver.observe(item, { attributes: true, attributeFilter: ['class'] });
+            });
+        }
+        window.addEventListener('resize', syncLens);
+        requestAnimationFrame(syncLens);
+    })();
 
     // ——— PUSH NOTIFICATIONS BACKEND URL ———
     // If your HTML is on GitHub Pages, set this to your deployed app URL:
