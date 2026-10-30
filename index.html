@@ -1225,8 +1225,19 @@
                 -webkit-backdrop-filter: blur(16px) saturate(1.8);
                 backdrop-filter: blur(16px) saturate(1.8);
                 transform: translate3d(var(--nav-indicator-x, 6px), 0, 0);
-                transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), width 180ms ease;
+                transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), width 180ms ease,
+                    top 180ms ease, bottom 180ms ease;
                 pointer-events: none;
+            }
+            .bottom-nav.is-pressed::before,
+            .bottom-nav.is-dragging::before {
+                top: 2px;
+                bottom: 2px;
+                border-color: rgba(255,255,255,0.34);
+                background: linear-gradient(145deg, rgba(255,255,255,0.3), rgba(255,255,255,0.1) 48%, rgba(255,255,255,0.17));
+                box-shadow: 0 5px 18px rgba(0,0,0,0.3),
+                    inset 0 1px 0 rgba(255,255,255,0.38),
+                    inset 0 -1px 0 rgba(255,255,255,0.09);
             }
             .bottom-nav::after {
                 content: "";
@@ -1267,7 +1278,9 @@
                 text-shadow: 0 0 12px color-mix(in srgb, var(--primary) 48%, transparent);
             }
             .bottom-nav .nav-item.nav-preview {
-                transform: scale(1.04);
+                z-index: 3;
+                font-size: 1.58em;
+                transform: translateY(-3px);
             }
             .bottom-nav.is-dragging::before {
                 transition: none;
@@ -26668,19 +26681,25 @@
             return nav.querySelector('.nav-item.active') || items[0];
         }
 
-        function moveLens(item) {
+        function moveLens(item, expanded) {
             if (!item) return;
             var navRect = nav.getBoundingClientRect();
             var itemRect = item.getBoundingClientRect();
             var borderLeft = parseFloat(window.getComputedStyle(nav).borderLeftWidth) || 0;
+            var lensWidth = itemRect.width * (expanded ? 1.36 : 1);
+            var lensLeft = itemRect.left - navRect.left - borderLeft -
+                (lensWidth - itemRect.width) / 2;
             nav.style.setProperty('--nav-indicator-x',
-                Math.round(itemRect.left - navRect.left - borderLeft) + 'px');
-            nav.style.setProperty('--nav-indicator-width', Math.round(itemRect.width) + 'px');
+                Math.round(lensLeft) + 'px');
+            nav.style.setProperty('--nav-indicator-width', Math.round(lensWidth) + 'px');
         }
 
         function syncLens() {
-            if (drag && drag.moved) return;
-            moveLens(activeItem());
+            if (drag) {
+                moveLens(drag.previewItem || activeItem(), true);
+                return;
+            }
+            moveLens(activeItem(), false);
         }
 
         function itemAtX(clientX) {
@@ -26704,7 +26723,7 @@
 
         function clearPreview() {
             items.forEach(function(item) { item.classList.remove('nav-preview'); });
-            nav.classList.remove('is-dragging');
+            nav.classList.remove('is-dragging', 'is-pressed');
         }
 
         function finishDrag(commit, clientX) {
@@ -26725,11 +26744,12 @@
         }
 
         nav.addEventListener('pointerdown', function(event) {
-            if (!isMobileNav() || event.pointerType !== 'touch' || !event.isPrimary) return;
+            if (!isMobileNav() || event.pointerType === 'touch' || !event.isPrimary) return;
             var selected = activeItem();
             if (!event.target.closest || event.target.closest('.nav-item') !== selected) return;
 
             drag = {
+                inputType: 'pointer',
                 pointerId: event.pointerId,
                 startX: event.clientX,
                 startY: event.clientY,
@@ -26737,11 +26757,15 @@
                 cancelled: false,
                 previewItem: selected
             };
+            nav.classList.add('is-pressed');
+            selected.classList.add('nav-preview');
+            moveLens(selected, true);
             try { nav.setPointerCapture(event.pointerId); } catch (e) {}
         });
 
         nav.addEventListener('pointermove', function(event) {
-            if (!drag || event.pointerId !== drag.pointerId || drag.cancelled) return;
+            if (!drag || drag.inputType !== 'pointer' ||
+                event.pointerId !== drag.pointerId || drag.cancelled) return;
             var dx = event.clientX - drag.startX;
             var dy = event.clientY - drag.startY;
 
@@ -26761,26 +26785,103 @@
                 items.forEach(function(item) {
                     item.classList.toggle('nav-preview', item === preview);
                 });
-                moveLens(preview);
+                moveLens(preview, true);
             }
             event.preventDefault();
         });
 
         nav.addEventListener('pointerup', function(event) {
-            if (!drag || event.pointerId !== drag.pointerId) return;
+            if (!drag || drag.inputType !== 'pointer' || event.pointerId !== drag.pointerId) return;
             var wasDragging = drag.moved;
             finishDrag(!drag.cancelled, event.clientX);
             if (wasDragging) event.preventDefault();
         });
 
         nav.addEventListener('pointercancel', function(event) {
-            if (!drag || event.pointerId !== drag.pointerId) return;
+            if (!drag || drag.inputType !== 'pointer' || event.pointerId !== drag.pointerId) return;
             finishDrag(false, drag.startX);
         });
 
         nav.addEventListener('lostpointercapture', function(event) {
-            if (!drag || event.pointerId !== drag.pointerId) return;
+            if (!drag || drag.inputType !== 'pointer' || event.pointerId !== drag.pointerId) return;
             finishDrag(false, drag.startX);
+        });
+
+        // iOS Safari and embedded mobile browsers have uneven Pointer Events
+        // behavior for captured drags, so native touch events are the primary
+        // path for phones. Keep pointer support as a fallback for other inputs.
+        nav.addEventListener('touchstart', function(event) {
+            if (!isMobileNav() || drag || !event.touches || event.touches.length !== 1) return;
+            var touch = event.touches[0];
+            var selected = activeItem();
+            if (!event.target.closest || event.target.closest('.nav-item') !== selected) return;
+            drag = {
+                inputType: 'touch',
+                touchId: touch.identifier,
+                startX: touch.clientX,
+                startY: touch.clientY,
+                moved: false,
+                cancelled: false,
+                previewItem: selected
+            };
+            nav.classList.add('is-pressed');
+            selected.classList.add('nav-preview');
+            moveLens(selected, true);
+        }, { passive: true });
+
+        nav.addEventListener('touchmove', function(event) {
+            if (!drag || drag.inputType !== 'touch' || drag.cancelled) return;
+            if (!event.touches || event.touches.length !== 1) {
+                drag.cancelled = true;
+                finishDrag(false, drag.startX);
+                return;
+            }
+            var touch = event.touches[0];
+            if (touch.identifier !== drag.touchId) return;
+            var dx = touch.clientX - drag.startX;
+            var dy = touch.clientY - drag.startY;
+
+            if (!drag.moved) {
+                if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) {
+                    drag.cancelled = true;
+                    finishDrag(false, touch.clientX);
+                    return;
+                }
+                if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.15) return;
+                drag.moved = true;
+                nav.classList.add('is-dragging');
+            }
+
+            var preview = itemAtX(touch.clientX);
+            if (preview && preview !== drag.previewItem) {
+                drag.previewItem = preview;
+                items.forEach(function(item) {
+                    item.classList.toggle('nav-preview', item === preview);
+                });
+                moveLens(preview, true);
+            }
+            event.preventDefault();
+        }, { passive: false });
+
+        nav.addEventListener('touchend', function(event) {
+            if (!drag || drag.inputType !== 'touch' || !event.changedTouches) return;
+            var touch = null;
+            for (var i = 0; i < event.changedTouches.length; i++) {
+                if (event.changedTouches[i].identifier === drag.touchId) {
+                    touch = event.changedTouches[i];
+                    break;
+                }
+            }
+            if (!touch) return;
+            var wasDragging = drag.moved;
+            finishDrag(!drag.cancelled, touch.clientX);
+            if (wasDragging) event.preventDefault();
+        });
+
+        nav.addEventListener('touchcancel', function(event) {
+            if (!drag || drag.inputType !== 'touch') return;
+            var touch = event.changedTouches && event.changedTouches[0];
+            finishDrag(false, touch ? touch.clientX : drag.startX);
         });
 
         nav.addEventListener('click', function(event) {
