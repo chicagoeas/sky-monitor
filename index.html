@@ -1181,7 +1181,6 @@
         .nav-item { color: #888; cursor: pointer; display: flex; flex-direction: column; align-items: center; font-size: 1.1em; transition: 0.3s; }
         .nav-item span { font-size: 0.5em; text-transform: uppercase; margin-top: 4px; }
         .nav-item.active { color: var(--primary); }
-        @media (max-width: 767px), (pointer: coarse) {
             .bottom-nav {
                 position: fixed;
                 left: 50%;
@@ -1292,8 +1291,32 @@
                 color: rgba(255,255,255,0.68);
                 text-shadow: none;
             }
-        }
         .spc-btn-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0; }
+        #spc-day-tabs, #comfort-day-tabs, #uv-day-tabs {
+            display:flex; flex-wrap:nowrap; gap:4px; padding:4px; max-width:100%;
+            border:1px solid rgba(255,255,255,0.2); border-radius:999px;
+            background:linear-gradient(145deg, rgba(255,255,255,0.16), rgba(15,24,34,0.62) 52%, rgba(255,255,255,0.08));
+            box-shadow:0 8px 22px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.2),
+                inset 0 -1px 0 rgba(0,0,0,0.22);
+            -webkit-backdrop-filter:blur(18px) saturate(1.65);
+            backdrop-filter:blur(18px) saturate(1.65);
+            isolation:isolate;
+        }
+        #spc-day-tabs .btn-opt, #comfort-day-tabs .btn-opt, #uv-day-tabs .btn-opt {
+            position:relative; z-index:1; flex:1 1 0; min-width:0; min-height:34px;
+            padding:7px 10px; border:1px solid transparent; border-radius:999px;
+            background:transparent; color:rgba(226,232,240,0.68);
+            transition:background 180ms ease, color 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+        }
+        #spc-day-tabs .btn-opt.active, #comfort-day-tabs .btn-opt.active, #uv-day-tabs .btn-opt.active {
+            border-color:rgba(255,255,255,0.3);
+            background:linear-gradient(145deg, rgba(255,255,255,0.42), rgba(79,195,247,0.8) 58%, rgba(255,255,255,0.26));
+            color:#07131d;
+            box-shadow:0 3px 12px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.5),
+                inset 0 -1px 0 rgba(255,255,255,0.13);
+            -webkit-backdrop-filter:blur(12px) saturate(1.8);
+            backdrop-filter:blur(12px) saturate(1.8);
+        }
         .sky-hd { display:flex; justify-content:space-between; align-items:center; font-weight:700; color:#f1f5f9; font-size:0.92em; margin-bottom:12px; letter-spacing:0.2px; }
         .sky-hd::after { content:'›'; color:#4b5563; font-size:1.15em; font-weight:400; }
         .analytics-header-row .sky-hd::after { display:none; }
@@ -1306,35 +1329,16 @@
             margin:0; margin-top:-5px; font-weight:bold;
         }
         .hourly-metric-picker { display:inline-flex; flex:0 0 auto; }
-        .hourly-metric-toggle {
-            display:inline-flex; align-items:center; justify-content:center;
-            width:30px; height:28px; min-width:30px; min-height:28px;
-            padding:3px; border:1px solid rgba(79,195,247,0.6); border-radius:7px;
-            background:rgba(79,195,247,0.12); color:#fff; font:inherit;
-            font-size:1.05em; line-height:1; cursor:pointer;
+        .hourly-metric-select {
+            min-width:118px; max-width:min(150px, 42vw); min-height:30px;
+            padding:4px 8px; border:1px solid rgba(79,195,247,0.55); border-radius:8px;
+            background-color:rgba(6,24,38,0.78); color:#e7edf2; font:inherit;
+            font-size:0.7em; font-weight:800; cursor:pointer;
         }
-        .hourly-metric-toggle:hover, .hourly-metric-toggle:focus-visible {
-            background:rgba(79,195,247,0.24); outline:2px solid rgba(79,195,247,0.55);
-            outline-offset:2px;
+        .hourly-metric-select:focus-visible {
+            outline:2px solid rgba(79,195,247,0.65); outline-offset:2px;
         }
-        #hourly-metric-menu {
-            position:fixed; z-index:10050; width:196px; max-width:calc(100vw - 16px);
-            padding:5px; border:1px solid rgba(79,195,247,0.35); border-radius:10px;
-            background:#10283a; box-shadow:0 12px 30px rgba(0,0,0,0.5);
-        }
-        #hourly-metric-menu[hidden] { display:none; }
-        #hourly-metric-menu button {
-            display:flex; align-items:center; width:100%; min-height:36px;
-            padding:7px 10px; border:0; border-radius:6px; background:transparent;
-            color:#e7edf2; text-align:left; font:inherit; font-size:0.82em;
-            cursor:pointer;
-        }
-        #hourly-metric-menu button:hover, #hourly-metric-menu button:focus-visible {
-            background:rgba(79,195,247,0.16); outline:none;
-        }
-        #hourly-metric-menu button[aria-checked="true"] {
-            background:rgba(79,195,247,0.2); color:#fff; font-weight:800;
-        }
+        .hourly-metric-select option { background:#10283a; color:#e7edf2; }
         .hourly-metric-value { white-space:nowrap; }
         /* Balance the compact outlook vertically against the PWS label above
            and Daily Forecast below. The following spacer is also used by the
@@ -10699,100 +10703,29 @@
     let _selectedHourlyMetric = 'temperature';
 
     function _hourlyMetricPickerHtml() {
-        _ensureHourlyMetricMenu();
         const selected = _hourlyMetricOptions.find(function(option) {
             return option.key === _selectedHourlyMetric;
         });
         const label = selected ? selected.label : 'Temperature';
-        return '<span class="hourly-metric-picker"><button type="button" class="hourly-metric-toggle" ' +
-            'data-hourly-metric-toggle aria-haspopup="menu" aria-expanded="false" ' +
-            'aria-label="Hourly metric: ' + label + '. Choose a different metric" title="Displayed metric: ' + label + '">' +
-            '<span aria-hidden="true">&#127777;&#65039;</span></button></span>';
+        return '<span class="hourly-metric-picker"><select class="hourly-metric-select" ' +
+            'data-hourly-metric-select aria-label="Choose the hourly metric to display" ' +
+            'title="Displayed metric: ' + label + '" onchange="window.setHourlyMetric(this.value)">' +
+            _hourlyMetricOptions.map(function(option) {
+                return '<option value="' + option.key + '"' +
+                    (option.key === _selectedHourlyMetric ? ' selected' : '') + '>' +
+                    option.label + '</option>';
+            }).join('') +
+            '</select></span>';
     }
 
-    function _ensureHourlyMetricMenu() {
-        if (document.getElementById('hourly-metric-menu')) return;
-        const menu = document.createElement('div');
-        menu.id = 'hourly-metric-menu';
-        menu.setAttribute('role', 'menu');
-        menu.hidden = true;
-        menu.innerHTML = _hourlyMetricOptions.map(function(option) {
-            return '<button type="button" role="menuitemradio" aria-checked="' +
-                (option.key === _selectedHourlyMetric ? 'true' : 'false') +
-                '" data-hourly-metric-value="' + option.key + '">' + option.label + '</button>';
-        }).join('');
-        document.body.appendChild(menu);
-
-        function closeMenu() {
-            menu.hidden = true;
-            document.querySelectorAll('[data-hourly-metric-toggle]').forEach(function(button) {
-                button.setAttribute('aria-expanded', 'false');
-            });
-        }
-        function placeMenu(button) {
-            menu.hidden = false;
-            const rect = button.getBoundingClientRect();
-            const menuRect = menu.getBoundingClientRect();
-            const left = Math.max(8, Math.min(window.innerWidth - menuRect.width - 8, rect.right - menuRect.width));
-            let top = rect.bottom + 6;
-            if (top + menuRect.height > window.innerHeight - 8) top = rect.top - menuRect.height - 6;
-            menu.style.left = left + 'px';
-            menu.style.top = Math.max(8, top) + 'px';
-        }
-        function updateMenuState() {
-            menu.querySelectorAll('[data-hourly-metric-value]').forEach(function(item) {
-                item.setAttribute('aria-checked',
-                    item.getAttribute('data-hourly-metric-value') === _selectedHourlyMetric ? 'true' : 'false');
-            });
-            document.querySelectorAll('[data-hourly-metric-toggle]').forEach(function(button) {
-                const selected = _hourlyMetricOptions.find(function(option) {
-                    return option.key === _selectedHourlyMetric;
-                });
-                const label = selected ? selected.label : 'Temperature';
-                button.setAttribute('aria-label', 'Hourly metric: ' + label + '. Choose a different metric');
-                button.title = 'Displayed metric: ' + label;
-            });
-        }
-
-        document.addEventListener('click', function(event) {
-            const metricOption = event.target.closest && event.target.closest('[data-hourly-metric-value]');
-            if (metricOption && menu.contains(metricOption)) {
-                event.preventDefault();
-                _selectedHourlyMetric = metricOption.getAttribute('data-hourly-metric-value');
-                updateMenuState();
-                _refreshHourlyMetricValues();
-                closeMenu();
-                return;
-            }
-            const toggle = event.target.closest && event.target.closest('[data-hourly-metric-toggle]');
-            if (toggle) {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!menu.hidden && toggle.getAttribute('aria-expanded') === 'true') {
-                    closeMenu();
-                } else {
-                    closeMenu();
-                    placeMenu(toggle);
-                    toggle.setAttribute('aria-expanded', 'true');
-                    updateMenuState();
-                    const selectedItem = menu.querySelector('[aria-checked="true"]');
-                    if (selectedItem) selectedItem.focus({ preventScroll: true });
-                }
-                return;
-            }
-            if (!menu.contains(event.target)) closeMenu();
+    window.setHourlyMetric = function(metric) {
+        if (!_hourlyMetricOptions.some(function(option) { return option.key === metric; })) return;
+        _selectedHourlyMetric = metric;
+        document.querySelectorAll('[data-hourly-metric-select]').forEach(function(select) {
+            if (select.value !== metric) select.value = metric;
         });
-        document.addEventListener('keydown', function(event) {
-            if (event.key === 'Escape' && !menu.hidden) {
-                const expanded = document.querySelector('[data-hourly-metric-toggle][aria-expanded="true"]');
-                closeMenu();
-                if (expanded) expanded.focus();
-            }
-        });
-        window.addEventListener('resize', closeMenu);
-        window.addEventListener('scroll', closeMenu, true);
-        updateMenuState();
-    }
+        _refreshHourlyMetricValues();
+    };
 
     // Current Conditions may use a QC-selected station/NWS value while the
     // hourly feed remains model-based. Prefer the finalized live observation
@@ -26729,9 +26662,85 @@
         if (currentTabIdx < 0) currentTabIdx = 0;
     };
 
-    // Mobile-only liquid-glass tab lens. Dragging starts from the currently
-    // selected tab, previews the tab under the finger, and switches on release.
-    (function initMobileGlassNav() {
+    function _horizontalArrowShouldStayNative(target) {
+        return !!(target && (
+            target.isContentEditable ||
+            (target.closest && target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'))
+        ));
+    }
+
+    function _isVisibleModal(id) {
+        var modal = document.getElementById(id);
+        return !!(modal && window.getComputedStyle(modal).display !== 'none');
+    }
+
+    document.addEventListener('keydown', function(event) {
+        if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
+            event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented ||
+            _horizontalArrowShouldStayNative(event.target)) return;
+
+        var step = event.key === 'ArrowRight' ? 1 : -1;
+        var target = event.target;
+
+        // Mirror the modal-specific horizontal touch gestures.
+        if (_isVisibleModal('twc-modal')) {
+            if (target.closest && target.closest('.forecast-scroll')) return;
+            var twcInner = document.getElementById('twc-modal-inner');
+            var twcDayCount = _twcData && Array.isArray(_twcData.dayOfWeek)
+                ? _twcData.dayOfWeek.length : 0;
+            if (twcInner && twcDayCount > 1) {
+                var twcIndex = Number(twcInner._currentDayIdx) || 0;
+                var nextTWCIndex = (twcIndex + step + twcDayCount) % twcDayCount;
+                if (nextTWCIndex !== twcIndex) {
+                    openTWCDetailModal(_twcData, nextTWCIndex);
+                    event.preventDefault();
+                }
+            }
+            return;
+        }
+
+        if (_isVisibleModal('comfort-modal')) {
+            var comfortTabs = document.querySelectorAll('#comfort-day-tabs .btn-opt');
+            var comfortIndex = Number(window._comfortDayIdx) || 0;
+            var nextComfortIndex = Math.max(0, Math.min(comfortTabs.length - 1, comfortIndex + step));
+            var comfortButton = document.getElementById('comfort-tab-' + nextComfortIndex);
+            if (comfortButton && nextComfortIndex !== comfortIndex) {
+                comfortButton.click();
+                event.preventDefault();
+            }
+            return;
+        }
+
+        if (_isVisibleModal('uv-modal')) {
+            var uvTabs = document.querySelectorAll('#uv-day-tabs .btn-opt');
+            var uvIndex = Number(window._uvDayIdx) || 0;
+            var nextUVIndex = Math.max(0, Math.min(uvTabs.length - 1, uvIndex + step));
+            var uvButton = document.getElementById('uv-tab-' + nextUVIndex);
+            if (uvButton && nextUVIndex !== uvIndex) {
+                uvButton.click();
+                event.preventDefault();
+            }
+            return;
+        }
+
+        // Other open modals do not have a horizontal swipe action; never let
+        // their arrow keys unexpectedly change the underlying app tab.
+        if (window._modalOpen || window.SKYMONITOR_INFO_PAGE ||
+            (target.closest && target.closest('#reporting-map'))) return;
+        if (!(target.closest && target.closest('.bottom-nav')) && isInsideHorizontalScroll(target)) return;
+
+        var nextTabIndex = currentTabIdx + step;
+        if (nextTabIndex < 0 || nextTabIndex >= tabs.length) return;
+        var destination = document.getElementById(navIds[nextTabIndex]);
+        if (!destination || typeof window.switchTab !== 'function') return;
+        var previousTabIndex = currentTabIdx;
+        window.switchTab(tabs[nextTabIndex], destination);
+        if (currentTabIdx !== previousTabIndex) event.preventDefault();
+    });
+
+    // Liquid-glass tab lens. Dragging starts from the selected tab and commits
+    // the tab under the pointer or finger on release.
+    (function initLiquidGlassNav() {
         var nav = document.querySelector('.bottom-nav');
         if (!nav) return;
         var items = Array.prototype.slice.call(nav.querySelectorAll('.nav-item'));
@@ -26739,11 +26748,6 @@
 
         var drag = null;
         var suppressDragClickUntil = 0;
-
-        function isMobileNav() {
-            return !!(window.matchMedia &&
-                window.matchMedia('(max-width: 767px), (pointer: coarse)').matches);
-        }
 
         function activeItem() {
             return nav.querySelector('.nav-item.active') || items[0];
@@ -26812,7 +26816,7 @@
         }
 
         nav.addEventListener('pointerdown', function(event) {
-            if (!isMobileNav() || event.pointerType === 'touch' || !event.isPrimary) return;
+            if (event.pointerType === 'touch' || !event.isPrimary) return;
             var selected = activeItem();
             if (!event.target.closest || event.target.closest('.nav-item') !== selected) return;
 
@@ -26876,10 +26880,10 @@
         });
 
         // iOS Safari and embedded mobile browsers have uneven Pointer Events
-        // behavior for captured drags, so native touch events are the primary
-        // path for phones. Keep pointer support as a fallback for other inputs.
+        // behavior for captured drags, so native touch events remain the primary
+        // path for phones. Pointer events provide desktop mouse/pen support.
         nav.addEventListener('touchstart', function(event) {
-            if (!isMobileNav() || drag || !event.touches || event.touches.length !== 1) return;
+            if (drag || !event.touches || event.touches.length !== 1) return;
             var touch = event.touches[0];
             var selected = activeItem();
             if (!event.target.closest || event.target.closest('.nav-item') !== selected) return;
@@ -26999,7 +27003,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('/sw.js?v=20261024-report-image-review').then(function(reg) {
+            navigator.serviceWorker.register('/sw.js?v=20261031-liquid-glass-navigation').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(function() {
