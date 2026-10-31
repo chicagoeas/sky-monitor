@@ -1292,7 +1292,7 @@
                 text-shadow: none;
             }
         .spc-btn-tabs.btn-group {
-            display:flex; flex-wrap:nowrap; gap:4px; padding:4px; min-width:0; max-width:100%;
+            position:relative; display:flex; flex-wrap:nowrap; gap:4px; padding:4px; min-width:0; max-width:100%;
             margin:10px 0; border:1px solid rgba(255,255,255,0.2); border-radius:999px;
             background:linear-gradient(145deg, rgba(255,255,255,0.16), rgba(15,24,34,0.62) 52%, rgba(255,255,255,0.08));
             box-shadow:0 8px 22px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.2),
@@ -1301,6 +1301,29 @@
             backdrop-filter:blur(18px) saturate(1.65);
             isolation:isolate; touch-action:pan-y; user-select:none; -webkit-user-select:none;
         }
+        .spc-btn-tabs.btn-group::before {
+            content:""; position:absolute; z-index:0; top:4px; bottom:4px; left:0;
+            width:var(--glass-lens-width, 0px); box-sizing:border-box; border:1px solid rgba(255,255,255,0.3);
+            border-radius:999px;
+            background:linear-gradient(145deg, rgba(255,255,255,0.42), rgba(79,195,247,0.8) 58%, rgba(255,255,255,0.26));
+            box-shadow:0 3px 12px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.5),
+                inset 0 -1px 0 rgba(255,255,255,0.13);
+            -webkit-backdrop-filter:blur(12px) saturate(1.8);
+            backdrop-filter:blur(12px) saturate(1.8);
+            transform:translate3d(var(--glass-lens-x, 4px), 0, 0);
+            transition:transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1), width 180ms ease,
+                top 180ms ease, bottom 180ms ease, opacity 120ms ease;
+            opacity:0; pointer-events:none;
+        }
+        .spc-btn-tabs.btn-group.is-glass-lens-ready::before { opacity:1; }
+        .spc-btn-tabs.btn-group.is-glass-pressed::before,
+        .spc-btn-tabs.btn-group.is-glass-dragging::before {
+            top:2px; bottom:2px; border-color:rgba(255,255,255,0.42);
+            background:linear-gradient(145deg, rgba(255,255,255,0.5), rgba(79,195,247,0.9) 58%, rgba(255,255,255,0.34));
+            box-shadow:0 5px 18px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.58),
+                inset 0 -1px 0 rgba(255,255,255,0.18);
+        }
+        .spc-btn-tabs.btn-group.is-glass-dragging::before { transition:none; }
         .spc-btn-tabs .btn-opt {
             position:relative; z-index:1; flex:1 1 0; min-width:0; min-height:34px;
             padding:7px 10px; border:1px solid transparent; border-radius:999px;
@@ -1308,15 +1331,14 @@
             transition:background 180ms ease, color 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
             -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none;
         }
-        .spc-btn-tabs .btn-opt.active,
+        .spc-btn-tabs.btn-group.is-glass-lens-ready .btn-opt.active {
+            border-color:transparent; background:transparent; color:#07131d;
+            box-shadow:none; -webkit-backdrop-filter:none; backdrop-filter:none;
+        }
         .spc-btn-tabs .btn-opt.glass-drag-preview {
-            border-color:rgba(255,255,255,0.3);
-            background:linear-gradient(145deg, rgba(255,255,255,0.42), rgba(79,195,247,0.8) 58%, rgba(255,255,255,0.26));
-            color:#07131d;
-            box-shadow:0 3px 12px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.5),
-                inset 0 -1px 0 rgba(255,255,255,0.13);
-            -webkit-backdrop-filter:blur(12px) saturate(1.8);
-            backdrop-filter:blur(12px) saturate(1.8);
+            z-index:2; border-color:transparent; background:transparent; color:#07131d;
+            box-shadow:none; transform:translateY(-1px) scale(1.06);
+            text-shadow:0 1px 8px rgba(255,255,255,0.34);
         }
         .spc-btn-tabs.is-glass-dragging .btn-opt.active:not(.glass-drag-preview) {
             border-color:transparent; background:transparent; color:rgba(226,232,240,0.68);
@@ -6428,6 +6450,9 @@
             startNHCCountdown();
         } else {
             updateOutlookMap('cpc', null);
+        }
+        if (window._syncGlassSegmentLenses) {
+            requestAnimationFrame(window._syncGlassSegmentLenses);
         }
     }
 
@@ -26798,6 +26823,38 @@
             return buttons[0] || null;
         }
 
+        function moveLens(group, button, expanded) {
+            if (!group || !button) return;
+            var groupRect = group.getBoundingClientRect();
+            var buttonRect = button.getBoundingClientRect();
+            if (!buttonRect.width || !buttonRect.height) return;
+            var borderLeft = parseFloat(window.getComputedStyle(group).borderLeftWidth) || 0;
+            var lensWidth = buttonRect.width * (expanded ? 1.36 : 1);
+            var lensLeft = buttonRect.left - groupRect.left - borderLeft -
+                (lensWidth - buttonRect.width) / 2;
+            group.style.setProperty('--glass-lens-x', Math.round(lensLeft) + 'px');
+            group.style.setProperty('--glass-lens-width', Math.round(lensWidth) + 'px');
+            group.classList.add('is-glass-lens-ready');
+        }
+
+        function syncLens(group) {
+            var selected = activeButton(group);
+            if (selected) moveLens(group, selected, false);
+        }
+
+        function syncAllLenses() {
+            document.querySelectorAll('.spc-btn-tabs.btn-group').forEach(syncLens);
+        }
+        window._syncGlassSegmentLenses = syncAllLenses;
+
+        function scheduleLensSync(group) {
+            if (!group) return;
+            requestAnimationFrame(function() {
+                if (group.isConnected === false || group.classList.contains('is-glass-pressed')) return;
+                syncLens(group);
+            });
+        }
+
         function buttonAtX(state, clientX) {
             var nearest = null;
             var nearestDistance = Infinity;
@@ -26830,6 +26887,7 @@
             if (state.previewButton) state.previewButton.classList.remove('glass-drag-preview');
             state.previewButton = button;
             button.classList.add('glass-drag-preview');
+            moveLens(state.group, button, true);
         }
 
         function beginDrag(group, target, inputType, event) {
@@ -26856,6 +26914,7 @@
             };
             group.classList.add('is-glass-pressed');
             selected.classList.add('glass-drag-preview');
+            moveLens(group, selected, true);
             return true;
         }
 
@@ -26877,6 +26936,7 @@
                     if (destination.focus) destination.focus();
                 }
             }
+            syncLens(state.group);
             return wasDragging;
         }
 
@@ -26976,6 +27036,47 @@
             event.preventDefault();
             event.stopImmediatePropagation();
         }, true);
+
+        // Keep the lens aligned when a tab is selected normally, when NHC/CPC
+        // state is restored, or when the Comfort/UV groups are rendered later.
+        document.addEventListener('click', function(event) {
+            scheduleLensSync(groupFromTarget(event.target));
+        });
+        document.addEventListener('change', function(event) {
+            if (event.target && event.target.id === 'outlook-center-select') {
+                requestAnimationFrame(syncAllLenses);
+            }
+        });
+        window.addEventListener('resize', syncAllLenses);
+
+        var observedGroups = new WeakSet();
+        function observeGroup(group) {
+            if (!group || observedGroups.has(group)) return;
+            observedGroups.add(group);
+            if (!window.MutationObserver) {
+                scheduleLensSync(group);
+                return;
+            }
+            var observer = new MutationObserver(function() { scheduleLensSync(group); });
+            observer.observe(group, { subtree:true, attributes:true, attributeFilter:['class'] });
+            scheduleLensSync(group);
+        }
+        document.querySelectorAll('.spc-btn-tabs.btn-group').forEach(observeGroup);
+        if (window.MutationObserver && document.body) {
+            var addedGroupObserver = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    mutation.addedNodes.forEach(function(node) {
+                        if (node.nodeType !== 1) return;
+                        if (node.matches && node.matches('.spc-btn-tabs.btn-group')) observeGroup(node);
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('.spc-btn-tabs.btn-group').forEach(observeGroup);
+                        }
+                    });
+                });
+            });
+            addedGroupObserver.observe(document.body, { childList:true, subtree:true });
+        }
+        requestAnimationFrame(syncAllLenses);
     })();
 
     // Liquid-glass tab lens. Dragging starts from the selected tab and commits
@@ -27243,7 +27344,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('/sw.js?v=20261031-glass-segment-drag').then(function(reg) {
+            navigator.serviceWorker.register('/sw.js?v=20261031-glass-lens-expansion').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(function() {
