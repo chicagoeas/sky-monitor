@@ -1291,24 +1291,25 @@
                 color: rgba(255,255,255,0.68);
                 text-shadow: none;
             }
-        .spc-btn-tabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 10px 0; }
-        #spc-day-tabs, #comfort-day-tabs, #uv-day-tabs {
-            display:flex; flex-wrap:nowrap; gap:4px; padding:4px; max-width:100%;
-            border:1px solid rgba(255,255,255,0.2); border-radius:999px;
+        .spc-btn-tabs.btn-group {
+            display:flex; flex-wrap:nowrap; gap:4px; padding:4px; min-width:0; max-width:100%;
+            margin:10px 0; border:1px solid rgba(255,255,255,0.2); border-radius:999px;
             background:linear-gradient(145deg, rgba(255,255,255,0.16), rgba(15,24,34,0.62) 52%, rgba(255,255,255,0.08));
             box-shadow:0 8px 22px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.2),
                 inset 0 -1px 0 rgba(0,0,0,0.22);
             -webkit-backdrop-filter:blur(18px) saturate(1.65);
             backdrop-filter:blur(18px) saturate(1.65);
-            isolation:isolate;
+            isolation:isolate; touch-action:pan-y; user-select:none; -webkit-user-select:none;
         }
-        #spc-day-tabs .btn-opt, #comfort-day-tabs .btn-opt, #uv-day-tabs .btn-opt {
+        .spc-btn-tabs .btn-opt {
             position:relative; z-index:1; flex:1 1 0; min-width:0; min-height:34px;
             padding:7px 10px; border:1px solid transparent; border-radius:999px;
             background:transparent; color:rgba(226,232,240,0.68);
             transition:background 180ms ease, color 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+            -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none;
         }
-        #spc-day-tabs .btn-opt.active, #comfort-day-tabs .btn-opt.active, #uv-day-tabs .btn-opt.active {
+        .spc-btn-tabs .btn-opt.active,
+        .spc-btn-tabs .btn-opt.glass-drag-preview {
             border-color:rgba(255,255,255,0.3);
             background:linear-gradient(145deg, rgba(255,255,255,0.42), rgba(79,195,247,0.8) 58%, rgba(255,255,255,0.26));
             color:#07131d;
@@ -1316,6 +1317,14 @@
                 inset 0 -1px 0 rgba(255,255,255,0.13);
             -webkit-backdrop-filter:blur(12px) saturate(1.8);
             backdrop-filter:blur(12px) saturate(1.8);
+        }
+        .spc-btn-tabs.is-glass-dragging .btn-opt.active:not(.glass-drag-preview) {
+            border-color:transparent; background:transparent; color:rgba(226,232,240,0.68);
+            box-shadow:none; -webkit-backdrop-filter:none; backdrop-filter:none;
+        }
+        .spc-btn-tabs.is-glass-dragging .btn-opt { transition:none; }
+        .spc-btn-tabs .btn-opt:focus-visible {
+            outline:2px solid rgba(79,195,247,0.72); outline-offset:2px; z-index:2;
         }
         .sky-hd { display:flex; justify-content:space-between; align-items:center; font-weight:700; color:#f1f5f9; font-size:0.92em; margin-bottom:12px; letter-spacing:0.2px; }
         .sky-hd::after { content:'›'; color:#4b5563; font-size:1.15em; font-weight:400; }
@@ -26556,7 +26565,9 @@
     function isInsideHorizontalScroll(el) {
         while (el && el !== document.body) {
             if (el.classList &&
-                (el.classList.contains('forecast-scroll') || el.classList.contains('bottom-nav'))) return true;
+                (el.classList.contains('forecast-scroll') ||
+                    el.classList.contains('bottom-nav') ||
+                    el.classList.contains('spc-btn-tabs'))) return true;
             const style = window.getComputedStyle(el);
             const overflowX = style.overflowX;
             if ((overflowX === 'auto' || overflowX === 'scroll') && el.scrollWidth > el.clientWidth) return true;
@@ -26588,7 +26599,7 @@
         touchOnMap = !!e.target.closest('#reporting-map');
         touchOnScrollableContent = isInsideVerticalScroll(e.target);
         ptrBlocked = !!window._modalOpen || touchOnScrollableContent ||
-            !!e.target.closest('.bottom-nav');
+            !!e.target.closest('.bottom-nav, .spc-btn-tabs');
         ptr_pulling = false;
     }, { passive: true });
 
@@ -26676,11 +26687,33 @@
 
     document.addEventListener('keydown', function(event) {
         if ((event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') ||
-            event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented ||
-            _horizontalArrowShouldStayNative(event.target)) return;
+            event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
 
         var step = event.key === 'ArrowRight' ? 1 : -1;
         var target = event.target;
+        if (_horizontalArrowShouldStayNative(target)) return;
+
+        // Keep arrow-key selection aligned with the same glass controls that
+        // support dragging, rather than changing the app tab underneath them.
+        var segmentButton = target.closest && target.closest('.btn-opt');
+        var segmentGroup = segmentButton && segmentButton.closest('.spc-btn-tabs');
+        if (segmentGroup) {
+            var segmentOptions = Array.prototype.filter.call(
+                segmentGroup.querySelectorAll('.btn-opt'),
+                function(button) {
+                    var style = window.getComputedStyle(button);
+                    return style.display !== 'none' && style.visibility !== 'hidden' && !button.disabled;
+                }
+            );
+            var segmentIndex = segmentOptions.indexOf(segmentButton);
+            var nextSegment = segmentOptions[segmentIndex + step];
+            if (nextSegment) {
+                nextSegment.click();
+                nextSegment.focus();
+                event.preventDefault();
+            }
+            return;
+        }
 
         // Mirror the modal-specific horizontal touch gestures.
         if (_isVisibleModal('twc-modal')) {
@@ -26737,6 +26770,213 @@
         window.switchTab(tabs[nextTabIndex], destination);
         if (currentTabIdx !== previousTabIndex) event.preventDefault();
     });
+
+    // Glass segmented controls share the tab bar's drag-to-select behavior.
+    // Delegation also covers Comfort/UV groups created later inside modals.
+    (function initGlassSegmentDrag() {
+        var groupSelector = '.spc-btn-tabs';
+        var drag = null;
+        var suppressClickGroup = null;
+        var suppressClickUntil = 0;
+
+        function groupFromTarget(target) {
+            return target && target.closest ? target.closest(groupSelector) : null;
+        }
+
+        function visibleButtons(group) {
+            return Array.prototype.filter.call(group.querySelectorAll('.btn-opt'), function(button) {
+                var style = window.getComputedStyle(button);
+                return style.display !== 'none' && style.visibility !== 'hidden' && !button.disabled;
+            });
+        }
+
+        function activeButton(group) {
+            var buttons = visibleButtons(group);
+            for (var i = 0; i < buttons.length; i++) {
+                if (buttons[i].classList.contains('active')) return buttons[i];
+            }
+            return buttons[0] || null;
+        }
+
+        function buttonAtX(state, clientX) {
+            var nearest = null;
+            var nearestDistance = Infinity;
+            state.buttons.forEach(function(button) {
+                var rect = button.getBoundingClientRect();
+                if (clientX >= rect.left && clientX <= rect.right) {
+                    nearest = button;
+                    nearestDistance = 0;
+                    return;
+                }
+                var center = rect.left + rect.width / 2;
+                var distance = Math.abs(clientX - center);
+                if (distance < nearestDistance) {
+                    nearest = button;
+                    nearestDistance = distance;
+                }
+            });
+            return nearest;
+        }
+
+        function clearDragPreview(state) {
+            state.buttons.forEach(function(button) {
+                button.classList.remove('glass-drag-preview');
+            });
+            state.group.classList.remove('is-glass-pressed', 'is-glass-dragging');
+        }
+
+        function setPreview(state, button) {
+            if (!button || button === state.previewButton) return;
+            if (state.previewButton) state.previewButton.classList.remove('glass-drag-preview');
+            state.previewButton = button;
+            button.classList.add('glass-drag-preview');
+        }
+
+        function beginDrag(group, target, inputType, event) {
+            if (drag) return false;
+            var buttons = visibleButtons(group);
+            var selected = activeButton(group);
+            var pressed = target.closest && target.closest('.btn-opt');
+            if (!selected || pressed !== selected) return false;
+
+            suppressClickGroup = null;
+            suppressClickUntil = 0;
+            drag = {
+                group: group,
+                buttons: buttons,
+                startButton: selected,
+                previewButton: selected,
+                inputType: inputType,
+                pointerId: event.pointerId,
+                touchId: event.touchId,
+                startX: event.clientX,
+                startY: event.clientY,
+                moved: false,
+                cancelled: false
+            };
+            group.classList.add('is-glass-pressed');
+            selected.classList.add('glass-drag-preview');
+            return true;
+        }
+
+        function finishDrag(commit, clientX) {
+            if (!drag) return false;
+            var state = drag;
+            drag = null;
+            var wasDragging = state.moved;
+            var destination = wasDragging ? buttonAtX(state, clientX) : null;
+            clearDragPreview(state);
+
+            if (commit && wasDragging && destination) {
+                // The synthetic click runs the existing selector logic; the
+                // following browser-generated drag click is suppressed below.
+                suppressClickGroup = state.group;
+                suppressClickUntil = Date.now() + 500;
+                if (destination !== state.startButton) {
+                    destination.click();
+                    if (destination.focus) destination.focus();
+                }
+            }
+            return wasDragging;
+        }
+
+        function updateDrag(clientX, clientY, preventDefault) {
+            if (!drag || drag.cancelled) return false;
+            var dx = clientX - drag.startX;
+            var dy = clientY - drag.startY;
+            if (!drag.moved) {
+                if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) {
+                    drag.cancelled = true;
+                    finishDrag(false, clientX);
+                    return false;
+                }
+                if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.15) return false;
+                drag.moved = true;
+                drag.group.classList.add('is-glass-dragging');
+            }
+            setPreview(drag, buttonAtX(drag, clientX));
+            if (preventDefault && preventDefault.cancelable) preventDefault.preventDefault();
+            return true;
+        }
+
+        document.addEventListener('pointerdown', function(event) {
+            if (event.pointerType === 'touch' || !event.isPrimary || event.button !== 0) return;
+            var group = groupFromTarget(event.target);
+            if (!group || !beginDrag(group, event.target, 'pointer', event)) return;
+            try { group.setPointerCapture(event.pointerId); } catch (e) {}
+        });
+
+        document.addEventListener('pointermove', function(event) {
+            if (!drag || drag.inputType !== 'pointer' || event.pointerId !== drag.pointerId) return;
+            updateDrag(event.clientX, event.clientY, event);
+        }, { passive: false });
+
+        document.addEventListener('pointerup', function(event) {
+            if (!drag || drag.inputType !== 'pointer' || event.pointerId !== drag.pointerId) return;
+            if (finishDrag(!drag.cancelled, event.clientX) && event.cancelable) event.preventDefault();
+        });
+
+        document.addEventListener('pointercancel', function(event) {
+            if (drag && drag.inputType === 'pointer' && event.pointerId === drag.pointerId) {
+                finishDrag(false, drag.startX);
+            }
+        });
+
+        document.addEventListener('lostpointercapture', function(event) {
+            if (drag && drag.inputType === 'pointer' && event.pointerId === drag.pointerId) {
+                finishDrag(false, drag.startX);
+            }
+        });
+
+        document.addEventListener('touchstart', function(event) {
+            if (!event.touches || event.touches.length !== 1) return;
+            var group = groupFromTarget(event.target);
+            if (!group) return;
+            var touch = event.touches[0];
+            beginDrag(group, event.target, 'touch', {
+                touchId: touch.identifier,
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+        }, { passive: true });
+
+        document.addEventListener('touchmove', function(event) {
+            if (!drag || drag.inputType !== 'touch') return;
+            if (!event.touches || event.touches.length !== 1) {
+                finishDrag(false, drag.startX);
+                return;
+            }
+            var touch = event.touches[0];
+            if (touch.identifier !== drag.touchId) return;
+            updateDrag(touch.clientX, touch.clientY, event);
+        }, { passive: false });
+
+        document.addEventListener('touchend', function(event) {
+            if (!drag || drag.inputType !== 'touch' || !event.changedTouches) return;
+            var touch = null;
+            for (var i = 0; i < event.changedTouches.length; i++) {
+                if (event.changedTouches[i].identifier === drag.touchId) {
+                    touch = event.changedTouches[i];
+                    break;
+                }
+            }
+            if (!touch) return;
+            if (finishDrag(!drag.cancelled, touch.clientX) && event.cancelable) event.preventDefault();
+        }, { passive: false });
+
+        document.addEventListener('touchcancel', function() {
+            if (drag && drag.inputType === 'touch') finishDrag(false, drag.startX);
+        }, { passive: true });
+
+        document.addEventListener('click', function(event) {
+            if (!suppressClickGroup || Date.now() > suppressClickUntil || event.detail === 0) return;
+            if (groupFromTarget(event.target) !== suppressClickGroup) return;
+            suppressClickGroup = null;
+            suppressClickUntil = 0;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }, true);
+    })();
 
     // Liquid-glass tab lens. Dragging starts from the selected tab and commits
     // the tab under the pointer or finger on release.
@@ -27003,7 +27243,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('/sw.js?v=20261031-liquid-glass-navigation').then(function(reg) {
+            navigator.serviceWorker.register('/sw.js?v=20261031-glass-segment-drag').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(function() {
