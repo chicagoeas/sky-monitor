@@ -10646,7 +10646,7 @@
         return timestamp != null && timestamp >= start && timestamp < start + 3600;
     }
 
-    function _currentTWCOutlookIconHtml(size) {
+    function _currentTWCOutlookIconHtml(size, rainChancePercent) {
         size = size || '32px';
         var currentText = String(currentCondition || '').trim();
         var currentLower = currentText.toLowerCase();
@@ -10662,6 +10662,11 @@
             // Never borrow a future forecast icon for the Now card while the
             // authoritative observation is still loading.
             currentCode = currentIsNight ? 33 : 34;
+        }
+        if (rainChancePercent != null) {
+            currentCode = _twcIconCodeWithRainChance(
+                currentCode, currentText, window.pirateCurrently || null, rainChancePercent
+            );
         }
         return '<img class="hourly-outlook-icon" src="' + _twcIconSrc(currentCode) + '" alt="' +
             escapeHtml(currentText || 'Current weather conditions') +
@@ -11025,8 +11030,8 @@
                  ? '<div style="font-size:0.62em; color:#36b9d8; margin-top:2px;">' + chance + '%</div>'
                  : '';
              const iconHtml = isCurrent
-                  ? _currentTWCOutlookIconHtml()
-                 : _twcHourlyIconHtml(h.icon, h.summary, '32px', 'hourly-outlook-icon', h);
+                  ? _currentTWCOutlookIconHtml(undefined, chance)
+                 : _twcHourlyIconHtml(h.icon, h.summary, '32px', 'hourly-outlook-icon', h, chance);
             card.innerHTML =
                 '<div style="font-size:0.68em; color:#c2c9cf; white-space:nowrap;">' + hourLabel + '</div>' +
                 iconHtml +
@@ -11064,11 +11069,13 @@
                 const card = document.createElement('div'); card.className = 'forecast-card';
                  const rainAmt = h.precipAccumulation || (h.precipIntensity ? parseFloat(h.precipIntensity.toFixed(2)) : 0);
                 const rainLine = !usingCustomContainer && rainAmt > 0 ? '<div style="font-size:0.65em; color:#4fc3f7; margin-top:2px;">\uD83C\uDF27 ' + _fmtPrecip(rainAmt) + '</div>' : '';
-                 const iconHtml = isCurrent
-                     ? _currentTWCOutlookIconHtml('48px')
-                     : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h);
                  const cardSummary = isCurrent && currentCondition ? currentCondition : (h.summary || '');
                  const cardPrecip = isCurrent ? _estimateCurrentPrecipChance() : Math.round((h.precipProbability || 0) * 100);
+                 const iconHtml = isCurrent
+                     ? _currentTWCOutlookIconHtml('48px', cardPrecip)
+                     : (usingCustomContainer
+                         ? _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h, cardPrecip)
+                         : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h));
                  card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div>' + iconHtml + '<div class="hourly-metric-value" style="font-size:1.2em; font-weight:bold;"></div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(cardSummary) + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + cardPrecip + '%</div>' + rainLine;
                 var pwMetricEl = card.querySelector('.hourly-metric-value');
                 pwMetricEl._forecastHour = h;
@@ -15098,14 +15105,58 @@
         return isNight ? 33 : 34; // 33/34 = fair night/day fallback
     }
 
+    const _twcRainIconCodes = new Set([4, 5, 6, 8, 9, 10, 11, 12, 35, 37, 38, 39, 40]);
+
+    function _twcNonRainIconCode(summary, details) {
+        const s = String(summary || '').toLowerCase();
+        const isNight = details && details.time != null
+            ? _isNightForTWCTime(details.time, details.timezoneOffset)
+            : window._polarState === 'night' || isNightAtStation;
+
+        // Keep frozen precipitation on a condition-appropriate icon rather
+        // than replacing it with a rain or generic cloud icon.
+        if (s.includes('snow') || s.includes('flurr')) return 16;
+        if (s.includes('sleet') || s.includes('ice pellet') || s.includes('freezing')) return 18;
+        if (s.includes('hail')) return 17;
+        if (s.includes('partly cloudy')) return isNight ? 29 : 30;
+        if (s.includes('mostly cloudy')) return isNight ? 27 : 28;
+        if (s.includes('overcast') || s.includes('cloud')) return 26;
+        if (s.includes('mostly sunny') || s.includes('mostly clear')) return isNight ? 33 : 34;
+        if (s.includes('clear') || s.includes('sunny') || s.includes('fair')) return isNight ? 31 : 32;
+
+        // "Possible Drizzle" often has no non-precipitation phrase to reuse.
+        // Use cloud cover when present; otherwise a mostly-cloudy icon is the
+        // closest non-rain representation.
+        let cloudCover = details && details.cloudCover != null ? Number(details.cloudCover) : NaN;
+        if (isFinite(cloudCover)) {
+            if (cloudCover > 1) cloudCover /= 100;
+            if (cloudCover >= 0.85) return 26;
+            if (cloudCover >= 0.45) return isNight ? 29 : 30;
+            if (cloudCover >= 0.2) return isNight ? 33 : 34;
+            return isNight ? 31 : 32;
+        }
+        return isNight ? 27 : 28;
+    }
+
+    function _twcIconCodeWithRainChance(iconCode, summary, details, rainChancePercent) {
+        if (!_twcRainIconCodes.has(Number(iconCode)) || Number(rainChancePercent) >= 20) {
+            return iconCode;
+        }
+        return _twcNonRainIconCode(summary, details);
+    }
+
     function _twcIconSrc(code) {
         return TWC_ICON_BASE_PATH + (code || 50) + '.svg';
     }
 
-    function _twcHourlyIconHtml(icon, summary, size, className, details) {
+    function _twcHourlyIconHtml(icon, summary, size, className, details, rainChancePercent) {
         const label = escapeHtml(summary || 'Weather conditions');
         const classAttr = className ? ' class="' + className + '"' : '';
-        return '<img' + classAttr + ' src="' + _twcIconSrc(_twcIconCodeForWeather(icon, summary, details)) +
+        let iconCode = _twcIconCodeForWeather(icon, summary, details);
+        if (rainChancePercent != null) {
+            iconCode = _twcIconCodeWithRainChance(iconCode, summary, details, rainChancePercent);
+        }
+        return '<img' + classAttr + ' src="' + _twcIconSrc(iconCode) +
             '" alt="' + label + '" style="width:' + size + ';height:' + size +
             ';object-fit:contain;display:block;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
     }
@@ -15440,9 +15491,11 @@
                  const c = isCurrent ? _currentComfortSnapshot(h) : computeHourComfort(h);
                  const hourLabel = isCurrent ? 'Now' : new Date((h.time + (offsetHours * 3600)) * 1000).toLocaleTimeString([], { hour: 'numeric', timeZone: 'UTC' });
                  const temp = _fmtTemp(isCurrent ? c.temperature : (h.temperature ?? 0));
+                 const rainChance = isCurrent ? _estimateCurrentPrecipChance() :
+                     Math.round((Number(h.precipProbability) || 0) * 100);
                  const icon = isCurrent
-                     ? _currentTWCOutlookIconHtml('30px')
-                     : _twcHourlyIconHtml(h.icon, h.summary, '30px', 'hourly-comfort-icon', h);
+                     ? _currentTWCOutlookIconHtml('30px', rainChance)
+                     : _twcHourlyIconHtml(h.icon, h.summary, '30px', 'hourly-comfort-icon', h, rainChance);
                 return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.06);"><div style="min-width:42px;font-size:0.75em;color:#aaa;text-align:right;">' + hourLabel + '</div><div style="min-width:30px;text-align:center;">' + icon + '</div><div style="min-width:36px;font-size:0.9em;font-weight:bold;color:var(--accent);">' + temp + '</div><div style="flex:1;"><div style="font-weight:900;font-size:0.85em;color:' + c.color + ';letter-spacing:0.5px;">' + c.word + '</div><div style="font-size:0.68em;opacity:0.65;">' + c.reason + '</div></div></div>';
             }).join('');
         }
