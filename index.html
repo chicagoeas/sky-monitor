@@ -14676,6 +14676,21 @@
         return _fmtPrecip(inches, _unitPrefs().precipitation === 'mm' ? 0 : 1);
     }
 
+    // TWC qpf is liquid-equivalent precipitation; qpfSnow is snowfall depth.
+    // Prefer snowfall on the compact forecast only when the forecast phrase
+    // identifies snow without also signaling a liquid/mixed precipitation type.
+    function _twcSnowOnlyForSlots(daypart, slots) {
+        var snowAmount = slots.reduce(function(total, slot) {
+            return total + (Number(daypart.qpfSnow?.[slot]) || 0);
+        }, 0);
+        var forecastText = slots.map(function(slot) {
+            return String(daypart.wxPhraseLong?.[slot] || '').toLowerCase();
+        }).join(' ');
+        var hasSnowSignal = /\b(?:snow|flurr(?:y|ies))\b/.test(forecastText);
+        var hasMixedPrecipSignal = /\b(?:rain|drizzle|sleet|freezing rain|freezing drizzle|ice pellets?|wintry mix|mixed precipitation|hail)\b/.test(forecastText);
+        return snowAmount > 0 && hasSnowSignal && !hasMixedPrecipSignal;
+    }
+
     function buildDailySummary(data) {
         var dp    = data.daypart[0];
         var highs = data.calendarDayTemperatureMax || [];
@@ -15181,11 +15196,16 @@
             const shortText = daypart.wxPhraseLong?.[baseIdx] ?? daypart.wxPhraseLong?.[baseIdx + 1] ?? '--';
             const precipPct = daypart.precipChance?.[baseIdx] ?? daypart.precipChance?.[baseIdx + 1] ?? 0;
             const precipAmt = ((daypart.qpf?.[baseIdx] ?? 0) + (daypart.qpf?.[baseIdx + 1] ?? 0));
+            const snowAmt = (Number(daypart.qpfSnow?.[baseIdx]) || 0) + (Number(daypart.qpfSnow?.[baseIdx + 1]) || 0);
+            const snowOnly = _twcSnowOnlyForSlots(daypart, [baseIdx, baseIdx + 1]);
+            const displayPrecipAmt = snowOnly ? snowAmt : precipAmt;
+            const displayPrecipIcon = snowOnly ? '\u2744\uFE0F' : '\uD83D\uDCA7';
+            const displayPrecipAmount = snowOnly ? fmtSnow(displayPrecipAmt) : fmtRain(displayPrecipAmt);
             const card = document.createElement('div'); card.className = 'forecast-card'; card.style.cursor = 'pointer'; card.style.position = 'relative';
             card.onclick = (function(idx) { return function() { openTWCDetailModal(data, idx); }; })(i);
             // Icons are locally hosted and SW-cached — serve the same path online and offline.
             const iconHtml = '<img src="' + _twcIconSrc(iconNum || 50) + '" alt="Weather conditions" style="width:48px;height:48px;object-fit:contain;display:block;margin:auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';">';
-            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + fmtT(high) + ' / <span style="color:white">' + fmtT(low) + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">\uD83D\uDCA7 ' + precipPct + '%' + (precipAmt > 0 ? ' / ' + fmtRain(precipAmt) : '') + '</div>' : '');
+            card.innerHTML = '<div style="font-size:0.9em; font-weight:bold; color:var(--primary);">' + label + '</div>' + iconHtml + '<div style="font-size:1.2em; color:var(--accent); font-weight:bold;">' + fmtT(high) + ' / <span style="color:white">' + fmtT(low) + '</span></div><div style="font-size:0.8em;color:#bbb;height:2.1em; display:flex; align-items:center; justify-content:center;">' + escapeHtml(shortText) + '</div>' + (precipPct > 0 ? '<div style="font-size:0.7em;color:#4fc3f7;margin-top:3px;">' + displayPrecipIcon + ' ' + precipPct + '%' + (displayPrecipAmt > 0 ? ' / ' + displayPrecipAmount : '') + '</div>' : '');
             const dayNarr = (daypart.narrative?.[baseIdx] || '').toLowerCase();
             const nightNarr = (daypart.narrative?.[baseIdx + 1] || '').toLowerCase();
             const severeKeywords = ['tornado', 'damaging wind', 'large hail'];
@@ -15331,6 +15351,7 @@
 
         for (let part = 0; part < 2; ++part) {
             if (narratives[part] == null) continue;
+            const snowOnly = _twcSnowOnlyForSlots(daypart, [base + part]);
             // v1.0.4: Only humidity, UV, sky cover, snow — no wind/precipType/thunderCat
             const detailRows = [
                 humidity[part] != null ? '<span style="opacity:0.55">\uD83D\uDCA7 Humidity</span><span>' + humidity[part] + '%</span>' : null,
@@ -15339,7 +15360,7 @@
                 cloudCover[part] ? '<span style="opacity:0.55">\u2601\uFE0F Sky</span><span>' + cloudCover[part] + '</span>' : null,
                 (snowQpf[part] != null && snowQpf[part] > 0) ? '<span style="opacity:0.55">\u2744\uFE0F Snow</span><span>' + fmtSnow(snowQpf[part]) + '</span>' : null
             ].filter(Boolean);
-            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + fmtT(lohi[0]) : 'Low: ' + fmtT(lohi[1])) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + fmtRain(qpf[part]) : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
+            html += '<div style="margin-top:13px; text-align:center;"><div style="font-size:1.15em;font-weight:bold; color:' + (part === 0 ? '#ffd54f' : '#bbb') + '">' + titles[part] + '</div><img src="' + _twcIconSrc(icons[part] || 50) + '" alt="Weather conditions" style="width:64px;height:64px;object-fit:contain;margin:0 auto;" onerror="this.onerror=null;this.style.visibility=\'hidden\';"><div style="font-size:1.5em; margin:0.25em 0; color:' + (part === 0 ? 'var(--accent)' : '#ffffff') + ';font-weight:bold;">' + (part === 0 ? 'High: ' + fmtT(lohi[0]) : 'Low: ' + fmtT(lohi[1])) + '</div><div style="font-size:1.05em; margin-bottom:9px;">' + escapeHtml(_convertNarrativeToMetric(narratives[part] ?? '--')) + '</div><div style="font-size:.9em;opacity:.85;"><strong>Precip Chance:</strong> ' + (precip[part] !== undefined ? precip[part] + '%' : '--') + (!snowOnly && qpf[part] != null && qpf[part] > 0 ? ' &nbsp;&middot;&nbsp; <strong>Amount:</strong> ' + fmtRain(qpf[part]) : '') + '</div>' + (detailRows.length ? '<div style="font-size:0.82em;text-align:left;margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:5px 12px;background:rgba(255,255,255,0.05);border-radius:8px;padding:10px;">' + detailRows.join('') + '</div>' : '') + '</div>';
         }
         html += '<div id="twc-hourly-section"><hr style="margin:14px 0;"><div class="twc-hourly-heading"><span>Hourly Forecast</span>' + _hourlyMetricPickerHtml() + '</div></div><div id="twc-hourly-placeholder"><em>Loading...</em></div>';
         document.getElementById('twc-modal-inner').innerHTML = html;
