@@ -16335,6 +16335,124 @@
         return contains;
     }
 
+    let reportingNwsPreloadListenerMap = null;
+    let reportingNwsPreloadTimer = null;
+
+    function reportingNwsAlertLookupPoint(entry) {
+        if (!reportingMap || !entry || !entry.layer || !entry.layer.getBounds) return null;
+        const bounds = entry.layer.getBounds();
+        if (!bounds || !bounds.isValid()) return null;
+        const candidates = [];
+        function addCandidate(point) {
+            if (point && isFinite(Number(point.lat)) && isFinite(Number(point.lng))) {
+                candidates.push(point);
+            }
+        }
+        addCandidate(bounds.getCenter());
+        if (reportingMap.getCenter) addCandidate(reportingMap.getCenter());
+
+        const south = bounds.getSouth();
+        const north = bounds.getNorth();
+        const west = bounds.getWest();
+        const east = bounds.getEast();
+        for (let row = 1; row <= 9; row++) {
+            for (let column = 1; column <= 9; column++) {
+                addCandidate(window.L.latLng(
+                    south + (north - south) * row / 10,
+                    west + (east - west) * column / 10
+                ));
+            }
+        }
+        for (let i = 0; i < candidates.length; i++) {
+            if (reportingPolygonContainsLatLng(entry.layer, candidates[i])) {
+                return candidates[i];
+            }
+        }
+        return candidates[0] || null;
+    }
+
+    function reportingNwsAlertNeedsMetadata(entry) {
+        if (!entry || entry.source !== 'nws' || !entry.layer) return false;
+        const props = entry.nwsAlertProperties || {};
+        const phenomena = String(props.phenomena || '').toUpperCase();
+        return phenomena === 'TO' || phenomena === 'SV' || phenomena === 'FF';
+    }
+
+    function preloadVisibleReportingNwsAlertMetadata() {
+        if (!reportingMap) return;
+        if (reportingNwsPreloadListenerMap !== reportingMap) {
+            reportingNwsPreloadListenerMap = reportingMap;
+            reportingMap.on('moveend', function() {
+                clearTimeout(reportingNwsPreloadTimer);
+                reportingNwsPreloadTimer = setTimeout(function() {
+                    reportingPopupEntries.forEach(function(entry) {
+                        if (entry.source === 'nws' && entry._nwsMetadataMatched) {
+                            refreshNwsReportingPopupVisuals(
+                                entry,
+                                entry.nwsAlertProperties,
+                                entry.nwsVisualText
+                            );
+                        }
+                    });
+                    preloadVisibleReportingNwsAlertMetadata();
+                }, 100);
+            });
+        }
+        if (!reportingPopupSourceIsVisible('nws')) return;
+        const viewport = reportingMap.getBounds && reportingMap.getBounds();
+        if (!viewport || !viewport.isValid()) return;
+        const now = Date.now();
+        const visibleEntries = reportingPopupEntries.filter(function(entry) {
+            if (!reportingNwsAlertNeedsMetadata(entry) ||
+                entry._nwsMetadataMatched || entry._nwsMetadataPromise ||
+                (entry._nwsMetadataAttemptedAt &&
+                    now - entry._nwsMetadataAttemptedAt < 60000)) return false;
+            try {
+                return entry.layer.getBounds().intersects(viewport);
+            } catch (error) {
+                return false;
+            }
+        });
+        visibleEntries.sort(function(a, b) {
+            const aPhenomena = String(a.nwsAlertProperties.phenomena || '').toUpperCase();
+            const bPhenomena = String(b.nwsAlertProperties.phenomena || '').toUpperCase();
+            const aPriority = aPhenomena === 'TO' || aPhenomena === 'FF' ? 0 : 1;
+            const bPriority = bPhenomena === 'TO' || bPhenomena === 'FF' ? 0 : 1;
+            return aPriority - bPriority;
+        });
+        let nextIndex = 0;
+        const workerCount = Math.min(2, visibleEntries.length);
+        for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+            (async function() {
+                while (nextIndex < visibleEntries.length) {
+                    const entry = visibleEntries[nextIndex++];
+                    if (!reportingNwsAlertSourceStillVisible(entry)) continue;
+                    entry._nwsMetadataAttemptedAt = Date.now();
+                    const point = reportingNwsAlertLookupPoint(entry);
+                    if (!point || typeof entry.loadDetails !== 'function') continue;
+                    try {
+                        await entry.loadDetails(point);
+                    } catch (error) {
+                        entry._nwsMetadataPromise = null;
+                    }
+                }
+            })().catch(function(error) {
+                console.warn('[SkyMonitor] NWS alert metadata preload failed:', error);
+            });
+        }
+    }
+
+    function reportingNwsAlertSourceStillVisible(entry) {
+        if (!reportingPopupSourceIsVisible('nws')) return false;
+        const viewport = reportingMap && reportingMap.getBounds && reportingMap.getBounds();
+        try {
+            return !!viewport && viewport.isValid() &&
+                entry.layer.getBounds().intersects(viewport);
+        } catch (error) {
+            return false;
+        }
+    }
+
     function reportingPopupSourceIsVisible(source) {
         if (!reportingMap) return false;
         if (source === 'nws') {
@@ -16916,14 +17034,27 @@
             const data = await res.json();
             const wanted = String(eventName || '').toLowerCase();
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
-            const alertCandidates = (data.features || []).map(function(feature) {
+            const eventCandidates = (data.features || []).map(function(feature) {
                 return feature.properties || {};
             }).filter(function(props) {
                 const sameEvent = String(props.event || '').toLowerCase() === wanted
                     || String(props.event || '').toLowerCase().includes(wanted)
                     || wanted.includes(String(props.event || '').toLowerCase());
                 return sameEvent;
-            }).sort(function(a, b) {
+            });
+            const candidatesWithIdentity = eventCandidates.filter(function(props) {
+                return !!nwsRadarAlertIdentityKey(props);
+            });
+            const expectedIdentity = nwsRadarAlertIdentityKey(
+                entry && entry.nwsAlertProperties
+            );
+            const identityMatchedCandidates = expectedIdentity
+                ? candidatesWithIdentity.filter(function(props) {
+                    return nwsRadarAlertIdentityKey(props) === expectedIdentity;
+                })
+                : [];
+            const alertCandidates = (expectedIdentity && candidatesWithIdentity.length
+                ? identityMatchedCandidates : eventCandidates).sort(function(a, b) {
                 const senderA = String(a.senderName || '').toLowerCase();
                 const senderB = String(b.senderName || '').toLowerCase();
                 const officeA = wantedOffice && (
@@ -16943,6 +17074,7 @@
             });
             const alert = alertCandidates[0];
             if (alert) {
+                if (entry) entry._nwsMetadataMatched = true;
                 refreshNwsReportingPopupVisuals(
                     entry,
                     alert,
@@ -17336,6 +17468,7 @@
         if (cb) cb.checked = alertsVisible;
         localStorage.setItem('report_alerts_on', alertsVisible ? '1' : '0');
         syncReportingMapLayers();
+        if (alertsVisible) setTimeout(preloadVisibleReportingNwsAlertMetadata, 0);
         ensureReportPinMarker();
         if (alertsVisible && alertPolygonLayer.getLayers && !alertPolygonLayer.getLayers().length) {
             loadReportingMapData();
@@ -21559,6 +21692,10 @@
         const cacheKey = baseCacheKey + '|frame:' + frameTimestamp;
         if (historicalNwsDetailsCache[cacheKey]) {
             return historicalNwsDetailsCache[cacheKey].then(function(detail) {
+                if (popupEntry && detail &&
+                    detail.indexOf('archived NWS text product is temporarily unavailable') === -1) {
+                    popupEntry._nwsMetadataMatched = true;
+                }
                 refreshNwsReportingPopupVisuals(popupEntry, props, detail);
                 return detail;
             });
@@ -21616,6 +21753,7 @@
                 }) || products[0];
                 if (!matchingProduct) return fallback;
 
+                if (popupEntry) popupEntry._nwsMetadataMatched = true;
                 refreshNwsReportingPopupVisuals(
                     popupEntry,
                     props,
@@ -21640,28 +21778,6 @@
         })();
         historicalNwsDetailsCache[cacheKey] = promise;
         return promise;
-    }
-
-    function preloadHistoricalNwsMapAlertMetadata(entries, requestId) {
-        if (!Array.isArray(entries) || !entries.length) return;
-        let nextIndex = 0;
-        const workerCount = Math.min(3, entries.length);
-        const workers = [];
-        for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-            workers.push((async function() {
-                while (nextIndex < entries.length) {
-                    if (requestId !== historicalRadarRequestId ||
-                        !historicalRadarState.active) return;
-                    const item = entries[nextIndex++];
-                    try {
-                        await loadHistoricalNwsDetails(item.props, item.entry);
-                    } catch (error) {}
-                }
-            })());
-        }
-        Promise.all(workers).catch(function(error) {
-            console.warn('[SkyMonitor] Historical NWS alert metadata preload failed:', error);
-        });
     }
 
     function normalizeNwsRadarWfo(value) {
@@ -21702,15 +21818,14 @@
             }
         });
         for (let i = 0; i < vtecValues.length; i++) {
-            const parsed = parseNwsRadarVtecIdentity(vtecValues[i]);
-            if (parsed) {
+            const identity = parseNwsRadarVtecIdentity(vtecValues[i]);
+            if (identity) {
                 return [
-                    parsed.wfo, parsed.phenomena, parsed.significance,
-                    parsed.eventid, parsed.year
+                    identity.wfo, identity.phenomena, identity.significance,
+                    identity.eventid, identity.year
                 ].join('|');
             }
         }
-
         const wfo = normalizeNwsRadarWfo(props.wfo || props.office || '');
         const phenomena = String(props.phenomena || '').trim().toUpperCase();
         const significance = String(props.significance || '').trim().toUpperCase();
@@ -21725,89 +21840,9 @@
             (issueDate ? issueDate.getUTCFullYear() : 0);
         if (!wfo || !phenomena || !significance || rawEventId == null || !year) return '';
         return [
-            wfo,
-            phenomena,
-            significance,
-            String(rawEventId).trim().padStart(4, '0'),
-            year
+            wfo, phenomena, significance,
+            String(rawEventId).trim().padStart(4, '0'), year
         ].join('|');
-    }
-
-    let reportingNwsMapMetadataPromise = null;
-    let reportingNwsMapMetadataExpiresAt = 0;
-
-    function fetchReportingNwsMapMetadata() {
-        if (reportingNwsMapMetadataPromise &&
-            Date.now() < reportingNwsMapMetadataExpiresAt) {
-            return reportingNwsMapMetadataPromise;
-        }
-        const eventFilter = [
-            'Tornado Warning',
-            'Severe Thunderstorm Warning',
-            'Flash Flood Warning',
-            'Special Marine Warning',
-            'Snow Squall Warning',
-            'Extreme Wind Warning',
-            'Dust Storm Warning'
-        ].join(',');
-        const url = 'https://api.weather.gov/alerts/active?event=' +
-            encodeURIComponent(eventFilter) + '&limit=500';
-        const request = fetch(url, {
-            cache: 'no-store',
-            headers: { 'Accept': 'application/geo+json' }
-        }).then(function(response) {
-            if (!response.ok) throw new Error('NWS active alert lookup returned ' + response.status);
-            return response.json();
-        }).then(function(payload) {
-            return Array.isArray(payload.features) ? payload.features : [];
-        }).catch(function(error) {
-            if (reportingNwsMapMetadataPromise === request) {
-                reportingNwsMapMetadataPromise = null;
-                reportingNwsMapMetadataExpiresAt = 0;
-            }
-            console.warn('[SkyMonitor] NWS alert metadata preload failed:', error);
-            return [];
-        });
-        reportingNwsMapMetadataPromise = request;
-        reportingNwsMapMetadataExpiresAt = Date.now() + 60000;
-        return request;
-    }
-
-    function enrichReportingNwsMapMetadata(metadataPromise) {
-        Promise.resolve(metadataPromise).then(function(features) {
-            const alertsByIdentity = Object.create(null);
-            (features || []).forEach(function(feature) {
-                const properties = feature && feature.properties || {};
-                const key = nwsRadarAlertIdentityKey(properties);
-                if (!key) return;
-                const existing = alertsByIdentity[key];
-                const candidateTime = parseReportDate(
-                    properties.sent || properties.effective || properties.updated
-                );
-                const existingTime = existing && parseReportDate(
-                    existing.sent || existing.effective || existing.updated
-                );
-                if (!existing || (candidateTime &&
-                    (!existingTime || candidateTime.getTime() > existingTime.getTime()))) {
-                    alertsByIdentity[key] = properties;
-                }
-            });
-            reportingPopupEntries.forEach(function(entry) {
-                if (entry.source !== 'nws') return;
-                const properties = alertsByIdentity[
-                    nwsRadarAlertIdentityKey(entry.nwsAlertProperties)
-                ];
-                if (!properties) return;
-                refreshNwsReportingPopupVisuals(
-                    entry,
-                    properties,
-                    [properties.headline, properties.description, properties.instruction]
-                        .filter(Boolean).join(' ')
-                );
-            });
-        }).catch(function(error) {
-            console.warn('[SkyMonitor] NWS alert metadata preload failed:', error);
-        });
     }
 
     function nwsRadarAlertMatchesDeepLink(props) {
@@ -21925,7 +21960,6 @@
                 MA: '#29b6f6', SQ: '#81d4fa', EW: '#ff9100', DS: '#c8a800'
             };
             const seen = {};
-            const metadataPreloadEntries = [];
             (data.features || []).forEach(function(feature) {
                 if (!feature || !feature.geometry) return;
                 const props = feature.properties || {};
@@ -21968,18 +22002,24 @@
                         (expires ? ' \u00B7 ' + escapeHtml(formatReportingExpiry(expires)) : ''),
                     detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                     loadDetails: function() {
-                        return loadHistoricalNwsDetails(props, this);
+                        if (this._nwsMetadataPromise) return this._nwsMetadataPromise;
+                        const popupEntry = this;
+                        this._nwsMetadataPromise = loadHistoricalNwsDetails(
+                            props,
+                            popupEntry
+                        ).then(function(detail) {
+                            if (!popupEntry._nwsMetadataMatched) {
+                                popupEntry._nwsMetadataPromise = null;
+                            }
+                            return detail;
+                        });
+                        return this._nwsMetadataPromise;
                     }
                 };
                 registerReportingPopup(polygon, popupEntry);
                 polygon.addTo(alertPolygonLayer);
-                if (phenomena === 'TO' || phenomena === 'SV' || phenomena === 'FF') {
-                    metadataPreloadEntries.push({ props: props, entry: popupEntry });
-                }
             });
-            setTimeout(function() {
-                preloadHistoricalNwsMapAlertMetadata(metadataPreloadEntries, requestId);
-            }, 0);
+            setTimeout(preloadVisibleReportingNwsAlertMetadata, 0);
             openDeepLinkedNwsRadarAlert();
         } catch (e) {
             if (requestId === historicalRadarRequestId) {
@@ -22065,7 +22105,6 @@
         // map data, not location-provider routing: a Canadian location should
         // still show active NWS polygons, and a U.S. location should still
         // show Canadian polygons whenever they are in the map view.
-        const nwsMapMetadataPromise = fetchReportingNwsMapMetadata();
         try {
             alertPolygonLayer.clearLayers();
             removeReportingPopupEntries('nws');
@@ -22179,12 +22218,20 @@
                             meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
                             detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                             loadDetails: function(latlng) {
-                                return loadNwsReportingDetails(
-                                    this,
+                                if (this._nwsMetadataPromise) return this._nwsMetadataPromise;
+                                const popupEntry = this;
+                                this._nwsMetadataPromise = loadNwsReportingDetails(
+                                    popupEntry,
                                     latlng,
                                     nwsEvent,
                                     f.properties.wfo || ''
-                                );
+                                ).then(function(detail) {
+                                    if (!popupEntry._nwsMetadataMatched) {
+                                        popupEntry._nwsMetadataPromise = null;
+                                    }
+                                    return detail;
+                                });
+                                return this._nwsMetadataPromise;
                             }
                         });
                         _poly.addTo(alertPolygonLayer);
@@ -22194,7 +22241,7 @@
             } catch (e) {
                 console.warn('[SkyMonitor] NWS map alerts failed:', e);
             }
-            enrichReportingNwsMapMetadata(nwsMapMetadataPromise);
+            setTimeout(preloadVisibleReportingNwsAlertMetadata, 0);
         } catch(e) {}
 
         // Active SkyMonitor custom alert polygons from the Cloudflare Worker
