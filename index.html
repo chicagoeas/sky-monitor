@@ -16480,59 +16480,80 @@
         return entry._popupId;
     }
 
-    function nwsAlertVisualData(props, eventName, extraText) {
+    function nwsAlertVisualData(props, eventName) {
         props = props || {};
         var parameters = props.parameters || props.Parameters || {};
-        var textParts = [eventName, extraText];
-        Object.keys(props).forEach(function(key) {
-            var value = props[key];
-            if (typeof value === 'string' || typeof value === 'number') {
-                textParts.push(String(value));
-            } else if (Array.isArray(value)) {
-                textParts.push(value.filter(function(item) {
-                    return typeof item === 'string' || typeof item === 'number';
-                }).join(' '));
-            }
-        });
-        [
-            'tornadoDamageThreat', 'tornado_damage_threat',
-            'thunderstormDamageThreat', 'thunderstorm_damage_threat',
-            'flashFloodDamageThreat', 'flash_flood_damage_threat',
-            'hailThreat', 'windThreat', 'damageThreat', 'damage_threat',
-            'pds', 'tornadoEmergency', 'tornado_emergency', 'emergency'
-        ].forEach(function(key) {
+        function parameterValue(key) {
             var value = parameters[key] != null ? parameters[key] : props[key];
-            if (Array.isArray(value)) value = value.join(' ');
-            if (typeof value === 'string' || typeof value === 'number') {
-                textParts.push(String(value));
+            if (Array.isArray(value)) value = value[0];
+            return String(value == null ? '' : value).trim().toUpperCase();
+        }
+        var phenomena = String(props.phenomena || '').trim().toUpperCase();
+        var eventLabel = String(
+            props.event || props.type || props.ps || eventName || ''
+        ).toUpperCase();
+        if (!phenomena) {
+            if (/\bTORNADO WARNING\b/.test(eventLabel)) phenomena = 'TO';
+            else if (/\bSEVERE THUNDERSTORM WARNING\b/.test(eventLabel)) phenomena = 'SV';
+            else if (/\bFLASH FLOOD WARNING\b/.test(eventLabel)) phenomena = 'FF';
+        }
+
+        // Badges are driven by official alert metadata: NWS CAP threat
+        // parameters and the alert headline fields. Never scan the narrative
+        // description or instructions for words such as "destructive".
+        var headlineParts = [];
+        [
+            props.headline,
+            props.NWSheadline,
+            parameters.NWSheadline,
+            props.ps,
+            props.type,
+            props.event,
+            eventName
+        ].forEach(function(value) {
+            if (Array.isArray(value)) {
+                value.forEach(function(item) {
+                    if (typeof item === 'string') headlineParts.push(item);
+                });
+            } else if (typeof value === 'string') {
+                headlineParts.push(value);
             }
         });
-        var text = textParts.filter(Boolean).join(' ').toUpperCase();
-        function activeFlag(value) {
-            return value === true || value === 1 ||
-                /^(?:1|TRUE|YES|PDS|EMERGENCY)$/i.test(String(value || '').trim());
-        }
-        var isTornadoEmergency = /\bTORNADO[\s-]+EMERGENCY\b/.test(text);
-        var isFlashFloodEmergency =
-            /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(text);
+        var officialHeadline = headlineParts.join(' ').toUpperCase();
+        var tornadoThreat = parameterValue('tornadoDamageThreat');
+        var thunderstormThreat = parameterValue('thunderstormDamageThreat');
+        var flashFloodThreat = parameterValue('flashFloodDamageThreat');
+        var isTornadoEmergency = phenomena === 'TO' &&
+            (tornadoThreat === 'CATASTROPHIC' ||
+                /\bTORNADO[\s-]+EMERGENCY\b/.test(officialHeadline));
+        var isFlashFloodEmergency = phenomena === 'FF' &&
+            (flashFloodThreat === 'CATASTROPHIC' ||
+                /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(officialHeadline));
+        var isPDSHeadline =
+            /\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(officialHeadline);
         var tags = [];
         if (isTornadoEmergency) {
             tags.push({ label: 'Tornado Emergency', kind: 'tornado-emergency' });
         } else if (isFlashFloodEmergency) {
             tags.push({ label: 'Flash Flood Emergency', kind: 'flash-flood-emergency' });
         }
-        if (/\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(text) ||
-            activeFlag(props.pds) || activeFlag(parameters.pds)) {
+        if ((phenomena === 'TO' && tornadoThreat === 'CONSIDERABLE') ||
+            isPDSHeadline || parameterValue('pds') === 'PDS') {
             tags.push({ label: 'PDS', kind: 'pds' });
         }
-        if (/\bCONSIDERABLE\b/.test(text)) {
-            tags.push({ label: 'Considerable', kind: 'considerable' });
-        }
-        if (/\bDESTRUCTIVE\b/.test(text)) {
-            tags.push({ label: 'Destructive', kind: 'destructive' });
-        }
-        if (/\bCATASTROPHIC\b/.test(text)) {
-            tags.push({ label: 'Catastrophic', kind: 'catastrophic' });
+        if (phenomena === 'SV') {
+            if (thunderstormThreat === 'CONSIDERABLE') {
+                tags.push({ label: 'Considerable', kind: 'considerable' });
+            } else if (thunderstormThreat === 'DESTRUCTIVE') {
+                tags.push({ label: 'Destructive', kind: 'destructive' });
+            }
+        } else if (phenomena === 'FF') {
+            if (isFlashFloodEmergency) {
+                // Catastrophic flash-flood damage threat is the NWS emergency
+                // threshold; show one emergency badge, not two competing tags.
+            } else if (flashFloodThreat === 'CONSIDERABLE') {
+                tags.push({ label: 'Considerable', kind: 'considerable' });
+            }
         }
         return {
             isTornadoEmergency: isTornadoEmergency,
@@ -16545,11 +16566,7 @@
         if (!entry || entry.source !== 'nws' || !entry.nwsEventName) {
             return entry && entry.title ? entry.title : 'Report';
         }
-        var visual = nwsAlertVisualData(
-            entry.nwsAlertProperties,
-            entry.nwsEventName,
-            entry.nwsVisualText
-        );
+        var visual = nwsAlertVisualData(entry.nwsAlertProperties, entry.nwsEventName);
         return '<span class="nws-alert-name">' + escapeHtml(entry.nwsEventName) + '</span>' +
             visual.tags.map(function(tag) {
                 return '<span class="nws-alert-tag nws-alert-tag--' + tag.kind +
@@ -16564,11 +16581,7 @@
             {}, entry.nwsAlertProperties || {}, properties || {}
         );
         if (extraText) entry.nwsVisualText = String(extraText);
-        var visual = nwsAlertVisualData(
-            entry.nwsAlertProperties,
-            entry.nwsEventName,
-            entry.nwsVisualText
-        );
+        var visual = nwsAlertVisualData(entry.nwsAlertProperties, entry.nwsEventName);
         var emergencyClass = visual.isEmergencyBoundary
             ? 'nws-emergency-boundary' : '';
         function applyEmergencyClass(layer) {
@@ -21596,6 +21609,7 @@
     }
 
     const historicalNwsDetailsCache = {};
+    const historicalNwsAlertTextCache = {};
 
     function _historicalNwsTextSections(rawText) {
         const text = String(rawText || '').replace(/\r/g, '').trim();
@@ -21679,6 +21693,28 @@
         };
     }
 
+    function _historicalNwsOfficialHeadline(rawText) {
+        const lines = String(rawText || '').replace(/\r/g, '').split('\n');
+        const narrativeIndex = lines.findIndex(function(line) {
+            return /^\s*AT\s+\d{1,4}(?::\d{2})?\s*(?:AM|PM)\b/i.test(line);
+        });
+        let headlineLines = narrativeIndex >= 0 ? lines.slice(0, narrativeIndex) : [];
+        if (narrativeIndex < 0) {
+            const start = lines.findIndex(function(line) {
+                return /^\s*\.\.\./.test(line);
+            });
+            if (start >= 0) {
+                let end = start;
+                while (end < lines.length &&
+                    !/\.\.\.\s*$/.test(lines[end].trim())) end++;
+                headlineLines = lines.slice(start, Math.min(lines.length, end + 1));
+            }
+        }
+        return headlineLines.filter(function(line) {
+            return /\bTORNADO[\s-]+EMERGENCY\b|\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b|\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/i.test(line);
+        }).join(' ').replace(/\.{3,}/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
     async function loadHistoricalNwsDetails(props, popupEntry) {
         props = props || {};
         const productId = String(props.product_id || '').trim();
@@ -21692,11 +21728,20 @@
         const cacheKey = baseCacheKey + '|frame:' + frameTimestamp;
         if (historicalNwsDetailsCache[cacheKey]) {
             return historicalNwsDetailsCache[cacheKey].then(function(detail) {
+                const cachedAlertText = historicalNwsAlertTextCache[cacheKey] || '';
+                const officialHeadline = _historicalNwsOfficialHeadline(cachedAlertText);
+                const visualProps = officialHeadline
+                    ? Object.assign({}, props, { headline: officialHeadline })
+                    : props;
                 if (popupEntry && detail &&
                     detail.indexOf('archived NWS text product is temporarily unavailable') === -1) {
                     popupEntry._nwsMetadataMatched = true;
                 }
-                refreshNwsReportingPopupVisuals(popupEntry, props, detail);
+                refreshNwsReportingPopupVisuals(
+                    popupEntry,
+                    visualProps,
+                    cachedAlertText || detail
+                );
                 return detail;
             });
         }
@@ -21753,10 +21798,15 @@
                 }) || products[0];
                 if (!matchingProduct) return fallback;
 
+                historicalNwsAlertTextCache[cacheKey] = matchingProduct.text;
                 if (popupEntry) popupEntry._nwsMetadataMatched = true;
+                const officialHeadline = _historicalNwsOfficialHeadline(matchingProduct.text);
+                const visualProps = officialHeadline
+                    ? Object.assign({}, props, { headline: officialHeadline })
+                    : props;
                 refreshNwsReportingPopupVisuals(
                     popupEntry,
-                    props,
+                    visualProps,
                     matchingProduct.text
                 );
                 const sections = _historicalNwsTextSections(matchingProduct.text);
