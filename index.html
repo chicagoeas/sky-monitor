@@ -16480,13 +16480,21 @@
         return entry._popupId;
     }
 
-    function nwsAlertVisualData(props, eventName) {
+    function nwsAlertVisualData(props, eventName, alertText) {
         props = props || {};
         var parameters = props.parameters || props.Parameters || {};
         function parameterValue(key) {
             var value = parameters[key] != null ? parameters[key] : props[key];
             if (Array.isArray(value)) value = value[0];
             return String(value == null ? '' : value).trim().toUpperCase();
+        }
+        function headlineValue(value) {
+            if (Array.isArray(value)) {
+                return value.filter(function(item) {
+                    return typeof item === 'string';
+                }).join(' ');
+            }
+            return typeof value === 'string' ? value : '';
         }
         var phenomena = String(props.phenomena || '').trim().toUpperCase();
         var eventLabel = String(
@@ -16499,10 +16507,9 @@
         }
 
         // Badges are driven by official alert metadata: NWS CAP threat
-        // parameters and the alert headline fields. Never scan the narrative
-        // description or instructions for words such as "destructive".
-        var headlineParts = [];
-        [
+        // parameters and headlines. PDS/emergency terms are explicit NWS
+        // alert-text markers; ordinary damage prose never creates a damage tag.
+        var officialHeadline = [
             props.headline,
             props.NWSheadline,
             parameters.NWSheadline,
@@ -16510,27 +16517,39 @@
             props.type,
             props.event,
             eventName
-        ].forEach(function(value) {
-            if (Array.isArray(value)) {
-                value.forEach(function(item) {
-                    if (typeof item === 'string') headlineParts.push(item);
-                });
-            } else if (typeof value === 'string') {
-                headlineParts.push(value);
-            }
-        });
-        var officialHeadline = headlineParts.join(' ').toUpperCase();
+        ].map(headlineValue).filter(Boolean).join(' ').toUpperCase();
+        var nwsText = String(alertText || '').toUpperCase();
+        var explicitTagSource = officialHeadline + ' ' + nwsText;
         var tornadoThreat = parameterValue('tornadoDamageThreat');
         var thunderstormThreat = parameterValue('thunderstormDamageThreat');
         var flashFloodThreat = parameterValue('flashFloodDamageThreat');
+        function officialDamageThreat(value, permittedValues) {
+            if (permittedValues.indexOf(value) !== -1) return value;
+            // Some NWS headline variants include the official threat label even
+            // when the CAP parameter is absent from that alert response.
+            for (var i = 0; i < permittedValues.length; i++) {
+                if (new RegExp('\\b' + permittedValues[i] + '\\b').test(officialHeadline)) {
+                    return permittedValues[i];
+                }
+            }
+            return '';
+        }
+        thunderstormThreat = officialDamageThreat(
+            thunderstormThreat,
+            ['DESTRUCTIVE', 'CONSIDERABLE']
+        );
+        flashFloodThreat = officialDamageThreat(
+            flashFloodThreat,
+            ['CATASTROPHIC', 'CONSIDERABLE']
+        );
         var isTornadoEmergency = phenomena === 'TO' &&
             (tornadoThreat === 'CATASTROPHIC' ||
-                /\bTORNADO[\s-]+EMERGENCY\b/.test(officialHeadline));
+                /\bTORNADO[\s-]+EMERGENCY\b/.test(explicitTagSource));
         var isFlashFloodEmergency = phenomena === 'FF' &&
             (flashFloodThreat === 'CATASTROPHIC' ||
-                /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(officialHeadline));
-        var isPDSHeadline =
-            /\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(officialHeadline);
+                /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(explicitTagSource));
+        var isPDS =
+            /\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(explicitTagSource);
         var tags = [];
         if (isTornadoEmergency) {
             tags.push({ label: 'Tornado Emergency', kind: 'tornado-emergency' });
@@ -16538,7 +16557,7 @@
             tags.push({ label: 'Flash Flood Emergency', kind: 'flash-flood-emergency' });
         }
         if ((phenomena === 'TO' && tornadoThreat === 'CONSIDERABLE') ||
-            isPDSHeadline || parameterValue('pds') === 'PDS') {
+            isPDS || parameterValue('pds') === 'PDS') {
             tags.push({ label: 'PDS', kind: 'pds' });
         }
         if (phenomena === 'SV') {
@@ -16566,7 +16585,11 @@
         if (!entry || entry.source !== 'nws' || !entry.nwsEventName) {
             return entry && entry.title ? entry.title : 'Report';
         }
-        var visual = nwsAlertVisualData(entry.nwsAlertProperties, entry.nwsEventName);
+        var visual = nwsAlertVisualData(
+            entry.nwsAlertProperties,
+            entry.nwsEventName,
+            entry.nwsVisualText
+        );
         return '<span class="nws-alert-name">' + escapeHtml(entry.nwsEventName) + '</span>' +
             visual.tags.map(function(tag) {
                 return '<span class="nws-alert-tag nws-alert-tag--' + tag.kind +
@@ -16581,7 +16604,11 @@
             {}, entry.nwsAlertProperties || {}, properties || {}
         );
         if (extraText) entry.nwsVisualText = String(extraText);
-        var visual = nwsAlertVisualData(entry.nwsAlertProperties, entry.nwsEventName);
+        var visual = nwsAlertVisualData(
+            entry.nwsAlertProperties,
+            entry.nwsEventName,
+            entry.nwsVisualText
+        );
         var emergencyClass = visual.isEmergencyBoundary
             ? 'nws-emergency-boundary' : '';
         function applyEmergencyClass(layer) {
