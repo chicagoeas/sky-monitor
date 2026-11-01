@@ -16520,9 +16520,21 @@
         ].map(headlineValue).filter(Boolean).join(' ').toUpperCase();
         var nwsText = String(alertText || '').toUpperCase();
         var explicitTagSource = officialHeadline + ' ' + nwsText;
-        var tornadoThreat = parameterValue('tornadoDamageThreat');
-        var thunderstormThreat = parameterValue('thunderstormDamageThreat');
-        var flashFloodThreat = parameterValue('flashFloodDamageThreat');
+        // The historical IEM polygon feed exposes the same NWS threat tag
+        // under `damagetag` / `floodtag_damage`, while live CAP alerts use the
+        // longer parameter names. Read both official representations.
+        var tornadoThreat = parameterValue('tornadoDamageThreat') ||
+            parameterValue('damagetag');
+        var thunderstormThreat = parameterValue('thunderstormDamageThreat') ||
+            parameterValue('damagetag');
+        var flashFloodThreat = parameterValue('flashFloodDamageThreat') ||
+            parameterValue('floodtag_damage');
+        var isEmergencyFlag = ['TRUE', '1', 'YES'].indexOf(
+            parameterValue('is_emergency')
+        ) !== -1;
+        var isPdsFlag = ['TRUE', '1', 'YES'].indexOf(
+            parameterValue('is_pds')
+        ) !== -1;
         function officialDamageThreat(value, permittedValues) {
             if (permittedValues.indexOf(value) !== -1) return value;
             // Some NWS headline variants include the official threat label even
@@ -16543,10 +16555,10 @@
             ['CATASTROPHIC', 'CONSIDERABLE']
         );
         var isTornadoEmergency = phenomena === 'TO' &&
-            (tornadoThreat === 'CATASTROPHIC' ||
+            (isEmergencyFlag || tornadoThreat === 'CATASTROPHIC' ||
                 /\bTORNADO[\s-]+EMERGENCY\b/.test(explicitTagSource));
         var isFlashFloodEmergency = phenomena === 'FF' &&
-            (flashFloodThreat === 'CATASTROPHIC' ||
+            (isEmergencyFlag || flashFloodThreat === 'CATASTROPHIC' ||
                 /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(explicitTagSource));
         var isPDS =
             /\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(explicitTagSource);
@@ -16557,7 +16569,7 @@
             tags.push({ label: 'Flash Flood Emergency', kind: 'flash-flood-emergency' });
         }
         if ((phenomena === 'TO' && tornadoThreat === 'CONSIDERABLE') ||
-            isPDS || parameterValue('pds') === 'PDS') {
+            isPDS || isPdsFlag || parameterValue('pds') === 'PDS') {
             tags.push({ label: 'PDS', kind: 'pds' });
         }
         if (phenomena === 'SV') {
