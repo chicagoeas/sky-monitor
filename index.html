@@ -3750,6 +3750,7 @@
     let _loadAllPromise = null;
     let _loadAllKey = '';
     let _citySearchGeneration = 0;
+    let _citySearchController = null;
     let _enrichmentPromise = null;
     window._fastProviderData = null;
     window._fastNwsAlerts = null;
@@ -4325,7 +4326,7 @@
         };
     }
 
-    function _osmGeocodeFetch(kind, params) {
+    function _osmGeocodeFetch(kind, params, requestOptions) {
         var query = new URLSearchParams();
         Object.keys(params || {}).forEach(function(key) {
             if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
@@ -4335,22 +4336,68 @@
         var endpoint = kind === 'reverse'
             ? 'https://photon.komoot.io/reverse?'
             : 'https://photon.komoot.io/api/?';
-        return fetch(endpoint + query.toString(), {
+        var options = requestOptions || {};
+        var externalSignal = options.signal || null;
+        var controller = typeof AbortController === 'function'
+            ? new AbortController()
+            : null;
+        var removeExternalAbortListener = null;
+        if (controller && externalSignal) {
+            if (externalSignal.aborted) {
+                controller.abort();
+            } else {
+                var abortFromCaller = function() { controller.abort(); };
+                externalSignal.addEventListener('abort', abortFromCaller, { once: true });
+                removeExternalAbortListener = function() {
+                    externalSignal.removeEventListener('abort', abortFromCaller);
+                };
+            }
+        }
+        var signal = controller ? controller.signal : externalSignal;
+        var timeoutMs = Number(options.timeoutMs) > 0
+            ? Number(options.timeoutMs)
+            : (kind === 'search' ? 10000 : 15000);
+        var timeoutId = null;
+        var timeoutPromise = new Promise(function(_resolve, reject) {
+            timeoutId = window.setTimeout(function() {
+                if (controller) controller.abort();
+                var timeoutError = new Error('Geocoding request timed out.');
+                timeoutError.name = 'TimeoutError';
+                reject(timeoutError);
+            }, timeoutMs);
+        });
+        var fetchOptions = {
             headers: {
                 'Accept': 'application/json',
                 'Accept-Language': 'en-US,en;q=0.8'
             },
             cache: 'no-store'
-        }).then(function(response) {
-            if (!response.ok) throw new Error('OSM geocoder request failed: ' + response.status);
-            return response.json();
-        }).then(function(data) {
-            var features = Array.isArray(data && data.features) ? data.features : [];
-            if (kind === 'reverse') {
-                return features.length ? _osmFeatureToGeoResult(features[0]) : {};
-            }
-            return features.map(_osmFeatureToGeoResult);
+        };
+        if (signal) fetchOptions.signal = signal;
+        var requestPromise = fetch(endpoint + query.toString(), fetchOptions)
+            .then(function(response) {
+                if (!response.ok) throw new Error('OSM geocoder request failed: ' + response.status);
+                return response.json();
+            })
+            .then(function(data) {
+                var features = Array.isArray(data && data.features) ? data.features : [];
+                if (kind === 'reverse') {
+                    return features.length ? _osmFeatureToGeoResult(features[0]) : {};
+                }
+                return features.map(_osmFeatureToGeoResult);
+            });
+        return Promise.race([requestPromise, timeoutPromise]).finally(function() {
+            if (timeoutId !== null) window.clearTimeout(timeoutId);
+            if (removeExternalAbortListener) removeExternalAbortListener();
         });
+    }
+
+    function _cancelActiveCitySearch() {
+        _citySearchGeneration++;
+        if (_citySearchController) {
+            _citySearchController.abort();
+            _citySearchController = null;
+        }
     }
 
     // Privacy Mode must never use the raw reverse-geocoder result as the
@@ -4577,39 +4624,7 @@
                 infoDropdown.className = 'city-ac-dropdown';
                 document.body.appendChild(infoDropdown);
             }
-            if (cityInput) {
-                var infoAcTimer = null;
-                var fetchInfoSuggestions = function(q) {
-                    clearTimeout(infoAcTimer);
-                    infoAcTimer = setTimeout(function() {
-                        _osmGeocodeFetch('search', { q: q, limit: 5 })
-                            .then(function(data) { _renderCityAC(data); })
-                            .catch(function() {});
-                    }, 350);
-                };
-                cityInput.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter') runCitySearch();
-                });
-                cityInput.addEventListener('blur', function() {
-                    setTimeout(function() {
-                        var dropdown = document.getElementById('city-ac-dropdown');
-                        if (dropdown) dropdown.style.display = 'none';
-                    }, 200);
-                });
-                cityInput.addEventListener('focus', function() {
-                    var q = (cityInput.value || '').trim();
-                    if (q.length >= 2) fetchInfoSuggestions(q);
-                });
-                cityInput.addEventListener('input', function() {
-                    var q = (cityInput.value || '').trim();
-                    var dropdown = document.getElementById('city-ac-dropdown');
-                    if (!q || q.length < 2) {
-                        if (dropdown) dropdown.style.display = 'none';
-                        return;
-                    }
-                    fetchInfoSuggestions(q);
-                });
-            }
+            _setupCityAutocomplete(cityInput);
         }
     }
 
@@ -4680,37 +4695,11 @@
                 _ddEl.className = 'city-ac-dropdown';
                 document.body.appendChild(_ddEl);
             }
-            var _cityEl = document.getElementById('cityInput');
-            if (_cityEl) {
-                var _acTimer = null;
-                var _doACFetch = function(q) {
-                    clearTimeout(_acTimer);
-                    _acTimer = setTimeout(function() {
-                        _osmGeocodeFetch('search', { q: q, limit: 5 })
-                            .then(function(data) { _renderCityAC(data); })
-                            .catch(function() {});
-                    }, 350);
-                };
-                _cityEl.addEventListener('keydown', function(e) { if (e.key === 'Enter') runCitySearch(); });
-                _cityEl.addEventListener('blur', function() {
-                    setTimeout(function() { var dd = document.getElementById('city-ac-dropdown'); if (dd) dd.style.display = 'none'; }, 200);
-                });
-                _cityEl.addEventListener('focus', function() {
-                    var q = (_cityEl.value || '').trim();
-                    if (q.length >= 2) _doACFetch(q);
-                });
-                _cityEl.addEventListener('input', function() {
-                    var q = (_cityEl.value || '').trim();
-                    var dd = document.getElementById('city-ac-dropdown');
-                    if (!q || q.length < 2) { if (dd) dd.style.display = 'none'; return; }
-                    _doACFetch(q);
-                });
-            }
+            _setupCityAutocomplete(document.getElementById('cityInput'));
         }
     }
 
-    function _renderCityAC(data) {
-        var cityEl = document.getElementById('cityInput');
+    function _getCityACDropdown() {
         var dd = document.getElementById('city-ac-dropdown');
         if (!dd) {
             dd = document.createElement('div');
@@ -4718,24 +4707,158 @@
             dd.className = 'city-ac-dropdown';
             document.body.appendChild(dd);
         }
+        return dd;
+    }
+
+    function _positionCityAC(cityEl, dd) {
+        if (!cityEl || !dd) return;
+        var rect = cityEl.getBoundingClientRect();
+        dd.style.left = rect.left + 'px';
+        dd.style.top = (rect.bottom + 6) + 'px';
+        dd.style.width = Math.max(rect.width, 300) + 'px';
+    }
+
+    function _renderCityACMessage(cityEl, query, message) {
+        if (
+            !cityEl ||
+            !cityEl.isConnected ||
+            cityEl.value.trim() !== query ||
+            document.activeElement !== cityEl
+        ) return;
+        var dd = _getCityACDropdown();
+        _positionCityAC(cityEl, dd);
+        var item = document.createElement('div');
+        item.className = 'city-ac-item';
+        item.setAttribute('role', 'status');
+        item.textContent = message;
+        dd.replaceChildren(item);
+        dd.style.display = 'block';
+    }
+
+    function _setupCityAutocomplete(cityInput) {
+        if (!cityInput) return;
+        var dropdown = _getCityACDropdown();
+        var timer = null;
+        var controller = null;
+        var generation = 0;
+
+        function cancelSuggestions(hideDropdown) {
+            generation++;
+            if (timer !== null) {
+                window.clearTimeout(timer);
+                timer = null;
+            }
+            if (controller) {
+                controller.abort();
+                controller = null;
+            }
+            if (hideDropdown) dropdown.style.display = 'none';
+        }
+
+        cityInput._cancelCityAutocomplete = function() {
+            cancelSuggestions(true);
+        };
+        cityInput.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter') runCitySearch();
+        });
+        cityInput.addEventListener('focus', function() {
+            scheduleSuggestions(cityInput.value || '');
+        });
+        cityInput.addEventListener('input', function() {
+            _cancelActiveCitySearch();
+            scheduleSuggestions(cityInput.value || '');
+        });
+        cityInput.addEventListener('blur', function() {
+            window.setTimeout(function() {
+                if (document.activeElement !== cityInput) {
+                    cancelSuggestions(true);
+                }
+            }, 200);
+        });
+
+        function scheduleSuggestions(rawQuery) {
+            var query = String(rawQuery || '').trim();
+            if (timer !== null) {
+                window.clearTimeout(timer);
+                timer = null;
+            }
+            if (controller) {
+                controller.abort();
+                controller = null;
+            }
+            generation++;
+            var requestGeneration = generation;
+            dropdown.style.display = 'none';
+            if (query.length < 2) return;
+
+            timer = window.setTimeout(function() {
+                timer = null;
+                if (
+                    requestGeneration !== generation ||
+                    !cityInput.isConnected ||
+                    cityInput.value.trim() !== query
+                ) return;
+
+                var requestController = typeof AbortController === 'function'
+                    ? new AbortController()
+                    : null;
+                controller = requestController;
+                var requestOptions = { timeoutMs: 8000 };
+                if (requestController) requestOptions.signal = requestController.signal;
+                _osmGeocodeFetch('search', { q: query, limit: 5 }, requestOptions)
+                    .then(function(data) {
+                        if (
+                            requestGeneration !== generation ||
+                            !cityInput.isConnected ||
+                            cityInput.value.trim() !== query
+                        ) return;
+                        _renderCityAC(data, query);
+                    })
+                    .catch(function(error) {
+                        if (
+                            requestGeneration !== generation ||
+                            (error && error.name === 'AbortError')
+                        ) return;
+                        _renderCityACMessage(
+                            cityInput,
+                            query,
+                            error && error.name === 'TimeoutError'
+                                ? 'Place lookup timed out. Press Enter or SYNC to retry.'
+                                : 'Place suggestions are unavailable. Press Enter or SYNC to retry.'
+                        );
+                    })
+                    .finally(function() {
+                        if (controller === requestController) controller = null;
+                    });
+            }, 350);
+        }
+    }
+
+    function _renderCityAC(data, expectedQuery) {
+        var cityEl = document.getElementById('cityInput');
+        if (
+            !cityEl ||
+            (expectedQuery && cityEl.value.trim() !== expectedQuery)
+        ) return;
+        var dd = _getCityACDropdown();
         if (!data || data.length === 0) { dd.style.display = 'none'; return; }
         // Position the fixed dropdown below the input using its on-screen coordinates
-        if (cityEl) {
-            var rect = cityEl.getBoundingClientRect();
-            dd.style.left  = rect.left + 'px';
-            dd.style.top   = (rect.bottom + 6) + 'px';
-            dd.style.width = Math.max(rect.width, 300) + 'px';
-        }
+        _positionCityAC(cityEl, dd);
         var _acData = data.slice(0, 5);
         dd.innerHTML = _acData.map(function(r, i) {
-            return '<div class="city-ac-item" data-idx="' + i + '">' + r.display_name + '</div>';
+            return '<div class="city-ac-item" role="option" data-idx="' + i + '">' +
+                escapeHtml(r.display_name || '') + '</div>';
         }).join('');
         dd.style.display = 'block';
         dd.querySelectorAll('.city-ac-item').forEach(function(item) {
             item.addEventListener('mousedown', function(e) {
                 e.preventDefault();
                 var r = _acData[parseInt(item.dataset.idx)];
+                if (!r) return;
                 var searchText = cityEl ? cityEl.value.trim() : '';
+                if (cityEl && typeof cityEl._cancelCityAutocomplete === 'function') {
+                    cityEl._cancelCityAutocomplete();
+                }
                 lat = parseFloat(parseFloat(r.lat).toFixed(4));
                 lon = parseFloat(parseFloat(r.lon).toFixed(4));
                 var shortName = r.display_name.split(',')[0].trim();
@@ -4763,6 +4886,9 @@
         if (error && error.message === 'No city result') {
             return 'No results found. Check the spelling and try a nearby city or ZIP code.';
         }
+        if (error && error.name === 'TimeoutError') {
+            return 'Place lookup timed out. Please try again.';
+        }
         return getSiteErrorText(
             'LOC-502-SEARCH',
             'Location search is temporarily unavailable. Please try again shortly.'
@@ -4773,13 +4899,31 @@
         const cityEl = document.getElementById('cityInput');
         const query = cityEl ? cityEl.value.trim() : '';
         if (!query) return;
+        if (!window.SKYMONITOR_INFO_PAGE && _isOffline) {
+            alert('You cannot search while offline.');
+            return;
+        }
+        if (cityEl && typeof cityEl._cancelCityAutocomplete === 'function') {
+            cityEl._cancelCityAutocomplete();
+        }
+        if (_citySearchController) _citySearchController.abort();
         const searchGeneration = ++_citySearchGeneration;
+        const searchController = typeof AbortController === 'function'
+            ? new AbortController()
+            : null;
+        _citySearchController = searchController;
+        const searchOptions = { timeoutMs: 10000 };
+        if (searchController) searchOptions.signal = searchController.signal;
         if (window.SKYMONITOR_INFO_PAGE) {
             // Resolve the city before leaving the informational route. The
             // main page can then start its weather load immediately instead
             // of depending on a second asynchronous search after navigation.
             try {
-                var infoResults = await _osmGeocodeFetch('search', { q: query, limit: 1 });
+                var infoResults = await _osmGeocodeFetch(
+                    'search',
+                    { q: query, limit: 1 },
+                    searchOptions
+                );
                 if (searchGeneration !== _citySearchGeneration) return;
                 var infoResult = infoResults && infoResults[0];
                 if (!infoResult) throw new Error('No city result');
@@ -4795,12 +4939,17 @@
             } catch (e) {
                 if (searchGeneration !== _citySearchGeneration) return;
                 alert(citySearchFailureText(e));
+            } finally {
+                if (_citySearchController === searchController) _citySearchController = null;
             }
             return;
         }
-        if (_isOffline) { alert('You cannot search while offline.'); return; }
         try {
-            const data = await _osmGeocodeFetch('search', { q: query, limit: 5 });
+            const data = await _osmGeocodeFetch(
+                'search',
+                { q: query, limit: 5 },
+                searchOptions
+            );
             if (searchGeneration !== _citySearchGeneration) return;
             if (data && data.length > 0) {
                 lat = parseFloat(parseFloat(data[0].lat).toFixed(4));
@@ -4820,6 +4969,8 @@
         } catch(e) {
             if (searchGeneration !== _citySearchGeneration) return;
             alert(citySearchFailureText(e));
+        } finally {
+            if (_citySearchController === searchController) _citySearchController = null;
         }
     }
 
