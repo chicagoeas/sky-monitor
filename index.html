@@ -1689,18 +1689,19 @@
         /* v1.0.4: Reporting map */
         #reporting-map { height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
         #reporting-map .leaflet-control-attribution { font-size: 9px !important; line-height: 1.2 !important; }
-        #reporting-map .leaflet-overlay-pane path.nws-tornado-emergency-boundary {
+        #reporting-map .leaflet-overlay-pane path.nws-emergency-boundary {
             stroke: #fff !important;
             stroke-width: 4px !important;
-            stroke-dasharray: 8 9 !important;
+            stroke-dasharray: 10 8 !important;
             stroke-linecap: round;
-            animation: nwsEmergencyBoundarySweep 1.25s linear infinite;
+            animation: nwsEmergencyBoundarySweep 0.9s linear infinite !important;
+            will-change: stroke-dashoffset;
             filter: drop-shadow(0 0 3px rgba(255,255,255,0.9));
         }
         @keyframes nwsEmergencyBoundarySweep {
-            0% { stroke-dashoffset: 0; opacity: 0.82; }
+            0% { stroke-dashoffset: 0; opacity: 0.72; }
             50% { stroke-dashoffset: -18; opacity: 1; }
-            100% { stroke-dashoffset: -36; opacity: 0.82; }
+            100% { stroke-dashoffset: -36; opacity: 0.72; }
         }
         /* Reporting popups stay inside the map on mobile and keep long alert text usable. */
         #reporting-map .leaflet-popup-content-wrapper,
@@ -2137,10 +2138,6 @@
         @media (prefers-reduced-motion: reduce) {
             #reporting-map .leaflet-layer.radar-frame-tile-layer {
                 transition: none;
-            }
-            #reporting-map .leaflet-overlay-pane path.nws-tornado-emergency-boundary {
-                animation: none;
-                stroke-dashoffset: 0;
             }
         }
         #historical-radar-controls .historical-radar-endpoints {
@@ -16397,10 +16394,7 @@
             return value === true || value === 1 ||
                 /^(?:1|TRUE|YES|PDS|EMERGENCY)$/i.test(String(value || '').trim());
         }
-        var isTornadoEmergency =
-            /\bTORNADO[\s-]+EMERGENCY\b/.test(text) ||
-            activeFlag(props.tornadoEmergency || props.tornado_emergency ||
-                parameters.tornadoEmergency || parameters.tornado_emergency);
+        var isTornadoEmergency = /\bTORNADO[\s-]+EMERGENCY\b/.test(text);
         var isFlashFloodEmergency =
             /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(text);
         var tags = [];
@@ -16408,8 +16402,6 @@
             tags.push({ label: 'Tornado Emergency', kind: 'tornado-emergency' });
         } else if (isFlashFloodEmergency) {
             tags.push({ label: 'Flash Flood Emergency', kind: 'flash-flood-emergency' });
-        } else if (/\bEMERGENCY\b/.test(text) || activeFlag(props.emergency)) {
-            tags.push({ label: 'Emergency', kind: 'emergency' });
         }
         if (/\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(text) ||
             activeFlag(props.pds) || activeFlag(parameters.pds)) {
@@ -16424,7 +16416,11 @@
         if (/\bCATASTROPHIC\b/.test(text)) {
             tags.push({ label: 'Catastrophic', kind: 'catastrophic' });
         }
-        return { isTornadoEmergency: isTornadoEmergency, tags: tags };
+        return {
+            isTornadoEmergency: isTornadoEmergency,
+            isEmergencyBoundary: isTornadoEmergency || isFlashFloodEmergency,
+            tags: tags
+        };
     }
 
     function reportingPopupTitleHtml(entry) {
@@ -16461,8 +16457,8 @@
                 var element = layer.getElement();
                 if (element && element.classList) {
                     element.classList.toggle(
-                        'nws-tornado-emergency-boundary',
-                        visual.isTornadoEmergency
+                        'nws-emergency-boundary',
+                        visual.isEmergencyBoundary
                     );
                 }
             }
@@ -21807,8 +21803,8 @@
                         opacity: 0.95,
                         fillColor: color,
                         fillOpacity: 0.2,
-                        className: visual.isTornadoEmergency
-                            ? 'nws-tornado-emergency-boundary' : ''
+                        className: visual.isEmergencyBoundary
+                            ? 'nws-emergency-boundary' : ''
                     }
                 });
                 registerReportingPopup(polygon, {
@@ -22007,8 +22003,8 @@
                             weight: 2.5,
                             opacity: 0.95,
                             fillOpacity: 0.2,
-                            className: visual.isTornadoEmergency
-                                ? 'nws-tornado-emergency-boundary' : ''
+                            className: visual.isEmergencyBoundary
+                                ? 'nws-emergency-boundary' : ''
                         } });
                          registerReportingPopup(_poly, {
                             source: 'nws',
