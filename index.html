@@ -7153,7 +7153,17 @@
     // Neighbors are filtered to ≤5 miles so isolated primaries get no neighbors and fall back
     // to the PirateWeather backstop rather than comparing against climatologically unrelated stations.
     function _weatherFetch(url, options, timeoutMs) {
-        options = options || {};
+        options = Object.assign({}, options || {});
+        // Worker routes own their cache policy. Do not let the browser add a
+        // second HTTP cache whose age starts when it receives an already-cached
+        // Worker response.
+        try {
+            var requestUrl = typeof url === 'string' ? url : (url && url.url) || String(url);
+            if (!options.cache &&
+                new URL(requestUrl, window.location.href).origin === new URL(WEATHER_WORKER_URL).origin) {
+                options.cache = 'no-store';
+            }
+        } catch(e) {}
         if (!timeoutMs || typeof AbortController !== 'function') {
             return fetch(url, options);
         }
@@ -9988,8 +9998,6 @@
     // in-page success so routine minute refreshes do not even need to call it,
     // but never throttle a load that has no usable data to display.
     var _lastPirateSuccessAt = 0;
-    var _lastPirateSuccessLat = null;
-    var _lastPirateSuccessLon = null;
     var _lastPirateSuccessLocationKey = '';
     function _pirateLocationBucketKey(latitude, longitude) {
         // Match the Worker cache's two-decimal coordinate bucket.
@@ -10003,14 +10011,10 @@
         requestLon = requestLon == null ? lon : requestLon;
         var requestSignal = window._weatherRequestController ? window._weatherRequestController.signal : undefined;
         const now = Date.now();
-        var movedKm = 0;
-        if (_lastPirateSuccessLat !== null && _lastPirateSuccessLon !== null) {
-            var meanLatRad = ((requestLat + _lastPirateSuccessLat) / 2) * Math.PI / 180;
-            var northKm = (requestLat - _lastPirateSuccessLat) * 111.32;
-            var eastKm = (requestLon - _lastPirateSuccessLon) * 111.32 * Math.cos(meanLatRad);
-            movedKm = Math.sqrt(northKm * northKm + eastKm * eastKm);
-        }
-        var minimumIntervalMs = movedKm >= 5 ? 300000 : 900000;
+        // Refresh a fixed location every five minutes at most. This matches
+        // the Worker's provider cache and avoids extending a cached response's
+        // age by restarting this timer when the page reloads.
+        var minimumIntervalMs = 5 * 60 * 1000;
         var locationKey = _pirateLocationBucketKey(requestLat, requestLon);
         var hasRecentDataForLocation =
             !!window.pirateCurrently &&
@@ -10062,13 +10066,20 @@
             }
         }).catch(function() {});
         try {
-            const resP = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/fast?lat=' +
-                encodeURIComponent(requestLat) + '&lon=' + encodeURIComponent(requestLon), {
+            var fastUrl = WEATHER_WORKER_URL + '/api/weather/fast?lat=' +
+                encodeURIComponent(requestLat) + '&lon=' + encodeURIComponent(requestLon);
+            if (forceRefresh) fastUrl += '&refresh=1';
+            const resP = await _weatherFetch(fastUrl, {
                     signal: requestSignal
                 }, 12000);
             if (!resP.ok) throw new Error('Pirate ' + resP.status);
             const fastPayload = await resP.json();
             if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
+            // The Worker keeps a last-good snapshot for resilience, but don't
+            // treat it as current. Let the existing live Open-Meteo backup run.
+            if (fastPayload && fastPayload.stale === true) {
+                throw new Error('PirateWeather returned a stale last-good snapshot');
+            }
             const d = fastPayload.pirate || fastPayload;
             if (!d || !d.currently) throw new Error('Pirate response missing currently data');
             window._fastProviderData = fastPayload;
@@ -10097,9 +10108,10 @@
             const curr = d.currently;
             window.pirateCurrently = curr;
             window.pirateAlerts = d.alerts || [];
-            _lastPirateSuccessAt = Date.now();
-            _lastPirateSuccessLat = requestLat;
-            _lastPirateSuccessLon = requestLon;
+            const sourceGeneratedAt = Date.parse(fastPayload.generatedAt || '');
+            _lastPirateSuccessAt = Number.isFinite(sourceGeneratedAt) && sourceGeneratedAt > 0
+                ? sourceGeneratedAt
+                : Date.now();
             _lastPirateSuccessLocationKey = locationKey;
             // Sanitize PirateWeather sentinel values (-999 = broken data from known PW bugs)
             var _uvWasBad = curr.uvIndex != null && curr.uvIndex < 0;
@@ -10695,7 +10707,10 @@
             + '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,surface_pressure,uv_index,precipitation,weather_code'
             + '&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,surface_pressure,precipitation_probability,uv_index,weather_code,precipitation'
             + '&wind_speed_unit=mph&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&forecast_days=3';
-        const res = await _weatherFetch(url, requestSignal ? { signal: requestSignal } : undefined, 12000);
+        const res = await _weatherFetch(url, {
+            signal: requestSignal,
+            cache: 'no-store'
+        }, 12000);
         if (!res.ok) throw new Error('Open-Meteo ' + res.status);
         const d = await res.json();
         if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
@@ -12899,7 +12914,10 @@
             var _obsEndpointFailed = false;
             try {
                 const obsRes = await _weatherFetch(primaryStation.id + '/observations/latest',
-                    requestSignal ? { signal: requestSignal } : undefined, 15000);
+                    requestSignal
+                        ? { signal: requestSignal, cache: 'no-store' }
+                        : { cache: 'no-store' },
+                    15000);
                 if (!obsRes.ok) _obsEndpointFailed = true;
                 const obs = obsRes.ok ? await obsRes.json() : null;
                 if (loadGeneration != null && loadGeneration !== weatherLoadGeneration) return;
