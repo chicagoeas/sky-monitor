@@ -16379,6 +16379,13 @@
     }
 
     function preloadVisibleReportingNwsAlertMetadata() {
+        // Historical IEM products are inexpensive to cache by product ID and
+        // are needed to recover threat tags absent from some archive records.
+        // In live mode, however, each entry would trigger a separate
+        // api.weather.gov point lookup. Load live metadata only when the user
+        // opens a popup instead of flooding the upstream service in the
+        // background for every warning visible on the map.
+        if (!historicalRadarState.active) return;
         if (!reportingMap) return;
         if (reportingNwsPreloadListenerMap !== reportingMap) {
             reportingNwsPreloadListenerMap = reportingMap;
@@ -16535,8 +16542,25 @@
         var isPdsFlag = ['TRUE', '1', 'YES'].indexOf(
             parameterValue('is_pds')
         ) !== -1;
+        function threatFromOfficialText(text, threatName, permittedValues) {
+            var source = String(text || '').toUpperCase()
+                .replace(/\s+/g, ' ');
+            var valuePattern = permittedValues.join('|');
+            var match = source.match(new RegExp(
+                '\\b' + threatName + '\\s+DAMAGE\\s+THREAT\\b' +
+                '[\\s.\\-:=]{1,24}\\b(' + valuePattern + ')\\b'
+            ));
+            return match ? match[1] : '';
+        }
         function officialDamageThreat(value, permittedValues) {
-            if (permittedValues.indexOf(value) !== -1) return value;
+            var normalizedValue = String(value || '').toUpperCase()
+                .replace(/[_-]+/g, ' ').trim();
+            for (var permittedIndex = 0; permittedIndex < permittedValues.length; permittedIndex++) {
+                if (new RegExp('\\b' + permittedValues[permittedIndex] + '\\b')
+                    .test(normalizedValue)) {
+                    return permittedValues[permittedIndex];
+                }
+            }
             // Some NWS headline variants include the official threat label even
             // when the CAP parameter is absent from that alert response.
             for (var i = 0; i < permittedValues.length; i++) {
@@ -16549,11 +16573,15 @@
         thunderstormThreat = officialDamageThreat(
             thunderstormThreat,
             ['DESTRUCTIVE', 'CONSIDERABLE']
-        );
+        ) || threatFromOfficialText(nwsText, 'THUNDERSTORM', ['DESTRUCTIVE', 'CONSIDERABLE']);
         flashFloodThreat = officialDamageThreat(
             flashFloodThreat,
             ['CATASTROPHIC', 'CONSIDERABLE']
-        );
+        ) || threatFromOfficialText(nwsText, 'FLASH\\s+FLOOD', ['CATASTROPHIC', 'CONSIDERABLE']);
+        tornadoThreat = officialDamageThreat(
+            tornadoThreat,
+            ['CATASTROPHIC', 'CONSIDERABLE']
+        ) || threatFromOfficialText(nwsText, 'TORNADO', ['CATASTROPHIC', 'CONSIDERABLE']);
         var isTornadoEmergency = phenomena === 'TO' &&
             (isEmergencyFlag || tornadoThreat === 'CATASTROPHIC' ||
                 /\bTORNADO[\s-]+EMERGENCY\b/.test(explicitTagSource));
@@ -17074,16 +17102,79 @@
         return value.replace(/^National Weather Service\b/i, 'NWS');
     }
 
+    const nwsActivePointCache = new Map();
+    async function fetchNwsActiveAlertsAtPoint(latlng) {
+        const latitude = Number(latlng && latlng.lat);
+        const longitude = Number(latlng && latlng.lng);
+        if (!isFinite(latitude) || !isFinite(longitude)) {
+            return { ok: false, payload: null };
+        }
+        const point = latitude.toFixed(4) + ',' + longitude.toFixed(4);
+        const cacheKey = point;
+        const now = Date.now();
+        const cached = nwsActivePointCache.get(cacheKey);
+        if (cached && cached.expiresAt > now) {
+            // Refresh insertion order so the bounded cache keeps recently used
+            // popup locations rather than old map pans.
+            nwsActivePointCache.delete(cacheKey);
+            nwsActivePointCache.set(cacheKey, cached);
+            return cached.promise;
+        }
+        if (cached) nwsActivePointCache.delete(cacheKey);
+
+        const url = 'https://api.weather.gov/alerts/active?point=' +
+            encodeURIComponent(point);
+        const cacheEntry = {
+            expiresAt: now + 5000,
+            promise: null
+        };
+        cacheEntry.promise = (async function() {
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const response = await fetch(url, {
+                        cache: 'no-store',
+                        headers: { 'Accept': 'application/geo+json' }
+                    });
+                    if (response.ok) {
+                        const payload = await response.json();
+                        cacheEntry.expiresAt = Date.now() + 30000;
+                        return { ok: true, payload: payload };
+                    }
+                    // A single retry can recover a transient upstream 5xx;
+                    // do not retry rate limits or other client errors.
+                    if (response.status < 500 || attempt > 0) {
+                        return { ok: false, payload: null, status: response.status };
+                    }
+                } catch (error) {
+                    if (attempt > 0) return { ok: false, payload: null, error: error };
+                }
+                await new Promise(function(resolve) { setTimeout(resolve, 350); });
+            }
+            return { ok: false, payload: null };
+        })();
+        nwsActivePointCache.set(cacheKey, cacheEntry);
+        while (nwsActivePointCache.size > 80) {
+            nwsActivePointCache.delete(nwsActivePointCache.keys().next().value);
+        }
+        cacheEntry.promise.then(function(result) {
+            if (!result.ok) cacheEntry.expiresAt = Date.now() + 5000;
+        }).catch(function() {
+            nwsActivePointCache.delete(cacheKey);
+        });
+        return cacheEntry.promise;
+    }
+
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
-        const url = 'https://api.weather.gov/alerts/active?point='
-            + encodeURIComponent(latlng.lat.toFixed(4) + ',' + latlng.lng.toFixed(4));
         const unavailable = '<span style="opacity:0.72;">' +
             escapeHtml(getSiteErrorText('ALERT-502-UPSTREAM', 'Full alert text is temporarily unavailable. Try refreshing the map.')) +
             '</span>';
+        const noMatchingAlert = '<span style="opacity:0.72;">' +
+            'The alert service did not return full text for this warning. Its map boundary and official alert title are still shown above.' +
+            '</span>';
         try {
-            const res = await fetch(url, { headers: { 'Accept': 'application/geo+json' } });
-            if (!res.ok) return unavailable;
-            const data = await res.json();
+            const response = await fetchNwsActiveAlertsAtPoint(latlng);
+            if (!response.ok) return unavailable;
+            const data = response.payload || {};
             const wanted = String(eventName || '').toLowerCase();
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
             const eventCandidates = (data.features || []).map(function(feature) {
@@ -17133,7 +17224,7 @@
                     [alert.headline, alert.description, alert.instruction].filter(Boolean).join(' ')
                 );
             }
-            if (!alert || (!alert.description && !alert.instruction)) return unavailable;
+            if (!alert) return noMatchingAlert;
              const timeInfo = reportingAlertTimeInfo(alert);
               const parsedAlertText = _historicalNwsTextSections(alert.description || '');
              const rows = [
@@ -17141,10 +17232,11 @@
                   ['Issued by', formatNwsIssuedBy(alert.senderName, wfo)],
                   ['Valid through', reportingAlertExpiryValue(alert)
                       ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(alert)) : ''],
+                   ['Official headline', alert.headline || eventName],
                   ['Alert text', parsedAlertText.description || alert.description],
                   ['Instructions', parsedAlertText.instructions || alert.instruction]
              ];
-            return reportingPopupDetailRows(rows);
+             return reportingPopupDetailRows(rows) || noMatchingAlert;
         } catch (e) {
             return unavailable;
         }
