@@ -17164,12 +17164,22 @@
         return cacheEntry.promise;
     }
 
+    function localNwsReportingDetails(entry, eventName, wfo) {
+        const props = entry && entry.nwsAlertProperties || {};
+        const timeInfo = reportingAlertTimeInfo(props);
+        const expires = reportingAlertExpiryValue(props);
+        const rows = [
+            [timeInfo.label, timeInfo.value ? formatReportTime(timeInfo.value) : ''],
+            ['Issued by', formatNwsIssuedBy(props.senderName || '', props.wfo || wfo)],
+            ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : '']
+        ];
+        return reportingPopupDetailRows(rows) ||
+            '<span style="opacity:0.72;">Official alert boundary and title are shown above.</span>';
+    }
+
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
         const unavailable = '<span style="opacity:0.72;">' +
             escapeHtml(getSiteErrorText('ALERT-502-UPSTREAM', 'Full alert text is temporarily unavailable. Try refreshing the map.')) +
-            '</span>';
-        const noMatchingAlert = '<span style="opacity:0.72;">' +
-            'The alert service did not return full text for this warning. Its map boundary and official alert title are still shown above.' +
             '</span>';
         try {
             const response = await fetchNwsActiveAlertsAtPoint(latlng);
@@ -17196,7 +17206,11 @@
                     return nwsRadarAlertIdentityKey(props) === expectedIdentity;
                 })
                 : [];
-            const alertCandidates = (expectedIdentity && candidatesWithIdentity.length
+            // Prefer the exact VTEC identity when it matches. IEM polygons and
+            // CAP alerts sometimes serialize that identity differently, so a
+            // strict miss must fall back to the point-filtered event candidates
+            // instead of treating a normal warning as incomplete.
+            const alertCandidates = (identityMatchedCandidates.length
                 ? identityMatchedCandidates : eventCandidates).sort(function(a, b) {
                 const senderA = String(a.senderName || '').toLowerCase();
                 const senderB = String(b.senderName || '').toLowerCase();
@@ -17224,7 +17238,10 @@
                     [alert.headline, alert.description, alert.instruction].filter(Boolean).join(' ')
                 );
             }
-            if (!alert) return noMatchingAlert;
+            // A warning does not need to carry a damage-threat tag to be a
+            // complete alert. If the NWS detail endpoint has no matching
+            // feature, retain the metadata already supplied by the map feed.
+            if (!alert) return localNwsReportingDetails(entry, eventName, wfo);
              const timeInfo = reportingAlertTimeInfo(alert);
               const parsedAlertText = _historicalNwsTextSections(alert.description || '');
              const rows = [
@@ -17236,7 +17253,8 @@
                   ['Alert text', parsedAlertText.description || alert.description],
                   ['Instructions', parsedAlertText.instructions || alert.instruction]
              ];
-             return reportingPopupDetailRows(rows) || noMatchingAlert;
+             return reportingPopupDetailRows(rows) ||
+                localNwsReportingDetails(entry, eventName, wfo);
         } catch (e) {
             return unavailable;
         }
