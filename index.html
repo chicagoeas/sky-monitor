@@ -1689,6 +1689,19 @@
         /* v1.0.4: Reporting map */
         #reporting-map { height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
         #reporting-map .leaflet-control-attribution { font-size: 9px !important; line-height: 1.2 !important; }
+        #reporting-map .leaflet-overlay-pane path.nws-tornado-emergency-boundary {
+            stroke: #fff !important;
+            stroke-width: 4px !important;
+            stroke-dasharray: 8 9 !important;
+            stroke-linecap: round;
+            animation: nwsEmergencyBoundarySweep 1.25s linear infinite;
+            filter: drop-shadow(0 0 3px rgba(255,255,255,0.9));
+        }
+        @keyframes nwsEmergencyBoundarySweep {
+            0% { stroke-dashoffset: 0; opacity: 0.82; }
+            50% { stroke-dashoffset: -18; opacity: 1; }
+            100% { stroke-dashoffset: -36; opacity: 0.82; }
+        }
         /* Reporting popups stay inside the map on mobile and keep long alert text usable. */
         #reporting-map .leaflet-popup-content-wrapper,
         #reporting-map .leaflet-popup-tip {
@@ -1739,7 +1752,26 @@
         }
         .reporting-popup-card-head:hover { background: rgba(255,255,255,0.06); }
         .reporting-popup-card-title {
-            display: flex; align-items: center; min-width: 0; padding-right: 18px;
+            display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+            min-width: 0; padding-right: 18px;
+        }
+        .nws-alert-name { min-width: 0; }
+        .nws-alert-tag {
+            display: inline-flex; align-items: center; flex: 0 0 auto;
+            padding: 2px 5px; border: 1px solid currentColor; border-radius: 5px;
+            font-size: 0.76em; line-height: 1.1; font-weight: 900;
+            letter-spacing: 0.15px; white-space: nowrap;
+        }
+        .nws-alert-tag--emergency,
+        .nws-alert-tag--tornado-emergency,
+        .nws-alert-tag--flash-flood-emergency {
+            color: #ff8a9a; background: rgba(255,23,68,0.17);
+        }
+        .nws-alert-tag--pds { color: #f5c66b; background: rgba(245,158,11,0.14); }
+        .nws-alert-tag--considerable { color: #ffd166; background: rgba(255,193,7,0.12); }
+        .nws-alert-tag--destructive,
+        .nws-alert-tag--catastrophic {
+            color: #ff9b86; background: rgba(255,87,51,0.16);
         }
         .reporting-popup-card-title > .reporting-popup-icon {
             flex: 0 0 20px;
@@ -2105,6 +2137,10 @@
         @media (prefers-reduced-motion: reduce) {
             #reporting-map .leaflet-layer.radar-frame-tile-layer {
                 transition: none;
+            }
+            #reporting-map .leaflet-overlay-pane path.nws-tornado-emergency-boundary {
+                animation: none;
+                stroke-dashoffset: 0;
             }
         }
         #historical-radar-controls .historical-radar-endpoints {
@@ -16329,6 +16365,116 @@
         return entry._popupId;
     }
 
+    function nwsAlertVisualData(props, eventName, extraText) {
+        props = props || {};
+        var parameters = props.parameters || props.Parameters || {};
+        var textParts = [eventName, extraText];
+        Object.keys(props).forEach(function(key) {
+            var value = props[key];
+            if (typeof value === 'string' || typeof value === 'number') {
+                textParts.push(String(value));
+            } else if (Array.isArray(value)) {
+                textParts.push(value.filter(function(item) {
+                    return typeof item === 'string' || typeof item === 'number';
+                }).join(' '));
+            }
+        });
+        [
+            'tornadoDamageThreat', 'tornado_damage_threat',
+            'thunderstormDamageThreat', 'thunderstorm_damage_threat',
+            'flashFloodDamageThreat', 'flash_flood_damage_threat',
+            'hailThreat', 'windThreat', 'damageThreat', 'damage_threat',
+            'pds', 'tornadoEmergency', 'tornado_emergency', 'emergency'
+        ].forEach(function(key) {
+            var value = parameters[key] != null ? parameters[key] : props[key];
+            if (Array.isArray(value)) value = value.join(' ');
+            if (typeof value === 'string' || typeof value === 'number') {
+                textParts.push(String(value));
+            }
+        });
+        var text = textParts.filter(Boolean).join(' ').toUpperCase();
+        function activeFlag(value) {
+            return value === true || value === 1 ||
+                /^(?:1|TRUE|YES|PDS|EMERGENCY)$/i.test(String(value || '').trim());
+        }
+        var isTornadoEmergency =
+            /\bTORNADO[\s-]+EMERGENCY\b/.test(text) ||
+            activeFlag(props.tornadoEmergency || props.tornado_emergency ||
+                parameters.tornadoEmergency || parameters.tornado_emergency);
+        var isFlashFloodEmergency =
+            /\bFLASH[\s-]+FLOOD[\s-]+EMERGENCY\b/.test(text);
+        var tags = [];
+        if (isTornadoEmergency) {
+            tags.push({ label: 'Tornado Emergency', kind: 'tornado-emergency' });
+        } else if (isFlashFloodEmergency) {
+            tags.push({ label: 'Flash Flood Emergency', kind: 'flash-flood-emergency' });
+        } else if (/\bEMERGENCY\b/.test(text) || activeFlag(props.emergency)) {
+            tags.push({ label: 'Emergency', kind: 'emergency' });
+        }
+        if (/\bPDS\b|\bPARTICULARLY\s+DANGEROUS\s+SITUATION\b/.test(text) ||
+            activeFlag(props.pds) || activeFlag(parameters.pds)) {
+            tags.push({ label: 'PDS', kind: 'pds' });
+        }
+        if (/\bCONSIDERABLE\b/.test(text)) {
+            tags.push({ label: 'Considerable', kind: 'considerable' });
+        }
+        if (/\bDESTRUCTIVE\b/.test(text)) {
+            tags.push({ label: 'Destructive', kind: 'destructive' });
+        }
+        if (/\bCATASTROPHIC\b/.test(text)) {
+            tags.push({ label: 'Catastrophic', kind: 'catastrophic' });
+        }
+        return { isTornadoEmergency: isTornadoEmergency, tags: tags };
+    }
+
+    function reportingPopupTitleHtml(entry) {
+        if (!entry || entry.source !== 'nws' || !entry.nwsEventName) {
+            return entry && entry.title ? entry.title : 'Report';
+        }
+        var visual = nwsAlertVisualData(
+            entry.nwsAlertProperties,
+            entry.nwsEventName,
+            entry.nwsVisualText
+        );
+        return '<span class="nws-alert-name">' + escapeHtml(entry.nwsEventName) + '</span>' +
+            visual.tags.map(function(tag) {
+                return '<span class="nws-alert-tag nws-alert-tag--' + tag.kind +
+                    '" aria-label="' + escapeHtml(tag.label) + '">' +
+                    escapeHtml(tag.label) + '</span>';
+            }).join('');
+    }
+
+    function refreshNwsReportingPopupVisuals(entry, properties, extraText) {
+        if (!entry || entry.source !== 'nws') return;
+        entry.nwsAlertProperties = Object.assign(
+            {}, entry.nwsAlertProperties || {}, properties || {}
+        );
+        if (extraText) entry.nwsVisualText = String(extraText);
+        var visual = nwsAlertVisualData(
+            entry.nwsAlertProperties,
+            entry.nwsEventName,
+            entry.nwsVisualText
+        );
+        function applyEmergencyClass(layer) {
+            if (!layer) return;
+            if (layer.getElement) {
+                var element = layer.getElement();
+                if (element && element.classList) {
+                    element.classList.toggle(
+                        'nws-tornado-emergency-boundary',
+                        visual.isTornadoEmergency
+                    );
+                }
+            }
+            if (layer.eachLayer) layer.eachLayer(applyEmergencyClass);
+        }
+        applyEmergencyClass(entry.layer);
+        var title = document.getElementById(
+            reportingPopupEntryIdFor(entry) + '-title'
+        );
+        if (title) title.innerHTML = reportingPopupTitleHtml(entry);
+    }
+
     function buildReportingPopupCard(entry, index) {
         const id = reportingPopupEntryIdFor(entry);
         const color = entry.color || '#4fc3f7';
@@ -16342,7 +16488,8 @@
             + '<div class="reporting-popup-card-head" onclick="toggleReportingPopupCard(\'' + id + '\')">'
             + reportLink
             + '<span class="reporting-popup-card-chevron" id="' + id + '-chevron">&#8250;</span>'
-            + '<span class="reporting-popup-card-title">' + (entry.title || 'Report') + '</span>'
+            + '<span class="reporting-popup-card-title" id="' + id + '-title">'
+            + reportingPopupTitleHtml(entry) + '</span>'
             + '<span class="reporting-popup-card-meta">' + (entry.meta || '') + '</span>'
             + '</div>'
             + '<div class="reporting-popup-card-detail" id="' + id + '-detail">'
@@ -16796,6 +16943,13 @@
                  return (bTime ? bTime.getTime() : 0) - (aTime ? aTime.getTime() : 0);
             });
             const alert = alertCandidates[0];
+            if (alert) {
+                refreshNwsReportingPopupVisuals(
+                    entry,
+                    alert,
+                    [alert.headline, alert.description, alert.instruction].filter(Boolean).join(' ')
+                );
+            }
             if (!alert || (!alert.description && !alert.instruction)) return unavailable;
              const timeInfo = reportingAlertTimeInfo(alert);
               const parsedAlertText = _historicalNwsTextSections(alert.description || '');
@@ -21393,7 +21547,7 @@
         };
     }
 
-    async function loadHistoricalNwsDetails(props) {
+    async function loadHistoricalNwsDetails(props, popupEntry) {
         props = props || {};
         const productId = String(props.product_id || '').trim();
         const baseCacheKey = productId || [
@@ -21405,7 +21559,10 @@
             : 0;
         const cacheKey = baseCacheKey + '|frame:' + frameTimestamp;
         if (historicalNwsDetailsCache[cacheKey]) {
-            return historicalNwsDetailsCache[cacheKey];
+            return historicalNwsDetailsCache[cacheKey].then(function(detail) {
+                refreshNwsReportingPopupVisuals(popupEntry, props, detail);
+                return detail;
+            });
         }
 
         const fallback = reportingPopupDetailRows([
@@ -21460,6 +21617,11 @@
                 }) || products[0];
                 if (!matchingProduct) return fallback;
 
+                refreshNwsReportingPopupVisuals(
+                    popupEntry,
+                    props,
+                    matchingProduct.text
+                );
                 const sections = _historicalNwsTextSections(matchingProduct.text);
                 const issued = matchingProduct.valid || props.issue;
                  const validThrough = reportingAlertExpiryValue(matchingProduct) ||
@@ -21635,6 +21797,7 @@
                 const color = colors[phenomena];
                 const eventName = props.ps || props.type ||
                     (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning');
+                const visual = nwsAlertVisualData(props, eventName);
                 const expires = props.expire || props.expire_utc ||
                     props.expires || props.ends || props.polygon_end;
                 const polygon = L_ref.geoJSON(feature.geometry, {
@@ -21643,7 +21806,9 @@
                         weight: 2.5,
                         opacity: 0.95,
                         fillColor: color,
-                        fillOpacity: 0.2
+                        fillOpacity: 0.2,
+                        className: visual.isTornadoEmergency
+                            ? 'nws-tornado-emergency-boundary' : ''
                     }
                 });
                 registerReportingPopup(polygon, {
@@ -21651,6 +21816,7 @@
                     isPolygon: true,
                     color: color,
                     nwsAlertProperties: props,
+                    nwsEventName: eventName,
                      popupKey: String(props.product_id || props.href ||
                          [phenomena, props.wfo, props.eventid, props.polygon_begin].join('|')),
                     title: escapeHtml(eventName),
@@ -21658,7 +21824,7 @@
                         (expires ? ' \u00B7 ' + escapeHtml(formatReportingExpiry(expires)) : ''),
                     detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                     loadDetails: function() {
-                        return loadHistoricalNwsDetails(props);
+                        return loadHistoricalNwsDetails(props, this);
                     }
                 });
                 polygon.addTo(alertPolygonLayer);
@@ -21834,13 +22000,22 @@
                         if (!f.geometry) return;
                         const color = shortFusedPhenomena[ph];
                         const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
+                        const visual = nwsAlertVisualData(f.properties, nwsEvent);
                         const expiresText = f.properties.expire || f.properties.polygon_end;
-                        const _poly = L_ref.geoJSON(f.geometry, { style: { color: color, weight: 2.5, opacity: 0.95, fillOpacity: 0.2 } });
+                        const _poly = L_ref.geoJSON(f.geometry, { style: {
+                            color: color,
+                            weight: 2.5,
+                            opacity: 0.95,
+                            fillOpacity: 0.2,
+                            className: visual.isTornadoEmergency
+                                ? 'nws-tornado-emergency-boundary' : ''
+                        } });
                          registerReportingPopup(_poly, {
                             source: 'nws',
                             isPolygon: true,
                             color: color,
                             nwsAlertProperties: f.properties,
+                            nwsEventName: nwsEvent,
                              popupKey: [
                                  f.properties.product_identifier || f.properties.id ||
                                      f.properties.href || '',
@@ -21853,7 +22028,7 @@
                             detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                             loadDetails: function(latlng) {
                                 return loadNwsReportingDetails(
-                                    null,
+                                    this,
                                     latlng,
                                     nwsEvent,
                                     f.properties.wfo || ''
