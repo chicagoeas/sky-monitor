@@ -17492,17 +17492,15 @@
             const response = await fetchNwsActiveAlertsAtPoint(latlng);
             if (!response.ok) return unavailable;
             const data = response.payload || {};
-            const wanted = String(eventName || '').toLowerCase();
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
-            const eventCandidates = (data.features || []).map(function(feature) {
+            const allCandidates = (data.features || []).map(function(feature) {
                 return feature.properties || {};
-            }).filter(function(props) {
-                const sameEvent = String(props.event || '').toLowerCase() === wanted
-                    || String(props.event || '').toLowerCase().includes(wanted)
-                    || wanted.includes(String(props.event || '').toLowerCase());
-                return sameEvent;
             });
-            const candidatesWithIdentity = eventCandidates.filter(function(props) {
+            const eventCandidates = allCandidates.filter(function(props) {
+                return normalizeNwsAlertEventLabel(props.event) ===
+                    normalizeNwsAlertEventLabel(eventName);
+            });
+            const candidatesWithIdentity = allCandidates.filter(function(props) {
                 return !!nwsRadarAlertIdentityKey(props);
             });
             const expectedIdentity = nwsRadarAlertIdentityKey(
@@ -17510,15 +17508,22 @@
             );
             const identityMatchedCandidates = expectedIdentity
                 ? candidatesWithIdentity.filter(function(props) {
-                    return nwsRadarAlertIdentityKey(props) === expectedIdentity;
+                    return nwsRadarAlertIdentityMatches(
+                        entry && entry.nwsAlertProperties,
+                        props
+                    );
                 })
                 : [];
-            // Prefer the exact VTEC identity when it matches. IEM polygons and
-            // CAP alerts sometimes serialize that identity differently, so a
-            // strict miss must fall back to the point-filtered event candidates
-            // instead of treating a normal warning as incomplete.
+            // Prefer the exact VTEC event. If the active feed has VTEC
+            // identities but none match the polygon, do not substitute another
+            // same-office event; only use the exact event-name fallback when
+            // the point feed has no usable VTEC identities to compare.
+            const hasUnmatchedIdentifiedEvent = !!expectedIdentity &&
+                candidatesWithIdentity.length > 0 &&
+                identityMatchedCandidates.length === 0;
             const alertCandidates = (identityMatchedCandidates.length
-                ? identityMatchedCandidates : eventCandidates).sort(function(a, b) {
+                ? identityMatchedCandidates
+                : hasUnmatchedIdentifiedEvent ? [] : eventCandidates).sort(function(a, b) {
                 const senderA = String(a.senderName || '').toLowerCase();
                 const senderB = String(b.senderName || '').toLowerCase();
                 const officeA = wantedOffice && (
@@ -22296,16 +22301,20 @@
 
     function parseNwsRadarVtecIdentity(value) {
         const match = String(value || '').match(
-            /(?:^|\/)[A-Z]\.[A-Z]{3}\.([A-Z0-9]{3,4})\.([A-Z]{2})\.([A-Z])\.(\d{1,4})\.(\d{6}T\d{4}Z)-/i
+            /(?:^|\/)[A-Z]\.[A-Z]{3}\.([A-Z0-9]{3,4})\.([A-Z]{2})\.([A-Z])\.(\d{1,4})\.(\d{6}T\d{4}Z)-(\d{6}T\d{4}Z)/i
         );
         if (!match) return null;
-        const yearPart = Number(match[5].slice(0, 2));
+        // Continuation VTECs commonly use 000000T0000Z as the start time.
+        // In that case, take the year from the end timestamp instead.
+        const startYearPart = Number(match[5].slice(0, 2));
+        const endYearPart = Number(match[6].slice(0, 2));
+        const yearPart = startYearPart || endYearPart;
         return {
             wfo: normalizeNwsRadarWfo(match[1]),
             phenomena: match[2].toUpperCase(),
             significance: match[3].toUpperCase(),
             eventid: match[4].padStart(4, '0'),
-            year: yearPart >= 70 ? 1900 + yearPart : 2000 + yearPart
+            year: yearPart ? (yearPart >= 70 ? 1900 + yearPart : 2000 + yearPart) : 0
         };
     }
 
@@ -22348,6 +22357,25 @@
             wfo, phenomena, significance,
             String(rawEventId).trim().padStart(4, '0'), year
         ].join('|');
+    }
+
+    function nwsRadarAlertIdentityMatches(firstProps, secondProps) {
+        const firstKey = nwsRadarAlertIdentityKey(firstProps);
+        const secondKey = nwsRadarAlertIdentityKey(secondProps);
+        if (!firstKey || !secondKey) return false;
+        if (firstKey === secondKey) return true;
+        const firstParts = firstKey.split('|');
+        const secondParts = secondKey.split('|');
+        const sameVtecEvent = firstParts.slice(0, 4).join('|') ===
+            secondParts.slice(0, 4).join('|');
+        const firstYear = Number(firstParts[4]) || 0;
+        const secondYear = Number(secondParts[4]) || 0;
+        return sameVtecEvent &&
+            (!firstYear || !secondYear || firstYear === secondYear);
+    }
+
+    function normalizeNwsAlertEventLabel(value) {
+        return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
 
     function nwsRadarAlertMatchesDeepLink(props) {
