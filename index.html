@@ -7152,6 +7152,11 @@
     // fetchNWSChain is the actual QC — qcStatus is only a soft tie-breaker for neighbor ranking.
     // Neighbors are filtered to ≤5 miles so isolated primaries get no neighbors and fall back
     // to the PirateWeather backstop rather than comparing against climatologically unrelated stations.
+    // loadAll runs every minute, but PWS observations are generally reported
+    // every few minutes. Keep a short per-location cache here as well as in the
+    // Worker so routine page refreshes do not issue needless proxy requests.
+    var PWS_CLIENT_CACHE_MS = 5 * 60 * 1000;
+    var pwsClientCache = new Map();
     function _weatherFetch(url, options, timeoutMs) {
         options = Object.assign({}, options || {});
         // Worker routes own their cache policy. Do not let the browser add a
@@ -7199,14 +7204,37 @@
         // Weather.com credentials and the station fan-out now stay in the Worker.
         // This is awaited before the authoritative current-observation pass
         // renders, so the home card cannot flash a provisional source.
-        try {
+        var cacheKey = Number(latP).toFixed(3) + ',' + Number(lonP).toFixed(3);
+        var now = Date.now();
+        var cached = pwsClientCache.get(cacheKey);
+        if (cached && cached.promise) return cached.promise;
+        if (cached && cached.expiresAt > now) return cached.data;
+
+        var requestPromise = (async function() {
+          try {
             const r = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/pws?lat=' +
                 encodeURIComponent(latP) + '&lon=' + encodeURIComponent(lonP),
                 signal ? { signal: signal } : undefined, 12000);
             if (!r.ok) return [];
             const stations = await r.json();
             return Array.isArray(stations) ? stations : [];
-        } catch(e) { return []; }
+          } catch(e) { return []; }
+        })();
+        pwsClientCache.set(cacheKey, { promise: requestPromise });
+        try {
+            var stations = await requestPromise;
+            pwsClientCache.set(cacheKey, {
+                data: stations,
+                expiresAt: Date.now() + (stations.length ? PWS_CLIENT_CACHE_MS : 60000)
+            });
+            while (pwsClientCache.size > 24) {
+                pwsClientCache.delete(pwsClientCache.keys().next().value);
+            }
+            return stations;
+        } catch(e) {
+            pwsClientCache.delete(cacheKey);
+            return [];
+        }
     }
     // Compatibility shim — existing callers that expect a single-station object
     async function fetchWUData(latP, lonP) {
