@@ -16710,9 +16710,10 @@
             else if (/\bFLASH FLOOD WARNING\b/.test(eventLabel)) phenomena = 'FF';
         }
 
-        // Badges are driven by official alert metadata: NWS CAP threat
-        // parameters and headlines. PDS/emergency terms are explicit NWS
-        // alert-text markers; ordinary damage prose never creates a damage tag.
+        // Impact badges are driven only by structured NWS CAP/IEM threat-tag
+        // fields. Never infer Considerable or Destructive from alert prose,
+        // headline wording, or the wind/hail values in the description.
+        // PDS/emergency labels retain their explicit NWS marker handling below.
         var officialHeadline = [
             props.headline,
             props.NWSheadline,
@@ -16739,16 +16740,6 @@
         var isPdsFlag = ['TRUE', '1', 'YES'].indexOf(
             parameterValue('is_pds')
         ) !== -1;
-        function threatFromOfficialText(text, threatName, permittedValues) {
-            var source = String(text || '').toUpperCase()
-                .replace(/\s+/g, ' ');
-            var valuePattern = permittedValues.join('|');
-            var match = source.match(new RegExp(
-                '\\b' + threatName + '\\s+DAMAGE\\s+THREAT\\b' +
-                '[\\s.\\-:=]{1,24}\\b(' + valuePattern + ')\\b'
-            ));
-            return match ? match[1] : '';
-        }
         function officialDamageThreat(value, permittedValues) {
             var normalizedValue = String(value || '').toUpperCase()
                 .replace(/[_-]+/g, ' ').trim();
@@ -16758,27 +16749,20 @@
                     return permittedValues[permittedIndex];
                 }
             }
-            // Some NWS headline variants include the official threat label even
-            // when the CAP parameter is absent from that alert response.
-            for (var i = 0; i < permittedValues.length; i++) {
-                if (new RegExp('\\b' + permittedValues[i] + '\\b').test(officialHeadline)) {
-                    return permittedValues[i];
-                }
-            }
             return '';
         }
         thunderstormThreat = officialDamageThreat(
             thunderstormThreat,
             ['DESTRUCTIVE', 'CONSIDERABLE']
-        ) || threatFromOfficialText(nwsText, 'THUNDERSTORM', ['DESTRUCTIVE', 'CONSIDERABLE']);
+        );
         flashFloodThreat = officialDamageThreat(
             flashFloodThreat,
             ['CATASTROPHIC', 'CONSIDERABLE']
-        ) || threatFromOfficialText(nwsText, 'FLASH\\s+FLOOD', ['CATASTROPHIC', 'CONSIDERABLE']);
+        );
         tornadoThreat = officialDamageThreat(
             tornadoThreat,
             ['CATASTROPHIC', 'CONSIDERABLE']
-        ) || threatFromOfficialText(nwsText, 'TORNADO', ['CATASTROPHIC', 'CONSIDERABLE']);
+        );
         var isTornadoEmergency = phenomena === 'TO' &&
             (isEmergencyFlag || tornadoThreat === 'CATASTROPHIC' ||
                 /\bTORNADO[\s-]+EMERGENCY\b/.test(explicitTagSource));
