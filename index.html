@@ -17533,7 +17533,7 @@
         const expires = reportingAlertExpiryValue(props);
         const rows = [
             [timeInfo.label, timeInfo.value ? formatReportTime(timeInfo.value) : ''],
-            ['Issued by', formatNwsIssuedBy(props.senderName || '', props.wfo || wfo)],
+            [timeInfo.actorLabel, formatNwsIssuedBy(props.senderName || '', props.wfo || wfo)],
             ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : '']
         ];
         return reportingPopupDetailRows(rows) ||
@@ -17614,7 +17614,7 @@
               const parsedAlertText = _historicalNwsTextSections(alert.description || '');
              const rows = [
                  [timeInfo.label, formatReportTime(timeInfo.value)],
-                  ['Issued by', formatNwsIssuedBy(alert.senderName, wfo)],
+                  [timeInfo.actorLabel, formatNwsIssuedBy(alert.senderName, wfo)],
                   ['Valid through', reportingAlertExpiryValue(alert)
                       ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(alert)) : ''],
                   ['Alert text', parsedAlertText.description || alert.description],
@@ -18575,7 +18575,10 @@
         if (diffMs <= 0) {
             return 'Expired ' + formatExpiredAgo(Math.max(0, -diffMs / 1000));
         }
-        return 'Expires in ' + formatReportingMinutesUntil(value);
+        const remaining = formatReportingMinutesUntil(value);
+        return remaining === '0 minutes'
+            ? 'Expires just now'
+            : 'Expires in ' + remaining;
     }
 
     function formatReportingMinutesUntilAt(value, referenceMs) {
@@ -22242,6 +22245,7 @@
 
     async function loadHistoricalNwsDetails(props, popupEntry) {
         props = props || {};
+        const fallbackTimeInfo = reportingAlertTimeInfo(props);
         const productId = String(props.product_id || '').trim();
         const baseCacheKey = productId || [
             props.year, props.wfo, props.phenomena, props.significance, props.eventid
@@ -22276,8 +22280,9 @@
         }
 
         const fallback = reportingPopupDetailRows([
-            ['Issued', props.issue ? formatReportTime(props.issue) : ''],
-            ['Issued by', formatNwsIssuedBy('', props.wfo)],
+            [fallbackTimeInfo.label, fallbackTimeInfo.value
+                ? formatReportTime(fallbackTimeInfo.value) : ''],
+            [fallbackTimeInfo.actorLabel, formatNwsIssuedBy('', props.wfo)],
             ['Valid through', reportingAlertExpiryValue(props)
                 ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(props)) : ''],
             ['Alert text', 'This weather alert is temporarily unavailable. Please try again later. (Code: ALERT-502-UPSTREAM)']
@@ -22343,12 +22348,22 @@
                     matchingProduct.text
                 );
                 const sections = _historicalNwsTextSections(matchingProduct.text);
-                const issued = matchingProduct.valid || props.issue;
+                const matchingProductId = String(
+                    matchingProduct.product_id || ''
+                ).trim();
+                const isUpdatedProduct = !!productId && !!matchingProductId &&
+                    matchingProductId !== productId;
+                const productTimeInfo = reportingAlertTimeInfo(Object.assign({}, props, {
+                    sent: matchingProduct.valid || props.issue,
+                    effective: props.issue || matchingProduct.valid,
+                    messageType: isUpdatedProduct ? 'Update' : props.messageType
+                }));
                  const validThrough = reportingAlertExpiryValue(matchingProduct) ||
                      reportingAlertExpiryValue(props);
                  const rows = [
-                     ['Issued', issued ? formatReportTime(issued) : ''],
-                     ['Issued by', formatNwsIssuedBy(sections.issuer, wfo)],
+                     [productTimeInfo.label, productTimeInfo.value
+                         ? formatReportTime(productTimeInfo.value) : ''],
+                     [productTimeInfo.actorLabel, formatNwsIssuedBy(sections.issuer, wfo)],
                      ['Valid through', validThrough
                          ? formatReportingDateTimeNoSeconds(validThrough) : ''],
                      ['Alert text', sections.description],
@@ -22715,11 +22730,7 @@
                 popupKey: productKey,
                 title: escapeHtml(eventName),
                 meta: escapeHtml(props.wfo || 'NWS') +
-                    (expiry ? ' \u00B7 ' + escapeHtml(
-                        isHistorical
-                            ? formatReportingExpiry(expiry)
-                            : 'Expires in ' + formatReportingMinutesUntil(expiry)
-                    ) : ''),
+                    (expiry ? ' \u00B7 ' + escapeHtml(formatReportingExpiry(expiry)) : ''),
                 detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                 loadDetails: function(latlng) {
                     if (this._nwsMetadataPromise) return this._nwsMetadataPromise;
@@ -22897,11 +22908,11 @@
                              ].join('|'),
                             title: escapeHtml(normalized.title),
                             meta: 'EC' +
-                                (normalized.expires ? ' \u00B7 Expires in ' +
-                                    escapeHtml(formatReportingMinutesUntil(normalized.expires)) : ''),
+                                (normalized.expires ? ' \u00B7 ' +
+                                    escapeHtml(formatReportingExpiry(normalized.expires)) : ''),
                             detail: reportingPopupDetailRows([
                                 [issuedLabel, normalized.issuedAt ? formatReportingDateTimeNoSeconds(normalized.issuedAt) : ''],
-                                ['Issued by', 'Environment Canada'],
+                                [issuedLabel + ' by', 'Environment Canada'],
                                 ['Valid through', normalized.expires ? formatReportingDateTimeNoSeconds(normalized.expires) : ''],
                                 ['Alert text', popupCopy.alertText],
                                 ['Instructions', popupCopy.instructions]
@@ -22955,7 +22966,9 @@
                                  expiresText || ''
                              ].join('|'),
                             title: escapeHtml(nwsEvent),
-                            meta: escapeHtml(f.properties.wfo || 'NWS') + (expiresText ? ' \u00B7 Expires in ' + escapeHtml(formatReportingMinutesUntil(expiresText)) : ''),
+                            meta: escapeHtml(f.properties.wfo || 'NWS') +
+                                (expiresText ? ' \u00B7 ' +
+                                    escapeHtml(formatReportingExpiry(expiresText)) : ''),
                             detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
                             loadDetails: function(latlng) {
                                 if (this._nwsMetadataPromise) return this._nwsMetadataPromise;
