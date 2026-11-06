@@ -26707,11 +26707,16 @@
         if (catEl) { catEl.innerText = 'Unavailable'; catEl.style.color = '#888'; }
         if (pollEl) pollEl.innerText = 'Source: ' + (sourceLabel || 'AirNow');
         if (healthEl) healthEl.innerText = message || getSiteErrorText('WX-503-UNAVAILABLE');
+        var dialCanvas = document.getElementById('aqi-dial-canvas');
+        if (dialCanvas) {
+            var dialContext = dialCanvas.getContext('2d');
+            if (dialContext) dialContext.clearRect(0, 0, dialCanvas.width, dialCanvas.height);
+        }
     }
 
     // AQI is proxied through the weather Worker. AirNow remains authoritative
-    // when it has usable data; an unavailable/empty AirNow response falls
-    // through to Open-Meteo instead of leaving the card blank.
+    // when it has usable data; Open-Meteo is reserved for provider failures,
+    // while a valid empty AirNow response stays identified as AirNow.
     async function fetchAQI(loadGeneration, requestLat, requestLon) {
         var curLat = requestLat == null ? lat : requestLat;
         var curLon = requestLon == null ? lon : requestLon;
@@ -26737,10 +26742,14 @@
                         await _resolveAQIStateCode(curLat, curLon);
                     }
                     if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
-                    _renderAQIData(data.observations, Array.isArray(data.forecast) ? data.forecast : []);
-                } else {
-                    await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
                 }
+                // An empty AirNow response is valid "no current station data,"
+                // not an outage. Keep AirNow as the displayed source rather
+                // than silently replacing it with modeled Open-Meteo AQI.
+                _renderAQIData(
+                    Array.isArray(data.observations) ? data.observations : [],
+                    Array.isArray(data.forecast) ? data.forecast : []
+                );
             } else if (data.source === 'openmeteo') {
                 _renderAQIDataOM(data.aqi);
             } else {
@@ -26822,8 +26831,20 @@
         section.style.display = '';
 
         if (!obsData || obsData.length === 0) {
-            var cardsEl = document.getElementById('aqi-forecast-cards');
-            if (cardsEl) cardsEl.innerHTML = '<span style="font-size:0.82em;color:#64748b;">No monitoring stations found within 200 miles.</span>';
+            var noDataMessage = 'No current AirNow monitoring data is available within 200 miles.';
+            _renderAQIUnavailable(noDataMessage, 'AirNow');
+            SkyDB.set(SkyDB.S.weather, 'aqi', {
+                ts: Date.now(),
+                aqi: null,
+                cat: 'Unavailable',
+                color: '#888',
+                health: noDataMessage,
+                pollutant: 'Source: AirNow',
+                area: '',
+                cardsHtml: '',
+                actionDay: false,
+                source: 'airnow'
+            });
             return;
         }
 
