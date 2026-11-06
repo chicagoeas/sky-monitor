@@ -20132,7 +20132,9 @@
                 _replaceReportingRadarLayer(
                     _historicalRadarFrameUrl(historicalRadarState.timestampMs),
                     'historical',
-                    null
+                    null,
+                    0,
+                    true
                 );
             }
         }, 120);
@@ -20220,7 +20222,7 @@
         });
     }
 
-    function _replaceReportingRadarLayer(url, mode, site, retryAttempt) {
+    function _replaceReportingRadarLayer(url, mode, site, retryAttempt, preserveCurrentHistoricalFrame) {
         if (!reportingMap || !window.L) return;
         const L_ref = window.L;
          const oldLayer = reportingRadarLayer;
@@ -20237,6 +20239,11 @@
              _cancelHistoricalRadarLayerTransition();
 
              const requestId = ++historicalRadarLayerRequestId;
+              const preserveOldFrame = !!(
+                  preserveCurrentHistoricalFrame &&
+                  oldLayer &&
+                  oldLayer._historicalRadarTimestampMs === historicalRadarState.timestampMs
+              );
              const prefetchedEntry = takeHistoricalRadarPrefetchLayer(
                  historicalRadarState.timestampMs
              );
@@ -20273,6 +20280,7 @@
                       }
                      historicalRadarLayerTransition = null;
                  }
+                  nextLayer._historicalRadarTimestampMs = historicalRadarState.timestampMs;
                  reportingRadarLayer = nextLayer;
                  reportingRadarLayerMode = 'historical';
                  reportingRadarSite = null;
@@ -20293,7 +20301,7 @@
               // Hide the committed frame while a genuinely fresh layer
               // warms. Showing it here would make the selected timestamp look
               // loaded even though Leaflet is still displaying old images.
-              if (oldLayer && oldLayer !== nextLayer &&
+              if (!preserveOldFrame && oldLayer && oldLayer !== nextLayer &&
                   radarVisible && reportingMap.hasLayer(oldLayer) &&
                   oldLayer.setOpacity) {
                   oldLayer.setOpacity(0);
@@ -20364,7 +20372,8 @@
                               _historicalRadarFrameUrl(retryTimestampMs),
                               'historical',
                               null,
-                              currentRetryAttempt + 1
+                              currentRetryAttempt + 1,
+                              preserveCurrentHistoricalFrame
                           );
                       }, 40);
                       return;
