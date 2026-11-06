@@ -16684,6 +16684,44 @@
         return entry._popupId;
     }
 
+    function historicalIemSvrDamageThreat(productText) {
+        var text = String(productText || '');
+        var explicitThreat = text.match(
+            /^\s*THUNDERSTORM\s+DAMAGE\s+THREAT\s*\.{2,}\s*(DESTRUCTIVE|CONSIDERABLE|NONE)\s*$/im
+        );
+        if (explicitThreat) {
+            return explicitThreat[1] === 'NONE' ? '' : explicitThreat[1];
+        }
+
+        // IEM's historical SBW properties contain the maximum threat for the
+        // whole VTEC event. A later statement can lower the hazard while that
+        // event-wide damagetag remains DESTRUCTIVE. Use only the standardized
+        // max-hail/max-wind footer from the product valid at the radar frame.
+        var hailMatch = text.match(
+            /^\s*MAX\s+HAIL\s+SIZE\s*\.{2,}\s*(\d+(?:\.\d+)?)\s*(?:IN(?:CHES)?|")/im
+        );
+        var windMatch = text.match(
+            /^\s*MAX\s+WIND\s+GUST\s*\.{2,}\s*(\d+(?:\.\d+)?)\s*(?:MPH)?\b/im
+        );
+        var hailInches = hailMatch ? Number(hailMatch[1]) : 0;
+        var windMph = windMatch ? Number(windMatch[1]) : 0;
+        if (hailInches >= 2.75 || windMph >= 80) return 'DESTRUCTIVE';
+        if (hailInches >= 1.75 || windMph >= 70) return 'CONSIDERABLE';
+        return '';
+    }
+
+    function historicalNwsVisualProperties(props, productText) {
+        var visualProps = Object.assign({}, props || {});
+        if (String(visualProps.phenomena || '').trim().toUpperCase() === 'SV') {
+            // Do not display an event-wide IEM badge while the historical
+            // frame-specific VTEC product is pending or unavailable.
+            visualProps._historicalIemProductThreatResolved = true;
+            visualProps._historicalIemProductThreat =
+                historicalIemSvrDamageThreat(productText);
+        }
+        return visualProps;
+    }
+
     function nwsAlertVisualData(props, eventName, alertText) {
         props = props || {};
         var parameters = props.parameters || props.Parameters || {};
@@ -16732,6 +16770,12 @@
             parameterValue('damagetag');
         var thunderstormThreat = parameterValue('thunderstormDamageThreat') ||
             parameterValue('damagetag');
+        if (phenomena === 'SV' &&
+            props._historicalIemProductThreatResolved === true) {
+            thunderstormThreat = String(
+                props._historicalIemProductThreat || ''
+            );
+        }
         var flashFloodThreat = parameterValue('flashFloodDamageThreat') ||
             parameterValue('floodtag_damage');
         var isEmergencyFlag = ['TRUE', '1', 'YES'].indexOf(
@@ -22211,9 +22255,13 @@
             return historicalNwsDetailsCache[cacheKey].then(function(detail) {
                 const cachedAlertText = historicalNwsAlertTextCache[cacheKey] || '';
                 const officialHeadline = _historicalNwsOfficialHeadline(cachedAlertText);
+                const historicalVisualProps =
+                    historicalNwsVisualProperties(props, cachedAlertText);
                 const visualProps = officialHeadline
-                    ? Object.assign({}, props, { headline: officialHeadline })
-                    : props;
+                    ? Object.assign({}, historicalVisualProps, {
+                        headline: officialHeadline
+                    })
+                    : historicalVisualProps;
                 if (popupEntry && detail &&
                     detail.indexOf('archived NWS text product is temporarily unavailable') === -1) {
                     popupEntry._nwsMetadataMatched = true;
@@ -22282,9 +22330,13 @@
                 historicalNwsAlertTextCache[cacheKey] = matchingProduct.text;
                 if (popupEntry) popupEntry._nwsMetadataMatched = true;
                 const officialHeadline = _historicalNwsOfficialHeadline(matchingProduct.text);
+                const historicalVisualProps =
+                    historicalNwsVisualProperties(props, matchingProduct.text);
                 const visualProps = officialHeadline
-                    ? Object.assign({}, props, { headline: officialHeadline })
-                    : props;
+                    ? Object.assign({}, historicalVisualProps, {
+                        headline: officialHeadline
+                    })
+                    : historicalVisualProps;
                 refreshNwsReportingPopupVisuals(
                     popupEntry,
                     visualProps,
@@ -22529,7 +22581,12 @@
                 const color = colors[phenomena];
                 const eventName = props.ps || props.type ||
                     (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning');
-                const visual = nwsAlertVisualData(props, eventName);
+                const historicalVisualProps =
+                    historicalNwsVisualProperties(props, '');
+                const visual = nwsAlertVisualData(
+                    historicalVisualProps,
+                    eventName
+                );
                 const expires = props.expire || props.expire_utc ||
                     props.expires || props.ends || props.polygon_end;
                 const polygon = L_ref.geoJSON(feature.geometry, {
@@ -22547,7 +22604,7 @@
                     source: 'nws',
                     isPolygon: true,
                     color: color,
-                    nwsAlertProperties: props,
+                    nwsAlertProperties: historicalVisualProps,
                     nwsEventName: eventName,
                      popupKey: String(props.product_id || props.href ||
                          [phenomena, props.wfo, props.eventid, props.polygon_begin].join('|')),
