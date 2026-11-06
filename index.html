@@ -22579,8 +22579,10 @@
                 seen[key] = true;
 
                 const color = colors[phenomena];
-                const eventName = props.ps || props.type ||
-                    (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning');
+                const eventName = phenomena === 'MA' && significance === 'W'
+                    ? 'Special Marine Warning'
+                    : (props.ps || props.type ||
+                        (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning'));
                 const historicalVisualProps =
                     historicalNwsVisualProperties(props, '');
                 const visual = nwsAlertVisualData(
@@ -22639,13 +22641,138 @@
         }
     }
 
+    async function loadIemSpsDetails(props) {
+        props = props || {};
+        const fallback = reportingPopupDetailRows([
+            ['Issued', props.issue ? formatReportTime(props.issue) : ''],
+            ['Issued by', formatNwsIssuedBy('', props.wfo)],
+            ['Valid through', props.expire
+                ? formatReportingDateTimeNoSeconds(props.expire) : ''],
+            ['Alert text', 'The Special Weather Statement text is temporarily unavailable.']
+        ]);
+        try {
+            const href = String(props.href || '').trim();
+            if (!href) return fallback;
+            const baseUrl = 'https://mesonet.agron.iastate.edu';
+            const productUrl = new URL(href, baseUrl);
+            if (productUrl.origin !== baseUrl ||
+                !productUrl.pathname.startsWith('/api/1/nwstext/')) return fallback;
+            const response = await fetch(productUrl.href, {
+                cache: 'no-store',
+                headers: { 'Accept': 'text/plain' }
+            });
+            if (!response.ok) return fallback;
+            const text = await response.text();
+            const sections = _historicalNwsTextSections(text);
+            return reportingPopupDetailRows([
+                ['Issued', props.issue ? formatReportTime(props.issue) : ''],
+                ['Issued by', formatNwsIssuedBy(sections.issuer, props.wfo)],
+                ['Valid through', props.expire
+                    ? formatReportingDateTimeNoSeconds(props.expire) : ''],
+                ['Alert text', sections.description || text],
+                ['Instructions', sections.instructions]
+            ]) || fallback;
+        } catch (error) {
+            return fallback;
+        }
+    }
+
+    function registerIemSpsPolygons(features, L_ref, historicalTimestampMs) {
+        const isHistorical = historicalTimestampMs != null &&
+            isFinite(Number(historicalTimestampMs));
+        const referenceMs = isHistorical ? Number(historicalTimestampMs) : Date.now();
+        const seen = {};
+        (features || []).forEach(function(feature) {
+            if (!feature || !feature.geometry ||
+                !['Polygon', 'MultiPolygon'].includes(feature.geometry.type)) return;
+            const props = feature.properties || {};
+            if (!_historicalAlertIsActiveAt(props, referenceMs)) return;
+            const expiry = props.expire || props.expires || '';
+            const productKey = String(props.href || props.product_id ||
+                [props.wfo, props.issue, expiry].join('|')) +
+                '|segment:' + String(props.segmentnum == null ? 0 : props.segmentnum);
+            if (seen[productKey]) return;
+            seen[productKey] = true;
+
+            const eventName = 'Special Weather Statement';
+            const color = '#ffffff';
+            const popupProperties = Object.assign({}, props, { event: eventName });
+            const polygon = L_ref.geoJSON(feature.geometry, {
+                style: {
+                    color: color,
+                    weight: 2.5,
+                    opacity: 1,
+                    fillColor: color,
+                    fillOpacity: 0.14
+                }
+            });
+            const popupEntry = {
+                source: 'nws',
+                isPolygon: true,
+                color: color,
+                nwsAlertProperties: popupProperties,
+                nwsEventName: eventName,
+                popupKey: productKey,
+                title: escapeHtml(eventName),
+                meta: escapeHtml(props.wfo || 'NWS') +
+                    (expiry ? ' \u00B7 ' + escapeHtml(
+                        isHistorical
+                            ? formatReportingExpiry(expiry)
+                            : 'Expires in ' + formatReportingMinutesUntil(expiry)
+                    ) : ''),
+                detail: '<span style="opacity:0.72;">Loading full alert details\u2026</span>',
+                loadDetails: function(latlng) {
+                    if (this._nwsMetadataPromise) return this._nwsMetadataPromise;
+                    const entry = this;
+                    this._nwsMetadataPromise = loadIemSpsDetails(props)
+                        .then(function(detail) {
+                            return detail;
+                        }).catch(function() {
+                            entry._nwsMetadataPromise = null;
+                            return '';
+                        });
+                    return this._nwsMetadataPromise;
+                }
+            };
+            registerReportingPopup(polygon, popupEntry);
+            polygon.addTo(alertPolygonLayer);
+        });
+    }
+
+    async function loadHistoricalSpsAlerts(timestampMs, L_ref, requestId) {
+        if (!alertPolygonLayer || !L_ref ||
+            !isFinite(Number(timestampMs))) return;
+        const url = 'https://mesonet.agron.iastate.edu/geojson/sps.py?valid=' +
+            encodeURIComponent(_historicalRadarIso(timestampMs));
+        try {
+            const data = await _fetchHistoricalRadarJson(
+                'nws-sps:' + Number(timestampMs),
+                url,
+                {
+                    cache: 'no-store',
+                    headers: { 'Accept': 'application/geo+json, application/json' }
+                }
+            );
+            if (requestId !== historicalRadarRequestId ||
+                !historicalRadarState.active) return;
+            registerIemSpsPolygons(data.features, L_ref, timestampMs);
+        } catch (error) {
+            if (requestId === historicalRadarRequestId) {
+                console.warn('[SkyMonitor] Historical IEM SPS polygons failed:', error);
+            }
+        }
+    }
+
     async function loadHistoricalReportingMapData(timestampMs) {
         if (!reportingMap || !window.L || !historicalRadarState.active) return;
         const requestId = ++historicalRadarRequestId;
         const loadToken = historicalRadarLoadToken;
         const L_ref = window.L;
         historicalRadarState.timestampMs = timestampMs;
-        await loadHistoricalNwsAlerts(timestampMs, L_ref, requestId);
+        await Promise.all([
+            loadHistoricalNwsAlerts(timestampMs, L_ref, requestId),
+            loadHistoricalSpsAlerts(timestampMs, L_ref, requestId)
+        ]);
         if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
         _markHistoricalRadarLoadingPart('alerts', loadToken);
         // Custom alerts are filtered against the selected frame below. The
@@ -22801,7 +22928,9 @@
                         if ((f.properties.type || '').toLowerCase().includes('statement')) return;
                         if (!f.geometry) return;
                         const color = shortFusedPhenomena[ph];
-                        const nwsEvent = f.properties.type || f.properties.ps || ph + ' Warning';
+                        const nwsEvent = ph === 'MA' && sig === 'W'
+                            ? 'Special Marine Warning'
+                            : (f.properties.type || f.properties.ps || ph + ' Warning');
                         const visual = nwsAlertVisualData(f.properties, nwsEvent);
                         const expiresText = f.properties.expire || f.properties.polygon_end;
                         const _poly = L_ref.geoJSON(f.geometry, { style: {
@@ -22851,6 +22980,27 @@
                 }
             } catch (e) {
                 console.warn('[SkyMonitor] NWS map alerts failed:', e);
+            }
+            try {
+                // IEM's SPS GeoJSON service returns only statements with
+                // storm-based polygons, excluding county-based SPS alerts.
+                const spsRes = await fetch(
+                    'https://mesonet.agron.iastate.edu/geojson/sps.py',
+                    {
+                        cache: 'no-store',
+                        headers: { 'Accept': 'application/geo+json, application/json' }
+                    }
+                );
+                if (spsRes.ok) {
+                    const spsData = await spsRes.json();
+                    registerIemSpsPolygons(
+                        spsData.features,
+                        L_ref,
+                        null
+                    );
+                }
+            } catch (e) {
+                console.warn('[SkyMonitor] IEM SPS polygons failed:', e);
             }
             setTimeout(preloadVisibleReportingNwsAlertMetadata, 0);
         } catch(e) {}
