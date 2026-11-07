@@ -496,19 +496,6 @@
             left: 10px;
             transition: top 0.16s ease;
         }
-        #tropical-route-map .leaflet-popup-content-wrapper,
-        #tropical-route-map .leaflet-popup-tip {
-            color: #edf7fc;
-            background: #07131d;
-            border: 1px solid rgba(79,195,247,0.45);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
-        #tropical-route-map .leaflet-popup-content {
-            margin: 12px 14px;
-            min-width: 170px;
-            font-size: 0.78rem;
-            line-height: 1.4;
-        }
         .tropical-forecast-popup-kicker {
             color: #9ab0bf;
             font-size: 0.65rem;
@@ -1681,7 +1668,9 @@
         }
         /* Reporting popups stay inside the map on mobile and keep long alert text usable. */
         #reporting-map .leaflet-popup-content-wrapper,
-        #reporting-map .leaflet-popup-tip {
+        #reporting-map .leaflet-popup-tip,
+        #tropical-route-map .leaflet-popup-content-wrapper,
+        #tropical-route-map .leaflet-popup-tip {
             background: #14294b; color: #f4f7fb;
         }
         #reporting-map .leaflet-popup-content-wrapper {
@@ -1689,22 +1678,34 @@
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(0,0,0,0.45);
         }
-        #reporting-map .leaflet-popup-content {
+        #tropical-route-map .leaflet-popup-content-wrapper {
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+        }
+        #reporting-map .leaflet-popup-content,
+        #tropical-route-map .leaflet-popup-content {
             width: min(310px, calc(100vw - 76px)) !important;
             max-width: calc(100vw - 76px);
             margin: 0;
         }
         @media(max-width: 767px) {
-            #reporting-map .leaflet-popup-content {
+            #reporting-map .leaflet-popup-content,
+            #tropical-route-map .leaflet-popup-content {
                 width: var(--reporting-popup-width, calc(100vw - 92px)) !important;
                 max-width: var(--reporting-popup-width, calc(100vw - 92px));
             }
-            #reporting-map .leaflet-popup-content-wrapper {
+            #reporting-map .leaflet-popup-content-wrapper,
+            #tropical-route-map .leaflet-popup-content-wrapper {
                 width: var(--reporting-popup-width, calc(100vw - 92px)) !important;
                 max-width: var(--reporting-popup-width, calc(100vw - 92px));
             }
         }
         #reporting-map .leaflet-popup-close-button {
+            color: #fff !important; font-size: 20px !important; font-weight: 800;
+            padding: 7px 9px 0 0 !important; z-index: 3;
+        }
+        #tropical-route-map .leaflet-popup-close-button {
             color: #fff !important; font-size: 20px !important; font-weight: 800;
             padding: 7px 9px 0 0 !important; z-index: 3;
         }
@@ -15966,7 +15967,6 @@
     let tropicalRouteNWSAlertCache = { expiresAt: 0, payload: null, promise: null };
     let tropicalNWSZoneGeometryCache = Object.create(null);
     let tropicalJtwcTextCache = Object.create(null);
-    let tropicalNHCTextCache = Object.create(null);
     let tropicalNHCJsonpSequence = 0;
     let tropicalRouteLoadToken = 0;
     let tropicalRouteRefreshTimer = null;
@@ -16901,7 +16901,8 @@
         const isReportsPopup = entries.length > 0 && entries.every(function(entry) {
             return entry.source === 'iem-lsr' || entry.source === 'skymonitor-reports';
         });
-        const itemNoun = isReportsPopup ? 'report' : 'alert';
+        const itemNoun = isReportsPopup ? 'report' :
+            ((entries[0] && entries[0].popupNoun) || 'alert');
          const radarAction = latlng && allowRadarAction
              ? '<button type="button" id="reporting-radar-action" class="reporting-popup-radar-action"'
                  + ' title="Show nearest radar at this coordinate" aria-label="Show nearest radar at this coordinate"'
@@ -24898,13 +24899,23 @@
         var popup = tropicalRouteMap._popup;
         var latLng = popup.getLatLng && popup.getLatLng();
         if (!latLng) return null;
+        var popupElement = popup.getElement && popup.getElement();
+        var expandedCards = popupElement
+            ? Array.prototype.map.call(
+                popupElement.querySelectorAll('.reporting-popup-card.is-open'),
+                function(card) { return card.id; }
+            )
+            : [];
         return {
             lat: latLng.lat,
             lon: latLng.lng,
             content: popup.getContent(),
             options: Object.assign({}, popup.options || {}),
-            nhcBasin: popup._skyMonitorNHCTextBasin || null,
-            jtwcStorm: popup._skyMonitorJTWCStorm || null
+            reportingEntries: Array.isArray(popup._skyMonitorReportingEntries)
+                ? popup._skyMonitorReportingEntries.slice()
+                : null,
+            selectedEntryId: popup._skyMonitorSelectedPopupEntryId || null,
+            expandedEntryIds: expandedCards
         };
     }
 
@@ -24915,17 +24926,73 @@
             tropicalRouteMap.getCenter().lng
         );
         var options = Object.assign({}, state.options, { autoPan: false });
+        if (state.reportingEntries && state.reportingEntries.length) {
+            var selectedEntry = state.reportingEntries.find(function(entry) {
+                return reportingPopupEntryIdFor(entry) === state.selectedEntryId;
+            }) || state.reportingEntries[0];
+            _openTropicalReportingPopup(
+                [state.lat, longitude],
+                state.reportingEntries,
+                selectedEntry,
+                { options: options, expandedEntryIds: state.expandedEntryIds }
+            );
+            return;
+        }
         var popup = L.popup(options)
             .setLatLng([state.lat, longitude])
             .setContent(state.content)
             .openOn(tropicalRouteMap);
-        if (state.nhcBasin) {
-            popup._skyMonitorNHCTextBasin = state.nhcBasin;
-            _loadTropicalNHCText(popup, state.nhcBasin);
-        } else if (state.jtwcStorm) {
-            popup._skyMonitorJTWCStorm = state.jtwcStorm;
-            _loadTropicalJTWCText(popup, state.jtwcStorm);
-        }
+    }
+
+    function _openTropicalReportingPopup(latLng, entries, selectedEntry, restoreState) {
+        if (!tropicalRouteMap || !window.L || !Array.isArray(entries) || !entries.length) return null;
+        restoreState = restoreState || {};
+        var options = Object.assign({
+            className: 'tropical-reporting-popup',
+            minWidth: 190,
+            maxWidth: 340,
+            closeButton: true,
+            autoPan: true,
+            keepInView: false,
+            autoPanPadding: [48, 42],
+            autoPanPaddingTopLeft: [54, 54],
+            autoPanPaddingBottomRight: [14, 42]
+        }, restoreState.options || {});
+        var popup = L.popup(options)
+            .setLatLng(latLng)
+            .setContent(buildReportingPopup(entries, latLng, false))
+            .openOn(tropicalRouteMap);
+        popup._skyMonitorReportingEntries = entries.slice();
+        popup._skyMonitorSelectedPopupEntryId = selectedEntry
+            ? reportingPopupEntryIdFor(selectedEntry)
+            : null;
+
+        var expandedEntryIds = Array.isArray(restoreState.expandedEntryIds)
+            ? restoreState.expandedEntryIds.slice()
+            : (selectedEntry ? [reportingPopupEntryIdFor(selectedEntry)] : []);
+        window.setTimeout(function() {
+            if (!popup.isOpen()) return;
+            expandedEntryIds.forEach(function(id) {
+                var card = document.getElementById(id);
+                if (card && !card.classList.contains('is-open')) {
+                    toggleReportingPopupCard(id);
+                }
+            });
+        }, 0);
+
+        entries.forEach(function(entry) {
+            if (typeof entry.loadDetails !== 'function' || entry._detailsLoaded) return;
+            entry._detailsLoaded = true;
+            Promise.resolve().then(function() {
+                return entry.loadDetails(latLng);
+            }).then(function(detail) {
+                if (detail) updateReportingPopupEntry(entry, detail);
+                else entry._detailsLoaded = false;
+            }).catch(function() {
+                entry._detailsLoaded = false;
+            });
+        });
+        return popup;
     }
 
     function _normalizeTropicalNHCOutlook(data) {
@@ -25027,151 +25094,6 @@
         }
     }
 
-    function _tropicalNHCOutlookTextUrl(basin) {
-        basin = String(basin || '').toLowerCase();
-        if (/central|cpac/.test(basin)) return 'https://www.nhc.noaa.gov/text/MIATWOCP.shtml';
-        if (/pacific|east|epac/.test(basin)) return 'https://www.nhc.noaa.gov/text/MIATWOEP.shtml';
-        return 'https://www.nhc.noaa.gov/text/MIATWOAT.shtml';
-    }
-
-    function _tropicalNHCProductCode(basin) {
-        basin = String(basin || '').toLowerCase();
-        if (/central|cpac/.test(basin)) return 'ACPN50';
-        if (/pacific|east|epac/.test(basin)) return 'ABPZ20';
-        return 'ABNT20';
-    }
-
-    function _fetchTropicalNHCOutlookText(basin) {
-        var productCode = _tropicalNHCProductCode(basin);
-        if (tropicalNHCTextCache[productCode]) {
-            return Promise.resolve(tropicalNHCTextCache[productCode]);
-        }
-        var request = _weatherFetch(
-            'https://api.weather.gov/products/types/TWO',
-            {
-                cache: 'no-store',
-                headers: { Accept: 'application/ld+json, application/json' }
-            },
-            12000
-        ).then(function(response) {
-            if (!response.ok) throw new Error('NHC outlook product list returned ' + response.status);
-            return response.json();
-        }).then(function(data) {
-            var products = data && Array.isArray(data['@graph']) ? data['@graph'] : [];
-            var product = products.filter(function(item) {
-                return item && item.wmoCollectiveId === productCode && item.id;
-            }).sort(function(a, b) {
-                return new Date(b.issuanceTime).getTime() - new Date(a.issuanceTime).getTime();
-            })[0];
-            if (!product) throw new Error('No current NHC outlook product was found for ' + productCode);
-            return _weatherFetch(
-                'https://api.weather.gov/products/' + encodeURIComponent(product.id),
-                {
-                    cache: 'no-store',
-                    headers: { Accept: 'application/ld+json, application/json' }
-                },
-                12000
-            ).then(function(response) {
-                if (!response.ok) throw new Error('NHC outlook text returned ' + response.status);
-                return response.json();
-            });
-        }).then(function(product) {
-            var text = String(product && product.productText || '').trim();
-            if (!text) throw new Error('The current NHC outlook product contains no text');
-            tropicalNHCTextCache[productCode] = text;
-            return text;
-        }).catch(function(error) {
-            delete tropicalNHCTextCache[productCode];
-            throw error;
-        });
-        tropicalNHCTextCache[productCode] = request;
-        return request;
-    }
-
-    function _whenTropicalPopupTextReady(popup, onReady, attempts) {
-        if (!popup || !popup.getElement) return;
-        var popupElement = popup.getElement();
-        var textElement = popupElement &&
-            popupElement.querySelector('.tropical-disturbance-actual-text');
-        if (textElement) {
-            onReady(textElement);
-            return;
-        }
-        attempts = attempts || 0;
-        if (attempts >= 12) return;
-        var schedule = window.requestAnimationFrame || function(callback) {
-            return window.setTimeout(callback, 16);
-        };
-        schedule(function() {
-            _whenTropicalPopupTextReady(popup, onReady, attempts + 1);
-        });
-    }
-
-    function _setTropicalPopupText(popup, text) {
-        if (!popup) return;
-        var content = popup.getContent && popup.getContent();
-        if (typeof content === 'string' && popup.setContent) {
-            var updatedContent = content.replace(
-                /(<pre class="tropical-disturbance-actual-text">)[\s\S]*?(<\/pre>)/,
-                function(match, openingTag, closingTag) {
-                    return openingTag + escapeHtml(text) + closingTag;
-                }
-            );
-            if (updatedContent !== content) {
-                // Leaflet's update() rebuilds the popup from its saved content.
-                // Keep the saved HTML in sync before asking it to recalculate layout.
-                popup.setContent(updatedContent);
-                return;
-            }
-        }
-        var popupElement = popup.getElement && popup.getElement();
-        var textElement = popupElement &&
-            popupElement.querySelector('.tropical-disturbance-actual-text');
-        if (textElement) textElement.textContent = text;
-    }
-
-    function _loadTropicalNHCText(popup, basin) {
-        var productCode = _tropicalNHCProductCode(basin);
-        _whenTropicalPopupTextReady(popup, function(textElement) {
-            if (typeof tropicalNHCTextCache[productCode] === 'string') {
-                _setTropicalPopupText(popup, tropicalNHCTextCache[productCode]);
-                return;
-            }
-            textElement.textContent = 'Loading the latest NHC tropical outlook…';
-            _fetchTropicalNHCOutlookText(basin).then(function(text) {
-                if (!popup.isOpen()) return;
-                _setTropicalPopupText(popup, text);
-            }).catch(function() {
-                if (!popup.isOpen()) return;
-                _setTropicalPopupText(
-                    popup,
-                    'The NHC text could not be loaded right now. Use the official text link above to open the current outlook.'
-                );
-            });
-        });
-    }
-
-    function _loadTropicalJTWCText(popup, storm) {
-        var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
-        _whenTropicalPopupTextReady(popup, function(textElement) {
-            if (typeof tropicalJtwcTextCache[advisoryUrl] === 'string') {
-                _setTropicalPopupText(popup, tropicalJtwcTextCache[advisoryUrl]);
-                return;
-            }
-            textElement.textContent = 'Loading the latest JTWC regional advisory…';
-            _fetchTropicalJTWCAdvisory(storm).then(function(text) {
-                if (!popup.isOpen()) return;
-                _setTropicalPopupText(popup, text);
-            }).catch(function() {
-                if (!popup.isOpen()) return;
-                _setTropicalPopupText(
-                    popup,
-                    'The JTWC text could not be loaded right now. Use the official text link above to open the current advisory.'
-                );
-            });
-        });
-    }
-
     function _tropicalJTWCAdvisoryUrl(storm) {
         var basin = String(storm && (storm.basin || '') || '').toUpperCase();
         var longitude = _tropicalFinite(storm && (
@@ -25214,49 +25136,146 @@
         return request;
     }
 
-    function _tropicalDisturbancePopupHtml(disturbance) {
-        if (disturbance.kind === 'NHC') {
-            var properties = disturbance.properties || {};
-            var basin = String(properties.basin || 'Tropical');
-            var risk = String(properties.risk7day || 'Outlook').replace(/_/g, ' ');
-            var probability = String(properties.prob7day || 'Not specified');
-            var probability2Day = String(properties.prob2day || 'Not specified');
-            var updateTime = _tropicalFinite(properties.idp_filedate);
-            var updateDate = updateTime != null ? new Date(updateTime) : null;
-            var updateLabel = updateDate && !isNaN(updateDate.getTime())
-                ? updateDate.toLocaleString(undefined, {
-                    year: 'numeric',
-                    month: '2-digit',
-                    day: '2-digit',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    timeZoneName: 'short'
-                })
-                : '';
-            return '<div class="tropical-disturbance-popup">' +
-                '<div class="tropical-disturbance-popup-kicker">National Hurricane Center · 7-day outlook</div>' +
-                '<div class="tropical-disturbance-popup-title">' + escapeHtml(risk) +
-                    ' potential development area</div>' +
-                '<div class="tropical-disturbance-popup-meta">' +
-                    '<b>7-day:</b> ' + escapeHtml(probability) +
-                    ' &nbsp; <b>2-day:</b> ' + escapeHtml(probability2Day) +
-                    '<br><b>Basin:</b> ' + escapeHtml(basin) +
-                    (updateLabel ? '<br><b>Outlook issued:</b> ' + escapeHtml(updateLabel) : '') +
-                '</div>' +
-                '<a class="tropical-disturbance-popup-link" href="' +
-                    escapeHtml(_tropicalNHCOutlookTextUrl(basin)) +
-                    '" target="_blank" rel="noopener noreferrer">Read the official NHC outlook text ↗</a>' +
-                '<pre class="tropical-disturbance-actual-text">Loading the latest NHC tropical outlook…</pre>' +
-                '</div>';
+    function _tropicalNHCDiscussionForDevelopment(disturbance) {
+        var properties = disturbance && disturbance.properties || {};
+        return String(
+            properties.discussion || properties.Discussion || ''
+        ).trim();
+    }
+
+    function _tropicalNHCReportingEntry(disturbance) {
+        var properties = disturbance.properties || {};
+        var basin = String(properties.basin || 'Tropical');
+        var risk = String(properties.risk7day || 'Outlook').replace(/_/g, ' ');
+        var probability = String(properties.prob7day || 'Not specified');
+        var probability2Day = String(properties.prob2day || 'Not specified');
+        var updateTime = _tropicalFinite(properties.idp_filedate);
+        var updateDate = updateTime != null ? new Date(updateTime) : null;
+        var updateLabel = updateDate && !isNaN(updateDate.getTime())
+            ? updateDate.toLocaleString(undefined, {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZoneName: 'short'
+            })
+            : '';
+        var directDiscussion = String(
+            properties.discussion || properties.Discussion || ''
+        ).trim();
+        var investMatch = directDiscussion.match(/\(([A-Z]{2}\d{2})\)/i);
+        var investId = investMatch ? investMatch[1].toUpperCase() : '';
+        var probabilityValue = parseFloat(probability.replace('%', ''));
+        var riskLower = risk.toLowerCase();
+        var color = /high/.test(riskLower) || probabilityValue >= 60 ? '#fb4f68' :
+            (/medium/.test(riskLower) || probabilityValue >= 30 ? '#fb923c' :
+                (/low/.test(riskLower) || probabilityValue > 0 ? '#f8c35a' : '#7dd3fc'));
+        var meta = [
+            'NHC',
+            basin,
+            '48-hour ' + probability2Day,
+            '7-day ' + probability
+        ].join(' · ');
+
+        function detailFor(discussion) {
+            return reportingPopupDetailRows([
+                ['NHC development-area discussion',
+                    discussion || 'Area-specific NHC text is not available in the current outlook feed.'],
+                ['Basin', basin],
+                ['48-hour formation chance', probability2Day],
+                ['7-day formation chance', probability],
+                ['Outlook issued', updateLabel]
+            ]);
         }
 
-        var storm = disturbance.storm || {};
+        return {
+            source: 'tropical',
+            popupNoun: 'development area',
+            color: color,
+            popupKey: 'nhc-development:' + String(
+                disturbance.feature && disturbance.feature.id || ''
+            ),
+            title: escapeHtml(investId
+                ? 'Tropical Disturbance (' + investId + ')'
+                : risk + ' potential development area'),
+            meta: escapeHtml(meta),
+            detail: '<span style="opacity:0.72;">Loading the matching NHC outlook text…</span>',
+            loadDetails: function() {
+                return Promise.resolve(detailFor(
+                    _tropicalNHCDiscussionForDevelopment(disturbance)
+                ));
+            }
+        };
+    }
+
+    function _tropicalJTWCInvestCode(storm) {
+        var candidates = [
+            storm && storm.invest,
+            storm && storm.name,
+            storm && storm.storm_name,
+            storm && storm.id,
+            storm && storm.stormId,
+            storm && storm.sid
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+            var value = String(candidates[i] || '').toUpperCase();
+            var codeMatch = value.match(/\b(9\d[A-Z])\b/) ||
+                value.match(/\bINVEST\s*[:#-]?\s*(9\d)\s*([A-Z])\b/);
+            if (codeMatch) {
+                return codeMatch[1] && codeMatch[1].length === 3
+                    ? codeMatch[1]
+                    : codeMatch[1] + codeMatch[2];
+            }
+        }
+        var idMatch = String(storm && (storm.id || storm.stormId) || '')
+            .toUpperCase().match(/^(WP|IO|SH)(9\d)(?:20\d{2})?$/);
+        if (!idMatch) return '';
+        var suffix = idMatch[1] === 'WP' ? 'W' : idMatch[1] === 'IO' ? 'A' : '';
+        if (idMatch[1] === 'SH') {
+            var point = _tropicalCurrentPoint(storm);
+            var longitude = point ? ((point.lon % 360) + 360) % 360 : null;
+            suffix = longitude != null && longitude >= 20 && longitude <= 135 ? 'S' : 'P';
+        }
+        return idMatch[2] + suffix;
+    }
+
+    function _tropicalJTWCInvestSections(text, investCode) {
+        if (!investCode) return [];
+        var lines = String(text || '').replace(/\r/g, '').split('\n');
+        var blocks = [];
+        var current = null;
+        function finishBlock() {
+            if (current && current.length) blocks.push(current.join('\n').trim());
+            current = null;
+        }
+        lines.forEach(function(line) {
+            if (/^\s*\(\d+\)\s+/.test(line)) {
+                finishBlock();
+                current = [line];
+                return;
+            }
+            if (/^\s*(?:[A-Z]\.\s+(?:TROPICAL|SUBTROPICAL)|\d+\.\s+[A-Z]|&&|\$\$|NNNN\b)/i.test(line)) {
+                finishBlock();
+                return;
+            }
+            if (current) current.push(line);
+        });
+        finishBlock();
+        var escapedCode = investCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        var matcher = new RegExp('\\bINVEST\\s+' + escapedCode + '\\b', 'i');
+        return blocks.filter(function(block) { return matcher.test(block); });
+    }
+
+    function _tropicalJTWCReportingEntry(storm) {
         var current = _tropicalCurrentPoint(storm);
-        var id = String(storm.id || '');
-        var investMatch = id.match(/^(?:[A-Z]{2})?(9[0-9])/i) || id.match(/(9[0-9])/);
-        var label = 'JTWC Invest' + (investMatch ? ' ' + investMatch[1] : '');
-        var latitude = current ? Math.abs(current.lat).toFixed(1) + (current.lat < 0 ? '°S' : '°N') : '—';
-        var longitude = current ? Math.abs(current.lon).toFixed(1) + (current.lon < 0 ? '°W' : '°E') : '—';
+        var investCode = _tropicalJTWCInvestCode(storm);
+        var latitude = current
+            ? Math.abs(current.lat).toFixed(1) + (current.lat < 0 ? '°S' : '°N')
+            : '—';
+        var longitude = current
+            ? Math.abs(current.lon).toFixed(1) + (current.lon < 0 ? '°W' : '°E')
+            : '—';
         var validTime = storm.validTime ? new Date(storm.validTime) : null;
         var validLabel = validTime && !isNaN(validTime.getTime())
             ? validTime.toLocaleString(undefined, {
@@ -25268,18 +25287,46 @@
                 timeZoneName: 'short'
             })
             : '';
-        var advisoryUrl = _tropicalJTWCAdvisoryUrl(storm);
-        return '<div class="tropical-disturbance-popup">' +
-            '<div class="tropical-disturbance-popup-kicker">Joint Typhoon Warning Center · invest</div>' +
-            '<div class="tropical-disturbance-popup-title">' + escapeHtml(label) + '</div>' +
-            '<div class="tropical-disturbance-popup-meta">' +
-                '<b>Published center:</b> ' + escapeHtml(latitude + ', ' + longitude) +
-                (validLabel ? '<br><b>Position time:</b> ' + escapeHtml(validLabel) : '') +
-            '</div>' +
-            '<a class="tropical-disturbance-popup-link" href="' + escapeHtml(advisoryUrl) +
-                '" target="_blank" rel="noopener noreferrer">Open official JTWC text ↗</a>' +
-            '<pre class="tropical-disturbance-actual-text">Loading the latest JTWC regional advisory…</pre>' +
-            '</div>';
+        var meta = ['JTWC', 'Published center ' + latitude + ', ' + longitude]
+            .concat(validLabel ? [validLabel] : []).join(' · ');
+
+        return {
+            source: 'tropical',
+            popupNoun: 'development area',
+            color: '#d8b4fe',
+            popupKey: 'jtwc-development:' +
+                String(storm && (storm.id || storm.stormId || '') || ''),
+            title: escapeHtml('Tropical Disturbance' +
+                (investCode ? ' (' + investCode + ')' : '')),
+            meta: escapeHtml(meta),
+            detail: '<span style="opacity:0.72;">Loading the matching JTWC invest text…</span>',
+            loadDetails: function() {
+                if (!investCode) {
+                    return Promise.resolve(reportingPopupDetailRows([
+                        ['JTWC invest text', 'A matching invest identifier is not available for this area.']
+                    ]));
+                }
+                return _fetchTropicalJTWCAdvisory(storm).then(function(text) {
+                    var matches = _tropicalJTWCInvestSections(text, investCode);
+                    return reportingPopupDetailRows([
+                        ['JTWC text for ' + investCode, matches.length
+                            ? matches.join('\n\n')
+                            : 'No matching invest entry appears in the current JTWC regional advisory.']
+                    ]);
+                }).catch(function() {
+                    return reportingPopupDetailRows([
+                        ['JTWC text for ' + investCode,
+                            'The matching JTWC invest text is unavailable right now.']
+                    ]);
+                });
+            }
+        };
+    }
+
+    function _tropicalDisturbanceReportingEntry(disturbance) {
+        return disturbance.kind === 'NHC'
+            ? _tropicalNHCReportingEntry(disturbance)
+            : _tropicalJTWCReportingEntry(disturbance.storm || {});
     }
 
     function _tropicalInvestZoneRing(current, worldOffset) {
@@ -25353,14 +25400,13 @@
                     weight: 2,
                     interactive: true
                 }).addTo(tropicalRouteDisturbanceLayer);
-                zone.bindPopup(_tropicalDisturbancePopupHtml(disturbance), {
-                    closeButton: true,
-                    maxWidth: 370
-                });
-                zone.on('popupopen', function(event) {
-                    var popup = event.popup;
-                    popup._skyMonitorNHCTextBasin = basin;
-                    _loadTropicalNHCText(popup, basin);
+                var nhcEntry = _tropicalDisturbanceReportingEntry(disturbance);
+                zone.on('click', function(event) {
+                    if (!event || !event.latlng) return;
+                    if (L.DomEvent && event.originalEvent) {
+                        L.DomEvent.stopPropagation(event.originalEvent);
+                    }
+                    _openTropicalReportingPopup(event.latlng, [nhcEntry], nhcEntry);
                 });
                 if (zone.getBounds().isValid()) bounds.extend(zone.getBounds());
                 return;
@@ -25370,7 +25416,7 @@
             var current = _tropicalCurrentPoint(storm);
             if (!current) return;
             var worldOffset = _tropicalMapWorldOffset(current.lon);
-            var popupHtml = _tropicalDisturbancePopupHtml(disturbance);
+            var jtwcEntry = _tropicalDisturbanceReportingEntry(disturbance);
             var zone = L.polygon([_tropicalInvestZoneRing(current, worldOffset)], {
                 pane: 'tropical-disturbance-pane',
                 color: '#d8b4fe',
@@ -25381,11 +25427,12 @@
                 dashArray: '8,6',
                 interactive: true
             }).addTo(tropicalRouteDisturbanceLayer);
-            zone.bindPopup(popupHtml, { closeButton: true, maxWidth: 390 });
-            zone.on('popupopen', function(event) {
-                var popup = event.popup;
-                popup._skyMonitorJTWCStorm = storm;
-                _loadTropicalJTWCText(popup, storm);
+            zone.on('click', function(event) {
+                if (!event || !event.latlng) return;
+                if (L.DomEvent && event.originalEvent) {
+                    L.DomEvent.stopPropagation(event.originalEvent);
+                }
+                _openTropicalReportingPopup(event.latlng, [jtwcEntry], jtwcEntry);
             });
             var centerMarker = L.circleMarker(
                 [current.lat, current.lon + worldOffset],
@@ -25398,9 +25445,12 @@
                     weight: 1.5
                 }
             ).addTo(tropicalRouteDisturbanceLayer);
-            centerMarker.bindPopup(popupHtml, { closeButton: true, maxWidth: 390 });
-            centerMarker.on('popupopen', function(event) {
-                zone.fire('popupopen', event);
+            centerMarker.on('click', function(event) {
+                if (!event || !event.latlng) return;
+                if (L.DomEvent && event.originalEvent) {
+                    L.DomEvent.stopPropagation(event.originalEvent);
+                }
+                _openTropicalReportingPopup(event.latlng, [jtwcEntry], jtwcEntry);
             });
             if (zone.getBounds().isValid()) bounds.extend(zone.getBounds());
         });
@@ -25420,7 +25470,7 @@
         });
     }
 
-    function _tropicalNWSAlertPopupHtml(feature) {
+    function _tropicalNWSAlertReportingEntry(feature) {
         var properties = feature && feature.properties || {};
         var eventName = String(properties.event || 'NWS tropical alert');
         var color = customSkyAlertSeverityColor(properties);
@@ -25428,28 +25478,37 @@
         var sent = _tropicalNWSLocalTime(properties.sent);
         var effective = _tropicalNWSLocalTime(properties.effective || properties.onset);
         var expires = _tropicalNWSLocalTime(properties.expires || properties.ends);
-        var details = String(properties.description || properties.text || '').trim();
+        var headline = String(properties.headline || '').trim();
+        var description = String(properties.description || properties.text || '').trim();
         var instruction = String(properties.instruction || '').trim();
-        var kicker = properties._nwsSource
-            ? 'National Weather Service · PGUM Coastal Waters Forecast'
-            : 'National Weather Service · active tropical alert';
-        if (instruction) details += (details ? '\n\n' : '') + 'INSTRUCTIONS\n' + instruction;
-        if (!details) details = 'The NWS did not include product text in this alert response.';
-        var metaLines = [];
-        if (area) metaLines.push('<b>Area:</b> ' + escapeHtml(area));
-        if (sent) metaLines.push('<b>Issued:</b> ' + escapeHtml(sent));
-        if (effective) metaLines.push('<b>Effective:</b> ' + escapeHtml(effective));
-        if (expires) metaLines.push('<b>Expires:</b> ' + escapeHtml(expires));
-
-        return '<div class="tropical-disturbance-popup">' +
-            '<div class="tropical-disturbance-popup-kicker">' + escapeHtml(kicker) + '</div>' +
-            '<div class="tropical-disturbance-popup-title" style="color:' +
-                escapeHtml(color) + '">' + escapeHtml(eventName) + '</div>' +
-            (metaLines.length
-                ? '<div class="tropical-disturbance-popup-meta">' + metaLines.join('<br>') + '</div>'
-                : '') +
-            '<pre class="tropical-nws-alert-text">' + escapeHtml(details) + '</pre>' +
-            '</div>';
+        var meta = area || (properties._nwsSource
+            ? 'NWS · PGUM Coastal Waters Forecast'
+            : 'National Weather Service');
+        if (expires) meta += ' · Expires ' + expires;
+        else if (sent) meta += ' · Issued ' + sent;
+        var rows = [
+            ['Area', area],
+            ['Issued', sent],
+            ['Effective', effective],
+            ['Expires', expires],
+            ['Headline', headline],
+            ['Details', description ||
+                'The NWS did not include product text in this alert response.'],
+            ['Instructions', instruction]
+        ];
+        return {
+            source: 'nws',
+            color: color,
+            popupKey: String(feature && feature.id != null
+                ? feature.id
+                : [eventName, properties.sent || '', area].join('|')),
+            title: escapeHtml(eventName),
+            meta: escapeHtml(meta),
+            nwsAlertProperties: properties,
+            nwsEventName: eventName,
+            detail: reportingPopupDetailRows(rows),
+            tropicalSourceFeature: feature
+        };
     }
 
     function _tropicalMapNWSGeometry(geometry) {
@@ -25572,20 +25631,6 @@
         return matches;
     }
 
-    function _tropicalNWSAlertsPopupHtml(features) {
-        var html = '<div class="tropical-nws-alerts-popup-group">';
-        if (features.length > 1) {
-            html += '<div style="font-weight:800;color:#9eb3c2;margin:0 0 10px;">' +
-                features.length + ' active NWS alerts affect this area</div>';
-        }
-        features.forEach(function(feature, index) {
-            html += '<div' + (index
-                ? ' style="padding-top:12px;margin-top:12px;border-top:1px solid rgba(255,255,255,0.15);"'
-                : '') + '>' + _tropicalNWSAlertPopupHtml(feature) + '</div>';
-        });
-        return html + '</div>';
-    }
-
     function _drawTropicalNWSAlerts() {
         var bounds = window.L ? L.latLngBounds([]) : null;
         if (!tropicalRouteMap || !window.L) return bounds;
@@ -25619,19 +25664,16 @@
             alertLayer.on('click', function(event) {
                 var point = event && event.latlng;
                 if (!point) return;
+                if (L.DomEvent && event.originalEvent) {
+                    L.DomEvent.stopPropagation(event.originalEvent);
+                }
                 var matchingAlerts = _tropicalNWSAlertsAtPoint(point, feature);
                 if (!matchingAlerts.length) matchingAlerts = [feature];
-                var maxHeight = Math.min(
-                    560,
-                    Math.max(220, (window.innerHeight || 700) - 160)
-                );
-                L.popup({
-                    closeButton: true,
-                    maxWidth: 420,
-                    maxHeight: maxHeight
-                }).setLatLng(point)
-                    .setContent(_tropicalNWSAlertsPopupHtml(matchingAlerts))
-                    .openOn(tropicalRouteMap);
+                var entries = matchingAlerts.map(_tropicalNWSAlertReportingEntry);
+                var selectedEntry = entries.find(function(entry) {
+                    return entry.tropicalSourceFeature === feature;
+                }) || entries[0];
+                _openTropicalReportingPopup(point, entries, selectedEntry);
             });
             alertLayer.addTo(tropicalRouteNWSAlertLayer);
             if (bounds && alertLayer.getBounds && alertLayer.getBounds().isValid()) {
@@ -25890,7 +25932,6 @@
         if (status) status.textContent = '';
         if (forceRefresh) {
             tropicalJtwcTextCache = Object.create(null);
-            tropicalNHCTextCache = Object.create(null);
         }
         try {
             var feedResults = await Promise.allSettled([
