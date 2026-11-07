@@ -24900,6 +24900,9 @@
         var latLng = popup.getLatLng && popup.getLatLng();
         if (!latLng) return null;
         var popupElement = popup.getElement && popup.getElement();
+        var popupScroll = popupElement
+            ? popupElement.querySelector('.reporting-popup-scroll')
+            : null;
         var expandedCards = popupElement
             ? Array.prototype.map.call(
                 popupElement.querySelectorAll('.reporting-popup-card.is-open'),
@@ -24907,10 +24910,14 @@
             )
             : [];
         return {
+            popup: popup,
             lat: latLng.lat,
             lon: latLng.lng,
             content: popup.getContent(),
             options: Object.assign({}, popup.options || {}),
+            popupScrollTop: popupScroll ? popupScroll.scrollTop : 0,
+            pageScrollX: window.scrollX || window.pageXOffset || 0,
+            pageScrollY: window.scrollY || window.pageYOffset || 0,
             reportingEntries: Array.isArray(popup._skyMonitorReportingEntries)
                 ? popup._skyMonitorReportingEntries.slice()
                 : null,
@@ -24925,23 +24932,47 @@
             state.lon,
             tropicalRouteMap.getCenter().lng
         );
+        function restorePageScroll() {
+            if ((window.scrollX || window.pageXOffset || 0) !== state.pageScrollX ||
+                (window.scrollY || window.pageYOffset || 0) !== state.pageScrollY) {
+                window.scrollTo(state.pageScrollX || 0, state.pageScrollY || 0);
+            }
+        }
+        if (state.popup && state.popup.isOpen && state.popup.isOpen()) {
+            state.popup.setLatLng([state.lat, longitude]);
+            restorePageScroll();
+            return;
+        }
+        function restorePopupViewport(popup) {
+            window.setTimeout(function() {
+                if (!popup || !popup.isOpen || !popup.isOpen()) return;
+                var popupElement = popup.getElement && popup.getElement();
+                var popupScroll = popupElement
+                    ? popupElement.querySelector('.reporting-popup-scroll')
+                    : null;
+                if (popupScroll) popupScroll.scrollTop = state.popupScrollTop || 0;
+                restorePageScroll();
+            }, 0);
+        }
         var options = Object.assign({}, state.options, { autoPan: false });
         if (state.reportingEntries && state.reportingEntries.length) {
             var selectedEntry = state.reportingEntries.find(function(entry) {
                 return reportingPopupEntryIdFor(entry) === state.selectedEntryId;
             }) || state.reportingEntries[0];
-            _openTropicalReportingPopup(
+            var restoredPopup = _openTropicalReportingPopup(
                 [state.lat, longitude],
                 state.reportingEntries,
                 selectedEntry,
                 { options: options, expandedEntryIds: state.expandedEntryIds }
             );
+            restorePopupViewport(restoredPopup);
             return;
         }
         var popup = L.popup(options)
             .setLatLng([state.lat, longitude])
             .setContent(state.content)
             .openOn(tropicalRouteMap);
+        restorePopupViewport(popup);
     }
 
     function _openTropicalReportingPopup(latLng, entries, selectedEntry, restoreState) {
@@ -25161,11 +25192,6 @@
                 timeZoneName: 'short'
             })
             : '';
-        var directDiscussion = String(
-            properties.discussion || properties.Discussion || ''
-        ).trim();
-        var investMatch = directDiscussion.match(/\(([A-Z]{2}\d{2})\)/i);
-        var investId = investMatch ? investMatch[1].toUpperCase() : '';
         var probabilityValue = parseFloat(probability.replace('%', ''));
         var riskLower = risk.toLowerCase();
         var color = /high/.test(riskLower) || probabilityValue >= 60 ? '#fb4f68' :
@@ -25181,7 +25207,7 @@
         function detailFor(discussion) {
             var cleanDiscussion = String(
                 discussion || 'Area-specific NHC text is not available in the current outlook feed.'
-            ).replace(/(^|\s)1\.\s*(?=Eastern East Pacific\b)/i, '$1');
+            ).replace(/^\s*1\.\s*/, '');
             return reportingPopupDetailRows([
                 ['Outlook issued', updateLabel],
                 ['Discussion', cleanDiscussion]
@@ -25195,9 +25221,7 @@
             popupKey: 'nhc-development:' + String(
                 disturbance.feature && disturbance.feature.id || ''
             ),
-            title: escapeHtml(investId
-                ? 'Tropical Disturbance (' + investId + ')'
-                : risk + ' potential development area'),
+            title: 'Tropical Disturbance',
             meta: escapeHtml(meta),
             detail: '<span style="opacity:0.72;">Loading the matching NHC outlook text…</span>',
             loadDetails: function() {
