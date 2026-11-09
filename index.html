@@ -505,6 +505,7 @@
         }
         .tropical-forecast-popup-title {
             margin: 2px 0 8px;
+            padding-right: 30px;
             color: #f8d66d;
             font-size: 0.98rem;
             font-weight: 900;
@@ -522,6 +523,41 @@
             margin-top: 8px;
             color: #8298a8;
             font-size: 0.84em;
+        }
+        .tropical-forecast-popup {
+            color: #e8f2f8;
+        }
+        .tropical-forecast-popup-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+            margin-top: 10px;
+        }
+        .tropical-forecast-popup-cell {
+            min-width: 0;
+            padding: 8px 9px;
+            border-radius: 9px;
+            background: rgba(255,255,255,0.055);
+        }
+        .tropical-forecast-popup-cell span {
+            display: block;
+            color: #8294a2;
+            font-size: 0.56rem;
+            letter-spacing: 0.65px;
+            text-transform: uppercase;
+        }
+        .tropical-forecast-popup-cell strong {
+            display: block;
+            overflow-wrap: anywhere;
+            margin-top: 3px;
+            color: #e8f2f8;
+            font-size: 0.77rem;
+        }
+        .tropical-forecast-popup-footer {
+            margin-top: 9px;
+            color: #9aabb7;
+            font-size: 0.62rem;
+            line-height: 1.4;
         }
         .tropical-nws-alert-text {
             display: block;
@@ -1710,11 +1746,38 @@
             box-shadow: 0 8px 24px rgba(0,0,0,0.45);
         }
         #tropical-route-map .leaflet-popup.tropical-forecast-leaflet-popup .leaflet-popup-content-wrapper {
-            border: 2px solid rgba(125,211,252,0.9);
-            box-shadow: 0 0 0 1px rgba(4,14,23,0.8), 0 8px 24px rgba(0,0,0,0.52);
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 15px;
+            background: rgba(4,14,23,0.94);
+            box-shadow: 0 14px 38px rgba(0,0,0,0.42);
         }
         #tropical-route-map .leaflet-popup.tropical-forecast-leaflet-popup .leaflet-popup-tip {
-            border: 1px solid rgba(125,211,252,0.9);
+            border: 1px solid rgba(255,255,255,0.14);
+            background: rgba(4,14,23,0.94);
+        }
+        #tropical-route-map .leaflet-popup.tropical-forecast-leaflet-popup .leaflet-popup-close-button {
+            top: 8px;
+            right: 8px;
+            display: grid;
+            place-items: center;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: 1px solid rgba(255,255,255,0.34);
+            border-radius: 50%;
+            background: rgba(255,255,255,0.10);
+            color: #f1f7fb;
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 26px;
+            text-align: center;
+        }
+        #tropical-route-map .leaflet-popup.tropical-forecast-leaflet-popup .leaflet-popup-close-button:hover,
+        #tropical-route-map .leaflet-popup.tropical-forecast-leaflet-popup .leaflet-popup-close-button:focus-visible {
+            border-color: #7dd3fc;
+            background: rgba(79,195,247,0.22);
+            color: #f1f7fb;
+            outline: none;
         }
         #reporting-map .leaflet-popup-content,
         #tropical-route-map .leaflet-popup-content {
@@ -23780,6 +23843,7 @@
     // reporting-map loaders, alert loaders, report loaders, or radar-layer
     // controls, so /radar/tropical remains a focused storm-tracking surface.
     function _tropicalFinite(value) {
+        if (value == null || value === '') return null;
         var n = Number(value);
         return isFinite(n) ? n : null;
     }
@@ -24161,15 +24225,24 @@
         var lead = Number(point.forecastHour) === 0
             ? 'CURRENT FORECAST'
             : point.forecastHour != null ? point.forecastHour + '-hour forecast' : 'Forecast position';
-        return '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
+        var pressure = _tropicalFinite(point.pressure != null ? point.pressure : storm.pressure);
+        var source = _tropicalIsJTWC(storm) ? 'JTWC' : 'NHC';
+        return '<div class="tropical-forecast-popup">' +
+            '<div class="tropical-forecast-popup-kicker">' + escapeHtml(lead) + '</div>' +
             '<div class="tropical-forecast-popup-title">' + escapeHtml(name) + '</div>' +
-            '<div class="tropical-forecast-popup-wind">' + escapeHtml(_tropicalFormatWind(point.wind)) + '</div>' +
-            '<div class="tropical-forecast-popup-meta"><b>' + escapeHtml(_tropicalCategory(pointStorm, point.wind)) +
-            '</b><br>' + escapeHtml(time) + '<br>Maximum sustained wind</div>' +
-            '<div class="tropical-forecast-popup-note">' +
-            escapeHtml(_tropicalIsJTWC(storm) ? 'JTWC official forecast point' : 'NHC official forecast point') + ' · ' +
+            '<div class="tropical-forecast-popup-grid">' +
+            '<div class="tropical-forecast-popup-cell"><span>Wind</span><strong>' +
+                escapeHtml(_tropicalFormatWind(point.wind)) + '</strong></div>' +
+            '<div class="tropical-forecast-popup-cell"><span>Pressure</span><strong>' +
+                escapeHtml(pressure != null ? pressure + ' mb' : '—') + '</strong></div>' +
+            '<div class="tropical-forecast-popup-cell"><span>Category</span><strong>' +
+                escapeHtml(_tropicalCategory(pointStorm, point.wind)) + '</strong></div>' +
+            '<div class="tropical-forecast-popup-cell"><span>Valid at</span><strong>' +
+                escapeHtml(time) + '</strong></div>' +
+            '</div><div class="tropical-forecast-popup-footer">' +
+            escapeHtml(source + ' official forecast point') + ' · ' +
             escapeHtml(point.lat.toFixed(1) + '°, ' + Math.abs(point.lon).toFixed(1) + '°' + (point.lon < 0 ? 'W' : 'E')) +
-            '</div>';
+            '</div></div>';
     }
 
     function _tropicalPointInRing(lat, lon, ring) {
@@ -24977,7 +25050,9 @@
             }
         }
         if (state.popup && state.popup.isOpen && state.popup.isOpen()) {
-            state.popup.setLatLng([state.lat, longitude]);
+            // The existing popup already follows the map while it moves.
+            // Calling setLatLng here makes Leaflet re-run autoPan and snaps
+            // the map back toward an opened disturbance popup.
             restorePageScroll();
             return;
         }
