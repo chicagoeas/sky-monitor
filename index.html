@@ -16104,6 +16104,12 @@
     const LIBREWXR_WEATHER_MAPS_URL = LIBREWXR_RADAR_BASE_URL + '/public/weather-maps.json';
     const LIVE_RADAR_FRAME_MS = 650;
     const LIVE_RADAR_CURRENT_HOLD_MS = 3200;
+    const LIVE_RADAR_PREFETCH_DELAY_MS = 160;
+    const LIVE_RADAR_PREFETCH_MAX_TILES_PER_SIDE = 6;
+    const LIVE_RADAR_PREFETCH_CACHE_SIZE = 4;
+    let liveRadarPrefetchTimer = null;
+    let liveRadarPrefetchCache = new Map();
+    let liveRadarPrefetchViewportKey = '';
     const LIVE_RADAR_TRANSITION_TIMEOUT_MS = 2400;
     const LIVE_RADAR_CROSSFADE_MS = 160;
     let liveRadarState = {
@@ -19769,6 +19775,82 @@
             '/256/{z}/{x}/{y}/10/1_1.png';
     }
 
+    function _scheduleLiveRadarPrefetch(index) {
+        if (liveRadarPrefetchTimer) clearTimeout(liveRadarPrefetchTimer);
+        liveRadarPrefetchTimer = setTimeout(function() {
+            liveRadarPrefetchTimer = null;
+            _prefetchLiveRadarNeighbors(index);
+        }, LIVE_RADAR_PREFETCH_DELAY_MS);
+    }
+
+    function _prefetchLiveRadarNeighbors(index) {
+        if (!reportingMap || !liveRadarState.active ||
+            !liveRadarState.frames.length || typeof Image === 'undefined') return;
+
+        const zoom = Math.max(0, Math.round(reportingMap.getZoom()));
+        const worldTiles = Math.pow(2, zoom);
+        const pixelBounds = reportingMap.getPixelBounds();
+        if (!pixelBounds || !pixelBounds.min || !pixelBounds.max) return;
+
+        let minX = Math.max(0, Math.floor(pixelBounds.min.x / 256));
+        let maxX = Math.min(worldTiles - 1, Math.floor((pixelBounds.max.x - 1) / 256));
+        let minY = Math.max(0, Math.floor(pixelBounds.min.y / 256));
+        let maxY = Math.min(worldTiles - 1, Math.floor((pixelBounds.max.y - 1) / 256));
+        const capRange = function(minimum, maximum) {
+            const limit = LIVE_RADAR_PREFETCH_MAX_TILES_PER_SIDE;
+            if (maximum - minimum + 1 <= limit) return [minimum, maximum];
+            const center = Math.floor((minimum + maximum) / 2);
+            const start = Math.max(
+                0,
+                Math.min(worldTiles - limit, center - Math.floor(limit / 2))
+            );
+            return [start, Math.min(worldTiles - 1, start + limit - 1)];
+        };
+        [minX, maxX] = capRange(minX, maxX);
+        [minY, maxY] = capRange(minY, maxY);
+        if (maxX < minX || maxY < minY) return;
+
+        const viewportKey = [zoom, minX, maxX, minY, maxY].join(':');
+        if (viewportKey !== liveRadarPrefetchViewportKey) {
+            liveRadarPrefetchCache.clear();
+            liveRadarPrefetchViewportKey = viewportKey;
+        }
+
+        [-1, 1].forEach(function(offset) {
+            const frameIndex = index + offset;
+            if (frameIndex < 0 || frameIndex >= liveRadarState.frames.length) return;
+            const timestampMs = liveRadarState.frames[frameIndex];
+            const cacheKey = String(timestampMs);
+            if (liveRadarPrefetchCache.has(cacheKey)) {
+                const cachedImages = liveRadarPrefetchCache.get(cacheKey);
+                liveRadarPrefetchCache.delete(cacheKey);
+                liveRadarPrefetchCache.set(cacheKey, cachedImages);
+                return;
+            }
+
+            const images = [];
+            const frameUrl = _liveRadarFrameUrl(timestampMs);
+            for (let x = minX; x <= maxX; x++) {
+                for (let y = minY; y <= maxY; y++) {
+                    const image = new Image();
+                    image.decoding = 'async';
+                    if ('fetchPriority' in image) image.fetchPriority = 'low';
+                    image.src = frameUrl
+                        .replace('{z}', String(zoom))
+                        .replace('{x}', String(x))
+                        .replace('{y}', String(y));
+                    images.push(image);
+                }
+            }
+            liveRadarPrefetchCache.set(cacheKey, images);
+            while (liveRadarPrefetchCache.size > LIVE_RADAR_PREFETCH_CACHE_SIZE) {
+                liveRadarPrefetchCache.delete(
+                    liveRadarPrefetchCache.keys().next().value
+                );
+            }
+        });
+    }
+
     function _liveRadarFormatTime(timestampMs, includeDate) {
         if (!timestampMs) return '--';
         return new Date(timestampMs).toLocaleString([], {
@@ -19929,6 +20011,7 @@
         liveRadarState.index = safeIndex;
         liveRadarState.timestampMs = liveRadarState.frames[safeIndex];
         _renderLiveRadarControls();
+        _scheduleLiveRadarPrefetch(safeIndex);
         _replaceReportingRadarLayer(
             _liveRadarFrameUrl(liveRadarState.timestampMs),
             'live',
