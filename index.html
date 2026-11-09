@@ -7282,6 +7282,52 @@
         });
     }
 
+    // Bound the full response, including JSON body parsing. _weatherFetch only
+    // owns the request until response headers arrive, which can leave optional
+    // feeds stuck forever if a connection stalls while downloading the body.
+    async function _weatherFetchJSON(url, options, timeoutMs) {
+        options = Object.assign({}, options || {});
+        try {
+            var requestUrl = typeof url === 'string' ? url : (url && url.url) || String(url);
+            if (!options.cache &&
+                new URL(requestUrl, window.location.href).origin === new URL(WEATHER_WORKER_URL).origin) {
+                options.cache = 'no-store';
+            }
+        } catch(e) {}
+
+        if (!timeoutMs || typeof AbortController !== 'function') {
+            var unboundedResponse = await fetch(url, options);
+            return { response: unboundedResponse, data: await unboundedResponse.json() };
+        }
+
+        var controller = new AbortController();
+        var parentSignal = options.signal;
+        var forwardAbort = function() {
+            if (!controller.signal.aborted) controller.abort();
+        };
+        if (parentSignal) {
+            if (parentSignal.aborted) controller.abort();
+            else parentSignal.addEventListener('abort', forwardAbort, { once: true });
+        }
+
+        var requestOptions = Object.assign({}, options, { signal: controller.signal });
+        var timer;
+        var request = (async function() {
+            var response = await fetch(url, requestOptions);
+            return { response: response, data: await response.json() };
+        })();
+        var timeout = new Promise(function(_, reject) {
+            timer = setTimeout(function() {
+                controller.abort();
+                reject(new Error('Weather response timed out after ' + timeoutMs + 'ms'));
+            }, timeoutMs);
+        });
+        return Promise.race([request, timeout]).finally(function() {
+            clearTimeout(timer);
+            if (parentSignal) parentSignal.removeEventListener('abort', forwardAbort);
+        });
+    }
+
     async function fetchWUMulti(latP, lonP, signal) {
         // Weather.com credentials and the station fan-out now stay in the Worker.
         // This is awaited before the authoritative current-observation pass
@@ -26877,9 +26923,13 @@
         _aqiStateCode = '';
         try {
             var place = await _osmGeocodeFetch('reverse', { lat: curLat, lon: curLon });
-            _aqiStateCode = _stateCodeFromName(place && place.address && place.address.state);
+            // A late lookup for an old location must not overwrite the code
+            // cached for the currently selected coordinates.
+            if (_aqiStateKey === key) {
+                _aqiStateCode = _stateCodeFromName(place && place.address && place.address.state);
+            }
         } catch (e) {}
-        return _aqiStateCode;
+        return _aqiStateKey === key ? _aqiStateCode : '';
     }
 
     var _aqiRequestSeq = 0;
@@ -26913,20 +26963,39 @@
         }
     }
 
+    function _showAQILoading() {
+        var section = document.getElementById('aqi-section');
+        if (!section || section.style.display !== 'none') return;
+        section.style.display = '';
+        var numEl = document.getElementById('air-num');
+        var catEl = document.getElementById('air-cat');
+        var pollEl = document.getElementById('air-poll');
+        var healthEl = document.getElementById('air-health');
+        if (numEl) { numEl.innerText = '--'; numEl.style.color = '#888'; }
+        if (catEl) { catEl.innerText = 'Loading...'; catEl.style.color = '#888'; }
+        if (pollEl) pollEl.innerText = 'Source: AirNow';
+        if (healthEl) healthEl.innerText = 'Loading current air quality data...';
+    }
+
     // AQI is proxied through the weather Worker. AirNow remains authoritative
     // when it has usable data; Open-Meteo is reserved for provider failures,
     // while a valid empty AirNow response stays identified as AirNow.
     async function fetchAQI(loadGeneration, requestLat, requestLon) {
         var curLat = requestLat == null ? lat : requestLat;
         var curLon = requestLon == null ? lon : requestLon;
-        if (!isFinite(curLat) || !isFinite(curLon)) return;
+        if (!isFinite(curLat) || !isFinite(curLon)) {
+            _renderAQIUnavailable('A valid location is required to load air quality data.', 'AirNow');
+            return;
+        }
         var seq = ++_aqiRequestSeq;
+        _showAQILoading();
         try {
-            var res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/air-quality?lat=' +
+            var result = await _weatherFetchJSON(WEATHER_WORKER_URL + '/api/weather/air-quality?lat=' +
                 encodeURIComponent(curLat) + '&lon=' + encodeURIComponent(curLon), {
                     signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
                 }, 12000);
-            var data = await res.json();
+            var res = result.response;
+            var data = result.data;
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
             if (!res.ok || !data || data.source === 'unavailable') {
                 await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
@@ -26938,7 +27007,9 @@
                         return (o.AQI || 0) > (m.AQI || 0) ? o : m;
                     }, data.observations[0]);
                     if (_airNowBest && _airNowBest.ReportingArea && !_airNowBest.StateCode) {
-                        await _resolveAQIStateCode(curLat, curLon);
+                        // State lookup only decorates the reporting-area label;
+                        // it must never delay a usable current AQI reading.
+                        _resolveAQIStateCode(curLat, curLon).catch(function() {});
                     }
                     if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
                 }
@@ -26960,6 +27031,18 @@
             // fallback rather than leaving a blank AQI card.
             console.warn('[SkyMonitor AQI] Worker unavailable:', e);
             await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
+        } finally {
+            // A current request must always leave a visible terminal state.
+            // This also covers unexpected response shapes or rendering errors.
+            if (_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) {
+                var section = document.getElementById('aqi-section');
+                var catEl = document.getElementById('air-cat');
+                if (section && section.style.display === 'none') {
+                    _renderAQIUnavailable('Air quality data could not be loaded. Please try again shortly.', 'AirNow');
+                } else if (catEl && catEl.innerText === 'Loading...') {
+                    _renderAQIUnavailable('Air quality data could not be loaded. Please try again shortly.', 'AirNow');
+                }
+            }
         }
     }
 
@@ -26972,9 +27055,10 @@
             var url = 'https://air-quality-api.open-meteo.com/v1/air-quality' +
                       '?latitude=' + curLat + '&longitude=' + curLon +
                       '&current=us_aqi,pm10,pm2_5,nitrogen_dioxide,ozone';
-            var res = await _weatherFetch(url, undefined, 12000);
+            var result = await _weatherFetchJSON(url, undefined, 12000);
+            var res = result.response;
             if (!res.ok) throw new Error('Open-Meteo AQ ' + res.status);
-            var data = await res.json();
+            var data = result.data;
             var curAQI = (data.current && data.current.us_aqi != null) ? data.current.us_aqi : null;
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
             _renderAQIDataOM(curAQI);
