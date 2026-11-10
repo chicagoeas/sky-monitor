@@ -3105,7 +3105,7 @@
             </div>
         </div>
         <div id="wuStation" style="font-size:10px; opacity:0.6; margin-top:-15px; margin-bottom:15px; padding-left:2px; display:none;">
-            Observed at <a id="wuLink" target="_blank" style="color:var(--accent); text-decoration:none;"></a>
+            Observed at <a id="wuLink" target="_blank" style="color:var(--accent); text-decoration:none;"></a><span id="wu-distance-note"></span><span id="wu-elevation-note"></span>
         </div>
         <div id="pws-qc-panel" style="display:none;"></div>
 
@@ -3724,6 +3724,16 @@
         var reference = window._pwsQcTemperatureReference;
         return reference && reference.temperature != null &&
             isFinite(reference.temperature) ? Number(reference.temperature) : null;
+    }
+
+    // Approximate near-surface temperature change with elevation. This is a
+    // comparison estimate, not a substitute for a measured vertical profile;
+    // cap it because inversions and terrain can invalidate a standard lapse rate.
+    function _boundedElevationCorrectionF(sourceElevFt, targetElevFt) {
+        if (sourceElevFt == null || targetElevFt == null ||
+            !isFinite(Number(sourceElevFt)) || !isFinite(Number(targetElevFt))) return 0;
+        var correction = (Number(sourceElevFt) - Number(targetElevFt)) * (3.5 / 1000);
+        return Math.max(-8, Math.min(8, correction));
     }
 
     function pwsPassesNeighborHumidityQC(station, peerStations) {
@@ -6378,6 +6388,10 @@
         window.wuData = null; window.wuNeighborData = [];
         var _wuStEl = document.getElementById('wuStation');
         if (_wuStEl) _wuStEl.style.display = 'none';
+        var _wuDistanceNote = document.getElementById('wu-distance-note');
+        var _wuElevationNote = document.getElementById('wu-elevation-note');
+        if (_wuDistanceNote) _wuDistanceNote.innerText = '';
+        if (_wuElevationNote) _wuElevationNote.innerText = '';
         // A manual location submission is an explicit refresh, even when the
         // geocoder resolves to the same coordinates as the request already in
         // flight. Do not let loadAll's same-key dedupe leave the UI reset while
@@ -12219,11 +12233,13 @@
             station.feature.geometry.coordinates &&
             station.feature.geometry.coordinates[2] != null
             ? Number(station.feature.geometry.coordinates[2]) * 3.28084 : null;
-        var _eccUserElevFt = window.userLocElevFt != null
-            ? window.userLocElevFt : window.wuElevFt;
+        var _eccUserElevFt = window._userLocElevKey === _eccElevCacheKey
+            ? window.userLocElevFt : null;
         if (_eccOfficialTempF !== null && _eccStationElevFt !== null &&
             _eccUserElevFt !== null) {
-            var _eccLapseDelta = (_eccStationElevFt - _eccUserElevFt) * (3.5 / 1000);
+            var _eccLapseDelta = _boundedElevationCorrectionF(
+                _eccStationElevFt, _eccUserElevFt
+            );
             if (Math.abs(_eccLapseDelta) >= 0.5) {
                 _eccOfficialTempF += _eccLapseDelta;
             }
@@ -12634,10 +12650,10 @@
             }).catch(function() {});
         }
         var officialTempF = tempF;
-        var userElevFt = window.userLocElevFt != null
-            ? window.userLocElevFt : window.wuElevFt;
+        var userElevFt = window._userLocElevKey === elevCacheKey
+            ? window.userLocElevFt : null;
         if (stationElevFt !== null && userElevFt != null) {
-            var lapseDelta = (stationElevFt - userElevFt) * (3.5 / 1000);
+            var lapseDelta = _boundedElevationCorrectionF(stationElevFt, userElevFt);
             if (Math.abs(lapseDelta) >= 0.5) officialTempF += lapseDelta;
         }
 
@@ -13014,6 +13030,8 @@
                     }
                 } catch(e) {}
             }
+            const _targetElevFt = window._userLocElevKey === _elevCacheKey
+                ? window.userLocElevFt : null;
             // PirateWeather icon slug → NWS icon URL.
             // Night-variant slugs use the night path; generic slugs default to day
             // (PirateWeather only emits day/night distinction on clear & partly-cloudy).
@@ -13046,6 +13064,7 @@
             let nwsObsWindMph = null;
             let nwsObsWindDir = null;
             var _obsEndpointFailed = false;
+            var _conditionTempForCurrentLocation = null;
             try {
                 const obsRes = await _weatherFetch(primaryStation.id + '/observations/latest',
                     requestSignal
@@ -13162,9 +13181,17 @@
             }
             const _pwTemp = getPwsQcTemperatureReference();
             // Reference: prefer the independent NWS observation when available.
+            // Compare it at the requested elevation, rather than treating the
+            // airport's elevation as the PWS location's elevation.
+            const _nwsReferenceTempF = nwsObsTempF !== null &&
+                elevMeters != null && _targetElevFt != null
+                ? nwsObsTempF + _boundedElevationCorrectionF(
+                    Number(elevMeters) * 3.28084, _targetElevFt
+                )
+                : nwsObsTempF;
             // The model reference is the fallback when NWS and neighbor data are absent.
-            const _refTemp = nwsObsTempF !== null
-                ? nwsObsTempF
+            const _refTemp = _nwsReferenceTempF !== null
+                ? _nwsReferenceTempF
                 : (_neighborMedianTemp !== null ? _neighborMedianTemp : _pwTemp);
 
             // Build the candidate set first so humidity can be checked against
@@ -13230,9 +13257,13 @@
             let _lapseApplied = false;
             if (nwsObsTempF !== null) {
                 const _nwsElevFt  = (elevMeters != null) ? elevMeters * 3.28084 : null;
-                const _userElevFt = (window.userLocElevFt != null) ? window.userLocElevFt : window.wuElevFt;
+                // Only the requested coordinate's elevation is a valid target.
+                // A remote PWS elevation is not a substitute if this lookup fails.
+                const _userElevFt = _targetElevFt;
                 if (_nwsElevFt !== null && _userElevFt != null) {
-                    const _lapseDelta = (_nwsElevFt - _userElevFt) * (3.5 / 1000);
+                    const _lapseDelta = _boundedElevationCorrectionF(
+                        _nwsElevFt, _userElevFt
+                    );
                     if (Math.abs(_lapseDelta) >= 0.5) { nwsObsTempFAdj = nwsObsTempF + _lapseDelta; _lapseApplied = true; }
                 }
             }
@@ -13249,6 +13280,7 @@
             // did not provide. This is Open-Meteo when PirateWeather is unavailable.
             if (_useNWSFallback) {
                 var _pwObsForFallback = window.pirateCurrently || {};
+                _conditionTempForCurrentLocation = nwsObsTempFAdj;
                 window.liveTemp = Math.round(nwsObsTempFAdj);
                 (function(){ var _tv = Math.round(nwsObsTempFAdj); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
                 var _resolvedHumidity = nwsObsHumidity !== null
@@ -13314,6 +13346,27 @@
                 // PWS passed QC — overwrite the model baseline that fetchPirate()
                 // laid down with the actual trusted station values. Single render, no flash.
                 var _wuT = _wu.temp, _wuH = _wu.humidity;
+                var _pwsElevationCorrection = 0;
+                var _pwsDistanceKm = _wu.distanceKm == null
+                    ? NaN : Number(_wu.distanceKm);
+                if (!isFinite(_pwsDistanceKm) && _wu.lat != null && _wu.lon != null &&
+                    isFinite(Number(_wu.lat)) && isFinite(Number(_wu.lon))) {
+                    _pwsDistanceKm = _environmentCanadaDistanceKm(
+                        requestLat, requestLon, Number(_wu.lat), Number(_wu.lon)
+                    );
+                }
+                // Apply the standard 3.5°F/1000 ft estimate only to reasonably
+                // nearby PWS data; distant terrain can have a different air mass.
+                if (_wu.elev != null && _targetElevFt != null &&
+                    isFinite(_pwsDistanceKm) && _pwsDistanceKm <= 60) {
+                    _pwsElevationCorrection = _boundedElevationCorrectionF(
+                        _wu.elev, _targetElevFt
+                    );
+                    if (Math.abs(_pwsElevationCorrection) >= 0.5) {
+                        _wuT += _pwsElevationCorrection;
+                    }
+                }
+                _conditionTempForCurrentLocation = _wuT;
                 window.liveTemp = Math.round(_wuT);
                 (function(){ var _tv = Math.round(_wuT); var _te = document.getElementById('tempVal'); _te.innerText = _fmtTemp(_tv); _te.style.color = colorFeelsLike(_tv); })();
                 (function(){ var _hv = Math.round(_wuH); var _el = document.getElementById('humVal'); _el.innerText = _hv + '%'; _el.style.color = colorHumidity(_hv); })();
@@ -13338,6 +13391,21 @@
                     var _wuLinkEl = document.getElementById('wuLink');
                     _wuLinkEl.innerText = _wu.stationId;
                     _wuLinkEl.href = 'https://www.wunderground.com/dashboard/pws/' + _wu.stationId;
+                }
+                var _wuDistanceNoteEl = document.getElementById('wu-distance-note');
+                if (_wuDistanceNoteEl) {
+                    _wuDistanceNoteEl.innerText = isFinite(_pwsDistanceKm)
+                        ? ' · ' + _fmtDistance(_pwsDistanceKm * 0.621371) + ' away'
+                        : '';
+                }
+                var _wuElevationNoteEl = document.getElementById('wu-elevation-note');
+                if (_wuElevationNoteEl) {
+                    _wuElevationNoteEl.innerText =
+                        Math.abs(_pwsElevationCorrection) >= 0.5
+                            ? ' · elev. estimate ' +
+                                (_pwsElevationCorrection > 0 ? '+' : '') +
+                                _fmtTemp(_pwsElevationCorrection)
+                            : '';
                 }
                 document.getElementById('wuStation').style.display = 'block';
                 (function() {
@@ -13377,6 +13445,7 @@
                 document.getElementById('stationName').innerText = 'LOCAL OBSERVATION';
                 if (_pwFallback.temperature != null) {
                     var _pwFallbackTemp = Math.round(_pwFallback.temperature);
+                    _conditionTempForCurrentLocation = _pwFallback.temperature;
                     window.liveTemp = _pwFallbackTemp;
                     var _pwTempEl = document.getElementById('tempVal');
                     _pwTempEl.innerText = _fmtTemp(_pwFallbackTemp);
@@ -13411,6 +13480,23 @@
                      (_pwFallback.precipProbability || 0) * 100,
                      nwsCond
                 );
+            }
+            // An airport can correctly report rain while a different-elevation
+            // location is below freezing. Do not relabel that as freezing rain
+            // without a vertical temperature profile; make the source mismatch
+            // and uncertainty explicit instead.
+            if (!_conditionFromPirate && nwsCond &&
+                _conditionTempForCurrentLocation != null &&
+                Number.isFinite(Number(_conditionTempForCurrentLocation)) &&
+                Number(_conditionTempForCurrentLocation) <= 32 &&
+                /\b(?:rain|drizzle)\b/i.test(nwsCond) &&
+                !/freezing|snow|sleet|ice/i.test(nwsCond)) {
+                var _conditionStationType = /airport|arpt/i.test(_nwsStationName)
+                    ? 'airport' : 'station';
+                currentCondition = nwsCond + ' reported at ' +
+                    _conditionStationType +
+                    '; location temperature below freezing (type uncertain)';
+                document.getElementById('conditionText').innerText = currentCondition;
             }
             // The discussion text is useful but not required to finish the
             // current-observation load.
