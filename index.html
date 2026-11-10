@@ -6506,6 +6506,15 @@
             state === 'hi' || state === 'hawaii';
     }
 
+    function _isAlaskaLocation() {
+        var state = String(window.locationState || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[.,]/g, '')
+            .replace(/\s+/g, ' ');
+        return state === 'ak' || state === 'alaska';
+    }
+
     function _isUSOutlookTerritoryLocation() {
         var countryCode = String(window.locationCountryCode || '').trim().toUpperCase();
         if (['PR', 'GU', 'AS', 'MP', 'VI'].indexOf(countryCode) !== -1) return true;
@@ -6528,6 +6537,7 @@
     function _syncOutlookCenterAvailability() {
         var territory = _isUSOutlookTerritoryLocation();
         var restrictSPCWPC = territory || _isAlaskaOrHawaiiLocation();
+        var alaska = _isAlaskaLocation();
         var section = document.getElementById('spc-outlook-section');
         if (section) section.style.display = territory ? 'none' : '';
 
@@ -6543,8 +6553,9 @@
             ['nhc', 'cpc'].forEach(function(center) {
                 var option = select.querySelector('option[value="' + center + '"]');
                 if (option) {
-                    option.hidden = territory;
-                    option.disabled = territory;
+                    var unavailable = territory || (alaska && center === 'nhc');
+                    option.hidden = unavailable;
+                    option.disabled = unavailable;
                 }
             });
         }
@@ -6559,6 +6570,11 @@
             (activeOutlookCenter === 'spc' || activeOutlookCenter === 'wpc')) {
             switchOutlookCenter('cpc');
         }
+        if (!_isUSOutlookTerritoryLocation() &&
+            _isAlaskaLocation() &&
+            activeOutlookCenter === 'nhc') {
+            switchOutlookCenter('cpc');
+        }
     }
 
     function updateOutlookMap(center, day) {
@@ -6569,6 +6585,11 @@
         }
         if (_isAlaskaOrHawaiiLocation() && (center === 'spc' || center === 'wpc')) {
             // Guard direct/programmatic map updates as well as the selector.
+            switchOutlookCenter('cpc');
+            return;
+        }
+        if (_isAlaskaLocation() && center === 'nhc') {
+            // The National Hurricane Center outlook is not applicable to Alaska.
             switchOutlookCenter('cpc');
             return;
         }
@@ -6678,6 +6699,9 @@
         if (_isUSOutlookTerritoryLocation()) return;
         if (_isAlaskaOrHawaiiLocation() &&
             (center === 'spc' || center === 'wpc')) {
+            center = 'cpc';
+        }
+        if (_isAlaskaLocation() && center === 'nhc') {
             center = 'cpc';
         }
         activeOutlookCenter = center;
@@ -15003,6 +15027,21 @@
         return snowAmount > 0 && hasSnowSignal && !hasMixedPrecipSignal;
     }
 
+    // Flood Outlook uses liquid QPF, not snowfall depth. TWC may provide
+    // liquid-equivalent QPF alongside snow forecasts, so exclude snow-only
+    // dayparts while retaining QPF when the forecast signals rain or a mix.
+    function _twcSnowOnlyForFloodSlots(daypart, slots) {
+        var snowAmount = slots.reduce(function(total, slot) {
+            return total + (Number(daypart.qpfSnow?.[slot]) || 0);
+        }, 0);
+        var forecastText = slots.map(function(slot) {
+            return String(daypart.wxPhraseLong?.[slot] || '').toLowerCase();
+        }).join(' ');
+        var hasSnowSignal = /\b(?:snow|flurr(?:y|ies))\b/.test(forecastText);
+        var hasLiquidOrMixedSignal = /\b(?:rain|drizzle|sleet|freezing rain|freezing drizzle|ice pellets?|wintry mix|mixed precipitation|hail)\b/.test(forecastText);
+        return !hasLiquidOrMixedSignal && (hasSnowSignal || snowAmount > 0);
+    }
+
     function buildDailySummary(data) {
         var dp    = data.daypart[0];
         var highs = data.calendarDayTemperatureMax || [];
@@ -15493,10 +15532,13 @@
         // TWC is the sole source for Outdoor Score. The separate hourly feed
         // must not be used to calculate it.
         computeOutdoorScore();
-        // Store TWC per-day QPF totals (day + night slots) for the Flood Outlook,
-        // so it matches the same source as the daily forecast cards.
+        // Store rain/mixed-liquid QPF totals for the Flood Outlook. TWC's qpf
+        // is liquid-equivalent and can be nonzero during snow-only forecasts;
+        // those days should not contribute snowfall to a flood outlook.
         window.twcDailyQPF = (data.dayOfWeek || []).map(function(_, i) {
-            return (daypart.qpf?.[i * 2] ?? 0) + (daypart.qpf?.[i * 2 + 1] ?? 0);
+            var slots = [i * 2, i * 2 + 1];
+            if (_twcSnowOnlyForFloodSlots(daypart, slots)) return 0;
+            return (daypart.qpf?.[slots[0]] ?? 0) + (daypart.qpf?.[slots[1]] ?? 0);
         });
         computeFloodOutlook();
         for (let i = 0; i < data.dayOfWeek.length; ++i) {
