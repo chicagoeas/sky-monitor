@@ -25631,8 +25631,8 @@
         ];
         for (var i = 0; i < candidates.length; i++) {
             var value = String(candidates[i] || '').toUpperCase();
-            var codeMatch = value.match(/\b(9\d[A-Z])\b/) ||
-                value.match(/\bINVEST\s*[:#-]?\s*(9\d)\s*([A-Z])\b/);
+            var codeMatch = value.match(/\b(9\d[A-Z])(?:20\d{2}|\d{2})?\b/) ||
+                value.match(/(?:^|[^A-Z0-9])(?:WP|IO|SH)?(9\d)([WABSP])(?:(?:20)?\d{2})?(?=$|[^A-Z0-9])/);
             if (codeMatch) {
                 return codeMatch[1] && codeMatch[1].length === 3
                     ? codeMatch[1]
@@ -25640,19 +25640,21 @@
             }
         }
         var idMatch = String(storm && (storm.id || storm.stormId) || '')
-            .toUpperCase().match(/^(WP|IO|SH)(9\d)(?:20\d{2})?$/);
+            .toUpperCase().match(/^(WP|IO|SH)(9\d)(?:(?:20)?\d{2})?$/);
         if (!idMatch) return '';
-        var suffix = idMatch[1] === 'WP' ? 'W' : idMatch[1] === 'IO' ? 'A' : '';
+        var point = _tropicalCurrentPoint(storm);
+        var longitude = point ? ((point.lon % 360) + 360) % 360 : null;
+        var suffix = idMatch[1] === 'WP' ? 'W' :
+            idMatch[1] === 'IO'
+                ? (longitude != null && longitude >= 80 && longitude <= 100 ? 'B' : 'A')
+                : '';
         if (idMatch[1] === 'SH') {
-            var point = _tropicalCurrentPoint(storm);
-            var longitude = point ? ((point.lon % 360) + 360) % 360 : null;
             suffix = longitude != null && longitude >= 20 && longitude <= 135 ? 'S' : 'P';
         }
         return idMatch[2] + suffix;
     }
 
-    function _tropicalJTWCInvestSections(text, investCode) {
-        if (!investCode) return [];
+    function _tropicalJTWCInvestSections(text, investCode, storm) {
         var lines = String(text || '').replace(/\r/g, '').split('\n');
         var blocks = [];
         var current = null;
@@ -25673,9 +25675,41 @@
             if (current) current.push(line);
         });
         finishBlock();
-        var escapedCode = investCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        var matcher = new RegExp('\\bINVEST\\s+' + escapedCode + '\\b', 'i');
-        return blocks.filter(function(block) { return matcher.test(block); });
+        if (investCode) {
+            var escapedCode = investCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            var matcher = new RegExp('\\bINVEST\\s+' + escapedCode + '\\b', 'i');
+            var codeMatches = blocks.filter(function(block) { return matcher.test(block); });
+            if (codeMatches.length) return codeMatches;
+        }
+
+        // Some JTWC feeds use shortened storm IDs that do not encode the
+        // invest suffix. When that happens, identify the advisory by its
+        // published center rather than failing before checking the text.
+        var center = _tropicalCurrentPoint(storm || {});
+        if (!center) return [];
+        var positionMatches = [];
+        blocks.forEach(function(block) {
+            var position = block.match(
+                /\b(?:NEAR\s+)?(\d{1,2}(?:\.\d+)?)\s*([NS])\s+(\d{1,3}(?:\.\d+)?)\s*([EW])\b/i
+            );
+            if (!position) return;
+            var latitude = Number(position[1]) * (position[2].toUpperCase() === 'S' ? -1 : 1);
+            var longitude = Number(position[3]) * (position[4].toUpperCase() === 'W' ? -1 : 1);
+            var latitudeDelta = Math.abs(latitude - center.lat);
+            var longitudeDelta = Math.abs(((longitude - center.lon + 540) % 360) - 180);
+            if (latitudeDelta <= 0.4 && longitudeDelta <= 0.4) {
+                positionMatches.push({
+                    block: block,
+                    distance: Math.sqrt(latitudeDelta * latitudeDelta + longitudeDelta * longitudeDelta)
+                });
+            }
+        });
+        positionMatches.sort(function(a, b) { return a.distance - b.distance; });
+        if (positionMatches.length > 1 &&
+            positionMatches[1].distance - positionMatches[0].distance < 0.08) {
+            return [];
+        }
+        return positionMatches.length ? [positionMatches[0].block] : [];
     }
 
     function _tropicalJTWCReportingEntry(storm) {
@@ -25689,9 +25723,8 @@
             : '—';
         var validLabel = storm.validTime
             ? formatReportTime(storm.validTime)
-            : '';
-        var meta = ['JTWC', 'Published center ' + latitude + ', ' + longitude]
-            .concat(validLabel ? ['Issued ' + validLabel] : []).join(' · ');
+            : 'Not available';
+        var meta = ['JTWC', 'Published center ' + latitude + ', ' + longitude].join(' · ');
 
         return {
             source: 'tropical',
@@ -25703,20 +25736,17 @@
             meta: escapeHtml(meta),
             detail: '<span style="opacity:0.72;">Loading the matching JTWC invest text…</span>',
             loadDetails: function() {
-                if (!investCode) {
-                    return Promise.resolve(reportingPopupDetailRows([
-                        ['Advisory', 'Error loading JTWC invest.']
-                    ]));
-                }
                 return _fetchTropicalJTWCAdvisory(storm).then(function(text) {
-                    var matches = _tropicalJTWCInvestSections(text, investCode);
+                    var matches = _tropicalJTWCInvestSections(text, investCode, storm);
                     return reportingPopupDetailRows([
+                        ['Issued', validLabel],
                         ['Advisory', matches.length
                             ? matches.join('\n\n')
                             : 'No matching invest entry appears in the current JTWC regional advisory.']
                     ]);
                 }).catch(function() {
                     return reportingPopupDetailRows([
+                        ['Issued', validLabel],
                         ['Advisory',
                             'The matching JTWC invest text is unavailable right now.']
                     ]);
