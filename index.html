@@ -11414,9 +11414,7 @@
                  const cardPrecip = isCurrent ? _estimateCurrentPrecipChance() : Math.round((h.precipProbability || 0) * 100);
                  const iconHtml = isCurrent
                      ? _currentTWCOutlookIconHtml('48px', cardPrecip)
-                     : (usingCustomContainer
-                         ? _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h, cardPrecip)
-                         : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h));
+                     : _twcHourlyIconHtml(h.icon, h.summary, '48px', 'hourly-forecast-icon', h, cardPrecip);
                  card.innerHTML = '<div style="font-size:0.7em;">' + hour + '</div>' + iconHtml + '<div class="hourly-metric-value" style="font-size:1.2em; font-weight:bold;"></div><div style="font-size:0.7em; opacity:0.7;">' + escapeHtml(cardSummary) + '</div><div style="font-size:0.65em; color:var(--primary);">Precip: ' + cardPrecip + '%</div>' + rainLine;
                 var pwMetricEl = card.querySelector('.hourly-metric-value');
                 pwMetricEl._forecastHour = h;
@@ -15570,27 +15568,26 @@
     }
 
     const _twcRainIconCodes = new Set([4, 5, 6, 8, 9, 10, 11, 12, 35, 37, 38, 39, 40]);
+    const _twcSnowIconCodes = new Set([5, 6, 7, 8, 10, 13, 14, 15, 16, 18, 41, 42, 43, 46]);
 
-    function _twcNonRainIconCode(summary, details) {
+    function _twcNonPrecipIconCode(summary, details) {
         const s = String(summary || '').toLowerCase();
         const isNight = details && details.time != null
             ? _isNightForTWCTime(details.time, details.timezoneOffset)
             : window._polarState === 'night' || isNightAtStation;
 
-        // Keep frozen precipitation on a condition-appropriate icon rather
-        // than replacing it with a rain or generic cloud icon.
-        if (s.includes('snow') || s.includes('flurr')) return 16;
-        if (s.includes('sleet') || s.includes('ice pellet') || s.includes('freezing')) return 18;
-        if (s.includes('hail')) return 17;
+        // Below the probability cutoff, remove all precip from the icon and
+        // use sky cover instead; the precip phrase itself may only say
+        // "Possible Flurries" or "Chance of Rain".
         if (s.includes('partly cloudy')) return isNight ? 29 : 30;
         if (s.includes('mostly cloudy')) return isNight ? 27 : 28;
         if (s.includes('overcast') || s.includes('cloud')) return 26;
         if (s.includes('mostly sunny') || s.includes('mostly clear')) return isNight ? 33 : 34;
         if (s.includes('clear') || s.includes('sunny') || s.includes('fair')) return isNight ? 31 : 32;
 
-        // "Possible Drizzle" often has no non-precipitation phrase to reuse.
+        // Precip phrases often have no non-precipitation phrase to reuse.
         // Use cloud cover when present; otherwise a mostly-cloudy icon is the
-        // closest non-rain representation.
+        // closest non-precipitation representation.
         let cloudCover = details && details.cloudCover != null ? Number(details.cloudCover) : NaN;
         if (isFinite(cloudCover)) {
             if (cloudCover > 1) cloudCover /= 100;
@@ -15603,10 +15600,14 @@
     }
 
     function _twcIconCodeWithRainChance(iconCode, summary, details, rainChancePercent) {
-        if (!_twcRainIconCodes.has(Number(iconCode)) || Number(rainChancePercent) >= 20) {
+        const code = Number(iconCode);
+        const isPrecipIcon = _twcRainIconCodes.has(code) ||
+            _twcSnowIconCodes.has(code);
+        if (!isPrecipIcon || !isFinite(Number(rainChancePercent)) ||
+            Number(rainChancePercent) >= 20) {
             return iconCode;
         }
-        return _twcNonRainIconCode(summary, details);
+        return _twcNonPrecipIconCode(summary, details);
     }
 
     function _twcIconSrc(code) {
@@ -15896,9 +15897,11 @@
         const H2 = (h.humidity ?? 0.5) * 100; const W = h.windSpeed ?? 0; const uv = h.uvIndex ?? 0;
         const cond = (h.summary ?? h.icon ?? '').toLowerCase();
         let word = 'FAIR', color = '#ffffff', reason = '';
-        const hasSnowHour = /snow|flurr|sleet|ice pellet/.test(cond);
+        const precipChance = (h.precipProbability ?? 0) * 100;
+        const hasSnowHour = /snow|flurr|sleet|ice pellet/.test(cond) &&
+            precipChance >= 30;
         const hasRainHour = /rain|drizzle|shower|thunder/.test(cond) &&
-            (h.precipProbability ?? 0) * 100 >= 30;
+            precipChance >= 30;
         // Keep hourly precedence aligned with updateSmartComfort: active
         // frozen precipitation, then rain, outrank wind chill and other factors.
         if (hasSnowHour) { word = 'SNOWY'; color = '#FFFFFF'; reason = 'Snow, ' + _fmtTemp(T); }
