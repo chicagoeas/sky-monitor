@@ -16630,9 +16630,6 @@
     let allOfficialAlertTypesFetchedAt = 0;
     let allOfficialAlertTypesPromise = null;
     let allOfficialAlertZoneGeometryCache = new Map();
-    let allOfficialAlertEntriesByKey = new Map();
-    let allOfficialAlertGeometryBoundsCache = new WeakMap();
-    let allOfficialAlertCanvasRenderer = null;
     let allOfficialAlertRenderTimer = null;
     let allAlertsSettingsCountry = 'US';
     let allAlertsSettingsCategory = 'severe';
@@ -19043,11 +19040,7 @@
             );
         } catch (error) {}
         renderAllAlertsSettingsList();
-        if (enabled && allOfficialAlertsVisible && alertsVisible) {
-            loadAllOfficialAlertsForMap();
-        } else {
-            renderAllOfficialAlertsOnMap();
-        }
+        renderAllOfficialAlertsOnMap();
     }
     window.setAllOfficialAlertCountryEnabled = setAllOfficialAlertCountryEnabled;
 
@@ -19057,11 +19050,7 @@
         if (!allOfficialAlertTypePrefs[country]) allOfficialAlertTypePrefs[country] = {};
         allOfficialAlertTypePrefs[country][key] = !!enabled;
         saveAllOfficialAlertPreferences();
-        if (enabled && allOfficialAlertsVisible && alertsVisible) {
-            loadAllOfficialAlertsForMap();
-        } else {
-            renderAllOfficialAlertsOnMap();
-        }
+        renderAllOfficialAlertsOnMap();
     }
 
     function setAllOfficialAlertTypePreferenceFromControl(control) {
@@ -19382,8 +19371,6 @@
                 allOfficialAlertFeatures.CA,
                 []
             );
-            clearAllOfficialAlertMapData();
-            allOfficialAlertGeometryBoundsCache = new WeakMap();
             allOfficialAlertDataFetchedAt = Date.now();
             if (status) {
                 status.hidden = !errors.length;
@@ -19475,102 +19462,36 @@
         return Array.from(new Set(safeUrls));
     }
 
-    async function _fetchAllOfficialAlertZoneGeometries(zoneUrls) {
-        const urls = Array.from(new Set(zoneUrls || []));
-        const missing = [];
-        urls.forEach(function(zoneUrl) {
-            if (allOfficialAlertZoneGeometryCache.has(zoneUrl)) return;
-            try {
-                const parsed = new URL(zoneUrl);
-                const match = parsed.origin === 'https://api.weather.gov'
-                    ? parsed.pathname.match(/^\/zones\/(forecast|county|marine|fire)\/([A-Z0-9]+)$/)
-                    : null;
-                if (match) missing.push({ url: zoneUrl, token: match[1] + ':' + match[2] });
-                else allOfficialAlertZoneGeometryCache.set(zoneUrl, Promise.resolve(null));
-            } catch (error) {
-                allOfficialAlertZoneGeometryCache.set(zoneUrl, Promise.resolve(null));
+    function _fetchAllOfficialAlertZoneGeometry(zoneUrl) {
+        if (allOfficialAlertZoneGeometryCache.has(zoneUrl)) {
+            return allOfficialAlertZoneGeometryCache.get(zoneUrl);
+        }
+        let cachedUrl = zoneUrl;
+        try {
+            const upstreamUrl = new URL(zoneUrl);
+            const match = upstreamUrl.pathname.match(
+                /^\/zones\/(forecast|county|marine|fire)\/([A-Z0-9]+)$/
+            );
+            if (upstreamUrl.origin === 'https://api.weather.gov' && match) {
+                cachedUrl = WEATHER_WORKER_URL + '/api/alert-zones/' +
+                    match[1] + '/' + match[2];
             }
+        } catch (error) {}
+        const request = fetch(cachedUrl, {
+            cache: 'force-cache',
+            headers: { 'Accept': 'application/geo+json, application/json' }
+        }).then(function(response) {
+            if (!response.ok) return null;
+            return response.json();
+        }).then(function(payload) {
+            const geometry = payload && payload.geometry ||
+                payload && payload.feature && payload.feature.geometry;
+            return geometry || null;
+        }).catch(function() {
+            return null;
         });
-
-        // One request carries up to 24 zone IDs. The Worker limits upstream
-        // fan-out, while the browser avoids opening a request for every zone.
-        const batches = [];
-        for (let offset = 0; offset < missing.length; offset += 24) {
-            batches.push(missing.slice(offset, offset + 24));
-        }
-        // Keep at most two batch requests in flight so a global alert refresh
-        // does not compete with map tiles, reports, or the live alert feed.
-        for (let offset = 0; offset < batches.length; offset += 2) {
-            const requests = batches.slice(offset, offset + 2).map(function(batch) {
-                const tokens = batch.map(function(item) { return item.token; });
-                const request = fetch(
-                    WEATHER_WORKER_URL + '/api/alert-zones/batch?zones=' +
-                        encodeURIComponent(tokens.join(',')),
-                    {
-                        cache: 'no-store',
-                        headers: { 'Accept': 'application/json' }
-                    }
-                ).then(function(response) {
-                    if (!response.ok) return { geometries: {} };
-                    return response.json();
-                }).catch(function() {
-                    return { geometries: {} };
-                }).then(async function(payload) {
-                    const result = payload && payload.geometries &&
-                        typeof payload.geometries === 'object'
-                        ? payload : { geometries: {} };
-                    const unresolved = batch.filter(function(item) {
-                        return !result.geometries[item.token];
-                    });
-                    if (!unresolved.length) return result;
-
-                    // Keep compatibility with deployments that have the
-                    // original per-zone Worker route but not the newer batch
-                    // route, and recover individual zones omitted by a batch.
-                    let nextIndex = 0;
-                    const fallbackWorkers = Math.min(6, unresolved.length);
-                    await Promise.all(Array.from({ length: fallbackWorkers }, async function() {
-                        while (nextIndex < unresolved.length) {
-                            const item = unresolved[nextIndex++];
-                            const parts = item.token.split(':');
-                            if (parts.length !== 2) continue;
-                            try {
-                                const fallbackResponse = await fetch(
-                                    WEATHER_WORKER_URL + '/api/alert-zones/' +
-                                        parts[0] + '/' + parts[1],
-                                    {
-                                        cache: 'no-store',
-                                        headers: {
-                                            'Accept': 'application/geo+json, application/json'
-                                        }
-                                    }
-                                );
-                                if (!fallbackResponse.ok) continue;
-                                const fallbackPayload = await fallbackResponse.json();
-                                result.geometries[item.token] = fallbackPayload &&
-                                    (fallbackPayload.geometry ||
-                                        fallbackPayload.feature && fallbackPayload.feature.geometry) || null;
-                            } catch (error) {}
-                        }
-                    }));
-                    return result;
-                });
-                batch.forEach(function(item) {
-                    allOfficialAlertZoneGeometryCache.set(
-                        item.url,
-                        request.then(function(payload) {
-                            return payload && payload.geometries &&
-                                payload.geometries[item.token] || null;
-                        })
-                    );
-                });
-                return request;
-            });
-            await Promise.all(requests);
-        }
-        return Promise.all(urls.map(function(zoneUrl) {
-            return allOfficialAlertZoneGeometryCache.get(zoneUrl) || Promise.resolve(null);
-        }));
+        allOfficialAlertZoneGeometryCache.set(zoneUrl, request);
+        return request;
     }
 
     async function resolveAllOfficialAlertGeometry() {
@@ -19588,11 +19509,19 @@
                 });
             });
         });
+        let nextIndex = 0;
         const uniqueZoneUrls = Array.from(zoneJobs.keys());
-        const geometries = await _fetchAllOfficialAlertZoneGeometries(uniqueZoneUrls);
-        uniqueZoneUrls.forEach(function(url, index) {
-            zoneJobs.set(url, geometries[index] || null);
-        });
+        const workerCount = Math.min(20, uniqueZoneUrls.length);
+        const workers = [];
+        for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+            workers.push((async function() {
+                while (nextIndex < uniqueZoneUrls.length) {
+                    const url = uniqueZoneUrls[nextIndex++];
+                    zoneJobs.set(url, await _fetchAllOfficialAlertZoneGeometry(url));
+                }
+            })());
+        }
+        await Promise.all(workers);
         jobs.forEach(function(job) {
             const geometries = job.zoneUrls.map(function(url) {
                 return zoneJobs.get(url);
@@ -19723,64 +19652,31 @@
         });
         saveAllOfficialAlertPreferences();
         renderAllAlertsSettingsList();
-        if (enabled && allOfficialAlertsVisible && alertsVisible) {
-            loadAllOfficialAlertsForMap();
-        } else {
-            renderAllOfficialAlertsOnMap();
-        }
+        renderAllOfficialAlertsOnMap();
     }
 
     function clearAllOfficialAlertMapData() {
         if (allOfficialAlertLayer) allOfficialAlertLayer.clearLayers();
-        allOfficialAlertEntriesByKey.clear();
         reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
             return !entry.isAllOfficialAlert;
         });
     }
 
-    function _allOfficialAlertGeometryBounds(geometry) {
-        if (!geometry || typeof geometry !== 'object') return null;
-        const cached = allOfficialAlertGeometryBoundsCache.get(geometry);
-        if (cached) return cached;
-        const bounds = { south: Infinity, west: Infinity, north: -Infinity, east: -Infinity };
-        function collect(value) {
-            if (!value) return;
-            if (Array.isArray(value)) {
-                if (value.length >= 2 && typeof value[0] === 'number' &&
-                    typeof value[1] === 'number') {
-                    bounds.south = Math.min(bounds.south, value[1]);
-                    bounds.west = Math.min(bounds.west, value[0]);
-                    bounds.north = Math.max(bounds.north, value[1]);
-                    bounds.east = Math.max(bounds.east, value[0]);
-                    return;
-                }
-                value.forEach(collect);
-                return;
-            }
-            if (typeof value !== 'object') return;
-            if (value.type === 'Feature') collect(value.geometry);
-            else if (value.type === 'GeometryCollection') collect(value.geometries);
-            else if (value.coordinates) collect(value.coordinates);
+    function _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName) {
+        if (!window.L || !reportingPopupEntries.length) return false;
+        const geometry = feature.geometry || feature._reportingResolvedGeometry;
+        if (!geometry) return false;
+        let center;
+        try {
+            center = window.L.geoJSON(geometry).getBounds().getCenter();
+        } catch (error) {
+            return false;
         }
-        collect(geometry);
-        if (!isFinite(bounds.south) || !isFinite(bounds.west) ||
-            !isFinite(bounds.north) || !isFinite(bounds.east)) return null;
-        allOfficialAlertGeometryBoundsCache.set(geometry, bounds);
-        return bounds;
-    }
-
-    function _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName, entriesByEvent) {
-        if (!window.L || !entriesByEvent) return false;
-        const geometry = feature && (feature.geometry || feature._reportingResolvedGeometry);
-        const bounds = _allOfficialAlertGeometryBounds(geometry);
-        if (!bounds) return false;
-        const center = window.L.latLng(
-            (bounds.south + bounds.north) / 2,
-            (bounds.west + bounds.east) / 2
-        );
         const eventKey = String(eventName || '').toLowerCase();
-        const candidates = entriesByEvent.get(eventKey) || [];
-        return candidates.some(function(entry) {
+        return reportingPopupEntries.some(function(entry) {
+            if (entry.isAllOfficialAlert || entry.source !== 'nws' ||
+                !entry.isPolygon || !entry.layer ||
+                String(entry.nwsEventName || '').toLowerCase() !== eventKey) return false;
             try {
                 return entry.layer.getBounds().contains(center) &&
                     reportingPolygonContainsLatLng(entry.layer, center);
@@ -19815,34 +19711,43 @@
         return 'NWS';
     }
 
-    function allOfficialAlertGeometryIsInCurrentView(geometry, view) {
-        if (!view) return true;
-        const bounds = _allOfficialAlertGeometryBounds(geometry);
-        if (!bounds) return true;
-        return bounds.north >= view.getSouth() && bounds.south <= view.getNorth() &&
-            bounds.east >= view.getWest() && bounds.west <= view.getEast();
+    function allOfficialAlertGeometryIsInCurrentView(geometry) {
+        if (!reportingMap || !window.L || !reportingMap.getBounds) return true;
+        const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+        function collect(value) {
+            if (!value) return;
+            if (Array.isArray(value)) {
+                if (value.length >= 2 && typeof value[0] === 'number' &&
+                    typeof value[1] === 'number') {
+                    bounds[0] = Math.min(bounds[0], value[1]);
+                    bounds[1] = Math.min(bounds[1], value[0]);
+                    bounds[2] = Math.max(bounds[2], value[1]);
+                    bounds[3] = Math.max(bounds[3], value[0]);
+                    return;
+                }
+                value.forEach(collect);
+                return;
+            }
+            if (typeof value !== 'object') return;
+            if (value.type === 'Feature') collect(value.geometry);
+            else if (value.type === 'GeometryCollection') collect(value.geometries);
+            else if (value.coordinates) collect(value.coordinates);
+        }
+        collect(geometry);
+        if (!isFinite(bounds[0]) || !isFinite(bounds[1]) ||
+            !isFinite(bounds[2]) || !isFinite(bounds[3])) return true;
+        const view = reportingMap.getBounds();
+        return bounds[2] >= view.getSouth() && bounds[0] <= view.getNorth() &&
+            bounds[3] >= view.getWest() && bounds[1] <= view.getEast();
     }
 
     function renderAllOfficialAlertsOnMap() {
         if (!allOfficialAlertLayer || !window.L) return;
+        clearAllOfficialAlertMapData();
         if (!allOfficialAlertsVisible || !alertsVisible || historicalRadarState.active) {
-            clearAllOfficialAlertMapData();
             syncReportingMapLayers();
             return;
         }
-        const viewBounds = reportingMap && reportingMap.getBounds
-            ? reportingMap.getBounds() : null;
-        const existingAlertPolygonsByEvent = new Map();
-        reportingPopupEntries.forEach(function(entry) {
-            if (entry.isAllOfficialAlert || entry.source !== 'nws' ||
-                !entry.isPolygon || !entry.layer) return;
-            const eventKey = String(entry.nwsEventName || '').toLowerCase();
-            if (!eventKey) return;
-            if (!existingAlertPolygonsByEvent.has(eventKey)) {
-                existingAlertPolygonsByEvent.set(eventKey, []);
-            }
-            existingAlertPolygonsByEvent.get(eventKey).push(entry);
-        });
         const seen = new Set();
         ['US', 'CA'].forEach(function(country) {
             if (!allOfficialAlertCountryEnabled(country)) return;
@@ -19856,7 +19761,9 @@
                     allOfficialAlertDefaultOn(country, eventName)
                 )) return;
                 const geometry = feature.geometry || feature._reportingResolvedGeometry;
-                if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry, viewBounds)) return;
+                if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) return;
+                if (country === 'US' &&
+                    _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName)) return;
 
                 const props = feature.properties || {};
                 const id = String(props.id || feature.id || props.feature_id ||
@@ -19864,17 +19771,6 @@
                 const key = country + '|' + id;
                 if (seen.has(key)) return;
                 seen.add(key);
-                const existing = allOfficialAlertEntriesByKey.get(key);
-                if (existing) {
-                    if (!allOfficialAlertLayer.hasLayer(existing.layer)) {
-                        existing.layer.addTo(allOfficialAlertLayer);
-                    }
-                    return;
-                }
-                if (country === 'US' &&
-                    _allOfficialAlertFeatureIsCoveredByExistingPolygon(
-                        feature, eventName, existingAlertPolygonsByEvent
-                    )) return;
 
                 const color = _allOfficialAlertColor(feature, eventName, country);
                 const geoFeature = { type: 'Feature', geometry: geometry, properties: props };
@@ -19893,7 +19789,6 @@
                             opacity: 1, fillColor: color, fillOpacity: 0.9
                         })
                         : window.L.geoJSON(geoFeature, {
-                        renderer: allOfficialAlertCanvasRenderer || undefined,
                         style: {
                             color: color, weight: 2.5, opacity: 0.95,
                             fillColor: color, fillOpacity: 0.2
@@ -19955,20 +19850,8 @@
                     ])
                 };
                 registerReportingPopup(geoLayer, popupEntry);
-                allOfficialAlertEntriesByKey.set(key, {
-                    layer: geoLayer,
-                    popupEntry: popupEntry
-                });
                 geoLayer.addTo(allOfficialAlertLayer);
             });
-        });
-        allOfficialAlertEntriesByKey.forEach(function(record, key) {
-            if (seen.has(key)) return;
-            allOfficialAlertLayer.removeLayer(record.layer);
-            allOfficialAlertEntriesByKey.delete(key);
-        });
-        reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
-            return !entry.isAllOfficialAlert || seen.has(entry._allOfficialAlertKey);
         });
         syncReportingMapLayers();
     }
@@ -24122,7 +24005,6 @@
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
         allOfficialAlertLayer = L_ref.layerGroup();
-        allOfficialAlertCanvasRenderer = L_ref.canvas({ padding: 0.5 });
         customSkyAlertLayer = L_ref.layerGroup();
         lsrLayer = L_ref.layerGroup().addTo(reportingMap);
 
