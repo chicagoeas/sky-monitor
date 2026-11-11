@@ -16518,6 +16518,7 @@
     ];
     let tropicalRouteNWSAlertsVisible = localStorage.getItem(TROPICAL_NWS_ALERTS_PREF_KEY) !== '0';
     let lsrLayer = null;
+    let reportingLsrCanvasRenderer = null;
     let alertPolygonLayer = null;
     let customSkyAlertLayer = null;
     let userReportLayer = null;
@@ -16613,6 +16614,7 @@
      let historicalRadarPending = !!CUSTOM_SKY_DEEP_LINK_ID;
     let singleSiteRadarSiteLayer = null;
     let singleSiteRadarSites = [];
+    let singleSiteRadarRenderSignature = '';
      let singleSiteRadarAllSites = [];
     let singleSiteRadarProducts = [];
     let singleSiteRadarLocationKey = '';
@@ -16667,6 +16669,7 @@
         }
     })();
     let allOfficialAlertLayer = null;
+    let allOfficialAlertLastRenderSignature = '';
     let allOfficialAlertFeatures = { US: [], CA: [] };
     let allOfficialAlertCatalogs = { US: [], CA: [] };
     let allOfficialAlertDataFetchedAt = 0;
@@ -18470,6 +18473,28 @@
                  }
                  return;
              }
+              const nextSites = Array.isArray(sites) ? sites.slice() : [];
+              const selectedSiteId = String(reportingRadarSite && reportingRadarSite.id || '')
+                  .toUpperCase();
+              const nextSignature = JSON.stringify([
+                  selectedSiteId,
+                  nextSites.map(function(site) {
+                      return [
+                          String(site && site.id || '').toUpperCase(),
+                          Number(site && site.lat),
+                          Number(site && site.lon),
+                          String(site && site.name || '')
+                      ];
+                  })
+              ]);
+              if (singleSiteRadarSiteLayer &&
+                  nextSignature === singleSiteRadarRenderSignature) {
+                  singleSiteRadarSites = nextSites;
+                  if (!reportingMap.hasLayer(singleSiteRadarSiteLayer)) {
+                      singleSiteRadarSiteLayer.addTo(reportingMap);
+                  }
+                  return;
+              }
              if (!singleSiteRadarSiteLayer) {
                  singleSiteRadarSiteLayer = window.L.layerGroup().addTo(reportingMap);
              } else {
@@ -18478,7 +18503,7 @@
                      singleSiteRadarSiteLayer.addTo(reportingMap);
                  }
              }
-             singleSiteRadarSites = Array.isArray(sites) ? sites.slice() : [];
+              singleSiteRadarSites = nextSites;
              singleSiteRadarSites.forEach(function(site) {
                  const siteId = String(site.id || '').toUpperCase();
                  const displayId = _iemRadarDisplayId(site);
@@ -18498,6 +18523,7 @@
                  });
                  marker.addTo(singleSiteRadarSiteLayer);
              });
+              singleSiteRadarRenderSignature = nextSignature;
          }
 
          function refreshSingleSiteRadarMarkerSelection() {
@@ -19284,8 +19310,34 @@
         }
         allOfficialAlertColorPrefs[country][key] = normalizedColor;
         saveAllOfficialAlertColorPreferences();
+        applyAllOfficialAlertColorToRenderedLayers(
+            country, key, normalizedColor
+        );
         renderAllAlertsSettingsList();
-        renderAllOfficialAlertsOnMap();
+    }
+
+    function applyAllOfficialAlertColorToRenderedLayers(country, eventName, color) {
+        const eventKey = String(eventName || '').toLowerCase();
+        reportingPopupEntries.forEach(function(entry) {
+            const entryCountry = entry._allOfficialAlertCountry ||
+                entry.allOfficialAlertCountry ||
+                (entry.source === 'nws' ? 'US' :
+                    (entry.source === 'environment-canada' ? 'CA' : ''));
+            const entryEvent = entry._allOfficialAlertEventName ||
+                entry.allOfficialAlertEventName ||
+                entry.nwsEventName ||
+                entry.environmentCanadaEventName || '';
+            if (entryCountry !== country ||
+                String(entryEvent).toLowerCase() !== eventKey) return;
+            entry.color = color;
+            if (entry.layer && typeof entry.layer.setStyle === 'function') {
+                entry.layer.setStyle({ color: color, fillColor: color });
+            }
+            if (entry._popupId) {
+                const card = document.getElementById(entry._popupId);
+                if (card) card.style.borderLeftColor = color;
+            }
+        });
     }
 
     function setAllOfficialAlertColorPreferenceFromControl(control) {
@@ -19645,6 +19697,7 @@
             // treating stale/empty data as a successful three-minute refresh.
             allOfficialAlertDataFetchedAt = Date.now() -
                 (errors.length ? 165000 : 0);
+            allOfficialAlertLastRenderSignature = '';
             if (status) {
                 status.hidden = !errors.length;
                 status.textContent = errors.length
@@ -19946,6 +19999,7 @@
         reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
             return !entry.isAllOfficialAlert;
         });
+        allOfficialAlertLastRenderSignature = '';
     }
 
     function _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName) {
@@ -20125,31 +20179,37 @@
         }
     }
 
+    const allOfficialAlertGeometryBoundsCache = new WeakMap();
     function allOfficialAlertGeometryIsInCurrentView(geometry) {
         if (!reportingMap || !window.L || !reportingMap.getBounds) return true;
-        const bounds = [Infinity, Infinity, -Infinity, -Infinity];
-        function collect(value) {
-            if (!value) return;
-            if (Array.isArray(value)) {
-                if (value.length >= 2 && typeof value[0] === 'number' &&
-                    typeof value[1] === 'number') {
-                    bounds[0] = Math.min(bounds[0], value[1]);
-                    bounds[1] = Math.min(bounds[1], value[0]);
-                    bounds[2] = Math.max(bounds[2], value[1]);
-                    bounds[3] = Math.max(bounds[3], value[0]);
+        if (!geometry || typeof geometry !== 'object') return true;
+        let bounds = allOfficialAlertGeometryBoundsCache.get(geometry);
+        if (!bounds) {
+            bounds = [Infinity, Infinity, -Infinity, -Infinity];
+            function collect(value) {
+                if (!value) return;
+                if (Array.isArray(value)) {
+                    if (value.length >= 2 && typeof value[0] === 'number' &&
+                        typeof value[1] === 'number') {
+                        bounds[0] = Math.min(bounds[0], value[1]);
+                        bounds[1] = Math.min(bounds[1], value[0]);
+                        bounds[2] = Math.max(bounds[2], value[1]);
+                        bounds[3] = Math.max(bounds[3], value[0]);
+                        return;
+                    }
+                    value.forEach(collect);
                     return;
                 }
-                value.forEach(collect);
-                return;
+                if (typeof value !== 'object') return;
+                if (value.type === 'Feature') collect(value.geometry);
+                else if (value.type === 'GeometryCollection') collect(value.geometries);
+                else if (value.coordinates) collect(value.coordinates);
             }
-            if (typeof value !== 'object') return;
-            if (value.type === 'Feature') collect(value.geometry);
-            else if (value.type === 'GeometryCollection') collect(value.geometries);
-            else if (value.coordinates) collect(value.coordinates);
+            collect(geometry);
+            if (!isFinite(bounds[0]) || !isFinite(bounds[1]) ||
+                !isFinite(bounds[2]) || !isFinite(bounds[3])) return true;
+            allOfficialAlertGeometryBoundsCache.set(geometry, bounds);
         }
-        collect(geometry);
-        if (!isFinite(bounds[0]) || !isFinite(bounds[1]) ||
-            !isFinite(bounds[2]) || !isFinite(bounds[3])) return true;
         const view = reportingMap.getBounds();
         return bounds[2] >= view.getSouth() && bounds[0] <= view.getNorth() &&
             bounds[3] >= view.getWest() && bounds[1] <= view.getEast();
@@ -20157,11 +20217,40 @@
 
     function renderAllOfficialAlertsOnMap() {
         if (!allOfficialAlertLayer || !window.L) return;
-        clearAllOfficialAlertMapData();
         if (!allOfficialAlertsVisible || !alertsVisible || historicalRadarState.active) {
+            clearAllOfficialAlertMapData();
             syncReportingMapLayers();
             return;
         }
+        const visibleAlertKeys = new Set();
+        ['US', 'CA'].forEach(function(country) {
+            if (!allOfficialAlertCountryEnabled(country)) return;
+            (allOfficialAlertFeatures[country] || []).forEach(function(feature, index) {
+                if (!_allOfficialAlertIsCurrent(feature, country)) return;
+                const eventName = allOfficialAlertTitle(feature, country);
+                if (!eventName || allOfficialAlertEventIsExcluded(eventName, country) ||
+                    !allOfficialAlertPreference(
+                        country,
+                        eventName,
+                        allOfficialAlertDefaultOn(country, eventName)
+                    )) return;
+                const geometry = dissolveAlertGeometry(
+                    feature.geometry || feature._reportingResolvedGeometry
+                );
+                if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) return;
+                if (country === 'US' &&
+                    _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName)) return;
+                const props = feature.properties || {};
+                const id = String(props.id || feature.id || props.feature_id ||
+                    [country, eventName, props.areaDesc || props.feature_name_en || '', index].join('|'));
+                visibleAlertKeys.add(country + '|' + id);
+            });
+        });
+        const nextRenderSignature = JSON.stringify(
+            Array.from(visibleAlertKeys).sort()
+        );
+        if (nextRenderSignature === allOfficialAlertLastRenderSignature) return;
+        clearAllOfficialAlertMapData();
         const seen = new Set();
         ['US', 'CA'].forEach(function(country) {
             if (!allOfficialAlertCountryEnabled(country)) return;
@@ -20232,6 +20321,7 @@
                 const popupEntry = {
                     _allOfficialAlertKey: key,
                     _allOfficialAlertCountry: country,
+                    _allOfficialAlertEventName: eventName,
                     _allOfficialAlertProperties: props,
                     source: country === 'CA' ? 'environment-canada' : 'nws',
                     isAllOfficialAlert: true,
@@ -20294,6 +20384,7 @@
                 geoLayer.addTo(allOfficialAlertLayer);
             });
         });
+        allOfficialAlertLastRenderSignature = nextRenderSignature;
         syncReportingMapLayers();
     }
 
@@ -24454,11 +24545,13 @@
         reportingLabelsPane.style.pointerEvents = 'none';
         const customAlertPane = reportingMap.createPane('custom-alerts');
         customAlertPane.style.zIndex = 450;
-        // IEM Local Storm Reports are SVG circle markers. Keep them above
-        // alert polygons so a report remains directly clickable when it is
-        // covered by both an NWS alert and a SkyMonitor custom alert.
+        // Keep Local Storm Reports above alert polygons and draw dense report
+        // dots on Canvas to avoid maintaining a separate SVG node per report.
         const lsrReportPane = reportingMap.createPane('lsr-reports');
         lsrReportPane.style.zIndex = 620;
+        reportingLsrCanvasRenderer = typeof L_ref.canvas === 'function'
+            ? L_ref.canvas({ pane: 'lsr-reports', padding: 0.5 })
+            : null;
         reportingMap.on('movestart zoomstart', _invalidateHistoricalRadarViewport);
         reportingMap.on('moveend zoomend', function() {
             saveReportingMapView();
@@ -25354,6 +25447,8 @@
                         });
                          registerReportingPopup(polygon, {
                             source: 'environment-canada',
+                            allOfficialAlertCountry: 'CA',
+                            allOfficialAlertEventName: normalized.title,
                             isPolygon: true,
                             color: color,
                              popupKey: normalized.id || [
@@ -25643,7 +25738,16 @@
                         : magnitudeText;
                      const displayMagnitude = normalizeIemLsrMagnitude(magnitudeWithUnit, lsrTypeLabel);
                       const mag = displayMagnitude ? ' \u2014 ' + displayMagnitude : '';
-                    const marker = L_ref.circleMarker([la, lo], { pane: 'lsr-reports', radius: 7, fillColor: dotColor, color: '#0b1e2d', weight: 1.5, opacity: 1, fillOpacity: 0.9 })
+                    const marker = L_ref.circleMarker([la, lo], {
+                        pane: 'lsr-reports',
+                        renderer: reportingLsrCanvasRenderer || undefined,
+                        radius: 7,
+                        fillColor: dotColor,
+                        color: '#0b1e2d',
+                        weight: 1.5,
+                        opacity: 1,
+                        fillOpacity: 0.9
+                    })
                         .addTo(lsrLayer);
                     registerReportingPopup(marker, {
                         source: 'iem-lsr',
