@@ -2011,6 +2011,8 @@
         #launch-screen .ls-icon { width: 88px; height: 88px; margin-bottom: 20px; border-radius: 20px; }
         #launch-screen .ls-title { font-size: clamp(1.5rem, 2.4rem, 39px); font-weight: 800; color: #ffd54f; letter-spacing: -1px; margin: 0; }
         #launch-screen .ls-sub { font-size: 0.8em; color: #4fc3f7; margin-top: 10px; opacity: 0.65; letter-spacing: 1px; text-transform: uppercase; }
+        #launch-screen .ls-loading-status { display: none; margin-top: 12px; color: #94a3b8; font-size: 0.78em; opacity: 0.9; }
+        #launch-screen .ls-loading-status.visible { display: block; }
 
         /* Data source QC panel — runs in background only, never shown to users */
         #pws-qc-panel { display: none !important; }
@@ -2589,6 +2591,7 @@
         <img class="ls-icon" src="https://cdn-icons-png.flaticon.com/512/1779/1779927.png" alt="">
         <div class="ls-title">SkyMonitor</div>
         <div class="ls-sub" style="text-transform: none;">Accurate weather, simplified.</div>
+        <div id="launch-loading-status" class="ls-loading-status" aria-live="polite"></div>
     </div>
     <canvas id="skyCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-2;"></canvas>
     <canvas id="rainCanvas" style="position:fixed; top:0; left:0; pointer-events:none; z-index:-1;"></canvas>
@@ -29288,7 +29291,28 @@
     // against every optional weather provider. Define this before
     // DOMContentLoaded so the primary load can dismiss it as soon as the
     // current observation is rendered.
+    var _launchLoadingStatusTimers = [];
+    function _setLaunchLoadingStatus(message) {
+        var ls = document.getElementById('launch-screen');
+        var status = document.getElementById('launch-loading-status');
+        if (!ls || !status || ls.classList.contains('hidden') || ls.style.display === 'none') return;
+        status.textContent = message;
+        status.classList.toggle('visible', !!message);
+    }
+    if (!window.SKYMONITOR_INFO_PAGE &&
+        !window.SKYMONITOR_RADAR_PAGE &&
+        !window.SKYMONITOR_TROPICAL_PAGE &&
+        !document.documentElement.classList.contains('skip-launch')) {
+        _launchLoadingStatusTimers.push(setTimeout(function() {
+            _setLaunchLoadingStatus('Loading...');
+        }, 5000));
+        _launchLoadingStatusTimers.push(setTimeout(function() {
+            _setLaunchLoadingStatus('Still loading...');
+        }, 20000));
+    }
     window._dismissLaunch = function() {
+        _launchLoadingStatusTimers.forEach(function(timer) { clearTimeout(timer); });
+        _launchLoadingStatusTimers = [];
         var ls = document.getElementById('launch-screen');
         if (!ls || ls.classList.contains('hidden')) return;
         ls.classList.add('hidden');
