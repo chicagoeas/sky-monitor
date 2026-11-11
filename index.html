@@ -16543,6 +16543,8 @@
     let liveRadarLastPlaybackIndex = null;
     let liveRadarRequestId = 0;
     let liveRadarFrameRequestId = 0;
+    let liveRadarMetadataRetryTimer = null;
+    let liveRadarMetadataRetryAttempt = 0;
     let liveRadarInitialLoadComplete = false;
     let liveRadarLayerTransition = null;
     let liveRadarLayerRequestId = 0;
@@ -16988,6 +16990,7 @@
     // for every layer.
     let reportingPopupEntries = [];
     let reportingPopupEntryId = 0;
+    let reportingPopupTimingRefreshTimer = null;
 
     function removeReportingPopupEntries(source) {
         reportingPopupEntries = source
@@ -17431,6 +17434,9 @@
             reportingPopupEntryIdFor(entry) + '-title'
         );
         if (title) title.innerHTML = reportingPopupTitleHtml(entry);
+        if (typeof entry.refreshPopupTiming === 'function') {
+            entry.refreshPopupTiming(Date.now());
+        }
     }
 
     function buildReportingPopupCard(entry, index) {
@@ -17448,7 +17454,7 @@
             + '<span class="reporting-popup-card-chevron" id="' + id + '-chevron">&#8250;</span>'
             + '<span class="reporting-popup-card-title" id="' + id + '-title">'
             + reportingPopupTitleHtml(entry) + '</span>'
-            + '<span class="reporting-popup-card-meta">' + (entry.meta || '') + '</span>'
+            + '<span class="reporting-popup-card-meta" id="' + id + '-meta">' + (entry.meta || '') + '</span>'
             + '</div>'
             + '<div class="reporting-popup-card-detail" id="' + id + '-detail">'
             + (entry.detail || '<span style="opacity:0.7;">Loading details\u2026</span>')
@@ -17565,6 +17571,11 @@
         if (detailEl) detailEl.innerHTML = detail;
     }
 
+    function updateReportingPopupMetaEntry(entry) {
+        const metaEl = document.getElementById(reportingPopupEntryIdFor(entry) + '-meta');
+        if (metaEl) metaEl.innerHTML = entry && entry.meta || '';
+    }
+
     function reportingPopupWidthForMap(mapWidth) {
         return Math.min(400, Math.max(0, Math.floor(mapWidth - 24)));
     }
@@ -17631,12 +17642,43 @@
                 if (card && !card.classList.contains('is-open')) toggleReportingPopupCard(cardId);
             }, 0);
         }
+        if (reportingPopupTimingRefreshTimer) {
+            clearInterval(reportingPopupTimingRefreshTimer);
+            reportingPopupTimingRefreshTimer = null;
+        }
+        const refreshPopupTimings = function() {
+            const nowMs = Date.now();
+            nearby.forEach(function(entry) {
+                if (typeof entry.refreshPopupTiming === 'function') {
+                    entry.refreshPopupTiming(nowMs);
+                }
+                if (typeof entry.refreshPopupData === 'function') {
+                    if (!entry._lastPopupDataRefreshMs) {
+                        entry._lastPopupDataRefreshMs = nowMs;
+                    } else if (nowMs - entry._lastPopupDataRefreshMs >= 60000) {
+                        entry._lastPopupDataRefreshMs = nowMs;
+                        entry.refreshPopupData(latlng).catch(function() {});
+                    }
+                }
+            });
+        };
+        refreshPopupTimings();
+        reportingPopupTimingRefreshTimer = setInterval(refreshPopupTimings, 15000);
+        reportingMap.once('popupclose', function() {
+            if (reportingPopupTimingRefreshTimer) {
+                clearInterval(reportingPopupTimingRefreshTimer);
+                reportingPopupTimingRefreshTimer = null;
+            }
+        });
         nearby.forEach(function(entry) {
             if (typeof entry.loadDetails === 'function' && !entry._detailsLoaded) {
                 entry._detailsLoaded = true;
                 entry.loadDetails(latlng).then(function(detail) {
                     if (detail) updateReportingPopupEntry(entry, detail);
-                }).catch(function() {});
+                    else entry._detailsLoaded = false;
+                }).catch(function() {
+                    entry._detailsLoaded = false;
+                });
             }
         });
     }
@@ -18067,6 +18109,9 @@
 
     function localNwsReportingDetails(entry, eventName, wfo) {
         const props = entry && entry.nwsAlertProperties || {};
+        if (entry && entry.isAllOfficialAlert) {
+            return allOfficialAlertPopupDetail(props, 'US', Date.now());
+        }
         const timeInfo = reportingAlertTimeInfo(props);
         const expires = reportingAlertExpiryValue(props);
         const rows = [
@@ -18084,7 +18129,7 @@
             '</span>';
         try {
             const response = await fetchNwsActiveAlertsAtPoint(latlng);
-            if (!response.ok) return unavailable;
+            if (!response.ok) return entry && entry.isAllOfficialAlert ? '' : unavailable;
             const data = response.payload || {};
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
             const allCandidates = (data.features || []).map(function(feature) {
@@ -18147,7 +18192,18 @@
             // A warning does not need to carry a damage-threat tag to be a
             // complete alert. If the NWS detail endpoint has no matching
             // feature, retain the metadata already supplied by the map feed.
-            if (!alert) return localNwsReportingDetails(entry, eventName, wfo);
+            if (!alert) {
+                return entry && entry.isAllOfficialAlert
+                    ? ''
+                    : localNwsReportingDetails(entry, eventName, wfo);
+            }
+            if (entry && entry.isAllOfficialAlert) {
+                return entry.detail || allOfficialAlertPopupDetail(
+                    entry.nwsAlertProperties || alert,
+                    'US',
+                    Date.now()
+                );
+            }
              const timeInfo = reportingAlertTimeInfo(alert);
               const parsedAlertText = _historicalNwsTextSections(alert.description || '');
              const rows = [
@@ -18161,7 +18217,7 @@
              return reportingPopupDetailRows(rows) ||
                 localNwsReportingDetails(entry, eventName, wfo);
         } catch (e) {
-            return unavailable;
+            return entry && entry.isAllOfficialAlert ? '' : unavailable;
         }
     }
 
@@ -19217,7 +19273,7 @@
 
     async function _fetchAllNwsAlertFeatures() {
         const response = await fetch(WEATHER_WORKER_URL + '/api/official-alerts/us', {
-            cache: 'force-cache',
+            cache: 'no-store',
             headers: { 'Accept': 'application/geo+json, application/json' }
         });
         if (!response.ok) {
@@ -19229,7 +19285,7 @@
 
     async function _fetchAllCanadaAlertFeatures() {
         const response = await fetch(WEATHER_WORKER_URL + '/api/official-alerts/ca', {
-            cache: 'force-cache',
+            cache: 'no-store',
             headers: { 'Accept': 'application/geo+json, application/json' }
         });
         if (!response.ok) {
@@ -19263,10 +19319,7 @@
         if (/cancel|expire|test|exercise/.test(status)) return false;
         const messageType = String(props.messageType || props.message_type || '').toLowerCase();
         if (messageType === 'cancel') return false;
-        const expires = country === 'CA'
-            ? (props.event_end_datetime || props.expiration_datetime ||
-                props.expires || props.expiresAt)
-            : (props.expires || props.ends || props.expiration || props.expirationTime);
+        const expires = allOfficialAlertExpiryValue(props, country);
         const expiresDate = parseReportDate(expires);
         return !expiresDate || expiresDate.getTime() > Date.now();
     }
@@ -19397,7 +19450,10 @@
                 allOfficialAlertFeatures.CA,
                 []
             );
-            allOfficialAlertDataFetchedAt = Date.now();
+            // Keep retrying soon after partial upstream failures instead of
+            // treating stale/empty data as a successful three-minute refresh.
+            allOfficialAlertDataFetchedAt = Date.now() -
+                (errors.length ? 165000 : 0);
             if (status) {
                 status.hidden = !errors.length;
                 status.textContent = errors.length
@@ -19730,13 +19786,66 @@
 
     function allOfficialAlertExpiryValue(properties, country) {
         const props = properties || {};
-        if (country !== 'CA') return reportingAlertExpiryValue(props);
+        if (country !== 'CA') {
+            return customSkyAlertValue(props, [
+                'ends', 'endTime',
+                'expire', 'expire_utc', 'polygon_end', 'polygonEnd',
+                'expires', 'expiresAt', 'expires_at',
+                'expiration', 'expirationTime', 'expiration_time'
+            ], '');
+        }
         return customSkyAlertValue(props, [
             'event_end_datetime', 'expiration_datetime',
             'expires', 'expiresAt', 'expires_at',
             'expiration', 'expirationTime', 'expiration_time',
             'ends', 'endTime'
         ], '');
+    }
+
+    function allOfficialAlertPopupMeta(properties, country, nowMs) {
+        const props = properties || {};
+        const referenceMs = isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+        const startDate = parseReportDate(allOfficialAlertStartValue(props, country));
+        const startsIn = startDate && startDate.getTime() > referenceMs
+            ? formatReportingMinutesUntilAt(startDate, referenceMs)
+            : '';
+        const expires = allOfficialAlertExpiryValue(props, country);
+        const office = country === 'CA'
+            ? 'Environment Canada'
+            : allOfficialAlertWfoCode(props);
+        return escapeHtml(office) +
+            (startsIn ? ' · Starts in ' + escapeHtml(startsIn) : '') +
+            (expires ? ' · ' + escapeHtml(formatReportingExpiry(expires)) : '');
+    }
+
+    function allOfficialAlertPopupDetail(properties, country, nowMs) {
+        const props = properties || {};
+        const referenceMs = isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+        const timeInfo = reportingAlertTimeInfo(props);
+        const start = allOfficialAlertStartValue(props, country);
+        const startDate = parseReportDate(start);
+        const futureStart = !!startDate && startDate.getTime() > referenceMs;
+        const expires = allOfficialAlertExpiryValue(props, country);
+        const area = country === 'CA'
+            ? [props.feature_name_en, props.province].filter(Boolean).join(', ')
+            : String(props.areaDesc || '');
+        const description = country === 'CA'
+            ? (props.alert_text_en || props.alert_text || props.description || '')
+            : (props.description || '');
+        const instructions = country === 'CA'
+            ? (props.instruction_en || props.instruction || '')
+            : (props.instruction || '');
+        return reportingPopupDetailRows([
+            [timeInfo.label, timeInfo.value
+                ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
+            ['Area', area],
+            ['Starts at', futureStart
+                ? formatReportingDateTimeNoSeconds(startDate) : ''],
+            ['Valid through', expires
+                ? formatReportingDateTimeNoSeconds(expires) : ''],
+            ['Alert text', description],
+            ['Instructions', instructions]
+        ]);
     }
 
     function allOfficialAlertWfoCode(properties) {
@@ -19866,26 +19975,10 @@
                     }
                     return false;
                 })(geometry);
-                const timeInfo = reportingAlertTimeInfo(props);
-                const start = allOfficialAlertStartValue(props, country);
-                const startDate = parseReportDate(start);
-                const nowMs = Date.now();
-                const futureStart = !!startDate && startDate.getTime() > nowMs;
-                const startsIn = futureStart
-                    ? formatReportingMinutesUntilAt(startDate, nowMs)
-                    : '';
-                const expiry = allOfficialAlertExpiryValue(props, country);
-                const area = country === 'CA'
-                    ? [props.feature_name_en, props.province].filter(Boolean).join(', ')
-                    : String(props.areaDesc || '');
-                const description = country === 'CA'
-                    ? (props.alert_text_en || props.alert_text || props.description || '')
-                    : (props.description || '');
-                const instructions = country === 'CA'
-                    ? (props.instruction_en || props.instruction || '')
-                    : (props.instruction || '');
                 const popupEntry = {
                     _allOfficialAlertKey: key,
+                    _allOfficialAlertCountry: country,
+                    _allOfficialAlertProperties: props,
                     source: country === 'CA' ? 'environment-canada' : 'nws',
                     isAllOfficialAlert: true,
                     isPolygon: hasPolygon,
@@ -19894,21 +19987,55 @@
                     nwsEventName: country === 'US' ? eventName : '',
                     popupKey: id,
                     title: escapeHtml(eventName),
-                    meta: (country === 'CA' ? 'Environment Canada' :
-                        allOfficialAlertWfoCode(props)) +
-                        (startsIn ? ' · Starts in ' + escapeHtml(startsIn) : '') +
-                        (expiry ? ' · ' + escapeHtml(formatReportingExpiry(expiry)) : ''),
-                    detail: reportingPopupDetailRows([
-                        [timeInfo.label, timeInfo.value
-                            ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-                        ['Area', area],
-                        ['Starts at', futureStart
-                            ? formatReportingDateTimeNoSeconds(startDate) : ''],
-                        ['Valid through', expiry ? formatReportingDateTimeNoSeconds(expiry) : ''],
-                        ['Alert text', description],
-                        ['Instructions', instructions]
-                    ])
+                    meta: allOfficialAlertPopupMeta(props, country, Date.now()),
+                    detail: allOfficialAlertPopupDetail(props, country, Date.now())
                 };
+                popupEntry.refreshPopupTiming = function(nowMs) {
+                    const currentProperties = country === 'US' && this.nwsAlertProperties
+                        ? this.nwsAlertProperties
+                        : this._allOfficialAlertProperties;
+                    this.meta = allOfficialAlertPopupMeta(
+                        currentProperties,
+                        country,
+                        nowMs
+                    );
+                    this.detail = allOfficialAlertPopupDetail(
+                        currentProperties,
+                        country,
+                        nowMs
+                    );
+                    updateReportingPopupMetaEntry(this);
+                    updateReportingPopupEntry(this, this.detail);
+                };
+                if (country === 'US') {
+                    popupEntry.loadDetails = function(latlng) {
+                        const entry = this;
+                        return loadNwsReportingDetails(
+                            entry,
+                            latlng,
+                            eventName,
+                            allOfficialAlertWfoCode(props)
+                        ).then(function(detail) {
+                            if (!entry._nwsMetadataMatched) return '';
+                            entry._lastPopupDataRefreshMs = Date.now();
+                            return detail || entry.detail;
+                        });
+                    };
+                    popupEntry.refreshPopupData = function(latlng) {
+                        const entry = this;
+                        return loadNwsReportingDetails(
+                            entry,
+                            latlng,
+                            eventName,
+                            allOfficialAlertWfoCode(props)
+                        ).then(function(detail) {
+                            if (detail && entry._nwsMetadataMatched) {
+                                entry._lastPopupDataRefreshMs = Date.now();
+                                updateReportingPopupEntry(entry, entry.detail || detail);
+                            }
+                        });
+                    };
+                }
                 registerReportingPopup(geoLayer, popupEntry);
                 geoLayer.addTo(allOfficialAlertLayer);
             });
@@ -20324,18 +20451,20 @@
 
     function reportingAlertExpiryValue(props) {
         return customSkyAlertValue(props, [
-            'expires',
-            'expiresAt',
-            'expires_at',
-            'expiration',
-            'expirationTime',
-            'expiration_time',
+            // For NWS CAP alerts, `expires` is the message's shorter
+            // expiration; `ends` is the actual advertised event end.
             'ends',
             'endTime',
             'expire',
             'expire_utc',
             'polygon_end',
-            'polygonEnd'
+            'polygonEnd',
+            'expires',
+            'expiresAt',
+            'expires_at',
+            'expiration',
+            'expirationTime',
+            'expiration_time'
         ], '');
     }
 
@@ -21822,6 +21951,10 @@
     }
 
     function _loadLiveRadarFrames() {
+        if (liveRadarMetadataRetryTimer) {
+            clearTimeout(liveRadarMetadataRetryTimer);
+            liveRadarMetadataRetryTimer = null;
+        }
         const requestId = ++liveRadarRequestId;
         _setHistoricalRadarStatus('Loading live radar\u2026', '#9edfff');
         return fetch(LIBREWXR_WEATHER_MAPS_URL, {
@@ -21833,13 +21966,30 @@
         }).then(function(payload) {
             if (requestId !== liveRadarRequestId ||
                 historicalRadarState.active) return;
+            liveRadarMetadataRetryAttempt = 0;
             _activateLiveRadarFrames(payload);
         }).catch(function(error) {
             if (requestId !== liveRadarRequestId ||
                 historicalRadarState.active) return;
             liveRadarInitialLoadComplete = false;
-            _setHistoricalRadarStatus(getSiteErrorText('RAD-502-UPSTREAM') + ' Retrying…', '#ffb74d');
+            const retryDelayMs = Math.min(
+                30000,
+                1000 * Math.pow(2, Math.min(liveRadarMetadataRetryAttempt, 5))
+            );
+            liveRadarMetadataRetryAttempt += 1;
+            _setHistoricalRadarStatus(
+                getSiteErrorText('RAD-502-UPSTREAM') +
+                    ' Retrying in ' + Math.ceil(retryDelayMs / 1000) + ' seconds…',
+                '#ffb74d'
+            );
             console.warn('[SkyMonitor] LibreWXR radar failed:', error);
+            liveRadarMetadataRetryTimer = setTimeout(function() {
+                liveRadarMetadataRetryTimer = null;
+                if (requestId !== liveRadarRequestId ||
+                    historicalRadarState.active ||
+                    reportingRadarLayerMode === 'single') return;
+                _loadLiveRadarFrames();
+            }, retryDelayMs);
         });
     }
 
@@ -22495,6 +22645,7 @@
              };
              const fail = function() {
                  if (committed || requestId !== liveRadarLayerRequestId) return;
+                  committed = true;
                  if (liveRadarLayerTransition &&
                      liveRadarLayerTransition.requestId === requestId) {
                      if (liveRadarLayerTransition.timeoutId) {
@@ -22505,6 +22656,27 @@
                  if (reportingMap.hasLayer(nextLayer)) {
                      reportingMap.removeLayer(nextLayer);
                  }
+                  if (currentRetryAttempt < 1 && radarVisible) {
+                      _setHistoricalRadarStatus(
+                          'Radar tile failed. Retrying…',
+                          '#ffb74d'
+                      );
+                      setTimeout(function() {
+                          if (requestId !== liveRadarLayerRequestId ||
+                              !radarVisible || historicalRadarState.active) return;
+                          _replaceReportingRadarLayer(
+                              url,
+                              'live',
+                              site,
+                              currentRetryAttempt + 1
+                          );
+                      }, 300);
+                      return;
+                  }
+                  _setHistoricalRadarStatus(
+                      getSiteErrorText('RAD-502-UPSTREAM') + ' Radar tile unavailable.',
+                      '#ffb74d'
+                  );
                  if (liveRadarPlaying) scheduleLiveRadarPlayback();
              };
              nextLayer.on('tileload', function() {
