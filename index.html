@@ -17240,6 +17240,27 @@
         return true;
     }
 
+    function reportingAlertEntriesAtLatLng(latlng) {
+        if (!latlng) return [];
+        const alertSources = {
+            'nws': true,
+            'environment-canada': true,
+            'custom-skymonitor': true
+        };
+        const clickedAlerts = reportingPopupEntries.filter(function(entry) {
+            if (!entry || !entry.isPolygon || !alertSources[entry.source] ||
+                !reportingPopupSourceIsVisible(entry.source) || !entry.layer) return false;
+            try {
+                const bounds = entry.layer.getBounds && entry.layer.getBounds();
+                return !!bounds && bounds.contains(latlng) &&
+                    reportingPolygonContainsLatLng(entry.layer, latlng);
+            } catch (error) {
+                return false;
+            }
+        });
+        return clickedAlerts;
+    }
+
     // Some map renderers (notably the high-z-index storm-report canvas) can
     // visually cover alert polygons and receive the pointer event first.
     // If that event does not resolve to a layer, Leaflet still emits a map
@@ -17257,25 +17278,32 @@
             return;
         }
 
-        const alertSources = {
-            'nws': true,
-            'environment-canada': true,
-            'custom-skymonitor': true
-        };
-        const clickedAlerts = reportingPopupEntries.filter(function(entry) {
-            if (!entry || !entry.isPolygon || !alertSources[entry.source] ||
-                !reportingPopupSourceIsVisible(entry.source) || !entry.layer) return false;
-            try {
-                const bounds = entry.layer.getBounds && entry.layer.getBounds();
-                return !!bounds && bounds.contains(event.latlng) &&
-                    reportingPolygonContainsLatLng(entry.layer, event.latlng);
-            } catch (error) {
-                return false;
-            }
-        });
+        const clickedAlerts = reportingAlertEntriesAtLatLng(event.latlng);
         if (clickedAlerts.length) {
             openReportingPopup(clickedAlerts[0], event.latlng);
         }
+    }
+
+    let reportingAlertHoverCursorActive = false;
+    function syncReportingAlertHoverCursor(event) {
+        if (!reportingMap) return;
+        const container = reportingMap.getContainer();
+        const target = event && event.originalEvent && event.originalEvent.target;
+        const overMarkerOrControl = target && target.closest &&
+            target.closest('.leaflet-marker-icon, .leaflet-popup, button, a, input');
+        const isOverAlert = !overMarkerOrControl &&
+            reportingAlertEntriesAtLatLng(event && event.latlng).length > 0;
+        if (isOverAlert === reportingAlertHoverCursorActive) return;
+        reportingAlertHoverCursorActive = isOverAlert;
+        container.style.cursor = isOverAlert ? 'pointer' : '';
+    }
+
+    function clearReportingAlertHoverCursor(event) {
+        if (!reportingAlertHoverCursorActive || !reportingMap) return;
+        const relatedTarget = event && event.originalEvent && event.originalEvent.relatedTarget;
+        if (relatedTarget && reportingMap.getContainer().contains(relatedTarget)) return;
+        reportingAlertHoverCursorActive = false;
+        reportingMap.getContainer().style.cursor = '';
     }
 
     function reportingPopupEntryIdFor(entry) {
@@ -24580,6 +24608,8 @@
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
         reportingMap.on('click', openReportingAlertPopupFromMapClick);
+        reportingMap.on('mousemove', syncReportingAlertHoverCursor);
+        reportingMap.on('mouseout', clearReportingAlertHoverCursor);
         const reportingBasemapPane = reportingMap.createPane('reporting-basemap');
         reportingBasemapPane.style.zIndex = 180;
         reportingBasemapPane.style.pointerEvents = 'none';
