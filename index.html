@@ -15427,11 +15427,17 @@
             if (source.includes('isolated')) return 'Isolated';
             return '';
         }
+        // Use one confidence scale anywhere the daily summary describes
+        // precipitation using TWC's probability of precipitation (PoP).
+        function precipLikelihood(chance) {
+            var probability = Number(chance);
+            return probability > 80 ? 'expected' : probability > 60 ? 'likely' : 'possible';
+        }
         function thunderSummary(j) {
             var chance = Number(pcPart(j));
             var coverage = thunderCoverage(j);
             var lead = coverage ? coverage + ' thunderstorms' : 'Thunderstorms';
-            var likelihood = chance >= 70 ? 'likely' : chance >= 40 ? 'possible' : 'possible';
+            var likelihood = precipLikelihood(chance);
             lead = lead.charAt(0).toUpperCase() + lead.slice(1);
             return lead + ' ' + likelihood + ' ' + daypartLabel(j) + '.';
         }
@@ -15455,9 +15461,6 @@
             }
             return false;
         }
-        function rainLikelihood(chance) {
-            return Number(chance) >= 70 ? 'likely' : 'possible';
-        }
         function rainSummary() {
             var rainDaySet = [];
             for (var i = 0; i < n; i++) {
@@ -15468,17 +15471,19 @@
                 var dayRain = pcPart(di * 2) >= 30;
                 var nightRain = pcPart(di * 2 + 1) >= 30;
                 var rainLbl = (!dayRain && nightRain) ? daypartLabel(di * 2 + 1) : dayLabel(di);
-                return 'Rain ' + rainLikelihood(maxPrecipChance(di)) + ' ' + rainLbl + '.';
+                return 'Rain ' + precipLikelihood(maxPrecipChance(di)) + ' ' + rainLbl + '.';
             }
             if (rainDaySet.length === 2) {
                 var firstChance = maxPrecipChance(rainDaySet[0]);
                 var secondChance = maxPrecipChance(rainDaySet[1]);
-                var multiLikelihood = Math.min(firstChance, secondChance) >= 70 ? 'likely' : 'possible';
+                var multiLikelihood = precipLikelihood(Math.min(firstChance, secondChance));
                 return 'Rain ' + multiLikelihood + ' ' + dayLabel(rainDaySet[0]) +
                     ' and ' + dayLabel(rainDaySet[1]) + '.';
             }
             if (rainDaySet.length >= 3) {
-                return 'Unsettled and rainy pattern through ' + dayLabel(rainDaySet[rainDaySet.length - 1]) + '.';
+                var patternChance = Math.min.apply(null, rainDaySet.map(maxPrecipChance));
+                return 'Rain ' + precipLikelihood(patternChance) + ' at times through ' +
+                    dayLabel(rainDaySet[rainDaySet.length - 1]) + '.';
             }
             return null;
         }
@@ -15557,7 +15562,22 @@
             }
         }
 
-        // ── Priority 4: Snow ────────────────────────────────────────────────
+        // ── Priority 4: mixed rain and snow ─────────────────────────────────
+        // TWC commonly phrases this as "Rain/Snow Showers"; don't reduce it to
+        // snow alone, and use the same probability wording as every other
+        // precipitation summary.
+        for (var j = 0; j < n * 2 && !s1; j++) {
+            var mixedText = weatherText(j);
+            var isRainSnowMix = /\brain\s*(?:\/|and)\s*snow\b|\bsnow\s*(?:\/|and)\s*rain\b|\bmix(?:ed)?\s+(?:of\s+)?rain\s+and\s+snow\b/i.test(mixedText);
+            if (pcPart(j) >= 30 && isRainSnowMix) {
+                var mixedLabel = /\bshowers?\b/i.test(mixedText)
+                    ? 'Rain and snow showers'
+                    : 'Rain and snow';
+                s1 = mixedLabel + ' ' + precipLikelihood(pcPart(j)) + ' ' + daypartLabel(j) + '.';
+            }
+        }
+
+        // ── Priority 5: Snow ────────────────────────────────────────────────
         for (var j = 0; j < n * 2 && !s1; j++) {
             var snow = snowPart(j);
             var snowText = weatherText(j);
@@ -15566,11 +15586,12 @@
                 var label = hasPositiveWeatherSignal(snowText, /\bblizzard\b/)
                     ? 'Blizzard conditions'
                     : daySnow >= 2 ? 'Heavy snow' : daySnow >= 0.1 ? 'Snow' : 'Snow showers';
-                s1 = label + ' expected ' + daypartLabel(j) + (daySnow >= 0.5 ? ' (' + fmtSnow(daySnow) + ' possible).' : '.');
+                s1 = label + ' ' + precipLikelihood(pcPart(j)) + ' ' + daypartLabel(j) +
+                    (daySnow >= 0.5 ? ' (' + fmtSnow(daySnow) + ' possible).' : '.');
             }
         }
 
-        // ── Priority 5: Dangerous heat or cold ──────────────────────────────
+        // ── Priority 6: Dangerous heat or cold ──────────────────────────────
         // Combine explicit TWC wording with conservative heat-index / wind-chill
         // thresholds. TWC temperatures here are in the app's native °F units.
         for (var j = 0; j < n * 2 && !s1; j++) {
@@ -15585,7 +15606,7 @@
             else if (dangerousCold) s1 = 'Dangerous cold possible ' + daypartLabel(j) + '.';
         }
 
-        // ── Priority 6: high winds ──────────────────────────────────────────
+        // ── Priority 7: high winds ──────────────────────────────────────────
         for (var j = 0; j < n * 2 && !s1; j++) {
             var windText = weatherText(j);
             var gust = dp.windGust?.[j];
@@ -15595,7 +15616,7 @@
             }
         }
 
-        // ── Priority 7: Thunderstorms (≥30% chance) ─────────────────────────
+        // ── Priority 8: Thunderstorms (≥30% chance) ─────────────────────────
         for (var j = 0; j < n * 2 && !s1; j++) {
             var wx = wxPart(j);
             var narr = narrPart(j);
@@ -15606,7 +15627,7 @@
             }
         }
 
-        // ── Priority 8: Heavy rain — driven by TWC narrative keyword + PoP ──
+        // ── Priority 9: Heavy rain — driven by TWC narrative keyword + PoP ──
         // Only flag "heavy rain" when TWC explicitly says so in the day/night
         // narrative (e.g. "Potential for heavy rainfall."). QPF alone can reach
         // 1"+ from prolonged moderate rain with no heavy-rain signal at all.
@@ -15615,11 +15636,12 @@
             if (pcPart(j) >= 30 &&
                 (narr.includes('heavy rain') || narr.includes('heavy rainfall'))) {
                 var amt = totalQpf(Math.floor(j / 2));
-                s1 = 'Potential for heavy rain ' + daypartLabel(j) + (amt >= 0.25 ? ' (' + fmtRain(amt) + ' possible).' : '.');
+                s1 = 'Heavy rain ' + precipLikelihood(pcPart(j)) + ' ' + daypartLabel(j) +
+                    (amt >= 0.25 ? ' (' + fmtRain(amt) + ' possible).' : '.');
             }
         }
 
-        // ── Priority 9: Rain / showers (≥30% chance) ────────────────────────
+        // ── Priority 10: Rain / showers (≥30% chance) ───────────────────────
         // Multi-day cases stay at day level; single-day case pinpoints day vs night.
         var rainText = rainSummary();
         if (!s1 && rainText) s1 = rainText;
