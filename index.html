@@ -3767,7 +3767,7 @@
                             placeholder="Search alert types" aria-label="Search alert types"
                             oninput="renderAllAlertsSettingsList()">
                     </div>
-                    <div id="all-alerts-catalog-status" role="status" aria-live="polite"></div>
+                    <div id="all-alerts-catalog-status" role="status" aria-live="polite" hidden></div>
                     <div id="all-alerts-catalog-list"></div>
                     <div class="all-alerts-dialog-footer">
                         <button id="all-alerts-reset-all" type="button"
@@ -18545,9 +18545,10 @@
         'tstm non tstm wnd dmg'
     ]);
     function allOfficialAlertEventIsExcluded(eventName) {
-        return ALL_OFFICIAL_ALERT_EXCLUDED_EVENT_NAMES.has(
-            String(eventName || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-        );
+        const normalized = String(eventName || '')
+            .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        return /\bforecast point\b/.test(normalized) ||
+            ALL_OFFICIAL_ALERT_EXCLUDED_EVENT_NAMES.has(normalized);
     }
 
     // Seed the settings with the complete WeatherWise U.S./Canada type lists
@@ -18598,7 +18599,6 @@
             hydro: {
                 Warnings: [
                     'Tsunami Warning|#fd6347',
-                    'Flood (forecast point) Warning|#00ff00',
                     'Flood Warning|#00ff00',
                     'Coastal Flood Warning|#228b22',
                     'Lakeshore Flood Warning|#228b22',
@@ -18606,14 +18606,12 @@
                 ],
                 Watches: [
                     'Tsunami Watch|#ff00ff',
-                    'Flood (forecast point) Watch|#2e8b57',
                     'Flood Watch|#2e8b57',
                     'Coastal Flood Watch|#66cdaa',
                     'Lakeshore Flood Watch|#66cdaa'
                 ],
                 Advisories: [
                     'Tsunami Advisory|#d2691e',
-                    'Flood (forecast point) Advisory|#00ff7f',
                     'Flood Advisory|#00ff7f',
                     'Coastal Flood Advisory|#7cfc00',
                     'Lakeshore Flood Advisory|#7cfc00',
@@ -19368,13 +19366,17 @@
             );
             allOfficialAlertDataFetchedAt = Date.now();
             if (status) {
+                status.hidden = !errors.length;
                 status.textContent = errors.length
                     ? errors.join(' · ') + ' — showing available types'
-                    : 'Official NWS and Environment Canada alert types';
+                    : '';
             }
             return allOfficialAlertFeatures;
         }).catch(function(error) {
-            if (status) status.textContent = 'Could not load official alert types. Try again shortly.';
+            if (status) {
+                status.hidden = false;
+                status.textContent = 'Could not load official alert types. Try again shortly.';
+            }
             console.warn('[SkyMonitor] Full official alert catalog failed:', error);
             return allOfficialAlertFeatures;
         }).finally(function() {
