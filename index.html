@@ -10633,7 +10633,7 @@
                 });
                 // Restore AQI / Air Quality section
                 SkyDB.get(SkyDB.S.weather, 'aqi').then(function(q) {
-                    if (!q || q.aqi == null) return;
+                    if (!q) return;
                     var _sec     = document.getElementById('aqi-section');
                     var _numEl   = document.getElementById('air-num');
                     var _catEl   = document.getElementById('air-cat');
@@ -10642,13 +10642,23 @@
                     var _crdEl   = document.getElementById('aqi-forecast-cards');
                     var _actEl   = document.getElementById('air-action-day');
                     if (_sec) _sec.style.display = '';
-                    if (_numEl)  { _numEl.innerText = Math.round(q.aqi); _numEl.style.color = q.color || ''; }
-                    if (_catEl)  { _catEl.innerText = q.cat || ''; _catEl.style.color = q.color || ''; }
                     if (_pollEl) _pollEl.innerText = q.pollutant ? (q.pollutant.startsWith('Source:') ? q.pollutant : 'Dominant: ' + q.pollutant + (q.area ? '  \u00b7  ' + q.area : '')) : '';
                     if (_hlthEl) _hlthEl.innerText = q.health || '';
                     if (_crdEl && q.cardsHtml) _crdEl.innerHTML = q.cardsHtml;
                     if (_actEl) _actEl.style.display = q.actionDay ? '' : 'none';
-                    _renderAQIDial(q.aqi, q.cat, q.color);
+                    if (q.aqi != null) {
+                        if (_numEl)  { _numEl.innerText = Math.round(q.aqi); _numEl.style.color = q.color || ''; }
+                        if (_catEl)  { _catEl.innerText = q.cat || ''; _catEl.style.color = q.color || ''; }
+                        _renderAQIDial(q.aqi, q.cat, q.color);
+                    } else {
+                        if (_numEl)  { _numEl.innerText = '--'; _numEl.style.color = q.color || '#888'; }
+                        if (_catEl)  { _catEl.innerText = q.cat || 'Unavailable'; _catEl.style.color = q.color || '#888'; }
+                        var _fcst = document.getElementById('aqi-forecast-container');
+                        if (_fcst) _fcst.style.display = 'none';
+                        var _dial = document.getElementById('aqi-dial-canvas');
+                        var _ctx = _dial && _dial.getContext('2d');
+                        if (_ctx) _ctx.clearRect(0, 0, _dial.width, _dial.height);
+                    }
                 });
                 // Restore daily forecast icons from cache
                 SkyDB.get(SkyDB.S.weather, 'twc_forecast').then(function(cached) {
@@ -25534,9 +25544,11 @@
 
     function _fetchTropicalJTWCAdvisory(storm) {
         var cacheKey = _tropicalJTWCAdvisoryUrl(storm);
-        if (tropicalJtwcTextCache[cacheKey]) {
-            return Promise.resolve(tropicalJtwcTextCache[cacheKey]);
+        var cached = tropicalJtwcTextCache[cacheKey];
+        if (cached && cached.expiresAt > Date.now()) {
+            return cached.promise || Promise.resolve(cached.text);
         }
+        delete tropicalJtwcTextCache[cacheKey];
         var basin = String(storm && storm.basin || '').toUpperCase();
         var current = _tropicalCurrentPoint(storm);
         var longitude = current ? current.lon : _tropicalFinite(storm && (
@@ -25552,13 +25564,19 @@
             if (!response.ok) throw new Error('JTWC advisory proxy returned ' + response.status);
             return response.text();
         }).then(function(text) {
-            tropicalJtwcTextCache[cacheKey] = text;
+            tropicalJtwcTextCache[cacheKey] = {
+                text: text,
+                expiresAt: Date.now() + 60 * 1000
+            };
             return text;
         }).catch(function(error) {
             delete tropicalJtwcTextCache[cacheKey];
             throw error;
         });
-        tropicalJtwcTextCache[cacheKey] = request;
+        tropicalJtwcTextCache[cacheKey] = {
+            promise: request,
+            expiresAt: Date.now() + 30 * 1000
+        };
         return request;
     }
 
@@ -25675,20 +25693,25 @@
             if (current) current.push(line);
         });
         finishBlock();
+        var developmentBlocks = blocks.filter(function(block) {
+            return /\b(?:INVEST|AREA OF CONVECTION|LOW PRESSURE AREA|TROPICAL DISTURBANCE)\b/i.test(block);
+        });
+        if (!developmentBlocks.length) developmentBlocks = blocks;
         if (investCode) {
             var escapedCode = investCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            var matcher = new RegExp('\\bINVEST\\s+' + escapedCode + '\\b', 'i');
-            var codeMatches = blocks.filter(function(block) { return matcher.test(block); });
+            var matcher = new RegExp('\\b(?:INVEST[\\s-]*)?' + escapedCode + '\\b', 'i');
+            var codeMatches = developmentBlocks.filter(function(block) { return matcher.test(block); });
             if (codeMatches.length) return codeMatches;
         }
 
         // Some JTWC feeds use shortened storm IDs that do not encode the
-        // invest suffix. When that happens, identify the advisory by its
-        // published center rather than failing before checking the text.
+        // invest suffix, and the text bulletin may lag the live position feed
+        // by several hours. Match the nearest development entry within a
+        // bounded radius instead of requiring near-identical centers.
         var center = _tropicalCurrentPoint(storm || {});
         if (!center) return [];
         var positionMatches = [];
-        blocks.forEach(function(block) {
+        developmentBlocks.forEach(function(block) {
             var position = block.match(
                 /\b(?:NEAR\s+)?(\d{1,2}(?:\.\d+)?)\s*([NS])\s+(\d{1,3}(?:\.\d+)?)\s*([EW])\b/i
             );
@@ -25697,19 +25720,41 @@
             var longitude = Number(position[3]) * (position[4].toUpperCase() === 'W' ? -1 : 1);
             var latitudeDelta = Math.abs(latitude - center.lat);
             var longitudeDelta = Math.abs(((longitude - center.lon + 540) % 360) - 180);
-            if (latitudeDelta <= 0.4 && longitudeDelta <= 0.4) {
+            var distance = Math.sqrt(
+                latitudeDelta * latitudeDelta +
+                Math.pow(longitudeDelta * Math.cos(center.lat * Math.PI / 180), 2)
+            );
+            if (distance <= 2.5) {
                 positionMatches.push({
                     block: block,
-                    distance: Math.sqrt(latitudeDelta * latitudeDelta + longitudeDelta * longitudeDelta)
+                    distance: distance
                 });
             }
         });
         positionMatches.sort(function(a, b) { return a.distance - b.distance; });
         if (positionMatches.length > 1 &&
-            positionMatches[1].distance - positionMatches[0].distance < 0.08) {
+            positionMatches[1].distance - positionMatches[0].distance < 0.5) {
             return [];
         }
         return positionMatches.length ? [positionMatches[0].block] : [];
+    }
+
+    function _tropicalJTWCUnmatchedAdvisory(storm, current, investCode) {
+        var facts = [];
+        if (investCode) facts.push('Invest ' + investCode);
+        if (current) {
+            facts.push('latest feed position ' +
+                Math.abs(current.lat).toFixed(1) + '°' + (current.lat < 0 ? 'S' : 'N') + ', ' +
+                Math.abs(current.lon).toFixed(1) + '°' + (current.lon < 0 ? 'W' : 'E'));
+        }
+        var windKnots = _tropicalFinite(storm && (
+            storm.intensity ?? storm.maxWind ?? storm.windSpeed
+        ));
+        if (windKnots != null) {
+            facts.push('estimated winds ' + Math.round(windKnots) + ' kt');
+        }
+        return 'JTWC still lists this system in its live storm feed, but it is not in the latest regional text advisory.' +
+            (facts.length ? ' ' + facts.join(' · ') + '.' : '');
     }
 
     function _tropicalJTWCReportingEntry(storm) {
@@ -25742,7 +25787,7 @@
                         ['Issued', validLabel],
                         ['Advisory', matches.length
                             ? matches.join('\n\n')
-                            : 'No matching invest entry appears in the current JTWC regional advisory.']
+                            : _tropicalJTWCUnmatchedAdvisory(storm, current, investCode)]
                     ]);
                 }).catch(function() {
                     return reportingPopupDetailRows([
@@ -27157,6 +27202,7 @@
         _aqiStateCode = '';
         try {
             var place = await _osmGeocodeFetch('reverse', { lat: curLat, lon: curLon });
+            if (_aqiStateKey !== key || curLat !== lat || curLon !== lon) return '';
             _aqiStateCode = _stateCodeFromName(place && place.address && place.address.state);
         } catch (e) {}
         return _aqiStateCode;
@@ -27218,7 +27264,10 @@
                         return (o.AQI || 0) > (m.AQI || 0) ? o : m;
                     }, data.observations[0]);
                     if (_airNowBest && _airNowBest.ReportingArea && !_airNowBest.StateCode) {
-                        await _resolveAQIStateCode(curLat, curLon);
+                        // Location labeling is optional. Do not hold the AQI
+                        // card behind a separate geocoder request on slow or
+                        // unreliable mobile connections.
+                        _resolveAQIStateCode(curLat, curLon).catch(function() {});
                     }
                     if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
                 }
@@ -27874,6 +27923,19 @@
             sync.style.opacity = '0';
         };
         if (isInitialLoad) _resetCurrentObservationFields();
+        // Start AQI independently of the slower current-weather and location
+        // classification chains so the card cannot remain hidden when those
+        // complete before an optional data source.
+        var _aqiSectionAtLoad = document.getElementById('aqi-section');
+        if (_aqiSectionAtLoad) _aqiSectionAtLoad.style.display = '';
+        const _earlyAQIPromise = Promise.resolve(
+            fetchAQI(loadGeneration, loadLat, loadLon)
+        ).catch(function(error) {
+            if (loadGeneration === weatherLoadGeneration) {
+                console.warn('[SkyMonitor AQI] Request failed:', error);
+                _renderAQIUnavailable(getSiteErrorText('WX-503-UNAVAILABLE'), 'AirNow');
+            }
+        });
         try {
             // Location classification is useful enrichment, but must not delay
             // the primary current/daily/hourly weather request.
@@ -27969,7 +28031,7 @@
                     if (loadGeneration !== weatherLoadGeneration) { _markHomeDataReady(); return; }
 
                     const _aqiAndBeachPromise = Promise.all([
-                        Promise.resolve(fetchAQI(loadGeneration, loadLat, loadLon)).catch(function() {}),
+                        _earlyAQIPromise,
                         Promise.resolve(fetchBeachForecast(loadLat, loadLon, loadGeneration)).catch(function() {})
                     ]);
                     const _nwsHomePromise = Promise.resolve(fetchNWSChain(loadGeneration, loadLat, loadLon)).then(function(_nwsOk) {
