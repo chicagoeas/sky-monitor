@@ -2744,6 +2744,7 @@
     </style>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js"></script>
     <!-- Leaflet JS (v1.0.4 NEW) -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
@@ -19609,9 +19610,11 @@
                 return zoneJobs.get(url);
             }).filter(Boolean);
             if (geometries.length) {
-                job.feature._reportingResolvedGeometry = geometries.length === 1
+                const combinedGeometry = geometries.length === 1
                     ? geometries[0]
                     : { type: 'GeometryCollection', geometries: geometries };
+                job.feature._reportingResolvedGeometry =
+                    dissolveAlertGeometry(combinedGeometry);
             } else {
                 const props = job.feature.properties || {};
                 const point = props.coordinates || props.center || props.centroid;
@@ -19873,6 +19876,54 @@
         return 'NWS';
     }
 
+    const dissolvedAlertGeometryCache = new WeakMap();
+    function dissolveAlertGeometry(geometry) {
+        if (!geometry || typeof geometry !== 'object') return geometry;
+        if (dissolvedAlertGeometryCache.has(geometry)) {
+            return dissolvedAlertGeometryCache.get(geometry);
+        }
+        const polygons = [];
+        const collect = function(value) {
+            if (!value) return;
+            if (value.type === 'Feature') {
+                collect(value.geometry);
+            } else if (value.type === 'FeatureCollection') {
+                (value.features || []).forEach(collect);
+            } else if (value.type === 'GeometryCollection') {
+                (value.geometries || []).forEach(collect);
+            } else if (value.type === 'Polygon' &&
+                Array.isArray(value.coordinates) && value.coordinates.length) {
+                polygons.push([value.coordinates]);
+            } else if (value.type === 'MultiPolygon' &&
+                Array.isArray(value.coordinates)) {
+                value.coordinates.forEach(function(polygon) {
+                    if (Array.isArray(polygon) && polygon.length) {
+                        polygons.push([polygon]);
+                    }
+                });
+            }
+        };
+        collect(geometry);
+        if (polygons.length < 2) {
+            dissolvedAlertGeometryCache.set(geometry, geometry);
+            return geometry;
+        }
+        const clipping = window.polygonClipping;
+        if (!clipping || typeof clipping.union !== 'function') return geometry;
+        try {
+            const coordinates = clipping.union.apply(clipping, polygons);
+            const dissolved = coordinates && coordinates.length
+                ? { type: 'MultiPolygon', coordinates: coordinates }
+                : geometry;
+            dissolvedAlertGeometryCache.set(geometry, dissolved);
+            return dissolved;
+        } catch (error) {
+            console.warn('[SkyMonitor] Alert boundary dissolve failed; using source geometry.', error);
+            dissolvedAlertGeometryCache.set(geometry, geometry);
+            return geometry;
+        }
+    }
+
     function allOfficialAlertGeometryIsInCurrentView(geometry) {
         if (!reportingMap || !window.L || !reportingMap.getBounds) return true;
         const bounds = [Infinity, Infinity, -Infinity, -Infinity];
@@ -19922,7 +19973,9 @@
                     eventName,
                     allOfficialAlertDefaultOn(country, eventName)
                 )) return;
-                const geometry = feature.geometry || feature._reportingResolvedGeometry;
+                const geometry = dissolveAlertGeometry(
+                    feature.geometry || feature._reportingResolvedGeometry
+                );
                 if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) return;
                 if (country === 'US' &&
                     _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName)) return;
@@ -21555,7 +21608,10 @@
                      ? '<div style="margin-top:6px;"><b style="font-size:0.9em;">Recommended Action</b><br><span>' + escapeHtml(recommendedAction) + '</span></div>'
                     : '';
                 const mdContent = isMd ? buildCustomSkyMdPopup(props, description) : '';
-                const polygon = L_ref.geoJSON(feature, {
+                const displayFeature = Object.assign({}, feature, {
+                    geometry: dissolveAlertGeometry(feature.geometry)
+                });
+                const polygon = L_ref.geoJSON(displayFeature, {
                     pane: 'custom-alerts',
                     style: {
                         color: isDeepLinked ? '#ffffff' : color,
@@ -24800,7 +24856,7 @@
                 );
                 const expires = props.expire || props.expire_utc ||
                     props.expires || props.ends || props.polygon_end;
-                const polygon = L_ref.geoJSON(feature.geometry, {
+                const polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                     style: {
                         color: color,
                         weight: 2.5,
@@ -24908,7 +24964,7 @@
             const color = _allOfficialAlertColor(
                 { properties: popupProperties }, eventName, 'US'
             );
-            const polygon = L_ref.geoJSON(feature.geometry, {
+            const polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                 style: {
                     color: color,
                     weight: 2.5,
@@ -25086,7 +25142,7 @@
                         var popupCopy = _environmentCanadaPopupCopy(normalized.description);
                         var statusText = String(feature.properties && feature.properties.status_en || '').toLowerCase();
                         var issuedLabel = statusText.indexOf('update') !== -1 ? 'Updated' : 'Issued';
-                        var polygon = L_ref.geoJSON(feature.geometry, {
+                        var polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                             style: {
                                 color: color,
                                 weight: 2.5,
@@ -25147,7 +25203,7 @@
                         );
                         const visual = nwsAlertVisualData(f.properties, nwsEvent);
                         const expiresText = f.properties.expire || f.properties.polygon_end;
-                        const _poly = L_ref.geoJSON(f.geometry, { style: {
+                        const _poly = L_ref.geoJSON(dissolveAlertGeometry(f.geometry), { style: {
                             color: color,
                             weight: 2.5,
                             opacity: 0.95,
@@ -27956,7 +28012,7 @@
             var color = customSkyAlertSeverityColor(properties);
             var isWatch = /\bWATCH\b/i.test(String(properties.event || ''));
             var alertLayer = L.geoJSON(Object.assign({}, feature, {
-                geometry: geometry
+                geometry: dissolveAlertGeometry(geometry)
             }), {
                 pane: 'tropical-nws-alert-pane',
                 interactive: true,
