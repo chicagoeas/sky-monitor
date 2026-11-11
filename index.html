@@ -2743,6 +2743,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <!-- Leaflet JS (v1.0.4 NEW) -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Dissolve neighboring alert zones into one perimeter before map rendering. -->
+    <script src="https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js"
+        integrity="sha384-2gzcIyrtB96QDjrxsFcJ1O461CWiXJ8fiHgIkJLwTgy4WTktHXTOXt4dviXz9Y5Q"
+        crossorigin="anonymous"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <!-- Cloudflare Turnstile -->
@@ -19530,6 +19534,78 @@
         return request;
     }
 
+    // NWS zone fallbacks arrive as many county polygons. Dissolve their shared
+    // edges before Leaflet draws them so only the alert's outside perimeter remains.
+    function _dissolveAllOfficialAlertGeometry(geometry) {
+        const clipping = window.polygonClipping;
+        if (!clipping || typeof clipping.union !== 'function' || !geometry) return geometry;
+        const polygonInputs = [];
+        const otherGeometries = [];
+        let polygonCount = 0;
+
+        function collect(value) {
+            if (!value || typeof value !== 'object') return;
+            if (value.type === 'Feature') {
+                collect(value.geometry);
+                return;
+            }
+            if (value.type === 'FeatureCollection') {
+                (value.features || []).forEach(collect);
+                return;
+            }
+            if (value.type === 'GeometryCollection') {
+                (value.geometries || []).forEach(collect);
+                return;
+            }
+            if (value.type === 'Polygon' && Array.isArray(value.coordinates) &&
+                value.coordinates.length) {
+                polygonInputs.push(value.coordinates);
+                polygonCount++;
+                return;
+            }
+            if (value.type === 'MultiPolygon' && Array.isArray(value.coordinates) &&
+                value.coordinates.length) {
+                polygonInputs.push(value.coordinates);
+                polygonCount += value.coordinates.length;
+                return;
+            }
+            if (value.type && value.coordinates) otherGeometries.push(value);
+        }
+
+        collect(geometry);
+        if (polygonCount < 2) return geometry;
+        try {
+            const mergedCoordinates = clipping.union.apply(clipping, polygonInputs);
+            if (!Array.isArray(mergedCoordinates) || !mergedCoordinates.length) {
+                return geometry;
+            }
+            const mergedGeometry = mergedCoordinates.length === 1
+                ? { type: 'Polygon', coordinates: mergedCoordinates[0] }
+                : { type: 'MultiPolygon', coordinates: mergedCoordinates };
+            return otherGeometries.length
+                ? {
+                    type: 'GeometryCollection',
+                    geometries: [mergedGeometry].concat(otherGeometries)
+                }
+                : mergedGeometry;
+        } catch (error) {
+            console.warn('[SkyMonitor] Official alert polygon dissolve failed:', error);
+            return geometry;
+        }
+    }
+
+    function _allOfficialAlertDisplayGeometry(feature) {
+        if (!feature) return null;
+        if (feature._reportingDissolvedGeometry) {
+            return feature._reportingDissolvedGeometry;
+        }
+        const geometry = feature.geometry || feature._reportingResolvedGeometry;
+        if (!geometry) return null;
+        feature._reportingDissolvedGeometry =
+            _dissolveAllOfficialAlertGeometry(geometry);
+        return feature._reportingDissolvedGeometry;
+    }
+
     async function resolveAllOfficialAlertGeometry() {
         const jobs = [];
         const zoneJobs = new Map();
@@ -19796,7 +19872,7 @@
                     eventName,
                     allOfficialAlertDefaultOn(country, eventName)
                 )) return;
-                const geometry = feature.geometry || feature._reportingResolvedGeometry;
+                const geometry = _allOfficialAlertDisplayGeometry(feature);
                 if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) return;
                 if (country === 'US' &&
                     _allOfficialAlertFeatureIsCoveredByExistingPolygon(feature, eventName)) return;
