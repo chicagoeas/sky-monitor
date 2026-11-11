@@ -27058,48 +27058,12 @@
         ctx.fill();
     }
 
-    var _aqiStateCode = '';
-    var _aqiStateKey = '';
-    var _US_STATE_CODES = {
-        alabama:'AL', alaska:'AK', arizona:'AZ', arkansas:'AR', california:'CA',
-        colorado:'CO', connecticut:'CT', delaware:'DE', florida:'FL', georgia:'GA',
-        hawaii:'HI', idaho:'ID', illinois:'IL', indiana:'IN', iowa:'IA',
-        kansas:'KS', kentucky:'KY', louisiana:'LA', maine:'ME', maryland:'MD',
-        massachusetts:'MA', michigan:'MI', minnesota:'MN', mississippi:'MS',
-        missouri:'MO', montana:'MT', nebraska:'NE', nevada:'NV', 'new hampshire':'NH',
-        'new jersey':'NJ', 'new mexico':'NM', 'new york':'NY', 'north carolina':'NC',
-        'north dakota':'ND', ohio:'OH', oklahoma:'OK', oregon:'OR', pennsylvania:'PA',
-        'rhode island':'RI', 'south carolina':'SC', 'south dakota':'SD',
-        tennessee:'TN', texas:'TX', utah:'UT', vermont:'VT', virginia:'VA',
-        washington:'WA', 'west virginia':'WV', wisconsin:'WI', wyoming:'WY',
-        'district of columbia':'DC'
-    };
-
-    function _stateCodeFromName(value) {
-        var name = String(value || '').trim();
-        if (/^[A-Za-z]{2}$/.test(name)) return name.toUpperCase();
-        return _US_STATE_CODES[name.toLowerCase()] || '';
-    }
-
-    async function _resolveAQIStateCode(curLat, curLon) {
-        var key = String(curLat) + ',' + String(curLon);
-        if (_aqiStateKey === key) return _aqiStateCode;
-        _aqiStateKey = key;
-        _aqiStateCode = '';
-        try {
-            var place = await _osmGeocodeFetch('reverse', { lat: curLat, lon: curLon });
-            if (_aqiStateKey !== key || curLat !== lat || curLon !== lon) return '';
-            _aqiStateCode = _stateCodeFromName(place && place.address && place.address.state);
-        } catch (e) {}
-        return _aqiStateCode;
-    }
-
     var _aqiRequestSeq = 0;
 
     function _aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon) {
-        return seq === _aqiRequestSeq &&
-            curLat === lat && curLon === lon &&
-            (loadGeneration == null || loadGeneration === weatherLoadGeneration);
+        if (seq !== _aqiRequestSeq) return false;
+        if (loadGeneration != null) return loadGeneration === weatherLoadGeneration;
+        return Number(curLat) === Number(lat) && Number(curLon) === Number(lon);
     }
 
     function _renderAQIUnavailable(message, sourceLabel) {
@@ -27125,19 +27089,21 @@
         }
     }
 
-    // AQI is proxied through the weather Worker. AirNow remains authoritative
-    // when it has usable data; Open-Meteo is reserved for provider failures,
-    // while a valid empty AirNow response stays identified as AirNow.
+    // Ask AirNow first. Empty coverage results and every AirNow error use
+    // Open-Meteo; AQI does not wait on a reverse-geocoder or country lookup.
     async function fetchAQI(loadGeneration, requestLat, requestLon) {
         var curLat = requestLat == null ? lat : requestLat;
         var curLon = requestLon == null ? lon : requestLon;
-        if (!isFinite(curLat) || !isFinite(curLon)) return;
+        if (!isFinite(curLat) || !isFinite(curLon)) {
+            _renderAQIUnavailable('Air quality data unavailable for this location.', 'Open-Meteo');
+            return;
+        }
         var seq = ++_aqiRequestSeq;
         try {
             var res = await _weatherFetch(WEATHER_WORKER_URL + '/api/weather/air-quality?lat=' +
                 encodeURIComponent(curLat) + '&lon=' + encodeURIComponent(curLon), {
                     signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
-                }, 12000);
+                }, 16000);
             var data = await res.json();
             if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
             if (!res.ok || !data || data.source === 'unavailable') {
@@ -27145,25 +27111,12 @@
                 return;
             }
             if (data.source === 'airnow') {
-                if (Array.isArray(data.observations) && data.observations.length) {
-                    var _airNowBest = data.observations.reduce(function(m, o) {
-                        return (o.AQI || 0) > (m.AQI || 0) ? o : m;
-                    }, data.observations[0]);
-                    if (_airNowBest && _airNowBest.ReportingArea && !_airNowBest.StateCode) {
-                        // Location labeling is optional. Do not hold the AQI
-                        // card behind a separate geocoder request on slow or
-                        // unreliable mobile connections.
-                        _resolveAQIStateCode(curLat, curLon).catch(function() {});
-                    }
+                if (Array.isArray(data.observations) && data.observations.length > 0) {
                     if (!_aqiRequestIsCurrent(seq, loadGeneration, curLat, curLon)) return;
+                    _renderAQIData(data.observations, Array.isArray(data.forecast) ? data.forecast : []);
+                } else {
+                    await _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, seq);
                 }
-                // An empty AirNow response is valid "no current station data,"
-                // not an outage. Keep AirNow as the displayed source rather
-                // than silently replacing it with modeled Open-Meteo AQI.
-                _renderAQIData(
-                    Array.isArray(data.observations) ? data.observations : [],
-                    Array.isArray(data.forecast) ? data.forecast : []
-                );
             } else if (data.source === 'openmeteo') {
                 _renderAQIDataOM(data.aqi);
             } else {
@@ -27178,8 +27131,7 @@
         }
     }
 
-    // Open-Meteo Air Quality fallback — used only when the Worker reports a
-    // genuine AirNow/provider failure or when the Worker itself is unreachable.
+    // Open-Meteo fallback for AirNow errors, empty coverage, or an unreachable Worker.
     // Forecast is not available from Open-Meteo, so the forecast strip is hidden.
     async function _fetchAQIFromOpenMeteo(curLat, curLon, loadGeneration, requestSeq) {
         var seq = requestSeq == null ? ++_aqiRequestSeq : requestSeq;
@@ -27187,7 +27139,7 @@
             var url = 'https://air-quality-api.open-meteo.com/v1/air-quality' +
                       '?latitude=' + curLat + '&longitude=' + curLon +
                       '&current=us_aqi,pm10,pm2_5,nitrogen_dioxide,ozone';
-            var res = await _weatherFetch(url, undefined, 12000);
+            var res = await _weatherFetch(url, undefined, 8000);
             if (!res.ok) throw new Error('Open-Meteo AQ ' + res.status);
             var data = await res.json();
             var curAQI = (data.current && data.current.us_aqi != null) ? data.current.us_aqi : null;
@@ -27269,7 +27221,7 @@
         var forecastArea = (fcstData || []).find(function(f) {
             return f.ReportingArea && f.ReportingArea === best.ReportingArea && f.StateCode;
         });
-        var stateCode = String(best.StateCode || (forecastArea && forecastArea.StateCode) || _aqiStateCode || '').trim();
+        var stateCode = String(best.StateCode || (forecastArea && forecastArea.StateCode) || '').trim();
         var area      = best.ReportingArea
             ? best.ReportingArea + (stateCode ? ', ' + stateCode : '')
             : '';
