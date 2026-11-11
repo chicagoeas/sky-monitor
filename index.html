@@ -2638,6 +2638,11 @@
         .all-alerts-category-tabs button.active {
             color: #fff; background: #2864e8;
         }
+        .all-alerts-category-tabs .all-alerts-search-button {
+            display: flex; align-items: center; justify-content: center;
+            margin-left: auto; min-width: 30px; padding-left: 7px; padding-right: 7px;
+            color: #d8e2ef;
+        }
         .all-alerts-search-wrap { padding: 0 16px 10px; }
         #all-alerts-search {
             box-sizing: border-box; width: 100%; padding: 9px 11px;
@@ -2692,6 +2697,12 @@
             font-size: 0.73em; font-weight: 750; cursor: pointer;
         }
         .all-alerts-dialog-footer button:hover { background: rgba(255,255,255,0.16); }
+        #all-alerts-reset-all {
+            flex: 1 1 auto; min-height: 34px; color: #fff !important;
+            background: #2864e8 !important; border-color: #3575ff !important;
+            text-align: center;
+        }
+        #all-alerts-reset-all:hover { background: #3976f0 !important; }
         @media(max-width: 520px) {
             #all-alerts-settings { padding: 8px; }
             .all-alerts-dialog { max-height: 94dvh; border-radius: 11px; }
@@ -3700,13 +3711,13 @@
                     </div>
                     <div class="all-alerts-country-tabs" role="tablist" aria-label="Alert country">
                         <button type="button" id="all-alerts-country-us" class="active"
-                            onclick="selectAllAlertsCountry('US')" role="tab">United States</button>
+                            onclick="selectAllAlertsCountry('US')" role="tab" aria-selected="true">United States</button>
                         <button type="button" id="all-alerts-country-ca"
-                            onclick="selectAllAlertsCountry('CA')" role="tab">Canada</button>
+                            onclick="selectAllAlertsCountry('CA')" role="tab" aria-selected="false">Canada</button>
                     </div>
                     <div id="all-alerts-category-tabs" class="all-alerts-category-tabs"
                         role="tablist" aria-label="Alert category"></div>
-                    <div class="all-alerts-search-wrap">
+                    <div id="all-alerts-search-wrap" class="all-alerts-search-wrap" style="display:none;">
                         <input id="all-alerts-search" type="search"
                             placeholder="Search alert types" aria-label="Search alert types"
                             oninput="renderAllAlertsSettingsList()">
@@ -3714,8 +3725,8 @@
                     <div id="all-alerts-catalog-status" role="status" aria-live="polite"></div>
                     <div id="all-alerts-catalog-list"></div>
                     <div class="all-alerts-dialog-footer">
-                        <button type="button" onclick="setAllVisibleAlertTypes(true)">Enable visible</button>
-                        <button type="button" onclick="setAllVisibleAlertTypes(false)">Disable visible</button>
+                        <button id="all-alerts-reset-all" type="button"
+                            onclick="resetAllOfficialAlertTypePreferences()">Reset All</button>
                     </div>
                 </div>
             </div>
@@ -18468,8 +18479,416 @@
         { key: 'other', label: 'Other' }
     ];
 
-    function allOfficialAlertCategory(eventName) {
+    // Seed the settings with the complete WeatherWise U.S./Canada type lists
+    // supplied by the user. Live feed event types are merged in below so a
+    // newly-issued official product still appears even if it is not pictured.
+    const ALL_OFFICIAL_ALERT_REFERENCE_CATALOG = {
+        US: {
+            severe: {
+                Warnings: [
+                    'Tornado Warning|#ff0000',
+                    'Severe Thunderstorm Warning|#ffa500',
+                    'Flash Flood Warning|#79ff26',
+                    'Special Marine Warning|#731e56'
+                ],
+                Watches: [
+                    'Tornado Watch|#ffff00',
+                    'Severe Thunderstorm Watch|#db7093',
+                    'Flash Flood Watch|#2e8b57'
+                ],
+                Statements: [
+                    'Special Weather Statement|#00ffff',
+                    'Marine Weather Statement|#ffdab9'
+                ]
+            },
+            winter: {
+                Warnings: [
+                    'Blizzard Warning|#ff4500',
+                    'Snow Squall Warning|#c71585',
+                    'Ice Storm Warning|#8b008b',
+                    'Winter Storm Warning|#ff69b4',
+                    'Lake Effect Snow Warning|#008b8b',
+                    'Avalanche Warning|#1e90ff',
+                    'Extreme Cold Warning|#0000ff',
+                    'Freeze Warning|#483d8b'
+                ],
+                Watches: [
+                    'Winter Storm Watch|#4682b4',
+                    'Avalanche Watch|#f4a460',
+                    'Extreme Cold Watch|#5f9ea0',
+                    'Freeze Watch|#00ffff'
+                ],
+                Advisories: [
+                    'Winter Weather Advisory|#7b68ee',
+                    'Cold Weather Advisory|#afeeee',
+                    'Frost Advisory|#6495ed'
+                ]
+            },
+            hydro: {
+                Warnings: [
+                    'Tsunami Warning|#fd6347',
+                    'Flood (forecast point) Warning|#00ff00',
+                    'Flood Warning|#00ff00',
+                    'Coastal Flood Warning|#228b22',
+                    'Lakeshore Flood Warning|#228b22',
+                    'High Surf Warning|#228b22'
+                ],
+                Watches: [
+                    'Tsunami Watch|#ff00ff',
+                    'Flood (forecast point) Watch|#2e8b57',
+                    'Flood Watch|#2e8b57',
+                    'Coastal Flood Watch|#66cdaa',
+                    'Lakeshore Flood Watch|#66cdaa'
+                ],
+                Advisories: [
+                    'Tsunami Advisory|#d2691e',
+                    'Flood (forecast point) Advisory|#00ff7f',
+                    'Flood Advisory|#00ff7f',
+                    'Coastal Flood Advisory|#7cfc00',
+                    'Lakeshore Flood Advisory|#7cfc00',
+                    'High Surf Advisory|#ba55d3'
+                ],
+                Statements: [
+                    'Rip Current Statement|#40e0d0',
+                    'Beach Hazards Statement|#40e0d0',
+                    'Coastal Flooding Statement|#6b8e23'
+                ],
+                Outlooks: [
+                    'Hydrologic Outlook|#90ee90'
+                ]
+            },
+            'wind-air': {
+                Warnings: [
+                    'Extreme Wind Warning|#ff8c00',
+                    'Hurricane Force Wind Warning|#cd5c5c',
+                    'Dust Storm Warning|#ffe4c4',
+                    'Blowing Dust Warning|#ffe4c4',
+                    'High Wind Warning|#daa520'
+                ],
+                Watches: [
+                    'Hurricane Force Wind Watch|#9932cc',
+                    'High Wind Watch|#b8860b'
+                ],
+                Advisories: [
+                    'Dense Fog Advisory|#708090',
+                    'Dense Fog (marine) Advisory|#708090',
+                    'Dense Smoke Advisory|#f0e68c',
+                    'Marine Dense Smoke Advisory|#f0e68c',
+                    'Dust Advisory|#bdb76b',
+                    'Blowing Dust Advisory|#bdb76b',
+                    'Lake Wind Advisory|#d2b48c',
+                    'Wind Advisory|#d2b48c',
+                    'Freezing Fog Advisory|#008080',
+                    'Air Stagnation Advisory|#808080'
+                ],
+                Statements: [
+                    'Air Quality Alert|#808080'
+                ]
+            },
+            'fire-heat': {
+                Warnings: [
+                    'Fire Warning|#a0522d',
+                    'Extreme Heat Warning|#c71585',
+                    'Red Flag Warning|#ff1493'
+                ],
+                Watches: [
+                    'Extreme Heat Watch|#800000',
+                    'Fire Weather Watch|#ffdead'
+                ],
+                Advisories: [
+                    'Heat Advisory|#ff7f50'
+                ]
+            },
+            tropical: {
+                Warnings: [
+                    'Storm Surge Warning|#b524f7',
+                    'Hurricane Warning|#dc143c',
+                    'Typhoon Warning|#dc143c',
+                    'Tropical Storm Warning|#b22222'
+                ],
+                Watches: [
+                    'Storm Surge Watch|#db7ff7',
+                    'Hurricane Watch|#ff00ff',
+                    'Typhoon Watch|#ff00ff',
+                    'Tropical Storm Watch|#f08080'
+                ]
+            },
+            marine: {
+                Warnings: [
+                    'Heavy Freezing Spray Warning|#00bfff',
+                    'Storm Warning|#9400d3',
+                    'Gale Warning|#dda0dd',
+                    'Hazardous Seas Warning|#d8bfd8'
+                ],
+                Watches: [
+                    'Storm Watch|#ffe4b5',
+                    'Gale Watch|#ffc0cb',
+                    'Hazardous Seas Watch|#483d8b',
+                    'Heavy Freezing Spray Watch|#bc8f8f'
+                ],
+                Advisories: [
+                    'Small Craft Advisory|#d8bfd8',
+                    'Brisk Wind Advisory|#d8bfd8',
+                    'Freezing Spray Advisory|#00bfff',
+                    'Low Water Advisory|#a52a2a'
+                ]
+            },
+            other: {
+                Warnings: [
+                    'Shelter In Place Warning|#fa8072',
+                    'Evacuation Immediate|#7fff00',
+                    'Civil Danger Warning|#ffb6c1',
+                    'Hazardous Materials Warning|#4b0082',
+                    'Civil Emergency Message|#ffb6c1',
+                    'Law Enforcement Warning|#c0c0c0',
+                    'Volcano Warning|#2f4f4f',
+                    'Ashfall Warning|#a9a9a9',
+                    'Local Area Emergency|#c0c0c0'
+                ],
+                Advisories: [
+                    'Ashfall Advisory|#808080'
+                ],
+                Statements: [
+                    '911 Telephone Outage|#c0c0c0'
+                ],
+                Outlooks: [
+                    'Hazardous Weather Outlook|#eee8aa'
+                ],
+                Forecasts: [
+                    'Short Term Forecast|#98fb98'
+                ]
+            }
+        },
+        CA: {
+            severe: {
+                Warnings: [
+                    'Tornado Warning|#ff0000',
+                    'Thunderstorm Warning|#ffa500',
+                    'Dust Storm Warning|#ffe4c4'
+                ],
+                Watches: [
+                    'Tornado Watch|#ffff00',
+                    'Thunderstorm Watch|#db7093',
+                    'Waterspout Watch|#9370db',
+                    'Dust Storm Watch|#deb887'
+                ]
+            },
+            winter: {
+                Warnings: [
+                    'Blizzard Warning|#ff4500',
+                    'Blowing Snow Warning|#87ceeb',
+                    'Snowfall Warning|#ffffff',
+                    'Snow Squall Warning|#c71585',
+                    'Freezing Drizzle Warning|#8b008b',
+                    'Freezing Rain Warning|#8b008b',
+                    'Winter Storm Warning|#ff69b4',
+                    'Arctic Outflow Warning|#0000cd',
+                    'Cold Wave Warning|#0000ff',
+                    'Extreme Cold Warning|#0000ff',
+                    'Flash Freeze Warning|#00ced1',
+                    'Frost Warning|#483d8b',
+                    'Wind Chill Warning|#00bfff',
+                    'Avalanche Warning|#1e90ff'
+                ],
+                Watches: [
+                    'Blizzard Watch|#ffa07a',
+                    'Blowing Snow Watch|#add8e6',
+                    'Snowfall Watch|#f0f8ff',
+                    'Snow Squall Watch|#da70d6',
+                    'Freezing Drizzle Watch|#9932cc',
+                    'Freezing Rain Watch|#9932cc',
+                    'Winter Storm Watch|#4682b4',
+                    'Arctic Outflow Watch|#4169e1',
+                    'Cold Wave Watch|#1e90ff',
+                    'Extreme Cold Watch|#5f9ea0',
+                    'Flash Freeze Watch|#20b2aa',
+                    'Frost Watch|#6495ed',
+                    'Wind Chill Watch|#87cefa',
+                    'Avalanche Watch|#f4a460'
+                ],
+                Advisories: [
+                    'Blowing Snow Advisory|#b0c4de',
+                    'Freezing Drizzle Advisory|#ba55d3',
+                    'Frost Advisory|#6495ed'
+                ]
+            },
+            hydro: {
+                Warnings: [
+                    'Flash Flood Warning|#8b0000',
+                    'Rainfall Warning|#228b22',
+                    'Overland Flooding Warning|#00ff00',
+                    'Coastal Flooding Warning|#b524f7'
+                ],
+                Watches: [
+                    'Flash Flood Watch|#2e8b57',
+                    'Rainfall Watch|#32cd32',
+                    'Overland Flooding Watch|#00ff7f',
+                    'Coastal Flooding Watch|#db7ff7'
+                ],
+                Statements: [
+                    'Coastal Flooding Statement|#20b2aa'
+                ]
+            },
+            'wind-air': {
+                Warnings: [
+                    'Air Quality Warning|#808080',
+                    'Fog Warning|#708090',
+                    'Wind Warning|#deb887'
+                ],
+                Watches: [
+                    'Fog Watch|#778899',
+                    'Wind Watch|#deb887'
+                ],
+                Statements: [
+                    'Air Quality Statement|#808080'
+                ]
+            },
+            'fire-heat': {
+                Warnings: [
+                    'Wildfire Warning|#ff8c00',
+                    'Industrial Fire Warning|#a0522d',
+                    'Urban Fire Warning|#b22222',
+                    'Heat Wave Warning|#c71585',
+                    'Heat Warning|#c71585',
+                    'Heat and Humidity Warning|#c71585'
+                ],
+                Watches: [
+                    'Wildfire Watch|#ffa500',
+                    'Industrial Fire Watch|#cd853f',
+                    'Urban Fire Watch|#cd5c5c',
+                    'Heat Wave Watch|#db7093',
+                    'Heat Watch|#ff7f50',
+                    'Heat and Humidity Watch|#ff7f50'
+                ]
+            },
+            tropical: {
+                Warnings: [
+                    'Hurricane Warning|#dc143c',
+                    'Tropical Storm Warning|#b22222'
+                ],
+                Watches: [
+                    'Hurricane Watch|#ff00ff',
+                    'Tropical Storm Watch|#f08080'
+                ],
+                Statements: [
+                    'Tropical Cyclone Statement|#f4a460'
+                ]
+            },
+            marine: {
+                Warnings: [
+                    'High Water Level Warning|#006400',
+                    'Tsunami Warning|#fd6347',
+                    'Iceberg Warning|#e0ffff',
+                    'Special Marine Warning|#731e56',
+                    'Freezing Spray Warning|#00bfff',
+                    'Squall Warning|#9400d3',
+                    'Hurricane Force Wind Warning|#cd5c5c',
+                    'Storm Warning|#9400d3',
+                    'Gale Warning|#dda0dd',
+                    'Strong Wind Warning|#daa520',
+                    'Ice Pressure Warning|#b0e0e6',
+                    'Rapid Closing of Coastal Leads Warning|#4682b4',
+                    'Special Ice Warning|#e0ffff'
+                ],
+                Watches: [
+                    'Tsunami Watch|#ff00ff',
+                    'Iceberg Watch|#afeeee',
+                    'Special Marine Watch|#8b4789',
+                    'Squall Watch|#ba55d3'
+                ],
+                Advisories: [
+                    'Marine Weather Advisory|#9370db'
+                ],
+                Statements: [
+                    'Marine Weather Statement|#66cdaa'
+                ]
+            },
+            other: {
+                Warnings: [
+                    'Earthquake Warning|#8b4513',
+                    'Landslide Warning|#8b4513',
+                    'Volcano Warning|#2f4f4f',
+                    'Volcanic Ash Warning|#a9a9a9',
+                    'Lahar Warning|#8b4513',
+                    'Lava Flow Warning|#ff4500',
+                    'Pyroclastic Flow Warning|#8b0000',
+                    'Pyroclastic Surge Warning|#8b0000',
+                    'Meteorite Warning|#4b0082',
+                    'Magnetic Storm Warning|#9932cc',
+                    'Weather Warning|#00ffff',
+                    'Heat Warning|#ff6b6b'
+                ],
+                Watches: [
+                    'Earthquake Watch|#a0522d',
+                    'Landslide Watch|#a0522d',
+                    'Volcano Watch|#c0c0c0',
+                    'Volcanic Ash Watch|#c0c0c0',
+                    'Lahar Watch|#a0522d',
+                    'Lava Flow Watch|#ff6347',
+                    'Pyroclastic Flow Watch|#b22222',
+                    'Pyroclastic Surge Watch|#b22222',
+                    'Meteorite Watch|#6a5acd',
+                    'Magnetic Storm Watch|#ba55d3',
+                    'Weather Watch|#7fffd4'
+                ],
+                Advisories: [
+                    'Weather Advisory|#48d1cc',
+                    'Other Advisory|#b0c4de'
+                ],
+                Statements: [
+                    'Special Weather Statement|#5f9ea0'
+                ]
+            }
+        }
+    };
+
+    function allOfficialAlertReferenceItems(country) {
+        const countryCatalog = ALL_OFFICIAL_ALERT_REFERENCE_CATALOG[country] || {};
+        const items = [];
+        Object.keys(countryCatalog).forEach(function(category) {
+            const groups = countryCatalog[category] || {};
+            Object.keys(groups).forEach(function(group) {
+                (groups[group] || []).forEach(function(spec) {
+                    const parts = String(spec).split('|');
+                    const name = parts[0].trim();
+                    if (!name) return;
+                    items.push({
+                        name: name,
+                        category: category,
+                        group: group,
+                        color: parts[1] || '#b0bec5',
+                        defaultOn: group !== 'Outlooks' && group !== 'Forecasts'
+                    });
+                });
+            });
+        });
+        return items;
+    }
+
+    allOfficialAlertCatalogs.US = allOfficialAlertReferenceItems('US');
+    allOfficialAlertCatalogs.CA = allOfficialAlertReferenceItems('CA');
+
+    function allOfficialAlertReferenceItem(country, eventName) {
+        const key = String(eventName || '').trim().toLowerCase();
+        return allOfficialAlertReferenceItems(country).find(function(item) {
+            return item.name.toLowerCase() === key;
+        }) || null;
+    }
+
+    function allOfficialAlertCategory(eventName, country) {
+        const reference = allOfficialAlertReferenceItem(country, eventName);
+        if (reference) return reference.category;
         const event = String(eventName || '').toLowerCase();
+        if (country === 'CA') {
+            if (/hurricane|tropical|typhoon|cyclone|storm surge/.test(event)) return 'tropical';
+            if (/marine|surf|small craft|gale|sea|rip current|waterspout|iceberg|squall|freezing spray/.test(event)) return 'marine';
+            if (/flood|river|rainfall|hydrologic|tsunami|coastal flood|lakeshore/.test(event)) return 'hydro';
+            if (/winter|snow|blizzard|ice|freeze|frost|cold|wind chill|sleet|freezing|avalanche/.test(event)) return 'winter';
+            if (/fire|heat|red flag/.test(event)) return 'fire-heat';
+            if (/wind|dust|fog|smoke|air quality|visibility/.test(event)) return 'wind-air';
+            if (/tornado|thunderstorm|hail|squall|severe|thunder/.test(event)) return 'severe';
+            return 'other';
+        }
         if (/hurricane|tropical|typhoon|cyclone|storm surge/.test(event)) return 'tropical';
         if (/marine|surf|small craft|gale|sea|rip current|waterspout/.test(event)) return 'marine';
         if (/flood|river|rainfall|hydrologic|tsunami|coastal flood|lakeshore/.test(event)) return 'hydro';
@@ -18480,13 +18899,24 @@
         return 'other';
     }
 
-    function allOfficialAlertGroup(eventName) {
+    function allOfficialAlertGroup(eventName, country) {
+        const reference = allOfficialAlertReferenceItem(country, eventName);
+        if (reference) return reference.group;
         const event = String(eventName || '').toLowerCase();
         if (/\bwarning\b/.test(event)) return 'Warnings';
         if (/\bwatch\b/.test(event)) return 'Watches';
         if (/\bstatement\b/.test(event)) return 'Statements';
         if (/\badvisory\b/.test(event)) return 'Advisories';
+        if (/\boutlook\b/.test(event)) return 'Outlooks';
+        if (/\bforecast\b/.test(event)) return 'Forecasts';
         return 'Other alerts';
+    }
+
+    function allOfficialAlertDefaultOn(country, eventName) {
+        const reference = allOfficialAlertReferenceItem(country, eventName);
+        if (reference) return reference.defaultOn;
+        const group = allOfficialAlertGroup(eventName, country);
+        return group !== 'Outlooks' && group !== 'Forecasts';
     }
 
     function allOfficialAlertTitle(feature, country) {
@@ -18499,10 +18929,13 @@
             .replace(/\s+/g, ' ').trim();
     }
 
-    function allOfficialAlertPreference(country, eventName) {
+    function allOfficialAlertPreference(country, eventName, defaultOn) {
         const countryPrefs = allOfficialAlertTypePrefs[country] || {};
         const key = String(eventName || '').toLowerCase();
-        return countryPrefs[key] !== false;
+        if (Object.prototype.hasOwnProperty.call(countryPrefs, key)) {
+            return countryPrefs[key] !== false;
+        }
+        return defaultOn !== false;
     }
 
     function saveAllOfficialAlertPreferences() {
@@ -18535,9 +18968,30 @@
     function selectAllAlertsCountry(country) {
         if (country !== 'US' && country !== 'CA') return;
         allAlertsSettingsCountry = country;
-        document.getElementById('all-alerts-country-us')?.classList.toggle('active', country === 'US');
-        document.getElementById('all-alerts-country-ca')?.classList.toggle('active', country === 'CA');
+        const usTab = document.getElementById('all-alerts-country-us');
+        const caTab = document.getElementById('all-alerts-country-ca');
+        if (usTab) {
+            usTab.classList.toggle('active', country === 'US');
+            usTab.setAttribute('aria-selected', country === 'US' ? 'true' : 'false');
+        }
+        if (caTab) {
+            caTab.classList.toggle('active', country === 'CA');
+            caTab.setAttribute('aria-selected', country === 'CA' ? 'true' : 'false');
+        }
         renderAllAlertsSettingsList();
+    }
+
+    function toggleAllAlertSearch() {
+        const wrap = document.getElementById('all-alerts-search-wrap');
+        const input = document.getElementById('all-alerts-search');
+        if (!wrap || !input) return;
+        const opening = wrap.style.display === 'none' || !wrap.style.display;
+        wrap.style.display = opening ? 'block' : 'none';
+        if (opening) input.focus();
+        else {
+            input.value = '';
+            renderAllAlertsSettingsList();
+        }
     }
 
     function selectAllAlertsCategory(category) {
@@ -18562,6 +19016,13 @@
     function closeAllAlertsSettings() {
         const modal = document.getElementById('all-alerts-settings');
         if (modal) modal.style.display = 'none';
+    }
+
+    function resetAllOfficialAlertTypePreferences() {
+        allOfficialAlertTypePrefs = {};
+        localStorage.removeItem('report_all_alert_type_prefs');
+        renderAllAlertsSettingsList();
+        renderAllOfficialAlertsOnMap();
     }
 
     function toggleAllOfficialAlerts() {
@@ -18638,12 +19099,27 @@
     }
 
     async function _fetchAllNwsAlertFeatures() {
-        return _fetchAllOfficialAlertPages(
-            'https://api.weather.gov/alerts/active?status=actual&message_type=alert,update&limit=500',
-            500,
-            30,
-            'application/geo+json, application/json'
-        );
+        const features = [];
+        const visited = new Set();
+        let url = 'https://api.weather.gov/alerts/active?status=actual&message_type=alert,update';
+        for (let page = 0; page < 20 && url && !visited.has(url); page++) {
+            visited.add(url);
+            const response = await fetch(url, {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            });
+            if (!response.ok) {
+                throw new Error('NWS active alerts returned HTTP ' + response.status);
+            }
+            const payload = await response.json();
+            if (Array.isArray(payload.features)) {
+                features.push.apply(features, payload.features);
+            }
+            const nextUrl = _allOfficialAlertNextPage(payload, url);
+            if (!nextUrl || visited.has(nextUrl)) break;
+            url = nextUrl;
+        }
+        return features;
     }
 
     async function _fetchAllCanadaAlertFeatures() {
@@ -18686,34 +19162,56 @@
     }
 
     function _allOfficialAlertSortedCatalog(country, features, nwsTypes) {
+        const staticItems = allOfficialAlertReferenceItems(country);
+        const seenNames = new Set(staticItems.map(function(item) {
+            return item.name.toLowerCase();
+        }));
         const names = new Map();
         (features || []).forEach(function(feature) {
             if (!_allOfficialAlertIsCurrent(feature, country)) return;
             const name = allOfficialAlertTitle(feature, country);
-            if (name) names.set(name.toLowerCase(), name);
+            if (name && !seenNames.has(name.toLowerCase())) {
+                names.set(name.toLowerCase(), name);
+            }
         });
         if (country === 'US') {
             (nwsTypes || []).forEach(function(name) {
                 const normalized = String(name || '').replace(/\s+/g, ' ').trim();
-                if (normalized) names.set(normalized.toLowerCase(), normalized);
+                if (normalized && !seenNames.has(normalized.toLowerCase())) {
+                    names.set(normalized.toLowerCase(), normalized);
+                }
             });
             Object.keys(ALERT_ICONS || {}).forEach(function(name) {
                 const normalized = name.replace(/\b[a-z]/g, function(letter) {
                     return letter.toUpperCase();
                 });
-                if (normalized) names.set(normalized.toLowerCase(), normalized);
+                if (normalized && !seenNames.has(normalized.toLowerCase())) {
+                    names.set(normalized.toLowerCase(), normalized);
+                }
             });
         } else {
             Object.keys(ENVIRONMENT_CANADA_ALERT_ICONS || {}).forEach(function(name) {
                 const normalized = name.replace(/\b[a-z]/g, function(letter) {
                     return letter.toUpperCase();
                 });
-                if (normalized) names.set(normalized.toLowerCase(), normalized);
+                if (normalized && !seenNames.has(normalized.toLowerCase())) {
+                    names.set(normalized.toLowerCase(), normalized);
+                }
             });
         }
-        return Array.from(names.values()).sort(function(a, b) {
-            return a.localeCompare(b);
+        const dynamicItems = Array.from(names.values()).map(function(name) {
+            const group = allOfficialAlertGroup(name, country);
+            return {
+                name: name,
+                category: allOfficialAlertCategory(name, country),
+                group: group,
+                color: _allOfficialAlertColor(null, name, country),
+                defaultOn: group !== 'Outlooks' && group !== 'Forecasts'
+            };
+        }).sort(function(a, b) {
+            return a.name.localeCompare(b.name);
         });
+        return staticItems.concat(dynamicItems);
     }
 
     async function ensureAllOfficialAlertData(forceRefresh) {
@@ -18771,6 +19269,8 @@
     function _allOfficialAlertColor(feature, eventName, country) {
         const event = String(eventName || '').toLowerCase();
         const props = feature && feature.properties || {};
+        const reference = allOfficialAlertReferenceItem(country, eventName);
+        if (reference && reference.color) return reference.color;
         if (country === 'CA') {
             const shortFused = _environmentCanadaShortFusedStyle(feature);
             if (shortFused) return shortFused.color;
@@ -18912,42 +19412,53 @@
                 '" class="' + (category.key === allAlertsSettingsCategory ? 'active' : '') +
                 '" onclick="selectAllAlertsCategory(\'' + category.key + '\')">' +
                 escapeHtml(category.label) + '</button>';
-        }).join('');
+        }).join('') +
+            '<button type="button" class="all-alerts-search-button" onclick="toggleAllAlertSearch()" ' +
+            'aria-label="Search alert types" title="Search alert types">' +
+            '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+            '<circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4 4"></path>' +
+            '</svg></button>';
         const catalog = allOfficialAlertCatalogs[allAlertsSettingsCountry] || [];
         const search = String(document.getElementById('all-alerts-search')?.value || '')
             .trim().toLowerCase();
-        const visibleNames = catalog.filter(function(name) {
-            return allOfficialAlertCategory(name) === allAlertsSettingsCategory &&
-                (!search || name.toLowerCase().includes(search));
+        const visibleItems = catalog.filter(function(item) {
+            return item.category === allAlertsSettingsCategory &&
+                (!search || item.name.toLowerCase().includes(search));
         });
         if (status && !allOfficialAlertDataFetchedAt && !allOfficialAlertDataPromise) {
             status.textContent = 'Open settings to load official alert types.';
         }
-        if (!visibleNames.length) {
+        if (!visibleItems.length) {
             list.innerHTML = '<div style="padding:18px 8px;color:#aab7c4;font-size:0.82em;text-align:center;">' +
                 (allOfficialAlertDataFetchedAt
                     ? 'No alert types match this category and search.'
                     : 'Loading alert types…') + '</div>';
             return;
         }
-        const groupOrder = ['Warnings', 'Watches', 'Statements', 'Advisories', 'Other alerts'];
+        const groupOrder = [
+            'Warnings', 'Watches', 'Advisories', 'Statements',
+            'Outlooks', 'Forecasts', 'Other alerts'
+        ];
         const grouped = {};
-        visibleNames.forEach(function(name) {
-            const group = allOfficialAlertGroup(name);
+        visibleItems.forEach(function(item) {
+            const group = item.group;
             if (!grouped[group]) grouped[group] = [];
-            grouped[group].push(name);
+            grouped[group].push(item);
         });
         list.innerHTML = groupOrder.filter(function(group) {
             return grouped[group] && grouped[group].length;
         }).map(function(group) {
-            const rows = grouped[group].map(function(name, index) {
-                const enabled = allOfficialAlertPreference(allAlertsSettingsCountry, name);
-                const color = _allOfficialAlertColor(
-                    null,
-                    name,
-                    allAlertsSettingsCountry
+            const rows = grouped[group].map(function(item) {
+                const enabled = allOfficialAlertPreference(
+                    allAlertsSettingsCountry,
+                    item.name,
+                    item.defaultOn
                 );
-                const safeName = escapeHtml(name);
+                const color = item.color || _allOfficialAlertColor(
+                    null, item.name, allAlertsSettingsCountry
+                );
+                const safeName = escapeHtml(item.name);
                 const safeCountry = allAlertsSettingsCountry;
                 return '<div class="all-alerts-type-row">' +
                     '<span class="all-alerts-type-swatch" style="background:' +
@@ -18970,15 +19481,15 @@
     function setAllVisibleAlertTypes(enabled) {
         const search = String(document.getElementById('all-alerts-search')?.value || '')
             .trim().toLowerCase();
-        const names = (allOfficialAlertCatalogs[allAlertsSettingsCountry] || []).filter(function(name) {
-            return allOfficialAlertCategory(name) === allAlertsSettingsCategory &&
-                (!search || name.toLowerCase().includes(search));
+        const items = (allOfficialAlertCatalogs[allAlertsSettingsCountry] || []).filter(function(item) {
+            return item.category === allAlertsSettingsCategory &&
+                (!search || item.name.toLowerCase().includes(search));
         });
         if (!allOfficialAlertTypePrefs[allAlertsSettingsCountry]) {
             allOfficialAlertTypePrefs[allAlertsSettingsCountry] = {};
         }
-        names.forEach(function(name) {
-            allOfficialAlertTypePrefs[allAlertsSettingsCountry][name.toLowerCase()] = !!enabled;
+        items.forEach(function(item) {
+            allOfficialAlertTypePrefs[allAlertsSettingsCountry][item.name.toLowerCase()] = !!enabled;
         });
         saveAllOfficialAlertPreferences();
         renderAllAlertsSettingsList();
@@ -19028,7 +19539,11 @@
             (allOfficialAlertFeatures[country] || []).forEach(function(feature, index) {
                 if (!_allOfficialAlertIsCurrent(feature, country)) return;
                 const eventName = allOfficialAlertTitle(feature, country);
-                if (!eventName || !allOfficialAlertPreference(country, eventName)) return;
+                if (!eventName || !allOfficialAlertPreference(
+                    country,
+                    eventName,
+                    allOfficialAlertDefaultOn(country, eventName)
+                )) return;
                 const geometry = feature.geometry || feature._reportingResolvedGeometry;
                 if (!geometry) return;
                 if (country === 'US' &&
