@@ -1715,7 +1715,6 @@
         #reporting-map { height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
         #reporting-map .leaflet-control-attribution { font-size: 9px !important; line-height: 1.2 !important; }
         #reporting-map .leaflet-overlay-pane path.nws-emergency-boundary {
-            stroke: #fff !important;
             stroke-width: 4px !important;
             stroke-dasharray: 10 8 !important;
             stroke-linecap: round;
@@ -24487,7 +24486,8 @@
         if (!reportingMap.hasLayer(alertPolygonLayer)) alertPolygonLayer.addTo(reportingMap);
         if (entry.layer.setStyle) {
             entry.layer.setStyle({
-                color: '#ffffff',
+                color: entry.color || '#ffffff',
+                fillColor: entry.color || '#ffffff',
                 weight: 6,
                 opacity: 1,
                 fillOpacity: 0.42
@@ -24534,30 +24534,31 @@
             });
             if (requestId !== historicalRadarRequestId || !historicalRadarState.active) return;
 
-            const colors = {
-                TO: '#ff1744', SV: '#ff9100', FF: '#00c853',
-                MA: '#29b6f6', SQ: '#81d4fa', EW: '#ff9100', DS: '#c8a800'
-            };
+            const supportedPhenomena = new Set([
+                'TO', 'SV', 'FF', 'MA', 'SQ', 'EW', 'DS'
+            ]);
             const seen = {};
             (data.features || []).forEach(function(feature) {
                 if (!feature || !feature.geometry) return;
                 const props = feature.properties || {};
                 const phenomena = String(props.phenomena || '').toUpperCase();
                 const significance = String(props.significance || '').toUpperCase();
-                if (significance !== 'W' || !colors[phenomena] ||
+                if (significance !== 'W' || !supportedPhenomena.has(phenomena) ||
                     !_historicalAlertIsActiveAt(props, timestampMs)) return;
                 const key = String(props.product_id || props.href ||
                     [phenomena, props.wfo, props.eventid, props.polygon_begin].join('|'));
                 if (seen[key]) return;
                 seen[key] = true;
 
-                const color = colors[phenomena];
                 const eventName = phenomena === 'MA' && significance === 'W'
                     ? 'Special Marine Warning'
                     : (props.ps || props.type ||
                         (phenomena === 'TO' ? 'Tornado Warning' : phenomena + ' Warning'));
                 const historicalVisualProps =
                     historicalNwsVisualProperties(props, '');
+                const color = _allOfficialAlertColor(
+                    { properties: historicalVisualProps }, eventName, 'US'
+                );
                 const visual = nwsAlertVisualData(
                     historicalVisualProps,
                     eventName
@@ -24668,8 +24669,10 @@
             seen[productKey] = true;
 
             const eventName = 'Special Weather Statement';
-            const color = '#ffffff';
             const popupProperties = Object.assign({}, props, { event: eventName });
+            const color = _allOfficialAlertColor(
+                { properties: popupProperties }, eventName, 'US'
+            );
             const polygon = L_ref.geoJSON(feature.geometry, {
                 style: {
                     color: color,
@@ -24842,7 +24845,9 @@
                         var key = normalized.id || [normalized.title, normalized.areaDesc, normalized.expires].join('|');
                         if (seenCanadaAlerts[key]) return;
                         seenCanadaAlerts[key] = true;
-                        var color = shortFusedStyle.color;
+                        var color = _allOfficialAlertColor(
+                            feature, normalized.title, 'CA'
+                        );
                         var popupCopy = _environmentCanadaPopupCopy(normalized.description);
                         var statusText = String(feature.properties && feature.properties.status_en || '').toLowerCase();
                         var issuedLabel = statusText.indexOf('update') !== -1 ? 'Updated' : 'Issued';
@@ -24888,19 +24893,23 @@
                 if (sbwRes.ok) {
                     const sbwData = await sbwRes.json();
                     // phenomena codes for short-fused warnings
-                    const shortFusedPhenomena = { TO:'#ff1744', SV:'#ff9100', FF:'#00c853', MA:'#29b6f6', SQ:'#81d4fa', EW:'#ff9100', DS:'#c8a800' };
+                    const supportedShortFusedPhenomena = new Set([
+                        'TO', 'SV', 'FF', 'MA', 'SQ', 'EW', 'DS'
+                    ]);
                     (sbwData.features || []).forEach(function(f) {
                         const ph = (f.properties.phenomena || '').toUpperCase();
                         const sig = (f.properties.significance || '').toUpperCase();
                         if (sig !== 'W') return; // warnings only
-                        if (!shortFusedPhenomena[ph]) return;
+                        if (!supportedShortFusedPhenomena.has(ph)) return;
                         // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
                         if ((f.properties.type || '').toLowerCase().includes('statement')) return;
                         if (!f.geometry) return;
-                        const color = shortFusedPhenomena[ph];
                         const nwsEvent = ph === 'MA' && sig === 'W'
                             ? 'Special Marine Warning'
                             : (f.properties.type || f.properties.ps || ph + ' Warning');
+                        const color = _allOfficialAlertColor(
+                            f, nwsEvent, 'US'
+                        );
                         const visual = nwsAlertVisualData(f.properties, nwsEvent);
                         const expiresText = f.properties.expire || f.properties.polygon_end;
                         const _poly = L_ref.geoJSON(f.geometry, { style: {
