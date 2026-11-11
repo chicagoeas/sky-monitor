@@ -25840,9 +25840,189 @@
     }
 
     function reportingDiscussionOfficialLink(url, label) {
-        return '<p><b>Official text</b><span class="reporting-popup-pre"><a href="' +
+        return '<p><b>Official source</b><span class="reporting-popup-pre"><a href="' +
             escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" ' +
             'style="color:#7dd3fc;">' + escapeHtml(label) + '</a></span></p>';
+    }
+
+    function reportingDiscussionTextFromHtml(html) {
+        if (!html || typeof DOMParser !== 'function') return '';
+        try {
+            const document = new DOMParser().parseFromString(String(html), 'text/html');
+            const productText = document.querySelector('pre');
+            return productText
+                ? String(productText.textContent || '').replace(/\r/g, '').trim()
+                : '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function reportingDiscussionAreaFromText(text) {
+        const match = String(text || '').match(
+            /^\s*Areas?\s+affected\s*\.{2,}\s*([\s\S]*?)(?=\n\s*\n|\n\s*(?:Concerning|Valid|Summary|Discussion)\b|(?![\s\S]))/im
+        );
+        return match ? match[1].replace(/\s+/g, ' ').trim() : '';
+    }
+
+    function reportingDiscussionIssueFromText(text) {
+        const match = String(text || '').match(
+            /^\s*(\d{1,4})\s*(AM|PM)\s+(AKST|AKDT|HST|AST|ADT|EST|EDT|CST|CDT|MST|MDT|PST|PDT|UTC|GMT)\s+\w{3}\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\s*$/im
+        );
+        if (!match) return '';
+        const digits = match[1].padStart(4, '0');
+        let hour = Number(digits.slice(0, 2));
+        const minute = Number(digits.slice(2));
+        const period = match[2].toUpperCase();
+        if (hour === 12) hour = 0;
+        if (period === 'PM') hour += 12;
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const month = monthNames.indexOf(match[4]);
+        const zoneOffsets = {
+            AKST: -9, AKDT: -8, HST: -10, AST: -4, ADT: -3,
+            EST: -5, EDT: -4, CST: -6, CDT: -5,
+            MST: -7, MDT: -6, PST: -8, PDT: -7, UTC: 0, GMT: 0
+        };
+        const offset = zoneOffsets[match[3].toUpperCase()];
+        if (month < 0 || offset == null || minute > 59 || hour > 23) return '';
+        return new Date(Date.UTC(
+            Number(match[6]), month, Number(match[5]), hour - offset, minute
+        )).toISOString();
+    }
+
+    function reportingDiscussionExpiryFromText(text, issuedValue) {
+        const match = String(text || '').match(
+            /^\s*Valid\s+(\d{6})Z?\s*-\s*(\d{6})Z?\s*$/im
+        );
+        if (!match) return '';
+        const issued = parseReportDate(issuedValue) ||
+            parseReportDate(reportingDiscussionIssueFromText(text)) ||
+            new Date();
+        function makeUtcDate(token, monthOffset) {
+            const digits = String(token);
+            return new Date(Date.UTC(
+                issued.getUTCFullYear(),
+                issued.getUTCMonth() + monthOffset,
+                Number(digits.slice(0, 2)),
+                Number(digits.slice(2, 4)),
+                Number(digits.slice(4, 6))
+            ));
+        }
+        const start = makeUtcDate(match[1], 0);
+        let end = makeUtcDate(match[2], 0);
+        if (start.getTime() < issued.getTime() - 86400000) {
+            start.setUTCMonth(start.getUTCMonth() + 1);
+            end.setUTCMonth(end.getUTCMonth() + 1);
+        } else if (end.getTime() < start.getTime()) {
+            end.setUTCMonth(end.getUTCMonth() + 1);
+        }
+        return end.toISOString();
+    }
+
+    function reportingDiscussionDetail(entry, discussionText) {
+        const text = String(discussionText || '').trim();
+        const area = entry.area || reportingDiscussionAreaFromText(text);
+        const rawIssued = entry.issued ||
+            reportingDiscussionIssueFromText(text);
+        const issued = rawIssued
+            ? (reportingDiscussionIssueFromText(rawIssued) || rawIssued)
+            : '';
+        const timingText = text || (entry.validWindow
+            ? 'Valid ' + entry.validWindow
+            : '');
+        const expires = entry.expires ||
+            reportingDiscussionExpiryFromText(timingText, issued);
+        if (area) entry.area = area;
+        if (issued) entry.issued = issued;
+        if (expires) entry.expires = expires;
+        const shownText = text || entry.discussionUnavailable ||
+            'Loading official discussion text\u2026';
+        return reportingPopupDetailRows([
+            ['Area', area],
+            ['Issued', issued ? formatReportingDiscussionDate(issued) : ''],
+            ['Valid through', expires ? formatReportingDiscussionDate(expires) : ''],
+            ['Discussion text', shownText]
+        ]) + reportingDiscussionOfficialLink(
+            entry.officialUrl,
+            entry.officialLabel
+        );
+    }
+
+    function reportingDiscussionMeta(entry, nowMs) {
+        const expiry = entry && entry.expires
+            ? formatReportingExpiry(entry.expires)
+            : '';
+        return escapeHtml(entry && entry.sourceLabel || 'Discussion') +
+            (expiry ? ' \u00B7 ' + escapeHtml(expiry) : '');
+    }
+
+    function loadReportingDiscussionDetails(entry) {
+        if (!entry) return Promise.resolve('');
+        if (entry.discussionText) {
+            entry.detail = reportingDiscussionDetail(entry, entry.discussionText);
+            return Promise.resolve(entry.detail);
+        }
+        if (entry._discussionLoadPromise) return entry._discussionLoadPromise;
+        const request = (async function() {
+            try {
+                let officialText = '';
+                if (entry.provider === 'WPC' && entry.discussionNumber) {
+                    const detailUrl = WEATHER_WORKER_URL + '/api/weather/mpd?id=' +
+                        encodeURIComponent(entry.discussionNumber);
+                    const response = await _weatherFetch(detailUrl, {
+                        cache: 'no-store'
+                    }, 9000);
+                    if (!response.ok) throw new Error('WPC discussion ' + response.status);
+                    const product = await response.json();
+                    officialText = String(product && product.discussionText || '').trim();
+                    if (product && product.area) entry.area = product.area;
+                    if (product && product.issued) entry.issued = product.issued;
+                    if (product && product.validWindow) entry.validWindow = product.validWindow;
+                } else {
+                    const response = await _weatherFetch(entry.officialUrl, {
+                        cache: 'no-store'
+                    }, 9000);
+                    if (!response.ok) throw new Error('Official discussion ' + response.status);
+                    const html = await response.text();
+                    officialText = reportingDiscussionTextFromHtml(html);
+                }
+                if (officialText) {
+                    entry.discussionText = officialText;
+                    entry.discussionUnavailable = '';
+                } else {
+                    throw new Error('Official discussion text is unavailable');
+                }
+            } catch (error) {
+                entry.discussionUnavailable = entry.provider === 'WPC'
+                    ? 'The official WPC discussion text is temporarily unavailable. Use the official source link below.'
+                    : 'The official discussion text is temporarily unavailable. Use the official source link below.';
+            }
+            entry.detail = reportingDiscussionDetail(entry, entry.discussionText);
+            if (typeof entry.refreshPopupTiming === 'function') {
+                entry.refreshPopupTiming(Date.now());
+            }
+            return entry.detail;
+        })();
+        entry._discussionLoadPromise = request;
+        return request.finally(function() {
+            if (entry._discussionLoadPromise === request) {
+                entry._discussionLoadPromise = null;
+            }
+        });
+    }
+
+    function prepareReportingDiscussionEntry(entry) {
+        entry.detail = reportingDiscussionDetail(entry, entry.discussionText);
+        entry.meta = reportingDiscussionMeta(entry, Date.now());
+        entry.refreshPopupTiming = function(nowMs) {
+            this.meta = reportingDiscussionMeta(this, nowMs);
+            updateReportingPopupMetaEntry(this);
+        };
+        entry.loadDetails = function() {
+            return loadReportingDiscussionDetails(this);
+        };
+        return entry;
     }
 
     function renderSpcWpcMdsOnMap(data) {
@@ -25886,36 +26066,26 @@
             const discussionNumber = numberMatch
                 ? numberMatch[0].padStart(4, '0')
                 : '';
-            const issueTime = formatReportingDiscussionDate(
-                reportingDiscussionAttribute(attributes, [
-                    'ISSUE', 'ISSUED', 'ISSUE_TIME', 'ISSUETIME', 'issue_time'
-                ])
-            );
-            const expireTime = formatReportingDiscussionDate(
-                reportingDiscussionAttribute(attributes, [
-                    'EXPIRE', 'EXPIRES', 'EXPIRATION', 'END_TIME', 'expire_time'
-                ])
-            );
+            const issueTime = reportingDiscussionAttribute(attributes, [
+                    'ISSUE', 'ISSUED', 'ISSUE_TIME', 'ISSUETIME', 'issue_time',
+                    'ISSUETIMEUTC', 'ISSUE_DATE', 'ISSUEDATE'
+                ]);
+            const expireTime = reportingDiscussionAttribute(attributes, [
+                    'EXPIRE', 'EXPIRES', 'EXPIRATION', 'END_TIME', 'expire_time',
+                    'VALID_THROUGH', 'VALIDTHROUGH'
+                ]);
             const area = reportingDiscussionAttribute(attributes, [
-                'AREA', 'AREA_DESC', 'AREAS', 'LOCATION', 'COUNTY'
+                'AREA', 'AREA_DESC', 'AREAS', 'LOCATION', 'COUNTY',
+                'AREAS_AFFECTED', 'AREASAFFECTED'
             ]);
             const narrative = reportingDiscussionAttribute(attributes, [
-                'MD_TEXT', 'DISCUSSION', 'NARRATIVE', 'TEXT', 'SUMMARY', 'DESCRIPTION'
+                'MD_TEXT', 'DISCUSSION', 'NARRATIVE', 'TEXT', 'SUMMARY', 'DESCRIPTION',
+                'PRODUCT_TEXT', 'PRODUCTTEXT'
             ]);
             const officialUrl = discussionNumber
                 ? 'https://www.spc.noaa.gov/products/md/md' + discussionNumber + '.html'
                 : 'https://www.spc.noaa.gov/products/md/';
-            const details = reportingPopupDetailRows([
-                ['Issued', issueTime],
-                ['Valid through', expireTime],
-                ['Area', area],
-                ['Discussion', narrative]
-            ]) + reportingDiscussionOfficialLink(
-                officialUrl,
-                discussionNumber ? 'Open SPC MD #' + discussionNumber : 'Open SPC discussions'
-            );
-            layer.addTo(spcWpcMdsLayer);
-            registerReportingPopup(layer, {
+            const popupEntry = prepareReportingDiscussionEntry({
                 source: 'spc-wpc-discussions',
                 isPolygon: true,
                 popupNoun: 'discussion',
@@ -25923,9 +26093,23 @@
                 popupKey: 'spc-md:' + (discussionNumber || feature.id || index),
                 title: escapeHtml('SPC Mesoscale Discussion' +
                     (discussionNumber ? ' #' + discussionNumber : '')),
-                meta: 'SPC' + (expireTime ? ' · Expires ' + escapeHtml(expireTime) : ''),
-                detail: details
+                provider: 'SPC',
+                discussionNumber: discussionNumber,
+                sourceLabel: 'SPC',
+                officialUrl: officialUrl,
+                officialLabel: discussionNumber
+                    ? 'Open SPC MD #' + discussionNumber
+                    : 'Open SPC discussions',
+                area: area,
+                issued: issueTime,
+                expires: expireTime,
+                discussionText: narrative
             });
+            layer.addTo(spcWpcMdsLayer);
+            registerReportingPopup(layer, Object.assign(popupEntry, {
+                source: 'spc-wpc-discussions'
+            }));
+            popupEntry.loadDetails().catch(function() {});
         });
 
         ((data && data.wpcMpds) || []).forEach(function(mpd, index) {
@@ -25950,6 +26134,7 @@
             const fallbackUrl = 'https://www.wpc.ncep.noaa.gov/metwatch/mcd' +
                 (discussionNumber || '0000') + '.html';
             let officialUrl = fallbackUrl;
+            const attributes = mpd && (mpd.properties || mpd.attributes) || mpd || {};
             try {
                 const candidate = new URL(mpd.url || fallbackUrl);
                 if (candidate.protocol === 'https:' &&
@@ -25957,8 +26142,27 @@
                     officialUrl = candidate.href;
                 }
             } catch (error) {}
-            layer.addTo(spcWpcMdsLayer);
-            registerReportingPopup(layer, {
+            const issueTime = reportingDiscussionAttribute(attributes, [
+                    'issueTime', 'issue_time', 'issued', 'issuedAt', 'issued_at',
+                    'issuanceTime', 'issuance_time', 'issue'
+                ]);
+            const expireTime = reportingDiscussionAttribute(attributes, [
+                    'expireTime', 'expire_time', 'expires', 'expiresAt', 'expires_at',
+                    'expiration', 'validThrough', 'valid_through', 'validUntil',
+                    'valid_until', 'endTime', 'end_time'
+                ]);
+            const area = reportingDiscussionAttribute(attributes, [
+                'area', 'areas', 'areaDescription', 'area_description',
+                'areasAffected', 'areas_affected', 'affectedArea', 'affected_area'
+            ]);
+            const validWindow = reportingDiscussionAttribute(attributes, [
+                'validWindow', 'valid_window', 'valid'
+            ]);
+            const narrative = reportingDiscussionAttribute(attributes, [
+                'discussionText', 'discussion_text', 'productText', 'product_text',
+                'fullText', 'full_text', 'narrative', 'text'
+            ]);
+            const popupEntry = prepareReportingDiscussionEntry({
                 source: 'spc-wpc-discussions',
                 isPolygon: true,
                 popupNoun: 'discussion',
@@ -25966,15 +26170,23 @@
                 popupKey: 'wpc-mpd:' + (discussionNumber || index),
                 title: escapeHtml('WPC Mesoscale Precipitation Discussion' +
                     (discussionNumber ? ' #' + discussionNumber : '')),
-                meta: 'WPC MPD · In map view',
-                detail: reportingPopupDetailRows([
-                    ['Source', 'Weather Prediction Center'],
-                    ['Coverage', 'Active discussion area intersects the visible map']
-                ]) + reportingDiscussionOfficialLink(
-                    officialUrl,
-                    discussionNumber ? 'Open WPC MPD #' + discussionNumber : 'Open WPC discussion'
-                )
+                provider: 'WPC',
+                discussionNumber: discussionNumber,
+                sourceLabel: 'WPC MPD',
+                officialUrl: officialUrl,
+                officialLabel: discussionNumber
+                    ? 'Open WPC MPD #' + discussionNumber
+                    : 'Open WPC discussion',
+                area: area,
+                issued: issueTime,
+                expires: expireTime,
+                validWindow: validWindow,
+                discussionText: narrative
             });
+            layer.addTo(spcWpcMdsLayer);
+            registerReportingPopup(layer, Object.assign(popupEntry, {
+                source: 'spc-wpc-discussions'
+            }));
         });
         syncReportingMapLayers();
     }
