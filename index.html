@@ -2700,7 +2700,13 @@
         .all-alerts-type-swatch {
             width: 22px; height: 22px; flex: 0 0 22px; border-radius: 4px;
             border: 1px solid rgba(255,255,255,0.8); box-sizing: border-box;
+            padding: 0; cursor: pointer; overflow: hidden; background: transparent;
+            -webkit-appearance: none; appearance: none;
         }
+        .all-alerts-type-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+        .all-alerts-type-swatch::-webkit-color-swatch { border: 0; border-radius: 3px; }
+        .all-alerts-type-swatch::-moz-color-swatch { border: 0; border-radius: 3px; }
+        .all-alerts-type-swatch:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
         .all-alerts-type-name {
             flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere;
             color: #f1f4f8; font-size: 0.82em; font-weight: 700;
@@ -16640,6 +16646,16 @@
             return {};
         }
     })();
+    let allOfficialAlertColorPrefs = (function() {
+        try {
+            const saved = JSON.parse(
+                localStorage.getItem('report_all_alert_color_prefs') || '{}'
+            );
+            return saved && typeof saved === 'object' ? saved : {};
+        } catch (error) {
+            return {};
+        }
+    })();
     let allOfficialAlertCountryPrefs = (function() {
         try {
             const saved = JSON.parse(
@@ -19239,6 +19255,48 @@
         } catch (error) {}
     }
 
+    function allOfficialAlertColorPreference(country, eventName) {
+        if (country !== 'US' && country !== 'CA') return '';
+        const countryPrefs = allOfficialAlertColorPrefs[country];
+        if (!countryPrefs || typeof countryPrefs !== 'object') return '';
+        const key = String(eventName || '').toLowerCase();
+        const color = String(countryPrefs[key] || '');
+        return /^#[0-9a-f]{6}$/i.test(color) ? color : '';
+    }
+
+    function saveAllOfficialAlertColorPreferences() {
+        try {
+            localStorage.setItem(
+                'report_all_alert_color_prefs',
+                JSON.stringify(allOfficialAlertColorPrefs)
+            );
+        } catch (error) {}
+    }
+
+    function setAllOfficialAlertColorPreference(country, eventName, color) {
+        const key = String(eventName || '').toLowerCase();
+        const normalizedColor = String(color || '').toLowerCase();
+        if ((country !== 'US' && country !== 'CA') || !key ||
+            !/^#[0-9a-f]{6}$/.test(normalizedColor)) return;
+        if (!allOfficialAlertColorPrefs[country] ||
+            typeof allOfficialAlertColorPrefs[country] !== 'object') {
+            allOfficialAlertColorPrefs[country] = {};
+        }
+        allOfficialAlertColorPrefs[country][key] = normalizedColor;
+        saveAllOfficialAlertColorPreferences();
+        renderAllAlertsSettingsList();
+        renderAllOfficialAlertsOnMap();
+    }
+
+    function setAllOfficialAlertColorPreferenceFromControl(control) {
+        if (!control) return;
+        setAllOfficialAlertColorPreference(
+            control.dataset.alertCountry,
+            control.dataset.alertEvent,
+            control.value
+        );
+    }
+
     function allOfficialAlertCountryEnabled(country) {
         return allOfficialAlertCountryPrefs[country] !== false;
     }
@@ -19324,7 +19382,9 @@
 
     function resetAllOfficialAlertTypePreferences() {
         allOfficialAlertTypePrefs = {};
+        allOfficialAlertColorPrefs = {};
         localStorage.removeItem('report_all_alert_type_prefs');
+        localStorage.removeItem('report_all_alert_color_prefs');
         renderAllAlertsSettingsList();
         renderAllOfficialAlertsOnMap();
     }
@@ -19608,6 +19668,8 @@
     function _allOfficialAlertColor(feature, eventName, country) {
         const event = String(eventName || '').toLowerCase();
         const props = feature && feature.properties || {};
+        const customizedColor = allOfficialAlertColorPreference(country, eventName);
+        if (customizedColor) return customizedColor;
         if (country === 'US' &&
             Object.prototype.hasOwnProperty.call(ALL_OFFICIAL_ALERT_US_COLOR_REFERENCE, event)) {
             return ALL_OFFICIAL_ALERT_US_COLOR_REFERENCE[event];
@@ -19833,14 +19895,19 @@
                     item.name,
                     item.defaultOn
                 );
-                const color = item.color || _allOfficialAlertColor(
+                const color = allOfficialAlertColorPreference(
+                    allAlertsSettingsCountry, item.name
+                ) || item.color || _allOfficialAlertColor(
                     null, item.name, allAlertsSettingsCountry
                 );
                 const safeName = escapeHtml(item.name);
                 const safeCountry = allAlertsSettingsCountry;
                 return '<div class="all-alerts-type-row">' +
-                    '<span class="all-alerts-type-swatch" style="background:' +
-                    escapeHtml(color) + ';"></span>' +
+                    '<input type="color" class="all-alerts-type-swatch" value="' +
+                    escapeHtml(color) + '" data-alert-country="' + safeCountry +
+                    '" data-alert-event="' + safeName + '" aria-label="Choose color for ' +
+                    safeName + '" title="Choose color for ' + safeName +
+                    '" onchange="setAllOfficialAlertColorPreferenceFromControl(this)">' +
                     '<span class="all-alerts-type-name">' + safeName + '</span>' +
                     '<span class="all-alerts-type-toggle"><label class="ios-toggle" aria-label="Show ' +
                     safeName + '">' +
