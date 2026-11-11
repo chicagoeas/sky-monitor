@@ -16971,6 +16971,7 @@
 
     function reportingPopupEntryIsNear(entry, latlng, sourceEntry) {
         if (!reportingPopupSourceIsVisible(entry.source)) return false;
+        if (!reportingPopupOfficialAlertIsEnabled(entry)) return false;
         if (entry === sourceEntry) return true;
         if (!reportingMap || !entry.layer) return false;
         try {
@@ -17187,6 +17188,23 @@
         }
         if (source === 'skymonitor-reports') return !!userReportLayer && reportingMap.hasLayer(userReportLayer);
         return true;
+    }
+
+    function reportingPopupOfficialAlertIsEnabled(entry) {
+        if (!entry || entry.isAllOfficialAlert ||
+            (entry.source !== 'nws' && entry.source !== 'environment-canada')) {
+            return true;
+        }
+        const country = entry.officialAlertCountry ||
+            (entry.source === 'environment-canada' ? 'CA' : 'US');
+        const eventName = entry.nwsEventName || entry.officialAlertEventName || '';
+        if (!eventName) return true;
+        return allOfficialAlertCountryEnabled(country) &&
+            allOfficialAlertPreference(
+                country,
+                eventName,
+                allOfficialAlertDefaultOn(country, eventName)
+            );
     }
 
     function reportingPopupEntryIdFor(entry) {
@@ -17558,7 +17576,8 @@
     }
 
     function openReportingPopup(sourceEntry, latlng, autoOpenEntry) {
-        if (!reportingMap || !window.L) return;
+        if (!reportingMap || !window.L ||
+            !reportingPopupOfficialAlertIsEnabled(sourceEntry)) return;
         const nearby = reportingPopupEntries.filter(function(entry) {
             return reportingPopupEntryIsNear(entry, latlng, sourceEntry);
         });
@@ -18160,6 +18179,20 @@
                 reportingMap.removeLayer(item.layer);
             }
         });
+        if (alertPolygonLayer) {
+            reportingPopupEntries.forEach(function(entry) {
+                if (!entry || entry.isAllOfficialAlert || !entry.layer ||
+                    (entry.source !== 'nws' && entry.source !== 'environment-canada')) return;
+                const shouldShow = alertsVisible &&
+                    reportingPopupOfficialAlertIsEnabled(entry);
+                const isAttached = alertPolygonLayer.hasLayer(entry.layer);
+                if (shouldShow && !isAttached) {
+                    alertPolygonLayer.addLayer(entry.layer);
+                } else if (!shouldShow && isAttached) {
+                    alertPolygonLayer.removeLayer(entry.layer);
+                }
+            });
+        }
     }
 
     function toggleMapSettings() {
@@ -19041,6 +19074,7 @@
         } catch (error) {}
         renderAllAlertsSettingsList();
         renderAllOfficialAlertsOnMap();
+        syncReportingMapLayers();
     }
     window.setAllOfficialAlertCountryEnabled = setAllOfficialAlertCountryEnabled;
 
@@ -19051,6 +19085,7 @@
         allOfficialAlertTypePrefs[country][key] = !!enabled;
         saveAllOfficialAlertPreferences();
         renderAllOfficialAlertsOnMap();
+        syncReportingMapLayers();
     }
 
     function setAllOfficialAlertTypePreferenceFromControl(control) {
@@ -19114,6 +19149,7 @@
         localStorage.removeItem('report_all_alert_type_prefs');
         renderAllAlertsSettingsList();
         renderAllOfficialAlertsOnMap();
+        syncReportingMapLayers();
     }
 
     function toggleAllOfficialAlerts() {
@@ -24862,6 +24898,8 @@
                         });
                          registerReportingPopup(polygon, {
                             source: 'environment-canada',
+                            officialAlertCountry: 'CA',
+                            officialAlertEventName: normalized.title,
                             isPolygon: true,
                             color: color,
                              popupKey: normalized.id || [
