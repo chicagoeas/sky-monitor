@@ -19511,10 +19511,49 @@
                         headers: { 'Accept': 'application/json' }
                     }
                 ).then(function(response) {
-                    if (!response.ok) throw new Error('Alert zone batch returned HTTP ' + response.status);
+                    if (!response.ok) return { geometries: {} };
                     return response.json();
                 }).catch(function() {
                     return { geometries: {} };
+                }).then(async function(payload) {
+                    const result = payload && payload.geometries &&
+                        typeof payload.geometries === 'object'
+                        ? payload : { geometries: {} };
+                    const unresolved = batch.filter(function(item) {
+                        return !result.geometries[item.token];
+                    });
+                    if (!unresolved.length) return result;
+
+                    // Keep compatibility with deployments that have the
+                    // original per-zone Worker route but not the newer batch
+                    // route, and recover individual zones omitted by a batch.
+                    let nextIndex = 0;
+                    const fallbackWorkers = Math.min(6, unresolved.length);
+                    await Promise.all(Array.from({ length: fallbackWorkers }, async function() {
+                        while (nextIndex < unresolved.length) {
+                            const item = unresolved[nextIndex++];
+                            const parts = item.token.split(':');
+                            if (parts.length !== 2) continue;
+                            try {
+                                const fallbackResponse = await fetch(
+                                    WEATHER_WORKER_URL + '/api/alert-zones/' +
+                                        parts[0] + '/' + parts[1],
+                                    {
+                                        cache: 'no-store',
+                                        headers: {
+                                            'Accept': 'application/geo+json, application/json'
+                                        }
+                                    }
+                                );
+                                if (!fallbackResponse.ok) continue;
+                                const fallbackPayload = await fallbackResponse.json();
+                                result.geometries[item.token] = fallbackPayload &&
+                                    (fallbackPayload.geometry ||
+                                        fallbackPayload.feature && fallbackPayload.feature.geometry) || null;
+                            } catch (error) {}
+                        }
+                    }));
+                    return result;
                 });
                 batch.forEach(function(item) {
                     allOfficialAlertZoneGeometryCache.set(
@@ -19541,14 +19580,6 @@
             (allOfficialAlertFeatures[country] || []).forEach(function(feature) {
                 if (!feature || feature.geometry || feature._reportingResolvedGeometry ||
                     !_allOfficialAlertIsCurrent(feature, country)) return;
-                const eventName = allOfficialAlertTitle(feature, country);
-                if (!allOfficialAlertCountryEnabled(country) ||
-                    !eventName || allOfficialAlertEventIsExcluded(eventName) ||
-                    !allOfficialAlertPreference(
-                        country,
-                        eventName,
-                        allOfficialAlertDefaultOn(country, eventName)
-                    )) return;
                 const zoneUrls = country === 'US'
                     ? _allOfficialAlertZoneUrls(feature) : [];
                 jobs.push({ feature: feature, country: country, zoneUrls: zoneUrls });
