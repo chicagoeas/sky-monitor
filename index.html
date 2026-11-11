@@ -2612,35 +2612,53 @@
         }
         .all-alerts-close:hover { background: rgba(255,255,255,0.1); }
         .all-alerts-country-tabs, .all-alerts-category-tabs {
-            display: flex; align-items: center; gap: 5px; overflow-x: auto;
-            scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+            min-width: 0; overflow: hidden; scrollbar-width: none;
+            -webkit-overflow-scrolling: auto;
         }
+        .all-alerts-country-tabs::-webkit-scrollbar,
+        .all-alerts-category-tabs::-webkit-scrollbar { display: none; }
         .all-alerts-country-tabs {
-            justify-content: center; margin: 0 16px 10px; padding: 7px;
+            display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px; margin: 0 16px 10px; padding: 7px;
             border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
             background: rgba(9,20,45,0.3);
+        }
+        .all-alerts-country-option {
+            display: flex; align-items: center; gap: 6px; min-width: 0;
         }
         .all-alerts-country-tabs button, .all-alerts-category-tabs button {
             flex: 0 0 auto; border: 1px solid transparent; border-radius: 8px;
             color: #c6d0df; background: transparent; font: inherit;
             font-size: 0.78em; font-weight: 750; padding: 8px 12px; cursor: pointer;
         }
+        .all-alerts-country-tabs button { flex: 1 1 auto; min-width: 0; }
+        .all-alerts-country-enable { flex: 0 0 auto; width: 42px; height: 24px; }
+        .all-alerts-country-enable .ios-toggle-track:before {
+            width: 20px; height: 20px; left: 2px; bottom: 2px;
+        }
+        .all-alerts-country-enable input:checked + .ios-toggle-track:before {
+            transform: translateX(18px);
+        }
         .all-alerts-country-tabs button.active {
             color: #fff; background: #2864e8; border-color: #8db0ff;
             box-shadow: 0 0 0 2px rgba(255,255,255,0.78);
         }
         .all-alerts-category-tabs {
-            margin: 0 16px 10px; padding: 5px 7px;
+            display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)) 34px;
+            align-items: stretch; gap: 3px; margin: 0 16px 10px; padding: 5px 7px;
             border: 1px solid rgba(255,255,255,0.07); border-radius: 10px;
             background: rgba(9,20,45,0.24);
         }
-        .all-alerts-category-tabs button { padding: 7px 9px; }
+        .all-alerts-category-tabs button {
+            min-width: 0; padding: 7px 4px; white-space: normal;
+            line-height: 1.15; font-size: 0.72em;
+        }
         .all-alerts-category-tabs button.active {
             color: #fff; background: #2864e8;
         }
         .all-alerts-category-tabs .all-alerts-search-button {
             display: flex; align-items: center; justify-content: center;
-            margin-left: auto; min-width: 30px; padding-left: 7px; padding-right: 7px;
+            min-width: 30px; padding-left: 5px; padding-right: 5px;
             color: #d8e2ef;
         }
         .all-alerts-search-wrap { padding: 0 16px 10px; }
@@ -2709,6 +2727,8 @@
             .all-alerts-dialog-head { padding: 12px 14px; }
             .all-alerts-dialog-title { font-size: 1.15em; }
             .all-alerts-country-tabs, .all-alerts-category-tabs { margin-left: 10px; margin-right: 10px; }
+            .all-alerts-category-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)) 34px; }
+            .all-alerts-country-tabs button { font-size: 0.72em; padding: 7px 6px; }
             #all-alerts-catalog-list { padding-left: 10px; padding-right: 10px; }
             .all-alerts-type-row { min-height: 45px; padding-left: 9px; padding-right: 9px; }
         }
@@ -3710,10 +3730,28 @@
                             onclick="closeAllAlertsSettings()" aria-label="Close alert settings">&#10005;</button>
                     </div>
                     <div class="all-alerts-country-tabs" role="tablist" aria-label="Alert country">
-                        <button type="button" id="all-alerts-country-us" class="active"
-                            onclick="selectAllAlertsCountry('US')" role="tab" aria-selected="true">United States</button>
-                        <button type="button" id="all-alerts-country-ca"
-                            onclick="selectAllAlertsCountry('CA')" role="tab" aria-selected="false">Canada</button>
+                        <div class="all-alerts-country-option">
+                            <button type="button" id="all-alerts-country-us" class="active"
+                                onclick="selectAllAlertsCountry('US')" role="tab" aria-selected="true">United States</button>
+                            <label class="ios-toggle all-alerts-country-enable"
+                                title="Enable or disable U.S. alerts">
+                                <input type="checkbox" id="all-alerts-country-enabled-us" checked
+                                    aria-label="Enable U.S. alerts"
+                                    onchange="setAllOfficialAlertCountryEnabled('US', this.checked)">
+                                <span class="ios-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="all-alerts-country-option">
+                            <button type="button" id="all-alerts-country-ca"
+                                onclick="selectAllAlertsCountry('CA')" role="tab" aria-selected="false">Canada</button>
+                            <label class="ios-toggle all-alerts-country-enable"
+                                title="Enable or disable Canadian alerts">
+                                <input type="checkbox" id="all-alerts-country-enabled-ca" checked
+                                    aria-label="Enable Canadian alerts"
+                                    onchange="setAllOfficialAlertCountryEnabled('CA', this.checked)">
+                                <span class="ios-toggle-track"></span>
+                            </label>
+                        </div>
                     </div>
                     <div id="all-alerts-category-tabs" class="all-alerts-category-tabs"
                         role="tablist" aria-label="Alert category"></div>
@@ -16571,6 +16609,16 @@
             return {};
         }
     })();
+    let allOfficialAlertCountryPrefs = (function() {
+        try {
+            const saved = JSON.parse(
+                localStorage.getItem('report_all_alert_country_prefs') || '{}'
+            );
+            return saved && typeof saved === 'object' ? saved : {};
+        } catch (error) {
+            return {};
+        }
+    })();
     let allOfficialAlertLayer = null;
     let allOfficialAlertFeatures = { US: [], CA: [] };
     let allOfficialAlertCatalogs = { US: [], CA: [] };
@@ -18966,6 +19014,24 @@
         } catch (error) {}
     }
 
+    function allOfficialAlertCountryEnabled(country) {
+        return allOfficialAlertCountryPrefs[country] !== false;
+    }
+
+    function setAllOfficialAlertCountryEnabled(country, enabled) {
+        if (country !== 'US' && country !== 'CA') return;
+        allOfficialAlertCountryPrefs[country] = !!enabled;
+        try {
+            localStorage.setItem(
+                'report_all_alert_country_prefs',
+                JSON.stringify(allOfficialAlertCountryPrefs)
+            );
+        } catch (error) {}
+        renderAllAlertsSettingsList();
+        renderAllOfficialAlertsOnMap();
+    }
+    window.setAllOfficialAlertCountryEnabled = setAllOfficialAlertCountryEnabled;
+
     function setAllOfficialAlertTypePreference(country, eventName, enabled) {
         const key = String(eventName || '').toLowerCase();
         if (!key || (country !== 'US' && country !== 'CA')) return;
@@ -18987,16 +19053,8 @@
     function selectAllAlertsCountry(country) {
         if (country !== 'US' && country !== 'CA') return;
         allAlertsSettingsCountry = country;
-        const usTab = document.getElementById('all-alerts-country-us');
-        const caTab = document.getElementById('all-alerts-country-ca');
-        if (usTab) {
-            usTab.classList.toggle('active', country === 'US');
-            usTab.setAttribute('aria-selected', country === 'US' ? 'true' : 'false');
-        }
-        if (caTab) {
-            caTab.classList.toggle('active', country === 'CA');
-            caTab.setAttribute('aria-selected', country === 'CA' ? 'true' : 'false');
-        }
+        const list = document.getElementById('all-alerts-catalog-list');
+        if (list) list.scrollTop = 0;
         renderAllAlertsSettingsList();
     }
 
@@ -19016,6 +19074,8 @@
     function selectAllAlertsCategory(category) {
         if (!ALL_OFFICIAL_ALERT_CATEGORIES.some(function(item) { return item.key === category; })) return;
         allAlertsSettingsCategory = category;
+        const list = document.getElementById('all-alerts-catalog-list');
+        if (list) list.scrollTop = 0;
         renderAllAlertsSettingsList();
     }
 
@@ -19236,6 +19296,8 @@
             return allOfficialAlertCatalogs;
         }
         if (allOfficialAlertTypesPromise) return allOfficialAlertTypesPromise;
+        const status = document.getElementById('all-alerts-catalog-status');
+        if (status) status.textContent = 'Loading official alert types…';
         allOfficialAlertTypesPromise = _fetchNwsAlertTypeCatalog().then(function(types) {
             allOfficialAlertTypes = Array.isArray(types) ? types : [];
             allOfficialAlertCatalogs.US = _allOfficialAlertSortedCatalog(
@@ -19249,8 +19311,10 @@
                 []
             );
             allOfficialAlertTypesFetchedAt = Date.now();
+            if (status) status.textContent = 'Official alert types loaded';
             return allOfficialAlertCatalogs;
         }).catch(function(error) {
+            if (status) status.textContent = 'Could not load alert types. Showing built-in types.';
             console.warn('[SkyMonitor] Official alert type catalog failed:', error);
             return allOfficialAlertCatalogs;
         }).finally(function() {
@@ -19469,19 +19533,38 @@
         const list = document.getElementById('all-alerts-catalog-list');
         const status = document.getElementById('all-alerts-catalog-status');
         if (!tabs || !list) return;
-        tabs.innerHTML = ALL_OFFICIAL_ALERT_CATEGORIES.map(function(category) {
-            return '<button type="button" role="tab" aria-selected="' +
-                (category.key === allAlertsSettingsCategory ? 'true' : 'false') +
-                '" class="' + (category.key === allAlertsSettingsCategory ? 'active' : '') +
-                '" onclick="selectAllAlertsCategory(\'' + category.key + '\')">' +
-                escapeHtml(category.label) + '</button>';
-        }).join('') +
-            '<button type="button" class="all-alerts-search-button" onclick="toggleAllAlertSearch()" ' +
-            'aria-label="Search alert types" title="Search alert types">' +
-            '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-            'stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
-            '<circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4 4"></path>' +
-            '</svg></button>';
+        if (tabs.dataset.initialized !== 'true') {
+            tabs.innerHTML = ALL_OFFICIAL_ALERT_CATEGORIES.map(function(category) {
+                return '<button type="button" role="tab" data-alert-category="' +
+                    escapeHtml(category.key) + '" aria-selected="false" ' +
+                    'onclick="selectAllAlertsCategory(\'' + category.key + '\')">' +
+                    escapeHtml(category.label) + '</button>';
+            }).join('') +
+                '<button type="button" class="all-alerts-search-button" onclick="toggleAllAlertSearch()" ' +
+                'aria-label="Search alert types" title="Search alert types">' +
+                '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+                'stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+                '<circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4 4"></path>' +
+                '</svg></button>';
+            tabs.dataset.initialized = 'true';
+        }
+        tabs.querySelectorAll('button[data-alert-category]').forEach(function(button) {
+            const selected = button.dataset.alertCategory === allAlertsSettingsCategory;
+            button.classList.toggle('active', selected);
+            button.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+        [['US', 'us'], ['CA', 'ca']].forEach(function(item) {
+            const country = item[0];
+            const code = item[1];
+            const button = document.getElementById('all-alerts-country-' + code);
+            const control = document.getElementById('all-alerts-country-enabled-' + code);
+            const selected = country === allAlertsSettingsCountry;
+            if (button) {
+                button.classList.toggle('active', selected);
+                button.setAttribute('aria-selected', selected ? 'true' : 'false');
+            }
+            if (control) control.checked = allOfficialAlertCountryEnabled(country);
+        });
         const catalog = allOfficialAlertCatalogs[allAlertsSettingsCountry] || [];
         const search = String(document.getElementById('all-alerts-search')?.value || '')
             .trim().toLowerCase();
@@ -19489,9 +19572,6 @@
             return item.category === allAlertsSettingsCategory &&
                 (!search || item.name.toLowerCase().includes(search));
         });
-        if (status && !allOfficialAlertTypesFetchedAt && !allOfficialAlertTypesPromise) {
-            status.textContent = 'Open settings to load official alert types.';
-        }
         if (!visibleItems.length) {
             list.innerHTML = '<div style="padding:18px 8px;color:#aab7c4;font-size:0.82em;text-align:center;">' +
                 (allOfficialAlertTypesFetchedAt
@@ -19653,6 +19733,7 @@
         }
         const seen = new Set();
         ['US', 'CA'].forEach(function(country) {
+            if (!allOfficialAlertCountryEnabled(country)) return;
             (allOfficialAlertFeatures[country] || []).forEach(function(feature, index) {
                 if (!_allOfficialAlertIsCurrent(feature, country)) return;
                 const eventName = allOfficialAlertTitle(feature, country);
