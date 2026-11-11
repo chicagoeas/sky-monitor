@@ -19227,7 +19227,7 @@
 
     async function _fetchAllNwsAlertFeatures() {
         const response = await fetch(WEATHER_WORKER_URL + '/api/official-alerts/us', {
-            cache: 'force-cache',
+            cache: 'no-store',
             headers: { 'Accept': 'application/geo+json, application/json' }
         });
         if (!response.ok) {
@@ -19239,7 +19239,7 @@
 
     async function _fetchAllCanadaAlertFeatures() {
         const response = await fetch(WEATHER_WORKER_URL + '/api/official-alerts/ca', {
-            cache: 'force-cache',
+            cache: 'no-store',
             headers: { 'Accept': 'application/geo+json, application/json' }
         });
         if (!response.ok) {
@@ -19849,14 +19849,15 @@
                     }
                     return false;
                 })(geometry);
-                const issued = country === 'CA'
-                    ? (props.publication_datetime || props.sent || props.issued)
-                    : (props.sent || props.effective || props.onset);
+                const timeInfo = reportingAlertTimeInfo(props);
+                const issued = timeInfo.value;
+                const issuedLabel = timeInfo.label;
                 const starts = country === 'CA'
                     ? (props.validity_datetime || props.event_start_datetime ||
                         props.onset || props.effective || props.publication_datetime)
                     : (props.onset || props.effective || props.start ||
                         props.startTime || props.start_time);
+                const startsIn = formatReportingStart(starts);
                 const expiry = country === 'CA'
                     ? (props.event_end_datetime || props.expiration_datetime || props.expires)
                     : (props.ends || props.expires || props.expiration);
@@ -19881,13 +19882,13 @@
                     meta: [
                         country === 'CA' ? 'Environment Canada' :
                             allOfficialAlertWfoCode(props),
-                        formatReportingStart(starts),
+                        startsIn,
                         expiry ? formatReportingExpiry(expiry) : ''
                     ].filter(Boolean).map(escapeHtml).join(' · '),
                     detail: reportingPopupDetailRows([
-                        ['Issued', issued ? formatReportingDateTimeNoSeconds(issued) : ''],
+                        [issuedLabel, issued ? formatReportingDateTimeNoSeconds(issued) : ''],
                         ['Area', area],
-                        ['Starts at', starts ? formatReportingDateTimeNoSeconds(starts) : ''],
+                        ['Starts at', startsIn ? formatReportingDateTimeNoSeconds(starts) : ''],
                         ['Valid through', expiry ? formatReportingDateTimeNoSeconds(expiry) : ''],
                         ['Alert text', description],
                         ['Instructions', instructions]
@@ -20202,6 +20203,7 @@
 
     function reportingAlertTimeInfo(props) {
         const issued = customSkyAlertValue(props, [
+            'publication_datetime',
             'issued',
             'issuedAt',
             'issued_at',
@@ -20251,6 +20253,7 @@
             'msgType',
             'messageType',
             'message_type',
+            'status_en',
             'alertStatus',
             'alert_status'
         ], '').toLowerCase();
@@ -24674,9 +24677,10 @@
 
     async function loadIemSpsDetails(props) {
         props = props || {};
+        const timeInfo = reportingAlertTimeInfo(props);
         const fallback = reportingPopupDetailRows([
-            ['Issued', props.issue ? formatReportTime(props.issue) : ''],
-            ['Issued by', formatNwsIssuedBy('', props.wfo)],
+            [timeInfo.label, timeInfo.value ? formatReportTime(timeInfo.value) : ''],
+            [timeInfo.actorLabel, formatNwsIssuedBy('', props.wfo)],
             ['Valid through', props.expire
                 ? formatReportingDateTimeNoSeconds(props.expire) : ''],
             ['Alert text', 'The Special Weather Statement text is temporarily unavailable.']
@@ -24696,8 +24700,8 @@
             const text = await response.text();
             const sections = _historicalNwsTextSections(text);
             return reportingPopupDetailRows([
-                ['Issued', props.issue ? formatReportTime(props.issue) : ''],
-                ['Issued by', formatNwsIssuedBy(sections.issuer, props.wfo)],
+                [timeInfo.label, timeInfo.value ? formatReportTime(timeInfo.value) : ''],
+                [timeInfo.actorLabel, formatNwsIssuedBy(sections.issuer, props.wfo)],
                 ['Valid through', props.expire
                     ? formatReportingDateTimeNoSeconds(props.expire) : ''],
                 ['Alert text', sections.description || text],
@@ -27608,7 +27612,8 @@
         var eventName = String(properties.event || 'NWS tropical alert');
         var color = customSkyAlertSeverityColor(properties);
         var area = String(properties.areaDesc || '').trim();
-        var sent = properties.sent ? formatReportTime(properties.sent) : '';
+        var timeInfo = reportingAlertTimeInfo(properties);
+        var sent = timeInfo.value ? formatReportTime(timeInfo.value) : '';
         var effective = _tropicalNWSLocalTime(properties.effective || properties.onset);
         var expires = _tropicalNWSLocalTime(properties.expires || properties.ends);
         var headline = String(properties.headline || '').trim();
@@ -27618,10 +27623,10 @@
             ? 'NWS · PGUM Coastal Waters Forecast'
             : 'National Weather Service');
         if (expires) meta += ' · Expires ' + expires;
-        else if (sent) meta += ' · Issued ' + sent;
+        else if (sent) meta += ' · ' + timeInfo.label + ' ' + sent;
         var rows = [
             ['Area', area],
-            ['Issued', sent],
+            [timeInfo.label, sent],
             ['Effective', effective],
             ['Expires', expires],
             ['Headline', headline],
