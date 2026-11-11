@@ -19276,7 +19276,7 @@
         const expires = country === 'CA'
             ? (props.event_end_datetime || props.expiration_datetime ||
                 props.expires || props.expiresAt)
-            : (props.expires || props.ends || props.expiration || props.expirationTime);
+            : (props.ends || props.expires || props.expiration || props.expirationTime);
         const expiresMs = Date.parse(expires || '');
         return !expiresMs || expiresMs > Date.now();
     }
@@ -19852,9 +19852,14 @@
                 const issued = country === 'CA'
                     ? (props.publication_datetime || props.sent || props.issued)
                     : (props.sent || props.effective || props.onset);
+                const starts = country === 'CA'
+                    ? (props.validity_datetime || props.event_start_datetime ||
+                        props.onset || props.effective || props.publication_datetime)
+                    : (props.onset || props.effective || props.start ||
+                        props.startTime || props.start_time);
                 const expiry = country === 'CA'
                     ? (props.event_end_datetime || props.expiration_datetime || props.expires)
-                    : (props.expires || props.ends || props.expiration);
+                    : (props.ends || props.expires || props.expiration);
                 const area = country === 'CA'
                     ? [props.feature_name_en, props.province].filter(Boolean).join(', ')
                     : String(props.areaDesc || '');
@@ -19873,12 +19878,16 @@
                     nwsEventName: country === 'US' ? eventName : '',
                     popupKey: id,
                     title: escapeHtml(eventName),
-                    meta: (country === 'CA' ? 'Environment Canada' :
-                        allOfficialAlertWfoCode(props)) +
-                        (expiry ? ' · ' + escapeHtml(formatReportingExpiry(expiry)) : ''),
+                    meta: [
+                        country === 'CA' ? 'Environment Canada' :
+                            allOfficialAlertWfoCode(props),
+                        formatReportingStart(starts),
+                        expiry ? formatReportingExpiry(expiry) : ''
+                    ].filter(Boolean).map(escapeHtml).join(' · '),
                     detail: reportingPopupDetailRows([
                         ['Issued', issued ? formatReportingDateTimeNoSeconds(issued) : ''],
                         ['Area', area],
+                        ['Starts at', starts ? formatReportingDateTimeNoSeconds(starts) : ''],
                         ['Valid through', expiry ? formatReportingDateTimeNoSeconds(expiry) : ''],
                         ['Alert text', description],
                         ['Instructions', instructions]
@@ -20482,6 +20491,18 @@
         return remaining === '0 minutes'
             ? 'Expires just now'
             : 'Expires in ' + remaining;
+    }
+
+    function formatReportingStart(value) {
+        if (!value) return '';
+        const parsed = parseReportDate(value);
+        if (!parsed) return '';
+        const diffMs = parsed.getTime() - Date.now();
+        if (diffMs <= 0) return '';
+        const remaining = diffMs < 60000
+            ? 'less than a minute'
+            : formatReportingMinutesUntil(value);
+        return 'Starts in ' + remaining;
     }
 
     function formatReportingMinutesUntilAt(value, referenceMs) {
