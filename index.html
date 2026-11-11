@@ -25839,12 +25839,6 @@
         return request.promise;
     }
 
-    function reportingDiscussionOfficialLink(url, label) {
-        return '<p><b>Official source</b><span class="reporting-popup-pre"><a href="' +
-            escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" ' +
-            'style="color:#7dd3fc;">' + escapeHtml(label) + '</a></span></p>';
-    }
-
     function reportingDiscussionTextFromHtml(html) {
         if (!html || typeof DOMParser !== 'function') return '';
         try {
@@ -25863,6 +25857,71 @@
             /^\s*Areas?\s+affected\s*\.{2,}\s*([\s\S]*?)(?=\n\s*\n|\n\s*(?:Concerning|Valid|Summary|Discussion)\b|(?![\s\S]))/im
         );
         return match ? match[1].replace(/\s+/g, ' ').trim() : '';
+    }
+
+    function filterReportingDiscussionText(text, provider) {
+        const source = String(text || '').replace(/\r/g, '');
+        if (String(provider || '').toUpperCase() !== 'SPC') return source.trim();
+        const lines = source.split('\n');
+        const filtered = [];
+        let skippingArea = false;
+        let skippingCoordinates = false;
+        lines.forEach(function(line) {
+            const trimmed = line.trim();
+            if (skippingArea) {
+                if (!trimmed ||
+                    /^(?:Concerning|Valid|Summary|Discussion)\b/i.test(trimmed)) {
+                    skippingArea = false;
+                    if (!trimmed) return;
+                } else {
+                    return;
+                }
+            }
+            if (skippingCoordinates) {
+                if (/^(?:\d{8}\s*)+$/.test(trimmed)) return;
+                skippingCoordinates = false;
+            }
+            if (!trimmed) {
+                filtered.push('');
+                return;
+            }
+            if (/^Mesoscale Discussion\s+#?\d+\s*$/i.test(trimmed) ||
+                /^NWS Storm Prediction Center\b/i.test(trimmed) ||
+                reportingDiscussionIssueFromText(trimmed) ||
+                /^Areas?\s+affected\s*\.{2,}/i.test(trimmed) ||
+                /^Valid\s+\d{6}Z?\s*-\s*\d{6}Z?\s*$/i.test(trimmed) ||
+                /^\.\.\.\s*Please see\b.*\bfor graphic product\.\.\.\s*$/i.test(trimmed) ||
+                /^ATTN\.\.\./i.test(trimmed) ||
+                /^MOST PROBABLE PEAK\b/i.test(trimmed)) {
+                if (/^Areas?\s+affected\s*\.{2,}/i.test(trimmed)) {
+                    skippingArea = true;
+                }
+                return;
+            }
+            if (/^LAT\.\.\.LON\b/i.test(trimmed)) {
+                skippingCoordinates = true;
+                return;
+            }
+            filtered.push(line.replace(/[ \t]+$/, ''));
+        });
+        return filtered.join('\n').replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n').trim();
+    }
+
+    function prepareReportingDiscussionText(entry, text) {
+        const sourceText = String(text || '').trim();
+        if (!sourceText || String(entry && entry.provider || '').toUpperCase() !== 'SPC') {
+            return sourceText;
+        }
+        const area = reportingDiscussionAreaFromText(sourceText);
+        const issued = reportingDiscussionIssueFromText(sourceText);
+        const expires = reportingDiscussionExpiryFromText(
+            sourceText,
+            issued || (entry && entry.issued)
+        );
+        if (area) entry.area = area;
+        if (issued) entry.issued = issued;
+        if (expires) entry.expires = expires;
+        return filterReportingDiscussionText(sourceText, 'SPC');
     }
 
     function reportingDiscussionIssueFromText(text) {
@@ -25943,10 +26002,7 @@
             ['Issued', issued ? formatReportingDiscussionDate(issued) : ''],
             ['Valid through', expires ? formatReportingDiscussionDate(expires) : ''],
             ['Discussion text', shownText]
-        ]) + reportingDiscussionOfficialLink(
-            entry.officialUrl,
-            entry.officialLabel
-        );
+        ]);
     }
 
     function reportingDiscussionMeta(entry, nowMs) {
@@ -25960,6 +26016,10 @@
     function loadReportingDiscussionDetails(entry) {
         if (!entry) return Promise.resolve('');
         if (entry.discussionText) {
+            entry.discussionText = prepareReportingDiscussionText(
+                entry,
+                entry.discussionText
+            );
             entry.detail = reportingDiscussionDetail(entry, entry.discussionText);
             return Promise.resolve(entry.detail);
         }
@@ -25988,15 +26048,18 @@
                     officialText = reportingDiscussionTextFromHtml(html);
                 }
                 if (officialText) {
-                    entry.discussionText = officialText;
+                    entry.discussionText = prepareReportingDiscussionText(
+                        entry,
+                        officialText
+                    );
                     entry.discussionUnavailable = '';
                 } else {
                     throw new Error('Official discussion text is unavailable');
                 }
             } catch (error) {
                 entry.discussionUnavailable = entry.provider === 'WPC'
-                    ? 'The official WPC discussion text is temporarily unavailable. Use the official source link below.'
-                    : 'The official discussion text is temporarily unavailable. Use the official source link below.';
+                    ? 'The official WPC discussion text is temporarily unavailable.'
+                    : 'The official discussion text is temporarily unavailable.';
             }
             entry.detail = reportingDiscussionDetail(entry, entry.discussionText);
             if (typeof entry.refreshPopupTiming === 'function') {
@@ -26013,6 +26076,12 @@
     }
 
     function prepareReportingDiscussionEntry(entry) {
+        if (entry.discussionText) {
+            entry.discussionText = prepareReportingDiscussionText(
+                entry,
+                entry.discussionText
+            );
+        }
         entry.detail = reportingDiscussionDetail(entry, entry.discussionText);
         entry.meta = reportingDiscussionMeta(entry, Date.now());
         entry.refreshPopupTiming = function(nowMs) {
@@ -26097,9 +26166,6 @@
                 discussionNumber: discussionNumber,
                 sourceLabel: 'SPC',
                 officialUrl: officialUrl,
-                officialLabel: discussionNumber
-                    ? 'Open SPC MD #' + discussionNumber
-                    : 'Open SPC discussions',
                 area: area,
                 issued: issueTime,
                 expires: expireTime,
@@ -26174,9 +26240,6 @@
                 discussionNumber: discussionNumber,
                 sourceLabel: 'WPC MPD',
                 officialUrl: officialUrl,
-                officialLabel: discussionNumber
-                    ? 'Open WPC MPD #' + discussionNumber
-                    : 'Open WPC discussion',
                 area: area,
                 issued: issueTime,
                 expires: expireTime,
