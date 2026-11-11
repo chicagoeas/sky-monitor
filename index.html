@@ -17012,6 +17012,7 @@
     let reportingPopupEntries = [];
     let reportingPopupEntryId = 0;
     let reportingPopupTimingRefreshTimer = null;
+    const reportingPopupHandledEvents = new WeakSet();
 
     function removeReportingPopupEntries(source) {
         reportingPopupEntries = source
@@ -17237,6 +17238,44 @@
         }
         if (source === 'skymonitor-reports') return !!userReportLayer && reportingMap.hasLayer(userReportLayer);
         return true;
+    }
+
+    // Some map renderers (notably the high-z-index storm-report canvas) can
+    // visually cover alert polygons and receive the pointer event first.
+    // If that event does not resolve to a layer, Leaflet still emits a map
+    // click. Use it as a fallback for alert polygons only; report markers and
+    // their existing popup handlers retain priority.
+    function openReportingAlertPopupFromMapClick(event) {
+        const originalEvent = event && event.originalEvent;
+        if (originalEvent && reportingPopupHandledEvents.has(originalEvent)) return;
+        if (originalEvent) reportingPopupHandledEvents.add(originalEvent);
+        if (!event || !event.latlng || !reportingMap) return;
+
+        const target = originalEvent && originalEvent.target;
+        if (target && target.closest &&
+            target.closest('.leaflet-marker-icon, .leaflet-popup, button, a, input')) {
+            return;
+        }
+
+        const alertSources = {
+            'nws': true,
+            'environment-canada': true,
+            'custom-skymonitor': true
+        };
+        const clickedAlerts = reportingPopupEntries.filter(function(entry) {
+            if (!entry || !entry.isPolygon || !alertSources[entry.source] ||
+                !reportingPopupSourceIsVisible(entry.source) || !entry.layer) return false;
+            try {
+                const bounds = entry.layer.getBounds && entry.layer.getBounds();
+                return !!bounds && bounds.contains(event.latlng) &&
+                    reportingPolygonContainsLatLng(entry.layer, event.latlng);
+            } catch (error) {
+                return false;
+            }
+        });
+        if (clickedAlerts.length) {
+            openReportingPopup(clickedAlerts[0], event.latlng);
+        }
     }
 
     function reportingPopupEntryIdFor(entry) {
@@ -17813,7 +17852,10 @@
         entry.layer = layer;
         reportingPopupEntries.push(entry);
         layer.on('click', function(e) {
-            if (window.L && window.L.DomEvent) window.L.DomEvent.stopPropagation(e);
+            if (e && e.originalEvent) reportingPopupHandledEvents.add(e.originalEvent);
+            if (window.L && window.L.DomEvent) {
+                window.L.DomEvent.stopPropagation(e && e.originalEvent ? e.originalEvent : e);
+            }
             openReportingPopup(entry, e.latlng);
         });
     }
@@ -24537,6 +24579,7 @@
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
+        reportingMap.on('click', openReportingAlertPopupFromMapClick);
         const reportingBasemapPane = reportingMap.createPane('reporting-basemap');
         reportingBasemapPane.style.zIndex = 180;
         reportingBasemapPane.style.pointerEvents = 'none';
