@@ -25638,6 +25638,19 @@
         };
     }
 
+    function _tropicalJTWCAdvisoryBody(text) {
+        var body = String(text || '').replace(/\r/g, '');
+        var rmksIndex = body.search(/^[ \t]*RMKS\/[ \t]*$/mi);
+        if (rmksIndex !== -1) {
+            var afterRmks = body.indexOf('\n', rmksIndex);
+            body = afterRmks === -1 ? '' : body.slice(afterRmks + 1);
+        }
+        var firstSectionIndex = body.search(/^[ \t]*1\.[ \t]+/m);
+        if (firstSectionIndex !== -1) body = body.slice(firstSectionIndex);
+        body = body.replace(/(?:^|\n)[ \t]*NNNN[ \t]*$/i, '');
+        return body.trim().replace(/[ \t]*\/\/[ \t]*$/, '').trim();
+    }
+
     function _tropicalJTWCReportingEntry(storm) {
         var current = _tropicalCurrentPoint(storm);
         var latitude = current
@@ -25646,6 +25659,9 @@
         var longitude = current
             ? Math.abs(current.lon).toFixed(1) + (current.lon < 0 ? '°W' : '°E')
             : '—';
+        var validLabel = storm.validTime
+            ? formatReportTime(storm.validTime)
+            : 'Not available';
         var meta = ['JTWC', 'Published center ' + latitude + ', ' + longitude].join(' · ');
 
         return {
@@ -25660,7 +25676,8 @@
             loadDetails: function() {
                 return _fetchTropicalJTWCAdvisory(storm).then(function(text) {
                     return reportingPopupDetailRows([
-                        ['Advisory', String(text || '').trim()]
+                        ['Issued', validLabel],
+                        ['Advisory', _tropicalJTWCAdvisoryBody(text)]
                     ]);
                 }).catch(function() {
                     return reportingPopupDetailRows([]);
