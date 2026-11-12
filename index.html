@@ -4569,6 +4569,7 @@
 
     function formatExpiredAgo(totalSeconds) {
         var seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+        if (seconds < 60) return 'just now';
         var totalMinutes = Math.floor(seconds / 60);
         if (totalMinutes < 60) {
             return totalMinutes + (totalMinutes === 1 ? ' minute' : ' minutes') + ' ago';
@@ -17918,7 +17919,9 @@
         if (customSkyDeepLinkEntry && customSkyDeepLinkEntry.layer &&
             customSkyDeepLinkEntry.layer.setStyle) {
             customSkyDeepLinkEntry.layer.setStyle({
-                weight: 2.5,
+                weight: reportingAlertBoundaryWeight(
+                    customSkyDeepLinkEntry.title
+                ),
                 opacity: 0.95,
                 fillOpacity: 0.22,
                 dashArray: null
@@ -20683,6 +20686,16 @@
         }
     }
 
+    function reportingAlertBoundaryWeight(eventName, normalWeight) {
+        const name = String(eventName || '').toLowerCase();
+        const unchangedWeight = isFinite(Number(normalWeight))
+            ? Number(normalWeight)
+            : 2.5;
+        return /\bwarning\b|\bspecial weather statements?\b/.test(name)
+            ? 4
+            : unchangedWeight;
+    }
+
     const allOfficialAlertGeometryBoundsCache = new WeakMap();
     function allOfficialAlertGeometryBounds(geometry) {
         if (!geometry || typeof geometry !== 'object') return null;
@@ -20776,14 +20789,15 @@
                         eventName,
                         allOfficialAlertDefaultOn(country, eventName)
                     )) continue;
-                // Leaflet handles GeometryCollections directly. Avoid the
-                // expensive polygon-clipping union for every multi-zone alert.
-                const geometry = feature.geometry || feature._reportingResolvedGeometry;
-                if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) continue;
+                const sourceGeometry = feature.geometry ||
+                    feature._reportingResolvedGeometry;
+                if (!sourceGeometry ||
+                    !allOfficialAlertGeometryIsInCurrentView(sourceGeometry)) continue;
                 if (country === 'US' &&
                     _allOfficialAlertFeatureIsCoveredByExistingPolygon(
                         feature, eventName, coverageIndex
                     )) continue;
+                const geometry = dissolveAlertGeometry(sourceGeometry);
                 const props = feature.properties || {};
                 const id = String(props.id || feature.id || props.feature_id ||
                     [country, eventName, props.areaDesc || props.feature_name_en || '', index].join('|'));
@@ -20838,19 +20852,23 @@
                             Number(pointGeometry.coordinates[1]),
                             Number(pointGeometry.coordinates[0])
                         ], {
-                            radius: 7, color: color, weight: 2,
+                            radius: 7, color: color,
+                            weight: reportingAlertBoundaryWeight(eventName, 2),
                         opacity: 1, fillColor: color, fillOpacity: 0.9,
                         renderer: allOfficialAlertCanvasRenderer
                         })
                         : window.L.geoJSON(geoFeature, {
                     renderer: allOfficialAlertCanvasRenderer,
                         style: {
-                            color: color, weight: 2.5, opacity: 0.95,
+                            color: color,
+                            weight: reportingAlertBoundaryWeight(eventName),
+                            opacity: 0.95,
                             fillColor: color, fillOpacity: 0.2
                         },
                         pointToLayer: function(pointFeature, latlng) {
                             return window.L.circleMarker(latlng, {
-                                radius: 7, color: color, weight: 2,
+                                radius: 7, color: color,
+                                weight: reportingAlertBoundaryWeight(eventName, 2),
                             opacity: 1, fillColor: color, fillOpacity: 0.9,
                             renderer: allOfficialAlertCanvasRenderer
                             });
@@ -22498,7 +22516,8 @@
                     pane: 'custom-alerts',
                     style: {
                         color: isDeepLinked ? '#ffffff' : color,
-                        weight: isDeepLinked ? 6 : 2.5,
+                        weight: isDeepLinked ? 6 :
+                            reportingAlertBoundaryWeight(headline),
                         opacity: 1,
                         fillColor: color,
                         fillOpacity: isDeepLinked ? 0.42 : (isArchived ? 0.14 : 0.22),
@@ -25775,7 +25794,7 @@
                 const polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                     style: {
                         color: color,
-                        weight: 2.5,
+                        weight: reportingAlertBoundaryWeight(eventName),
                         opacity: 0.95,
                         fillColor: color,
                         fillOpacity: 0.2,
@@ -25883,7 +25902,7 @@
             const polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                 style: {
                     color: color,
-                    weight: 2.5,
+                    weight: reportingAlertBoundaryWeight(eventName),
                     opacity: 1,
                     fillColor: color,
                     fillOpacity: 0.14
@@ -26065,7 +26084,7 @@
                         var polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                             style: {
                                 color: color,
-                                weight: 2.5,
+                                weight: reportingAlertBoundaryWeight(normalized.title),
                                 opacity: 0.95,
                                 fillColor: color,
                                 fillOpacity: 0.2
@@ -26131,7 +26150,7 @@
                         const expiresText = f.properties.expire || f.properties.polygon_end;
                         const _poly = L_ref.geoJSON(dissolveAlertGeometry(f.geometry), { style: {
                             color: color,
-                            weight: 2.5,
+                            weight: reportingAlertBoundaryWeight(nwsEvent),
                             opacity: 0.95,
                             fillOpacity: 0.2,
                             className: visual.isEmergencyBoundary
