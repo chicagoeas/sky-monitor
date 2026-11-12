@@ -3720,8 +3720,8 @@
                     <span style="font-size:0.82em; color:#ccc;">&#128204; Local Storm Reports <span id="lsr-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="lsr-toggle-cb" onchange="toggleLSR()"><span class="ios-toggle-track"></span></label>
                 </div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#127785;&#65039; SPC/WPC MDs</span>
+                <div id="spc-wpc-md-row" style="display:none; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:0.82em; color:#ccc;">&#127785;&#65039; SPC/WPC MD/MPDs</span>
                     <label class="ios-toggle"><input type="checkbox" id="spc-wpc-md-toggle-cb" onchange="toggleSpcWpcMds()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="border-top:1px solid rgba(255,255,255,0.08); margin:4px 0 10px;"></div>
@@ -6831,6 +6831,7 @@
     function _setWeatherLocationState(state) {
         window.locationState = String(state || '').trim();
         _syncOutlookCenterAvailability();
+        updateSpcWpcMdsSettingVisibility();
         if (!_isUSOutlookTerritoryLocation() &&
             _isAlaskaOrHawaiiLocation() &&
             (activeOutlookCenter === 'spc' || activeOutlookCenter === 'wpc')) {
@@ -8685,6 +8686,7 @@
                 window.locationCountryCode = code;
                 window._locationCountryCoordsKey = _locationCountryKeyFor(lat, lon);
                 _updateNotificationProviderVisibility();
+                updateSpcWpcMdsSettingVisibility();
             }
         } catch (e) {}
         return code;
@@ -8912,6 +8914,7 @@
 
     function applyInternationalMode(skipObservation) {
         updateUSOnlyLayerLabels();
+        updateSpcWpcMdsSettingVisibility();
         ['spc-outlook-section','wxstory-section','afd-section','hwo-section'].forEach(function(id) {
             const el = document.getElementById(id); if (el) el.style.display = 'none';
         });
@@ -9071,6 +9074,7 @@
 
     function applyUSMode() {
         updateUSOnlyLayerLabels();
+        updateSpcWpcMdsSettingVisibility();
         ['spc-outlook-section','wxstory-section'].forEach(function(id) {
             const el = document.getElementById(id); if (el) el.style.display = '';
         });
@@ -17330,6 +17334,7 @@
         if (source === 'spc-wpc-discussions') {
             const cb = document.getElementById('spc-wpc-md-toggle-cb');
             return !!spcWpcMdsLayer &&
+                isLower48SpcWpcLocation() &&
                 (cb ? cb.checked : spcWpcMdsVisible) &&
                 !historicalRadarState.active &&
                 reportingMap.hasLayer(spcWpcMdsLayer);
@@ -18412,11 +18417,51 @@
     }
 
     let lsrVisible = localStorage.getItem('report_lsr_on') === '1';
+    // Default off unless the user explicitly opted in. Hiding the setting
+    // outside the lower 48 never overwrites this saved preference.
     let spcWpcMdsVisible = localStorage.getItem('report_spc_wpc_mds_on') === '1';
     let spcWpcMdsLoadGeneration = 0;
     let spcWpcMdsMapCache = null;
     let spcWpcMdsMapRequest = null;
     let spcWpcMdsMapRefreshTimer = null;
+
+    function isLower48SpcWpcLocation() {
+        const country = String(window.locationCountryCode || '').trim().toUpperCase();
+        const hasConfirmedUsLocation = country === 'US' ||
+            (!country && window.isOutsideUS !== true &&
+                !!String(window.locationState || '').trim());
+        const latitude = Number(lat);
+        const longitude = Number(lon);
+        if (!hasConfirmedUsLocation || _isUSOutlookTerritoryLocation() ||
+            _isAlaskaOrHawaiiLocation() ||
+            !isFinite(latitude) || !isFinite(longitude)) return false;
+        return latitude >= 24.396308 && latitude <= 49.384358 &&
+            longitude >= -124.848974 && longitude <= -66.885444;
+    }
+
+    function updateSpcWpcMdsSettingVisibility() {
+        const available = isLower48SpcWpcLocation();
+        const row = document.getElementById('spc-wpc-md-row');
+        const checkbox = document.getElementById('spc-wpc-md-toggle-cb');
+        if (row) row.style.display = available ? 'flex' : 'none';
+        if (checkbox) checkbox.checked = spcWpcMdsVisible;
+
+        if (!available) {
+            spcWpcMdsLoadGeneration++;
+            if (spcWpcMdsMapRefreshTimer) {
+                clearTimeout(spcWpcMdsMapRefreshTimer);
+                spcWpcMdsMapRefreshTimer = null;
+            }
+            if (spcWpcMdsLayer) spcWpcMdsLayer.clearLayers();
+            removeReportingPopupEntries('spc-wpc-discussions');
+        }
+        syncReportingMapLayers();
+        if (available && spcWpcMdsVisible && reportingMap && spcWpcMdsLayer &&
+            !historicalRadarState.active) {
+            loadSpcWpcMdsOnMap();
+        }
+        return available;
+    }
 
     function syncReportingMapLayers() {
         if (!reportingMap) return;
@@ -18431,7 +18476,8 @@
             { layer: customSkyAlertLayer, visible: customSkyAlertsVisible },
             {
                 layer: spcWpcMdsLayer,
-                visible: spcWpcMdsVisible && !historicalRadarState.active
+                visible: isLower48SpcWpcLocation() &&
+                    spcWpcMdsVisible && !historicalRadarState.active
             }
         ].forEach(function(item) {
             if (!item.layer) return;
@@ -18813,6 +18859,11 @@
 
     function toggleSpcWpcMds() {
         const cb = document.getElementById('spc-wpc-md-toggle-cb');
+        if (!isLower48SpcWpcLocation()) {
+            if (cb) cb.checked = spcWpcMdsVisible;
+            updateSpcWpcMdsSettingVisibility();
+            return;
+        }
         spcWpcMdsVisible = cb ? cb.checked : !spcWpcMdsVisible;
         if (cb) cb.checked = spcWpcMdsVisible;
         localStorage.setItem('report_spc_wpc_mds_on', spcWpcMdsVisible ? '1' : '0');
@@ -24837,7 +24888,8 @@
         reportingMap.on('moveend zoomend', function() {
             saveReportingMapView();
             _scheduleHistoricalRadarViewportRefresh();
-            if (spcWpcMdsVisible && !historicalRadarState.active) {
+            if (spcWpcMdsVisible && isLower48SpcWpcLocation() &&
+                !historicalRadarState.active) {
                 if (spcWpcMdsMapRefreshTimer) {
                     clearTimeout(spcWpcMdsMapRefreshTimer);
                 }
@@ -24911,6 +24963,7 @@
         }
         const _spcWpcMdsCb = document.getElementById('spc-wpc-md-toggle-cb');
         if (_spcWpcMdsCb) _spcWpcMdsCb.checked = spcWpcMdsVisible;
+        updateSpcWpcMdsSettingVisibility();
         const _settingsPanel = document.getElementById('map-settings-panel');
         if (_settingsPanel && localStorage.getItem('report_map_settings_open') === '1') {
             _settingsPanel.style.display = 'block';
@@ -25883,7 +25936,9 @@
         }
         syncReportingMapLayers();
         ensureReportPinMarker();
-        if (spcWpcMdsVisible) loadSpcWpcMdsOnMap();
+        if (spcWpcMdsVisible && isLower48SpcWpcLocation()) {
+            loadSpcWpcMdsOnMap();
+        }
     }
 
     const SPC_WPC_MDS_MAP_CACHE_MS = 5 * 60 * 1000;
@@ -26449,7 +26504,7 @@
 
     async function loadSpcWpcMdsOnMap() {
         if (!spcWpcMdsVisible || !reportingMap || !spcWpcMdsLayer ||
-            historicalRadarState.active) return;
+            !isLower48SpcWpcLocation() || historicalRadarState.active) return;
         const bounds = reportingMap.getBounds && reportingMap.getBounds();
         const key = reportingSpcWpcMdsBoundsKey(bounds);
         if (!key) return;
@@ -30961,6 +31016,7 @@
             window.locationCountryCode = '';
             window._locationCountryCoordsKey = '';
             _updateNotificationProviderVisibility();
+            updateSpcWpcMdsSettingVisibility();
         }
         window.locationState = '';
         _syncOutlookCenterAvailability();
@@ -31005,6 +31061,7 @@
                     window._locationCountryCoordsKey = loadLocationKey;
                     _syncOutlookCenterAvailability();
                     _updateNotificationProviderVisibility();
+                    updateSpcWpcMdsSettingVisibility();
                     if (_nomD.address && _nomD.address.state) {
                         _setWeatherLocationState(_nomD.address.state);
                     }
