@@ -1716,6 +1716,23 @@
 
         /* v1.0.4: Reporting map */
         #reporting-map { height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+        #reporting-alert-loading {
+            position: absolute; inset: 0; z-index: 1500;
+            display: none; align-items: center; justify-content: center;
+            flex-direction: column; gap: 14px;
+            background: rgba(0,0,0,0.84); color: #c8d2dc;
+            font-size: 1rem; font-weight: 600;
+        }
+        #reporting-alert-loading.is-visible { display: flex; }
+        #reporting-alert-loading[hidden] { display: none !important; }
+        .reporting-alert-loading-spinner {
+            width: 28px; height: 28px; box-sizing: border-box;
+            border: 2px solid rgba(255,255,255,0.18);
+            border-top-color: rgba(255,255,255,0.85);
+            border-radius: 50%;
+            animation: reporting-alert-spin 0.8s linear infinite;
+        }
+        @keyframes reporting-alert-spin { to { transform: rotate(360deg); } }
         #reporting-map .leaflet-control-attribution { font-size: 9px !important; line-height: 1.2 !important; }
         #reporting-map .leaflet-overlay-pane path.nws-emergency-boundary {
             stroke-width: 4px !important;
@@ -3621,7 +3638,12 @@
                 </div>
             </div>
 
-            <div id="reporting-map"></div>
+             <div id="reporting-map">
+                 <div id="reporting-alert-loading" role="status" aria-live="polite" hidden>
+                     <span class="reporting-alert-loading-spinner" aria-hidden="true"></span>
+                     <span>Loading alerts...</span>
+                 </div>
+             </div>
             <div id="historical-radar-controls" aria-label="Historical radar timeline">
                 <div class="historical-radar-heading">
                     <span id="historical-radar-kicker">Historical radar</span>
@@ -3720,8 +3742,8 @@
                     <span style="font-size:0.82em; color:#ccc;">&#128204; Local Storm Reports <span id="lsr-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(US only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="lsr-toggle-cb" onchange="toggleLSR()"><span class="ios-toggle-track"></span></label>
                 </div>
-                <div id="spc-wpc-md-row" style="display:none; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-size:0.82em; color:#ccc;">&#127785;&#65039; SPC/WPC MD/MPDs</span>
+                 <div id="spc-wpc-md-row" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                     <span style="font-size:0.82em; color:#ccc;">&#127785;&#65039; SPC/WPC MD/MPDs <span id="spc-wpc-md-us-only" style="display:none; color:#8aa0b5; font-size:0.9em;">(U.S. only)</span></span>
                     <label class="ios-toggle"><input type="checkbox" id="spc-wpc-md-toggle-cb" onchange="toggleSpcWpcMds()"><span class="ios-toggle-track"></span></label>
                 </div>
                 <div style="border-top:1px solid rgba(255,255,255,0.08); margin:4px 0 10px;"></div>
@@ -6494,6 +6516,9 @@
                 reportingMap.invalidateSize({ pan: true, animate: false });
                 syncReportingMapLayers();
                 ensureReportPinMarker();
+                if (allOfficialAlertsVisible && alertsVisible) {
+                    loadAllOfficialAlertsForMap();
+                }
                 // Mobile Safari can finish revealing the tab after the first
                 // Leaflet/layout pass. Retry once after it is fully visible.
                 if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
@@ -16774,6 +16799,10 @@
     // Keep dissolved zone combinations across feed refreshes to avoid repeat polygon unions.
     let allOfficialAlertResolvedZoneSetCache = new Map();
     let allOfficialAlertRenderTimer = null;
+    let allOfficialAlertRenderGeneration = 0;
+    let allOfficialAlertMapLoadPromise = null;
+    let allOfficialAlertRenderPending = false;
+    let allOfficialAlertCanvasRenderer = null;
     let allAlertsSettingsCountry = 'US';
     let allAlertsSettingsCategory = 'severe';
     let customSkyAlertsVisible = CUSTOM_SKY_DEEP_LINK_ID
@@ -17334,7 +17363,6 @@
         if (source === 'spc-wpc-discussions') {
             const cb = document.getElementById('spc-wpc-md-toggle-cb');
             return !!spcWpcMdsLayer &&
-                isLower48SpcWpcLocation() &&
                 (cb ? cb.checked : spcWpcMdsVisible) &&
                 !historicalRadarState.active &&
                 reportingMap.hasLayer(spcWpcMdsLayer);
@@ -18417,8 +18445,8 @@
     }
 
     let lsrVisible = localStorage.getItem('report_lsr_on') === '1';
-    // Default off unless the user explicitly opted in. Hiding the setting
-    // outside the lower 48 never overwrites this saved preference.
+    // Default off unless the user explicitly opted in. The U.S.-only note is
+    // informational and never changes this saved preference.
     let spcWpcMdsVisible = localStorage.getItem('report_spc_wpc_mds_on') === '1';
     let spcWpcMdsLoadGeneration = 0;
     let spcWpcMdsMapCache = null;
@@ -18443,20 +18471,13 @@
         const available = isLower48SpcWpcLocation();
         const row = document.getElementById('spc-wpc-md-row');
         const checkbox = document.getElementById('spc-wpc-md-toggle-cb');
-        if (row) row.style.display = available ? 'flex' : 'none';
+        const usOnly = document.getElementById('spc-wpc-md-us-only');
+        if (row) row.style.display = 'flex';
+        if (usOnly) usOnly.style.display = available ? 'none' : 'inline';
         if (checkbox) checkbox.checked = spcWpcMdsVisible;
 
-        if (!available) {
-            spcWpcMdsLoadGeneration++;
-            if (spcWpcMdsMapRefreshTimer) {
-                clearTimeout(spcWpcMdsMapRefreshTimer);
-                spcWpcMdsMapRefreshTimer = null;
-            }
-            if (spcWpcMdsLayer) spcWpcMdsLayer.clearLayers();
-            removeReportingPopupEntries('spc-wpc-discussions');
-        }
         syncReportingMapLayers();
-        if (available && spcWpcMdsVisible && reportingMap && spcWpcMdsLayer &&
+        if (spcWpcMdsVisible && reportingMap && spcWpcMdsLayer &&
             !historicalRadarState.active) {
             loadSpcWpcMdsOnMap();
         }
@@ -18476,8 +18497,7 @@
             { layer: customSkyAlertLayer, visible: customSkyAlertsVisible },
             {
                 layer: spcWpcMdsLayer,
-                visible: isLower48SpcWpcLocation() &&
-                    spcWpcMdsVisible && !historicalRadarState.active
+                visible: spcWpcMdsVisible && !historicalRadarState.active
             }
         ].forEach(function(item) {
             if (!item.layer) return;
@@ -18859,11 +18879,6 @@
 
     function toggleSpcWpcMds() {
         const cb = document.getElementById('spc-wpc-md-toggle-cb');
-        if (!isLower48SpcWpcLocation()) {
-            if (cb) cb.checked = spcWpcMdsVisible;
-            updateSpcWpcMdsSettingVisibility();
-            return;
-        }
         spcWpcMdsVisible = cb ? cb.checked : !spcWpcMdsVisible;
         if (cb) cb.checked = spcWpcMdsVisible;
         localStorage.setItem('report_spc_wpc_mds_on', spcWpcMdsVisible ? '1' : '0');
@@ -18886,6 +18901,11 @@
         localStorage.setItem('report_alerts_on', alertsVisible ? '1' : '0');
         syncReportingMapLayers();
         if (alertsVisible) setTimeout(preloadVisibleReportingNwsAlertMetadata, 0);
+        if (!alertsVisible) {
+            allOfficialAlertRenderGeneration++;
+            allOfficialAlertRenderPending = false;
+            updateOfficialAlertLoadingOverlay(false);
+        }
         ensureReportPinMarker();
         if (alertsVisible && alertPolygonLayer.getLayers && !alertPolygonLayer.getLayers().length) {
             loadReportingMapData();
@@ -19608,7 +19628,9 @@
             );
         } catch (error) {}
         renderAllAlertsSettingsList();
-        renderAllOfficialAlertsOnMap();
+        renderAllOfficialAlertsOnMap().catch(function(error) {
+            console.warn('[SkyMonitor] Official alert map render failed:', error);
+        });
     }
     window.setAllOfficialAlertCountryEnabled = setAllOfficialAlertCountryEnabled;
 
@@ -19618,7 +19640,9 @@
         if (!allOfficialAlertTypePrefs[country]) allOfficialAlertTypePrefs[country] = {};
         allOfficialAlertTypePrefs[country][key] = !!enabled;
         saveAllOfficialAlertPreferences();
-        renderAllOfficialAlertsOnMap();
+        renderAllOfficialAlertsOnMap().catch(function(error) {
+            console.warn('[SkyMonitor] Official alert map render failed:', error);
+        });
     }
 
     function setAllOfficialAlertTypePreferenceFromControl(control) {
@@ -19685,7 +19709,9 @@
         localStorage.removeItem('report_all_alert_type_prefs');
         localStorage.removeItem('report_all_alert_color_prefs');
         renderAllAlertsSettingsList();
-        renderAllOfficialAlertsOnMap();
+        renderAllOfficialAlertsOnMap().catch(function(error) {
+            console.warn('[SkyMonitor] Official alert map render failed:', error);
+        });
     }
 
     function toggleAllOfficialAlerts() {
@@ -19694,6 +19720,9 @@
         if (cb) cb.checked = allOfficialAlertsVisible;
         localStorage.setItem('report_all_official_alerts', allOfficialAlertsVisible ? '1' : '0');
         if (!allOfficialAlertsVisible) {
+            allOfficialAlertRenderGeneration++;
+            allOfficialAlertRenderPending = false;
+            updateOfficialAlertLoadingOverlay(false);
             clearAllOfficialAlertMapData();
             syncReportingMapLayers();
             ensureReportPinMarker();
@@ -19703,55 +19732,22 @@
         if (alertsVisible) loadAllOfficialAlertsForMap();
     }
 
-    function _allOfficialAlertNextPage(payload, currentUrl) {
-        const paginationNext = payload && payload.pagination && payload.pagination.next;
-        const links = payload && Array.isArray(payload.links) ? payload.links : [];
-        const nextLink = links.find(function(link) {
-            return String(link && link.rel || '').toLowerCase() === 'next' &&
-                (link.href || link.url);
-        });
-        const nextValue = typeof paginationNext === 'string'
-            ? paginationNext
-            : (paginationNext && (paginationNext.href || paginationNext.url)) ||
-                (nextLink && (nextLink.href || nextLink.url));
-        if (!nextValue) return '';
-        try {
-            const nextUrl = new URL(nextValue, currentUrl);
-            return nextUrl.protocol === 'https:' &&
-                nextUrl.hostname === 'api.weather.gov'
-                ? nextUrl.href : '';
-        } catch (error) {
-            return '';
-        }
-    }
-
     async function _fetchAllNwsAlertFeatures() {
-        // NWS serves this CORS-enabled feed directly and manages its own page
-        // size; do not append a `limit` or synthetic `offset` query parameter.
-        const initialUrl =
-            'https://api.weather.gov/alerts/active?status=actual&message_type=alert,update';
-        const features = [];
-        const seenUrls = new Set();
-        let url = initialUrl;
-        for (let page = 0; page < 20 && url && !seenUrls.has(url); page++) {
-            seenUrls.add(url);
-            const response = await fetch(url, {
+        const response = await fetch(
+            WEATHER_WORKER_URL + '/api/official-alerts/us',
+            {
                 cache: 'no-store',
                 headers: { 'Accept': 'application/geo+json, application/json' }
-            });
-            if (!response.ok) {
-                throw new Error('NWS active alerts returned HTTP ' + response.status);
             }
-            const payload = await response.json();
-            if (!Array.isArray(payload.features)) {
-                throw new Error('NWS active alert feed returned no feature list');
-            }
-            features.push.apply(features, payload.features);
-            const nextUrl = _allOfficialAlertNextPage(payload, url);
-            if (!nextUrl || seenUrls.has(nextUrl)) break;
-            url = nextUrl;
+        );
+        if (!response.ok) {
+            throw new Error('NWS active alerts returned HTTP ' + response.status);
         }
-        return features;
+        const payload = await response.json();
+        if (!Array.isArray(payload.features)) {
+            throw new Error('NWS active alert feed returned no feature list');
+        }
+        return payload.features;
     }
 
     async function _fetchAllCanadaAlertFeatures() {
@@ -20128,42 +20124,50 @@
             })());
         }
         await Promise.all(workers);
-        jobs.forEach(function(job) {
+        for (let jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
+            if (!shouldProcessOfficialAlertMapWork()) {
+                allOfficialAlertRenderPending = true;
+                return geometryChanged;
+            }
+            const job = jobs[jobIndex];
             const cachedGeometry = job.geometryCacheKey
                 ? allOfficialAlertResolvedZoneSetCache.get(job.geometryCacheKey)
                 : null;
             if (cachedGeometry) {
                 job.feature._reportingResolvedGeometry = cachedGeometry;
                 geometryChanged = true;
-                return;
-            }
-            const geometries = job.zoneUrls.map(function(url) {
-                return zoneJobs.get(url);
-            }).filter(Boolean);
-            if (geometries.length) {
-                const combinedGeometry = geometries.length === 1
-                    ? geometries[0]
-                    : { type: 'GeometryCollection', geometries: geometries };
-                job.feature._reportingResolvedGeometry =
-                    dissolveAlertGeometry(combinedGeometry);
-                _cacheAllOfficialAlertResolvedZoneGeometry(
-                    job.geometryCacheKey,
-                    job.feature._reportingResolvedGeometry
-                );
-                geometryChanged = true;
             } else {
-                const props = job.feature.properties || {};
-                const point = props.coordinates || props.center || props.centroid;
-                if (Array.isArray(point) && point.length >= 2 &&
-                    isFinite(Number(point[0])) && isFinite(Number(point[1]))) {
-                    job.feature._reportingResolvedGeometry = {
-                        type: 'Point',
-                        coordinates: [Number(point[0]), Number(point[1])]
-                    };
+                const geometries = job.zoneUrls.map(function(url) {
+                    return zoneJobs.get(url);
+                }).filter(Boolean);
+                if (geometries.length) {
+                    const combinedGeometry = geometries.length === 1
+                        ? geometries[0]
+                        : { type: 'GeometryCollection', geometries: geometries };
+                    // Keep separate zone polygons as a GeometryCollection.
+                    // Unioning many county boundaries on the UI thread caused
+                    // long tasks while the full alert layer was loading.
+                    job.feature._reportingResolvedGeometry = combinedGeometry;
+                    _cacheAllOfficialAlertResolvedZoneGeometry(
+                        job.geometryCacheKey,
+                        job.feature._reportingResolvedGeometry
+                    );
                     geometryChanged = true;
+                } else {
+                    const props = job.feature.properties || {};
+                    const point = props.coordinates || props.center || props.centroid;
+                    if (Array.isArray(point) && point.length >= 2 &&
+                        isFinite(Number(point[0])) && isFinite(Number(point[1]))) {
+                        job.feature._reportingResolvedGeometry = {
+                            type: 'Point',
+                            coordinates: [Number(point[0]), Number(point[1])]
+                        };
+                        geometryChanged = true;
+                    }
                 }
             }
-        });
+            if ((jobIndex + 1) % 2 === 0) await yieldOfficialAlertMapWork();
+        }
         allOfficialAlertGeometryResolutionDone = true;
         return geometryChanged;
     }
@@ -20281,7 +20285,9 @@
         });
         saveAllOfficialAlertPreferences();
         renderAllAlertsSettingsList();
-        renderAllOfficialAlertsOnMap();
+        renderAllOfficialAlertsOnMap().catch(function(error) {
+            console.warn('[SkyMonitor] Official alert map render failed:', error);
+        });
     }
 
     function clearAllOfficialAlertMapData() {
@@ -20291,6 +20297,46 @@
         });
         allOfficialAlertLastRenderSignature = '';
     }
+
+    function shouldProcessOfficialAlertMapWork() {
+        if (!allOfficialAlertsVisible || !alertsVisible ||
+            historicalRadarState.active ||
+            document.visibilityState === 'hidden') return false;
+        return document.documentElement.classList.contains('radar-route') ||
+            !!document.getElementById('reporting-tab')?.classList.contains('active');
+    }
+
+    function yieldOfficialAlertMapWork() {
+        return new Promise(function(resolve) {
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(function() { setTimeout(resolve, 0); });
+            } else {
+                setTimeout(resolve, 0);
+            }
+        });
+    }
+
+    function updateOfficialAlertLoadingOverlay(loading) {
+        const overlay = document.getElementById('reporting-alert-loading');
+        if (!overlay) return;
+        const visible = !!loading && allOfficialAlertsVisible && alertsVisible &&
+            !historicalRadarState.active &&
+            document.documentElement.classList.contains('radar-route') &&
+            document.visibilityState !== 'hidden';
+        overlay.hidden = !visible;
+        overlay.classList.toggle('is-visible', visible);
+    }
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+            updateOfficialAlertLoadingOverlay(!!allOfficialAlertMapLoadPromise);
+            if (allOfficialAlertRenderPending && shouldProcessOfficialAlertMapWork()) {
+                loadAllOfficialAlertsForMap();
+            }
+        } else {
+            updateOfficialAlertLoadingOverlay(false);
+        }
+    });
 
     function _allOfficialAlertExistingNwsCoverageIndex() {
         const index = new Map();
@@ -20536,45 +20582,69 @@
             bounds[3] >= view.getWest() && bounds[1] <= view.getEast();
     }
 
-    function renderAllOfficialAlertsOnMap() {
-        if (!allOfficialAlertLayer || !window.L) return;
+    async function renderAllOfficialAlertsOnMap() {
+        if (!allOfficialAlertLayer || !window.L) return false;
+        const renderGeneration = ++allOfficialAlertRenderGeneration;
         if (!allOfficialAlertsVisible || !alertsVisible || historicalRadarState.active) {
+            allOfficialAlertRenderPending = false;
             clearAllOfficialAlertMapData();
             syncReportingMapLayers();
-            return;
+            return false;
+        }
+        if (!shouldProcessOfficialAlertMapWork()) {
+            allOfficialAlertRenderPending = true;
+            return false;
         }
         const visibleAlertKeys = new Set();
         const renderCandidates = [];
         const seenRenderKeys = new Set();
         const coverageIndex = _allOfficialAlertExistingNwsCoverageIndex();
-        ['US', 'CA'].forEach(function(country) {
-            if (!allOfficialAlertCountryEnabled(country)) return;
+        let scannedCount = 0;
+        const countries = ['US', 'CA'];
+        for (let countryIndex = 0; countryIndex < countries.length; countryIndex++) {
+            const country = countries[countryIndex];
+            if (!allOfficialAlertCountryEnabled(country)) continue;
             const sourceFeatures = allOfficialAlertFeatures[country] || [];
             const countryFeatures = country === 'CA'
                 ? _groupEnvironmentCanadaAlertFeatures(sourceFeatures)
                 : sourceFeatures;
-            countryFeatures.forEach(function(feature, index) {
-                if (!_allOfficialAlertIsCurrent(feature, country)) return;
+            for (let index = 0; index < countryFeatures.length; index++) {
+                if (renderGeneration !== allOfficialAlertRenderGeneration) return false;
+                if (!shouldProcessOfficialAlertMapWork()) {
+                    allOfficialAlertRenderPending = true;
+                    return false;
+                }
+                const feature = countryFeatures[index];
+                scannedCount++;
+                if (scannedCount % 8 === 0) {
+                    await yieldOfficialAlertMapWork();
+                    if (renderGeneration !== allOfficialAlertRenderGeneration) return false;
+                    if (!shouldProcessOfficialAlertMapWork()) {
+                        allOfficialAlertRenderPending = true;
+                        return false;
+                    }
+                }
+                if (!_allOfficialAlertIsCurrent(feature, country)) continue;
                 const eventName = allOfficialAlertTitle(feature, country);
                 if (!eventName || allOfficialAlertEventIsExcluded(eventName, country) ||
                     !allOfficialAlertPreference(
                         country,
                         eventName,
                         allOfficialAlertDefaultOn(country, eventName)
-                    )) return;
-                const geometry = dissolveAlertGeometry(
-                    feature.geometry || feature._reportingResolvedGeometry
-                );
-                if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) return;
+                    )) continue;
+                // Leaflet handles GeometryCollections directly. Avoid the
+                // expensive polygon-clipping union for every multi-zone alert.
+                const geometry = feature.geometry || feature._reportingResolvedGeometry;
+                if (!geometry || !allOfficialAlertGeometryIsInCurrentView(geometry)) continue;
                 if (country === 'US' &&
                     _allOfficialAlertFeatureIsCoveredByExistingPolygon(
                         feature, eventName, coverageIndex
-                    )) return;
+                    )) continue;
                 const props = feature.properties || {};
                 const id = String(props.id || feature.id || props.feature_id ||
                     [country, eventName, props.areaDesc || props.feature_name_en || '', index].join('|'));
                 const key = country + '|' + id;
-                if (seenRenderKeys.has(key)) return;
+                if (seenRenderKeys.has(key)) continue;
                 seenRenderKeys.add(key);
                 visibleAlertKeys.add(key);
                 renderCandidates.push({
@@ -20586,14 +20656,24 @@
                     id: id,
                     key: key
                 });
-            });
-        });
+            }
+        }
         const nextRenderSignature = JSON.stringify(
             Array.from(visibleAlertKeys).sort()
         );
-        if (nextRenderSignature === allOfficialAlertLastRenderSignature) return;
+        if (nextRenderSignature === allOfficialAlertLastRenderSignature) {
+            allOfficialAlertRenderPending = false;
+            return true;
+        }
         clearAllOfficialAlertMapData();
-        renderCandidates.forEach(function(candidate) {
+        let renderedCount = 0;
+        for (let candidateIndex = 0; candidateIndex < renderCandidates.length; candidateIndex++) {
+                if (renderGeneration !== allOfficialAlertRenderGeneration) return false;
+                if (!shouldProcessOfficialAlertMapWork()) {
+                    allOfficialAlertRenderPending = true;
+                    return false;
+                }
+                const candidate = renderCandidates[candidateIndex];
                 const country = candidate.country;
                 const feature = candidate.feature;
                 const eventName = candidate.eventName;
@@ -20615,9 +20695,11 @@
                             Number(pointGeometry.coordinates[0])
                         ], {
                             radius: 7, color: color, weight: 2,
-                            opacity: 1, fillColor: color, fillOpacity: 0.9
+                        opacity: 1, fillColor: color, fillOpacity: 0.9,
+                        renderer: allOfficialAlertCanvasRenderer
                         })
                         : window.L.geoJSON(geoFeature, {
+                    renderer: allOfficialAlertCanvasRenderer,
                         style: {
                             color: color, weight: 2.5, opacity: 0.95,
                             fillColor: color, fillOpacity: 0.2
@@ -20625,14 +20707,15 @@
                         pointToLayer: function(pointFeature, latlng) {
                             return window.L.circleMarker(latlng, {
                                 radius: 7, color: color, weight: 2,
-                                opacity: 1, fillColor: color, fillOpacity: 0.9
+                            opacity: 1, fillColor: color, fillOpacity: 0.9,
+                            renderer: allOfficialAlertCanvasRenderer
                             });
                         }
                     });
                 } catch (error) {
-                    return;
+                    continue;
                 }
-                if (!geoLayer || (geoLayer.getLayers && !geoLayer.getLayers().length)) return;
+                if (!geoLayer || (geoLayer.getLayers && !geoLayer.getLayers().length)) continue;
                 const hasPolygon = (function hasPolygon(geo) {
                     if (!geo) return false;
                     if (geo.type === 'Feature') return hasPolygon(geo.geometry);
@@ -20706,25 +20789,62 @@
                 }
                 registerReportingPopup(geoLayer, popupEntry);
                 geoLayer.addTo(allOfficialAlertLayer);
-        });
+                renderedCount++;
+                if (renderedCount % 3 === 0) await yieldOfficialAlertMapWork();
+        }
         allOfficialAlertLastRenderSignature = nextRenderSignature;
+        allOfficialAlertRenderPending = false;
         syncReportingMapLayers();
+        return true;
     }
 
     async function loadAllOfficialAlertsForMap() {
-        if (!allOfficialAlertsVisible || !alertsVisible || !reportingMap) return;
-        try {
-            await ensureAllOfficialAlertData(false);
-            if (!allOfficialAlertsVisible || !reportingMap) return;
-            // Paint alerts whose feed already contains geometry immediately;
-            // zone-backed alerts are added after the cached boundary loads.
-            renderAllOfficialAlertsOnMap();
-            const geometryChanged = await resolveAllOfficialAlertGeometry();
-            if (!allOfficialAlertsVisible || historicalRadarState.active) return;
-            if (geometryChanged) renderAllOfficialAlertsOnMap();
-        } catch (error) {
-            console.warn('[SkyMonitor] Full official map alerts failed:', error);
+        if (!allOfficialAlertsVisible || !alertsVisible || !reportingMap) {
+            updateOfficialAlertLoadingOverlay(false);
+            return;
         }
+        if (!shouldProcessOfficialAlertMapWork()) {
+            allOfficialAlertRenderPending = true;
+            updateOfficialAlertLoadingOverlay(false);
+            return;
+        }
+        if (allOfficialAlertMapLoadPromise) return allOfficialAlertMapLoadPromise;
+        allOfficialAlertRenderPending = false;
+        updateOfficialAlertLoadingOverlay(true);
+        let loadPromise;
+        loadPromise = Promise.resolve().then(async function() {
+            await ensureAllOfficialAlertData(false);
+            if (!allOfficialAlertsVisible || !alertsVisible || !reportingMap) return;
+            if (!shouldProcessOfficialAlertMapWork()) {
+                allOfficialAlertRenderPending = true;
+                return;
+            }
+            // Render alerts already carrying geometry while zone boundaries
+            // are fetched, then draw the rest in short main-thread slices.
+            await renderAllOfficialAlertsOnMap();
+            if (!shouldProcessOfficialAlertMapWork()) {
+                allOfficialAlertRenderPending = true;
+                return;
+            }
+            const geometryChanged = await resolveAllOfficialAlertGeometry();
+            if (!shouldProcessOfficialAlertMapWork()) {
+                allOfficialAlertRenderPending = true;
+                return;
+            }
+            if (geometryChanged) await renderAllOfficialAlertsOnMap();
+        }).catch(function(error) {
+            console.warn('[SkyMonitor] Full official map alerts failed:', error);
+        }).finally(function() {
+            if (allOfficialAlertMapLoadPromise === loadPromise) {
+                allOfficialAlertMapLoadPromise = null;
+            }
+            updateOfficialAlertLoadingOverlay(false);
+            if (allOfficialAlertRenderPending && shouldProcessOfficialAlertMapWork()) {
+                setTimeout(loadAllOfficialAlertsForMap, 0);
+            }
+        });
+        allOfficialAlertMapLoadPromise = loadPromise;
+        return loadPromise;
     }
 
     function setCustomSkyAlertsStatus(message, color) {
@@ -24582,6 +24702,7 @@
         window.SKYMONITOR_RADAR_PAGE = active;
         window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRoute;
         document.documentElement.classList.toggle('radar-route', active);
+        updateOfficialAlertLoadingOverlay(active && !!allOfficialAlertMapLoadPromise);
         syncTropicalTrackerButtonVisibility();
         _renderHistoricalRadarControls();
         document.title = historicalRoute
@@ -24615,6 +24736,9 @@
                     reportingMap.invalidateSize({ pan: true, animate: false });
                     syncReportingMapLayers();
                     ensureReportPinMarker();
+                    if (allOfficialAlertsVisible && alertsVisible) {
+                        loadAllOfficialAlertsForMap();
+                    }
                 }
                 if (historicalRoute && !historicalRadarState.active &&
                     !CUSTOM_SKY_DEEP_LINK_ID && !NWS_RADAR_DEEP_LINK_VTEC) {
@@ -24888,8 +25012,7 @@
         reportingMap.on('moveend zoomend', function() {
             saveReportingMapView();
             _scheduleHistoricalRadarViewportRefresh();
-            if (spcWpcMdsVisible && isLower48SpcWpcLocation() &&
-                !historicalRadarState.active) {
+            if (spcWpcMdsVisible && !historicalRadarState.active) {
                 if (spcWpcMdsMapRefreshTimer) {
                     clearTimeout(spcWpcMdsMapRefreshTimer);
                 }
@@ -24904,7 +25027,9 @@
                 }
                 allOfficialAlertRenderTimer = setTimeout(function() {
                     allOfficialAlertRenderTimer = null;
-                    renderAllOfficialAlertsOnMap();
+                    renderAllOfficialAlertsOnMap().catch(function(error) {
+                        console.warn('[SkyMonitor] Official alert map render failed:', error);
+                    });
                 }, 0);
             }
         });
@@ -24931,6 +25056,9 @@
 
         alertPolygonLayer = L_ref.layerGroup().addTo(reportingMap);
         allOfficialAlertLayer = L_ref.layerGroup();
+        allOfficialAlertCanvasRenderer = typeof L_ref.canvas === 'function'
+            ? L_ref.canvas({ pane: 'overlayPane', padding: 0.5 })
+            : null;
         customSkyAlertLayer = L_ref.layerGroup();
         spcWpcMdsLayer = L_ref.layerGroup();
         lsrLayer = L_ref.layerGroup().addTo(reportingMap);
@@ -25936,7 +26064,7 @@
         }
         syncReportingMapLayers();
         ensureReportPinMarker();
-        if (spcWpcMdsVisible && isLower48SpcWpcLocation()) {
+        if (spcWpcMdsVisible) {
             loadSpcWpcMdsOnMap();
         }
     }
@@ -26507,7 +26635,7 @@
 
     async function loadSpcWpcMdsOnMap() {
         if (!spcWpcMdsVisible || !reportingMap || !spcWpcMdsLayer ||
-            !isLower48SpcWpcLocation() || historicalRadarState.active) return;
+            historicalRadarState.active) return;
         const bounds = reportingMap.getBounds && reportingMap.getBounds();
         const key = reportingSpcWpcMdsBoundsKey(bounds);
         if (!key) return;
