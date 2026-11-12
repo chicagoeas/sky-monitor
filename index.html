@@ -4104,9 +4104,6 @@
     let _citySearchController = null;
     let _enrichmentPromise = null;
     window._fastProviderData = null;
-    window._fastNwsAlerts = null;
-    window._fastNwsAlertsKey = '';
-    window._fastNwsAlertsAttempted = false;
     window._weatherRequestController = null;
     let activeSPCDay = 1;
     let activeOutlookCenter = 'spc';
@@ -9785,57 +9782,27 @@
         }
 
         try {
-            let data = null;
             const requestSignal = window._weatherRequestController
                 ? window._weatherRequestController.signal
                 : undefined;
-            const alertUrl = WEATHER_WORKER_URL + '/api/weather/nws-alerts?lat=' +
-                encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon);
-            const directAlertUrl = 'https://api.weather.gov/alerts/active?point=' +
+            const alertUrl = 'https://api.weather.gov/alerts/active?point=' +
                 encodeURIComponent(lat) + ',' + encodeURIComponent(lon);
-            let workerAlertError = null;
+            let data;
             try {
-                // The edge route returns a very short-lived cached result when
-                // available and caps its upstream NWS wait at five seconds.
-                const res = await _weatherFetch(alertUrl, {
+                const response = await _weatherFetch(alertUrl, {
                     cache: 'no-store',
                     signal: requestSignal
-                }, 6500);
-                if (!res.ok) throw new Error('NWS alert worker ' + res.status);
-                data = await res.json();
+                }, 7000);
+                if (!response.ok) {
+                    throw new Error('NWS alerts ' + response.status);
+                }
+                data = await response.json();
                 if (!data || !Array.isArray(data.features)) {
                     throw new Error('NWS alerts response missing features');
                 }
-            } catch (alertErr) {
-                workerAlertError = alertErr;
-                if (requestSignal && requestSignal.aborted) throw alertErr;
-                // Keep a direct NOAA path if the edge route itself is down.
-                // This is one bounded fallback, rather than three serial
-                // 12-second attempts that could hold the Severe view for 40s.
-                try {
-                    const res = await _weatherFetch(directAlertUrl, {
-                        cache: 'no-store',
-                        signal: requestSignal
-                    }, 7000);
-                    if (!res.ok) {
-                        throw new Error('NWS alerts ' + res.status +
-                            (workerAlertError ? ' after edge request failed' : ''));
-                    }
-                    data = await res.json();
-                    if (!data || !Array.isArray(data.features)) {
-                        throw new Error('NWS alerts response missing features');
-                    }
-                } catch (directAlertError) {
-                    if (requestSignal && requestSignal.aborted) throw directAlertError;
-                    console.warn('[SkyMonitor] NWS alert requests failed:', directAlertError);
-                    return await _tryInternationalAlertFallback(stack, banner, checklist);
-                }
-            }
-            if (!data) {
-                console.warn('[SkyMonitor] NWS alerts did not finish:', workerAlertError);
-                // NWS is the first provider in the chain. If it cannot
-                // answer, try the international providers before preserving
-                // the previous display.
+            } catch (alertError) {
+                if (requestSignal && requestSignal.aborted) throw alertError;
+                console.warn('[SkyMonitor] Direct NWS alert request failed:', alertError);
                 return await _tryInternationalAlertFallback(stack, banner, checklist);
             }
             // The active endpoint normally excludes expired alerts, but
@@ -10483,8 +10450,6 @@
             const d = fastPayload.pirate || fastPayload;
             if (!d || !d.currently) throw new Error('Pirate response missing currently data');
             window._fastProviderData = fastPayload;
-            window._fastNwsAlerts = fastPayload.nwsAlerts || null;
-            window._fastNwsAlertsKey = lat + ',' + lon;
             if (d.offset != null) stationTzOffset = d.offset * 3600;
             var pirateZone = _normalizeStationIanaTimeZone(d.timezone);
             var pirateZoneLocationKey = _stationTimezoneLocationKey(requestLat, requestLon);
@@ -11915,26 +11880,19 @@
         }
     }
 
-    // One shared optional request prevents TWC, OpenWeather, and NWS alerts
-    // from each starting their own browser-side provider request.
+    // Share the optional TWC/OpenWeather request rather than starting duplicate provider calls.
     async function getWeatherEnrichment() {
         if (_enrichmentPromise) return _enrichmentPromise;
-        const key = lat + ',' + lon;
-            _enrichmentPromise = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
+        _enrichmentPromise = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
             encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon), {
                 signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
             }, 12000).then(function(res) {
                 if (!res.ok) throw new Error('Weather enrichment ' + res.status);
                 return res.json();
             }).then(function(data) {
-                if (key !== lat + ',' + lon) return data;
                 window._fastProviderData = Object.assign({}, window._fastProviderData || {}, data);
-                window._fastNwsAlerts = data.nwsAlerts || null;
-                window._fastNwsAlertsKey = key;
-                window._fastNwsAlertsAttempted = true;
                 return data;
             }).catch(function() {
-                if (key === lat + ',' + lon) window._fastNwsAlertsAttempted = true;
                 return null;
             });
         return _enrichmentPromise;
@@ -19572,72 +19530,53 @@
 
     function _allOfficialAlertNextPage(payload, currentUrl) {
         const paginationNext = payload && payload.pagination && payload.pagination.next;
-        if (typeof paginationNext === 'string' && paginationNext) {
-            try { return new URL(paginationNext, currentUrl).href; } catch (error) {}
-        }
-        if (paginationNext && typeof paginationNext === 'object' &&
-            (paginationNext.href || paginationNext.url)) {
-            try {
-                return new URL(paginationNext.href || paginationNext.url, currentUrl).href;
-            } catch (error) {}
-        }
         const links = payload && Array.isArray(payload.links) ? payload.links : [];
         const nextLink = links.find(function(link) {
             return String(link && link.rel || '').toLowerCase() === 'next' &&
                 (link.href || link.url);
         });
-        if (nextLink) {
-            try { return new URL(nextLink.href || nextLink.url, currentUrl).href; } catch (error) {}
+        const nextValue = typeof paginationNext === 'string'
+            ? paginationNext
+            : (paginationNext && (paginationNext.href || paginationNext.url)) ||
+                (nextLink && (nextLink.href || nextLink.url));
+        if (!nextValue) return '';
+        try {
+            const nextUrl = new URL(nextValue, currentUrl);
+            return nextUrl.protocol === 'https:' &&
+                nextUrl.hostname === 'api.weather.gov'
+                ? nextUrl.href : '';
+        } catch (error) {
+            return '';
         }
-        return '';
-    }
-
-    async function _fetchAllOfficialAlertPages(initialUrl, pageSize, maxPages, accept) {
-        const features = [];
-        const seenUrls = new Set();
-        let url = initialUrl;
-        let offset = 0;
-        for (let page = 0; page < maxPages && url && !seenUrls.has(url); page++) {
-            seenUrls.add(url);
-            const response = await fetch(url, {
-                cache: 'no-store',
-                headers: { 'Accept': accept || 'application/geo+json, application/json' }
-            });
-            if (!response.ok) throw new Error('Official alert feed returned HTTP ' + response.status);
-            const payload = await response.json();
-            const pageFeatures = Array.isArray(payload.features) ? payload.features : [];
-            features.push.apply(features, pageFeatures);
-
-            const nextUrl = _allOfficialAlertNextPage(payload, url);
-            if (nextUrl && !seenUrls.has(nextUrl)) {
-                url = nextUrl;
-                continue;
-            }
-            const total = Number(
-                payload.numberMatched ||
-                payload.totalFeatures ||
-                payload.pagination && (payload.pagination.total || payload.pagination.count) ||
-                0
-            );
-            if (pageFeatures.length < pageSize || (total && features.length >= total)) break;
-            offset += pageFeatures.length;
-            const fallbackUrl = new URL(initialUrl);
-            fallbackUrl.searchParams.set('offset', String(offset));
-            url = fallbackUrl.href;
-        }
-        return features;
     }
 
     async function _fetchAllNwsAlertFeatures() {
-        const response = await fetch(WEATHER_WORKER_URL + '/api/official-alerts/us', {
-            cache: 'no-store',
-            headers: { 'Accept': 'application/geo+json, application/json' }
-        });
-        if (!response.ok) {
-            throw new Error('NWS active alerts returned HTTP ' + response.status);
+        // NWS serves this CORS-enabled feed directly and manages its own page
+        // size; do not append a `limit` or synthetic `offset` query parameter.
+        const initialUrl =
+            'https://api.weather.gov/alerts/active?status=actual&message_type=alert,update';
+        const features = [];
+        const seenUrls = new Set();
+        let url = initialUrl;
+        for (let page = 0; page < 20 && url && !seenUrls.has(url); page++) {
+            seenUrls.add(url);
+            const response = await fetch(url, {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            });
+            if (!response.ok) {
+                throw new Error('NWS active alerts returned HTTP ' + response.status);
+            }
+            const payload = await response.json();
+            if (!Array.isArray(payload.features)) {
+                throw new Error('NWS active alert feed returned no feature list');
+            }
+            features.push.apply(features, payload.features);
+            const nextUrl = _allOfficialAlertNextPage(payload, url);
+            if (!nextUrl || seenUrls.has(nextUrl)) break;
+            url = nextUrl;
         }
-        const payload = await response.json();
-        return Array.isArray(payload.features) ? payload.features : [];
+        return features;
     }
 
     async function _fetchAllCanadaAlertFeatures() {
@@ -19655,7 +19594,7 @@
     async function _fetchNwsAlertTypeCatalog() {
         try {
             const response = await fetch(
-                WEATHER_WORKER_URL + '/api/official-alert-types',
+                'https://api.weather.gov/alerts/types',
                 {
                     cache: 'force-cache',
                     headers: { 'Accept': 'application/json' }
@@ -19947,18 +19886,7 @@
         if (allOfficialAlertZoneGeometryCache.has(zoneUrl)) {
             return allOfficialAlertZoneGeometryCache.get(zoneUrl);
         }
-        let cachedUrl = zoneUrl;
-        try {
-            const upstreamUrl = new URL(zoneUrl);
-            const match = upstreamUrl.pathname.match(
-                /^\/zones\/(forecast|county|marine|fire)\/([A-Z0-9]+)$/
-            );
-            if (upstreamUrl.origin === 'https://api.weather.gov' && match) {
-                cachedUrl = WEATHER_WORKER_URL + '/api/alert-zones/' +
-                    match[1] + '/' + match[2];
-            }
-        } catch (error) {}
-        const request = fetch(cachedUrl, {
+        const request = fetch(zoneUrl, {
             cache: 'force-cache',
             headers: { 'Accept': 'application/geo+json, application/json' }
         }).then(function(response) {
@@ -30865,9 +30793,6 @@
         window._weatherRequestController = new AbortController();
         _enrichmentPromise = null;
         window._fastProviderData = null;
-        window._fastNwsAlerts = null;
-        window._fastNwsAlertsKey = '';
-        window._fastNwsAlertsAttempted = false;
         twcMaxFeelsLike = null;
         var loadFailed = false;
         var loadFailureCode = '';
