@@ -26088,7 +26088,8 @@
 
     function filterReportingDiscussionText(text, provider) {
         const source = String(text || '').replace(/\r/g, '');
-        if (String(provider || '').toUpperCase() !== 'SPC') return source.trim();
+        const providerName = String(provider || '').toUpperCase();
+        if (providerName !== 'SPC' && providerName !== 'WPC') return source.trim();
         const lines = source.split('\n');
         const filtered = [];
         let skippingArea = false;
@@ -26112,7 +26113,9 @@
                 filtered.push('');
                 return;
             }
-            if (/^Mesoscale Discussion\s+#?\d+\s*$/i.test(trimmed) ||
+            if (/^Mesoscale (?:Precipitation )?Discussion\b/i.test(trimmed) ||
+                /^Mesoscale Weather Prediction Center\b/i.test(trimmed) ||
+                /^Weather Prediction Center\b/i.test(trimmed) ||
                 /^NWS Storm Prediction Center\b/i.test(trimmed) ||
                 reportingDiscussionIssueFromText(trimmed) ||
                 /^Areas?\s+affected\s*\.{2,}/i.test(trimmed) ||
@@ -26136,9 +26139,9 @@
 
     function prepareReportingDiscussionText(entry, text) {
         const sourceText = String(text || '').trim();
-        if (!sourceText || String(entry && entry.provider || '').toUpperCase() !== 'SPC') {
-            return sourceText;
-        }
+        if (!sourceText) return sourceText;
+        const provider = String(entry && entry.provider || '').toUpperCase();
+        if (provider !== 'SPC' && provider !== 'WPC') return sourceText;
         const area = reportingDiscussionAreaFromText(sourceText);
         const issued = reportingDiscussionIssueFromText(sourceText);
         const expires = reportingDiscussionExpiryFromText(
@@ -26148,7 +26151,7 @@
         if (area) entry.area = area;
         if (issued) entry.issued = issued;
         if (expires) entry.expires = expires;
-        return filterReportingDiscussionText(sourceText, 'SPC');
+        return filterReportingDiscussionText(sourceText, provider);
     }
 
     function reportingDiscussionIssueFromText(text) {
@@ -26486,7 +26489,7 @@
                     (discussionNumber ? ' #' + discussionNumber : '')),
                 provider: 'WPC',
                 discussionNumber: discussionNumber,
-                sourceLabel: 'WPC MPD',
+                sourceLabel: 'WPC',
                 officialUrl: officialUrl,
                 area: area,
                 issued: issueTime,
