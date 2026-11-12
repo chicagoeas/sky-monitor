@@ -8054,7 +8054,8 @@
     function _environmentCanadaAlertAreaIsCurrent(feature, referenceMs) {
         var p = feature && feature.properties || {};
         var status = String(p.status_en || p.status || '').trim().toLowerCase();
-        if (status && ['issued', 'updated', 'continued'].indexOf(status) === -1) {
+        if (['ended', 'expired', 'cancelled', 'canceled', 'inactive',
+            'withdrawn', 'superseded', 'test', 'exercise'].indexOf(status) !== -1) {
             return false;
         }
         var endValue = p.event_end_datetime || p.expiration_datetime || p.expires;
@@ -8267,11 +8268,7 @@
         var now = Date.now();
         var seen = {};
         var alerts = payload.features.filter(function(feature) {
-            var p = feature && feature.properties || {};
-            var status = String(p.status_en || '').toLowerCase();
-            var endMs = Date.parse(p.event_end_datetime || p.expiration_datetime || '');
-            return (!status || status === 'issued' || status === 'updated' || status === 'continued') &&
-                (!endMs || endMs > now) &&
+            return _environmentCanadaAlertAreaIsCurrent(feature, now) &&
                 _pointInGeoJson(Number(requestLon), Number(requestLat), feature.geometry);
         }).map(_normalizeEnvironmentCanadaAlert).filter(function(alert) {
             var key = [alert.title, alert.areaDesc, alert.onset, alert.expires]
