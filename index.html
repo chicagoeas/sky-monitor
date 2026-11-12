@@ -16796,12 +16796,13 @@
     let allOfficialAlertTypesFetchedAt = 0;
     let allOfficialAlertTypesPromise = null;
     let allOfficialAlertZoneGeometryCache = new Map();
-    // Keep dissolved zone combinations across feed refreshes to avoid repeat polygon unions.
+    // Reuse assembled zone geometry across feed refreshes.
     let allOfficialAlertResolvedZoneSetCache = new Map();
     let allOfficialAlertRenderTimer = null;
     let allOfficialAlertRenderGeneration = 0;
     let allOfficialAlertMapLoadPromise = null;
     let allOfficialAlertRenderPending = false;
+    let allOfficialAlertInitialLoadComplete = false;
     let allOfficialAlertCanvasRenderer = null;
     let allAlertsSettingsCountry = 'US';
     let allAlertsSettingsCategory = 'severe';
@@ -20320,6 +20321,7 @@
         const overlay = document.getElementById('reporting-alert-loading');
         if (!overlay) return;
         const visible = !!loading && allOfficialAlertsVisible && alertsVisible &&
+            !allOfficialAlertInitialLoadComplete &&
             !historicalRadarState.active &&
             document.documentElement.classList.contains('radar-route') &&
             document.visibilityState !== 'hidden';
@@ -20835,6 +20837,10 @@
         }).catch(function(error) {
             console.warn('[SkyMonitor] Full official map alerts failed:', error);
         }).finally(function() {
+            if (allOfficialAlertsVisible && alertsVisible &&
+                !allOfficialAlertRenderPending && !historicalRadarState.active) {
+                allOfficialAlertInitialLoadComplete = true;
+            }
             if (allOfficialAlertMapLoadPromise === loadPromise) {
                 allOfficialAlertMapLoadPromise = null;
             }
