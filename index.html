@@ -7988,7 +7988,7 @@
         var title = _environmentCanadaEventTitle(eventType || event, alertName || event);
         var area = [p.feature_name_en, p.province].filter(Boolean).join(', ');
         return {
-            id: String(p.feature_id || feature.id || 'environment-canada-' + index)
+            id: String(p.alert_group_id || p.alert_id || p.feature_id || feature.id || 'environment-canada-' + index)
                 .replace(/[^a-zA-Z0-9_-]/g, '_'),
             title: title,
             event: event,
@@ -7999,13 +7999,116 @@
             issuedAt: p.publication_datetime || '',
             onset: p.validity_datetime || p.publication_datetime || '',
             expires: p.event_end_datetime || p.expiration_datetime || '',
-            areaDesc: area,
+            areaDesc: p.affected_areas_en
+                ? [p.affected_areas_en, p.province].filter(Boolean).join(', ')
+                : area,
             countryCode: 'CA',
             iconUrl: _environmentCanadaAlertIcon(event),
             icon: '\u26A0\uFE0F',
             sourceUrl: 'https://weather.gc.ca/index_e.html',
             geometry: feature.geometry || null
         };
+    }
+
+    function _environmentCanadaAlertGroupKey(feature) {
+        var p = feature && feature.properties || {};
+        var directId = [
+            p.alert_group_id, p.alertGroupId, p.alert_id, p.alertId,
+            p.product_id, p.productId, p.bulletin_id, p.bulletinId,
+            p.alert_identifier, p.alertIdentifier
+        ].find(function(value) {
+            return value != null && String(value).trim();
+        });
+        if (directId) {
+            var directKey = String(directId).trim();
+            return directKey.indexOf('ec-alert:') === 0
+                ? directKey : 'ec-alert:' + directKey;
+        }
+        var ids = [feature && feature.id, p.id];
+        for (var i = 0; i < ids.length; i++) {
+            var match = String(ids[i] || '').match(/^(.+)_fea\d+-\d+$/i);
+            if (match) return 'ec-alert:' + match[1];
+        }
+        return '';
+    }
+
+    function _collectEnvironmentCanadaPolygons(geometry, polygons) {
+        if (!geometry) return;
+        if (geometry.type === 'Feature') {
+            _collectEnvironmentCanadaPolygons(geometry.geometry, polygons);
+        } else if (geometry.type === 'FeatureCollection') {
+            (geometry.features || []).forEach(function(feature) {
+                _collectEnvironmentCanadaPolygons(feature, polygons);
+            });
+        } else if (geometry.type === 'GeometryCollection') {
+            (geometry.geometries || []).forEach(function(item) {
+                _collectEnvironmentCanadaPolygons(item, polygons);
+            });
+        } else if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
+            polygons.push(geometry.coordinates);
+        } else if (geometry.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
+            polygons.push.apply(polygons, geometry.coordinates);
+        }
+    }
+
+    function _groupEnvironmentCanadaAlertFeatures(features) {
+        var groups = new Map();
+        var ordered = [];
+        (features || []).forEach(function(feature) {
+            var key = _environmentCanadaAlertGroupKey(feature);
+            if (!key) {
+                ordered.push({ feature: feature });
+                return;
+            }
+            var group = groups.get(key);
+            if (!group) {
+                group = [];
+                groups.set(key, group);
+                ordered.push({ group: group, key: key });
+            }
+            group.push(feature);
+        });
+        return ordered.reduce(function(result, entry) {
+            if (entry.feature) {
+                result.push(entry.feature);
+                return result;
+            }
+            var group = entry.group || [];
+            if (group.length < 2) {
+                result.push.apply(result, group);
+                return result;
+            }
+            var polygons = [];
+            group.forEach(function(feature) {
+                _collectEnvironmentCanadaPolygons(feature && feature.geometry, polygons);
+            });
+            if (!polygons.length) {
+                result.push.apply(result, group);
+                return result;
+            }
+            var first = group[0];
+            var properties = Object.assign({}, first.properties || {});
+            var areas = [];
+            var seenAreas = {};
+            group.forEach(function(feature) {
+                var name = String(feature && feature.properties &&
+                    feature.properties.feature_name_en || '').trim();
+                if (name && !seenAreas[name]) {
+                    seenAreas[name] = true;
+                    areas.push(name);
+                }
+            });
+            properties.alert_group_id = entry.key;
+            properties.affected_areas_en = areas.join(', ');
+            if (areas.length) properties.feature_name_en = areas.join(', ');
+            properties.grouped_area_count = group.length;
+            result.push(Object.assign({}, first, {
+                id: entry.key,
+                properties: properties,
+                geometry: { type: 'MultiPolygon', coordinates: polygons }
+            }));
+            return result;
+        }, []);
     }
 
     // Keep the reporting map aligned with the U.S. short-fused layer. Broad
@@ -20168,6 +20271,7 @@
         const props = properties || {};
         const keys = country === 'CA'
             ? [
+                'validity_datetime', 'validityDatetime',
                 'event_start_datetime', 'onset', 'effective',
                 'start_datetime', 'startTime', 'start_time',
                 'validFrom', 'valid_from', 'starts'
@@ -20373,7 +20477,11 @@
         const coverageIndex = _allOfficialAlertExistingNwsCoverageIndex();
         ['US', 'CA'].forEach(function(country) {
             if (!allOfficialAlertCountryEnabled(country)) return;
-            (allOfficialAlertFeatures[country] || []).forEach(function(feature, index) {
+            const sourceFeatures = allOfficialAlertFeatures[country] || [];
+            const countryFeatures = country === 'CA'
+                ? _groupEnvironmentCanadaAlertFeatures(sourceFeatures)
+                : sourceFeatures;
+            countryFeatures.forEach(function(feature, index) {
                 if (!_allOfficialAlertIsCurrent(feature, country)) return;
                 const eventName = allOfficialAlertTitle(feature, country);
                 if (!eventName || allOfficialAlertEventIsExcluded(eventName, country) ||
@@ -25584,7 +25692,7 @@
                     var canadaFeatures = Array.isArray(canadaPayload.features)
                         ? canadaPayload.features : [];
                     var seenCanadaAlerts = {};
-                    canadaFeatures.forEach(function(feature, index) {
+                    _groupEnvironmentCanadaAlertFeatures(canadaFeatures).forEach(function(feature, index) {
                         if (!feature || !feature.geometry) return;
                         var shortFusedStyle = _environmentCanadaShortFusedStyle(feature);
                         if (!shortFusedStyle) return;
@@ -25600,6 +25708,10 @@
                         var popupCopy = _environmentCanadaPopupCopy(normalized.description);
                         var statusText = String(feature.properties && feature.properties.status_en || '').toLowerCase();
                         var issuedLabel = statusText.indexOf('update') !== -1 ? 'Updated' : 'Issued';
+                        var startDate = parseReportDate(normalized.onset);
+                        var startsIn = startDate && startDate.getTime() > Date.now()
+                            ? formatReportingMinutesUntilAt(startDate, Date.now())
+                            : '';
                         var polygon = L_ref.geoJSON(dissolveAlertGeometry(feature.geometry), {
                             style: {
                                 color: color,
@@ -25623,11 +25735,15 @@
                              ].join('|'),
                             title: escapeHtml(normalized.title),
                             meta: 'EC' +
+                                (startsIn ? ' \u00B7 Starts in ' +
+                                    escapeHtml(startsIn) : '') +
                                 (normalized.expires ? ' \u00B7 ' +
                                     escapeHtml(formatReportingExpiry(normalized.expires)) : ''),
                             detail: reportingPopupDetailRows([
                                 [issuedLabel, normalized.issuedAt ? formatReportingDateTimeNoSeconds(normalized.issuedAt) : ''],
                                 [issuedLabel + ' by', 'Environment Canada'],
+                                ['Area', normalized.areaDesc],
+                                ['Starts at', startsIn ? formatReportingDateTimeNoSeconds(startDate) : ''],
                                 ['Valid through', normalized.expires ? formatReportingDateTimeNoSeconds(normalized.expires) : ''],
                                 ['Alert text', popupCopy.alertText],
                                 ['Instructions', popupCopy.instructions]
@@ -26137,14 +26253,35 @@
 
         ((data && data.spcFeatures) || []).forEach(function(feature, index) {
             const attributes = feature.attributes || feature.properties || {};
+            const discussionName = reportingDiscussionAttribute(attributes, [
+                'Name', 'name'
+            ]).replace(/[^a-z]/gi, '').toLowerCase();
+            if (discussionName === 'noarea') return;
             const rings = feature.geometry && feature.geometry.rings;
             if (!Array.isArray(rings) || !rings.length) return;
             const polygonLayers = rings.map(function(ring) {
-                const latlngs = (Array.isArray(ring) ? ring : [])
+                const sourcePoints = (Array.isArray(ring) ? ring : [])
                     .filter(function(point) {
                         return Array.isArray(point) && isFinite(Number(point[0])) &&
                             isFinite(Number(point[1]));
-                    })
+                    });
+                const uniquePoints = new Set(sourcePoints.map(function(point) {
+                    return Number(point[0]).toFixed(6) + ',' +
+                        Number(point[1]).toFixed(6);
+                }));
+                if (uniquePoints.size < 3) return null;
+                const longitudes = sourcePoints.map(function(point) { return Number(point[0]); });
+                const latitudes = sourcePoints.map(function(point) { return Number(point[1]); });
+                const lonSpan = Math.max.apply(Math, longitudes) -
+                    Math.min.apply(Math, longitudes);
+                const latSpan = Math.max.apply(Math, latitudes) -
+                    Math.min.apply(Math, latitudes);
+                // SPC can publish a tiny "NoArea" square around the point
+                // where a discussion product is anchored. It is metadata,
+                // not an affected-area polygon, and otherwise appears as a
+                // stray red dot at national zoom.
+                if (Math.max(lonSpan, latSpan) < 0.02) return null;
+                const latlngs = sourcePoints
                     .map(function(point) {
                         return [Number(point[1]), Number(point[0])];
                     });
