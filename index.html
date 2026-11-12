@@ -1717,14 +1717,23 @@
         /* v1.0.4: Reporting map */
         #reporting-map { height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
         #reporting-alert-loading {
-            position: absolute; inset: 0; z-index: 1500;
+            position: fixed; inset: 0; z-index: 2147483000;
             display: none; align-items: center; justify-content: center;
             flex-direction: column; gap: 14px;
             background: rgba(0,0,0,0.84); color: #c8d2dc;
             font-size: 1rem; font-weight: 600;
+            pointer-events: auto; touch-action: none; overscroll-behavior: none;
+            cursor: wait;
         }
         #reporting-alert-loading.is-visible { display: flex; }
         #reporting-alert-loading[hidden] { display: none !important; }
+        html.official-alert-page-lock,
+        html.official-alert-page-lock body { overflow: hidden !important; }
+        html.official-alert-page-lock body * {
+            pointer-events: none !important;
+            -webkit-user-select: none !important;
+            user-select: none !important;
+        }
         .reporting-alert-loading-spinner {
             width: 28px; height: 28px; box-sizing: border-box;
             border: 2px solid rgba(255,255,255,0.18);
@@ -16803,6 +16812,7 @@
     let allOfficialAlertMapLoadPromise = null;
     let allOfficialAlertRenderPending = false;
     let allOfficialAlertInitialLoadComplete = false;
+    let allOfficialAlertLoadingInputLocked = false;
     let allOfficialAlertCanvasRenderer = null;
     let allAlertsSettingsCountry = 'US';
     let allAlertsSettingsCategory = 'severe';
@@ -19733,18 +19743,73 @@
         if (alertsVisible) loadAllOfficialAlertsForMap();
     }
 
+    const ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS = 10000;
+    const ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS = 18000;
+
+    function fetchAllOfficialAlertJson(url, options, timeoutMs, parentSignal) {
+        const requestOptions = Object.assign({}, options || {});
+        const controller = typeof AbortController === 'function'
+            ? new AbortController()
+            : null;
+        if (controller) requestOptions.signal = controller.signal;
+        let timeoutId = null;
+        let parentAbortListener = null;
+        const request = Promise.resolve().then(async function() {
+            if (parentSignal && parentSignal.aborted) {
+                throw new Error('Official alert request cancelled');
+            }
+            const response = await fetch(url, requestOptions);
+            const payload = response.ok ? await response.json() : null;
+            return { response: response, payload: payload };
+        });
+        const races = [
+            request,
+            new Promise(function(_, reject) {
+                timeoutId = setTimeout(function() {
+                    if (controller) controller.abort();
+                    reject(new Error(
+                        'Official alert request timed out after ' +
+                        (timeoutMs || ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS) + 'ms'
+                    ));
+                }, timeoutMs || ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS);
+            })
+        ];
+        if (parentSignal) {
+            races.push(new Promise(function(_, reject) {
+                parentAbortListener = function() {
+                    if (controller) controller.abort();
+                    reject(new Error('Official alert request cancelled'));
+                };
+                if (parentSignal.aborted) parentAbortListener();
+                else parentSignal.addEventListener(
+                    'abort',
+                    parentAbortListener,
+                    { once: true }
+                );
+            }));
+        }
+        return Promise.race(races).finally(function() {
+            if (timeoutId) clearTimeout(timeoutId);
+            if (parentSignal && parentAbortListener) {
+                parentSignal.removeEventListener('abort', parentAbortListener);
+            }
+        });
+    }
+
     async function _fetchAllNwsAlertFeatures() {
-        const response = await fetch(
+        const result = await fetchAllOfficialAlertJson(
             WEATHER_WORKER_URL + '/api/official-alerts/us',
             {
                 cache: 'no-store',
                 headers: { 'Accept': 'application/geo+json, application/json' }
-            }
+            },
+            ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS
         );
+        const response = result.response;
         if (!response.ok) {
             throw new Error('NWS active alerts returned HTTP ' + response.status);
         }
-        const payload = await response.json();
+        const payload = result.payload;
         if (!Array.isArray(payload.features)) {
             throw new Error('NWS active alert feed returned no feature list');
         }
@@ -19752,28 +19817,35 @@
     }
 
     async function _fetchAllCanadaAlertFeatures() {
-        const response = await fetch(WEATHER_WORKER_URL + '/api/official-alerts/ca', {
-            cache: 'no-store',
-            headers: { 'Accept': 'application/geo+json, application/json' }
-        });
+        const result = await fetchAllOfficialAlertJson(
+            WEATHER_WORKER_URL + '/api/official-alerts/ca',
+            {
+                cache: 'no-store',
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            },
+            ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS
+        );
+        const response = result.response;
         if (!response.ok) {
             throw new Error('Environment Canada alerts returned HTTP ' + response.status);
         }
-        const payload = await response.json();
+        const payload = result.payload;
         return Array.isArray(payload.features) ? payload.features : [];
     }
 
     async function _fetchNwsAlertTypeCatalog() {
         try {
-            const response = await fetch(
+            const result = await fetchAllOfficialAlertJson(
                 'https://api.weather.gov/alerts/types',
                 {
                     cache: 'force-cache',
                     headers: { 'Accept': 'application/json' }
-                }
+                },
+                ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS
             );
+            const response = result.response;
             if (!response.ok) return [];
-            const payload = await response.json();
+            const payload = result.payload;
             return Array.isArray(payload.eventTypes) ? payload.eventTypes :
                 (Array.isArray(payload.event_types) ? payload.event_types : []);
         } catch (error) {
@@ -20054,22 +20126,31 @@
         return Array.from(new Set(safeUrls));
     }
 
-    function _fetchAllOfficialAlertZoneGeometry(zoneUrl) {
+    function _fetchAllOfficialAlertZoneGeometry(zoneUrl, signal) {
         if (allOfficialAlertZoneGeometryCache.has(zoneUrl)) {
             return allOfficialAlertZoneGeometryCache.get(zoneUrl);
         }
-        const request = fetch(zoneUrl, {
-            cache: 'force-cache',
-            headers: { 'Accept': 'application/geo+json, application/json' }
-        }).then(function(response) {
-            if (!response.ok) return null;
-            return response.json();
-        }).then(function(payload) {
+        let request;
+        request = fetchAllOfficialAlertJson(
+            zoneUrl,
+            {
+                cache: 'force-cache',
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            },
+            ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS,
+            signal
+        ).then(function(result) {
+            const payload = result.response.ok ? result.payload : null;
             const geometry = payload && payload.geometry ||
                 payload && payload.feature && payload.feature.geometry;
             return geometry || null;
         }).catch(function() {
             return null;
+        }).then(function(geometry) {
+            if (!geometry && allOfficialAlertZoneGeometryCache.get(zoneUrl) === request) {
+                allOfficialAlertZoneGeometryCache.delete(zoneUrl);
+            }
+            return geometry;
         });
         allOfficialAlertZoneGeometryCache.set(zoneUrl, request);
         return request;
@@ -20116,15 +20197,36 @@
         const uniqueZoneUrls = Array.from(zoneJobs.keys());
         const workerCount = Math.min(20, uniqueZoneUrls.length);
         const workers = [];
+        let geometryDeadlineReached = false;
+        const geometryController = typeof AbortController === 'function'
+            ? new AbortController()
+            : null;
+        const geometryDeadlineTimer = uniqueZoneUrls.length
+            ? setTimeout(function() {
+                geometryDeadlineReached = true;
+                if (geometryController) geometryController.abort();
+            }, ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS)
+            : null;
         for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
             workers.push((async function() {
-                while (nextIndex < uniqueZoneUrls.length) {
+                while (nextIndex < uniqueZoneUrls.length &&
+                    !geometryDeadlineReached) {
                     const url = uniqueZoneUrls[nextIndex++];
-                    zoneJobs.set(url, await _fetchAllOfficialAlertZoneGeometry(url));
+                    zoneJobs.set(
+                        url,
+                        await _fetchAllOfficialAlertZoneGeometry(
+                            url,
+                            geometryController && geometryController.signal
+                        )
+                    );
                 }
             })());
         }
-        await Promise.all(workers);
+        try {
+            await Promise.all(workers);
+        } finally {
+            if (geometryDeadlineTimer) clearTimeout(geometryDeadlineTimer);
+        }
         for (let jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
             if (!shouldProcessOfficialAlertMapWork()) {
                 allOfficialAlertRenderPending = true;
@@ -20317,9 +20419,48 @@
         });
     }
 
+    function blockOfficialAlertLoadingInput(event) {
+        if (!allOfficialAlertLoadingInputLocked) return;
+        if (event.cancelable) event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+    [
+        'keydown', 'keyup', 'keypress', 'click', 'dblclick', 'contextmenu',
+        'pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'submit'
+    ].forEach(function(eventName) {
+        document.addEventListener(eventName, blockOfficialAlertLoadingInput, true);
+    });
+    ['wheel', 'touchstart', 'touchmove'].forEach(function(eventName) {
+        document.addEventListener(eventName, blockOfficialAlertLoadingInput, {
+            capture: true,
+            passive: false
+        });
+    });
+
+    function setOfficialAlertPageInteractionLock(locked) {
+        allOfficialAlertLoadingInputLocked = !!locked;
+        document.documentElement.classList.toggle(
+            'official-alert-page-lock',
+            allOfficialAlertLoadingInputLocked
+        );
+        if (document.body) {
+            if (allOfficialAlertLoadingInputLocked) {
+                document.body.setAttribute('aria-busy', 'true');
+            } else {
+                document.body.removeAttribute('aria-busy');
+            }
+        }
+    }
+
     function updateOfficialAlertLoadingOverlay(loading) {
         const overlay = document.getElementById('reporting-alert-loading');
-        if (!overlay) return;
+        if (!overlay) {
+            setOfficialAlertPageInteractionLock(false);
+            return;
+        }
+        if (document.body && overlay.parentElement !== document.body) {
+            document.body.appendChild(overlay);
+        }
         const visible = !!loading && allOfficialAlertsVisible && alertsVisible &&
             !allOfficialAlertInitialLoadComplete &&
             !historicalRadarState.active &&
@@ -20327,6 +20468,7 @@
             document.visibilityState !== 'hidden';
         overlay.hidden = !visible;
         overlay.classList.toggle('is-visible', visible);
+        setOfficialAlertPageInteractionLock(visible);
     }
 
     document.addEventListener('visibilitychange', function() {
