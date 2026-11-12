@@ -8051,10 +8051,25 @@
         }
     }
 
+    function _environmentCanadaAlertAreaIsCurrent(feature, referenceMs) {
+        var p = feature && feature.properties || {};
+        var status = String(p.status_en || p.status || '').trim().toLowerCase();
+        if (status && ['issued', 'updated', 'continued'].indexOf(status) === -1) {
+            return false;
+        }
+        var endValue = p.event_end_datetime || p.expiration_datetime || p.expires;
+        var endMs = Date.parse(endValue || '');
+        var nowMs = isFinite(Number(referenceMs)) ? Number(referenceMs) : Date.now();
+        return !isFinite(endMs) || endMs > nowMs;
+    }
+
     function _groupEnvironmentCanadaAlertFeatures(features) {
+        var referenceMs = Date.now();
         var groups = new Map();
         var ordered = [];
-        (features || []).forEach(function(feature) {
+        (features || []).filter(function(feature) {
+            return _environmentCanadaAlertAreaIsCurrent(feature, referenceMs);
+        }).forEach(function(feature) {
             var key = _environmentCanadaAlertGroupKey(feature);
             if (!key) {
                 ordered.push({ feature: feature });
@@ -8098,10 +8113,19 @@
                     areas.push(name);
                 }
             });
+            var latestEndMs = Math.max.apply(Math, group.map(function(feature) {
+                var p = feature && feature.properties || {};
+                var endMs = Date.parse(p.event_end_datetime ||
+                    p.expiration_datetime || p.expires || '');
+                return isFinite(endMs) ? endMs : 0;
+            }));
             properties.alert_group_id = entry.key;
             properties.affected_areas_en = areas.join(', ');
             if (areas.length) properties.feature_name_en = areas.join(', ');
             properties.grouped_area_count = group.length;
+            if (latestEndMs > 0) {
+                properties.event_end_datetime = new Date(latestEndMs).toISOString();
+            }
             result.push(Object.assign({}, first, {
                 id: entry.key,
                 properties: properties,
