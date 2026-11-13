@@ -1722,18 +1722,11 @@
             flex-direction: column; gap: 14px;
             background: rgba(0,0,0,0.84); color: #c8d2dc;
             font-size: 1rem; font-weight: 600;
-            pointer-events: auto; touch-action: none; overscroll-behavior: none;
-            cursor: wait;
+            pointer-events: none; touch-action: auto; overscroll-behavior: none;
+            cursor: default;
         }
         #reporting-alert-loading.is-visible { display: flex; }
         #reporting-alert-loading[hidden] { display: none !important; }
-        html.official-alert-page-lock,
-        html.official-alert-page-lock body { overflow: hidden !important; }
-        html.official-alert-page-lock body * {
-            pointer-events: none !important;
-            -webkit-user-select: none !important;
-            user-select: none !important;
-        }
         .reporting-alert-loading-spinner {
             width: 28px; height: 28px; box-sizing: border-box;
             border: 2px solid rgba(255,255,255,0.18);
@@ -16797,6 +16790,11 @@
     let allOfficialAlertLayer = null;
     let allOfficialAlertLastRenderSignature = '';
     let allOfficialAlertFeatures = { US: [], CA: [] };
+    let allOfficialAlertDataVersions = { US: '', CA: '' };
+    let allOfficialAlertDataRevision = 0;
+    // Keep constructed Leaflet layers by alert ID so zooms, pans, and data
+    // refreshes can reuse existing geometry instead of repainting every alert.
+    let allOfficialAlertRenderedLayers = new Map();
     let allOfficialAlertCatalogs = { US: [], CA: [] };
     let allOfficialAlertDataFetchedAt = 0;
     let allOfficialAlertDataPromise = null;
@@ -16813,7 +16811,6 @@
     let allOfficialAlertMapLoadPromise = null;
     let allOfficialAlertRenderPending = false;
     let allOfficialAlertInitialLoadComplete = false;
-    let allOfficialAlertLoadingInputLocked = false;
     let allOfficialAlertCanvasRenderer = null;
     let allAlertsSettingsCountry = 'US';
     let allAlertsSettingsCategory = 'severe';
@@ -17152,7 +17149,9 @@
 
     function removeReportingPopupEntries(source) {
         reportingPopupEntries = source
-            ? reportingPopupEntries.filter(function(entry) { return entry.source !== source; })
+            ? reportingPopupEntries.filter(function(entry) {
+                return entry.isAllOfficialAlert || entry.source !== source;
+            })
             : [];
     }
 
@@ -19816,7 +19815,10 @@
         if (!Array.isArray(payload.features)) {
             throw new Error('NWS active alert feed returned no feature list');
         }
-        return payload.features;
+        return {
+            features: payload.features,
+            version: response.headers.get('X-SkyMonitor-Data-Version') || ''
+        };
     }
 
     async function _fetchAllCanadaAlertFeatures() {
@@ -19833,7 +19835,10 @@
             throw new Error('Environment Canada alerts returned HTTP ' + response.status);
         }
         const payload = result.payload;
-        return Array.isArray(payload.features) ? payload.features : [];
+        return {
+            features: Array.isArray(payload.features) ? payload.features : [],
+            version: response.headers.get('X-SkyMonitor-Data-Version') || ''
+        };
     }
 
     async function _fetchNwsAlertTypeCatalog() {
@@ -19972,17 +19977,35 @@
         ]).then(function(results) {
             const errors = [];
             if (results[0].status === 'fulfilled') {
-                allOfficialAlertFeatures.US = results[0].value || [];
-                _hydrateAllOfficialAlertResolvedZoneGeometry(
-                    allOfficialAlertFeatures.US, 'US'
-                );
-                allOfficialAlertGeometryResolutionDone = false;
+                const latest = results[0].value || {};
+                const latestFeatures = Array.isArray(latest.features)
+                    ? latest.features : [];
+                const latestVersion = String(latest.version || '');
+                if (!latestVersion || latestVersion !== allOfficialAlertDataVersions.US) {
+                    allOfficialAlertFeatures.US = latestFeatures;
+                    allOfficialAlertDataVersions.US = latestVersion;
+                    allOfficialAlertDataRevision++;
+                    allOfficialAlertLastRenderSignature = '';
+                    _hydrateAllOfficialAlertResolvedZoneGeometry(
+                        allOfficialAlertFeatures.US, 'US'
+                    );
+                    allOfficialAlertGeometryResolutionDone = false;
+                }
             } else {
                 errors.push('U.S. alerts unavailable');
             }
             if (results[1].status === 'fulfilled') {
-                allOfficialAlertFeatures.CA = results[1].value || [];
-                allOfficialAlertGeometryResolutionDone = false;
+                const latest = results[1].value || {};
+                const latestFeatures = Array.isArray(latest.features)
+                    ? latest.features : [];
+                const latestVersion = String(latest.version || '');
+                if (!latestVersion || latestVersion !== allOfficialAlertDataVersions.CA) {
+                    allOfficialAlertFeatures.CA = latestFeatures;
+                    allOfficialAlertDataVersions.CA = latestVersion;
+                    allOfficialAlertDataRevision++;
+                    allOfficialAlertLastRenderSignature = '';
+                    allOfficialAlertGeometryResolutionDone = false;
+                }
             } else {
                 errors.push('Canadian alerts unavailable');
             }
@@ -20002,7 +20025,6 @@
             // treating stale/empty data as a successful three-minute refresh.
             allOfficialAlertDataFetchedAt = Date.now() -
                 (errors.length ? 165000 : 0);
-            allOfficialAlertLastRenderSignature = '';
             if (status) {
                 status.hidden = !errors.length;
                 status.textContent = errors.length
@@ -20397,7 +20419,16 @@
     }
 
     function clearAllOfficialAlertMapData() {
-        if (allOfficialAlertLayer) allOfficialAlertLayer.clearLayers();
+        if (allOfficialAlertLayer && allOfficialAlertRenderedLayers) {
+            allOfficialAlertRenderedLayers.forEach(function(record) {
+                if (record && record.layer &&
+                    allOfficialAlertLayer.hasLayer(record.layer)) {
+                    allOfficialAlertLayer.removeLayer(record.layer);
+                }
+            });
+        } else if (allOfficialAlertLayer) {
+            allOfficialAlertLayer.clearLayers();
+        }
         reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
             return !entry.isAllOfficialAlert;
         });
@@ -20422,36 +20453,11 @@
         });
     }
 
-    function blockOfficialAlertLoadingInput(event) {
-        if (!allOfficialAlertLoadingInputLocked) return;
-        if (event.cancelable) event.preventDefault();
-        event.stopImmediatePropagation();
-    }
-    [
-        'keydown', 'keyup', 'keypress', 'click', 'dblclick', 'contextmenu',
-        'pointerdown', 'pointerup', 'pointermove', 'mousedown', 'mouseup', 'submit'
-    ].forEach(function(eventName) {
-        document.addEventListener(eventName, blockOfficialAlertLoadingInput, true);
-    });
-    ['wheel', 'touchstart', 'touchmove'].forEach(function(eventName) {
-        document.addEventListener(eventName, blockOfficialAlertLoadingInput, {
-            capture: true,
-            passive: false
-        });
-    });
-
-    function setOfficialAlertPageInteractionLock(locked) {
-        allOfficialAlertLoadingInputLocked = !!locked;
-        document.documentElement.classList.toggle(
-            'official-alert-page-lock',
-            allOfficialAlertLoadingInputLocked
-        );
+    function setOfficialAlertPageInteractionLock() {
+        // Loading official polygons must never disable map clicks or gestures.
+        document.documentElement.classList.remove('official-alert-page-lock');
         if (document.body) {
-            if (allOfficialAlertLoadingInputLocked) {
-                document.body.setAttribute('aria-busy', 'true');
-            } else {
-                document.body.removeAttribute('aria-busy');
-            }
+            document.body.removeAttribute('aria-busy');
         }
     }
 
@@ -20729,16 +20735,6 @@
         return bounds;
     }
 
-    function allOfficialAlertGeometryIsInCurrentView(geometry) {
-        if (!reportingMap || !window.L || !reportingMap.getBounds) return true;
-        if (!geometry || typeof geometry !== 'object') return true;
-        const bounds = allOfficialAlertGeometryBounds(geometry);
-        if (!bounds) return true;
-        const view = reportingMap.getBounds();
-        return bounds[2] >= view.getSouth() && bounds[0] <= view.getNorth() &&
-            bounds[3] >= view.getWest() && bounds[1] <= view.getEast();
-    }
-
     async function renderAllOfficialAlertsOnMap() {
         if (!allOfficialAlertLayer || !window.L) return false;
         const renderGeneration = ++allOfficialAlertRenderGeneration;
@@ -20752,7 +20748,17 @@
             allOfficialAlertRenderPending = true;
             return false;
         }
-        const visibleAlertKeys = new Set();
+        const nextRenderSignature = JSON.stringify([
+            allOfficialAlertDataRevision,
+            allOfficialAlertCountryPrefs,
+            allOfficialAlertTypePrefs,
+            allOfficialAlertColorPrefs
+        ]);
+        if (nextRenderSignature === allOfficialAlertLastRenderSignature) {
+            allOfficialAlertRenderPending = false;
+            return true;
+        }
+        const eligibleAlertKeys = new Set();
         const renderCandidates = [];
         const seenRenderKeys = new Set();
         const coverageIndex = _allOfficialAlertExistingNwsCoverageIndex();
@@ -20791,8 +20797,7 @@
                     )) continue;
                 const sourceGeometry = feature.geometry ||
                     feature._reportingResolvedGeometry;
-                if (!sourceGeometry ||
-                    !allOfficialAlertGeometryIsInCurrentView(sourceGeometry)) continue;
+                if (!sourceGeometry) continue;
                 if (country === 'US' &&
                     _allOfficialAlertFeatureIsCoveredByExistingPolygon(
                         feature, eventName, coverageIndex
@@ -20804,7 +20809,10 @@
                 const key = country + '|' + id;
                 if (seenRenderKeys.has(key)) continue;
                 seenRenderKeys.add(key);
-                visibleAlertKeys.add(key);
+                eligibleAlertKeys.add(key);
+                // Keep every active, eligible alert in the layer group. Leaflet
+                // clips paths to the viewport itself; viewport filtering here
+                // would recreate alerts as users pan or zoom into new areas.
                 renderCandidates.push({
                     country: country,
                     feature: feature,
@@ -20816,15 +20824,7 @@
                 });
             }
         }
-        const nextRenderSignature = JSON.stringify(
-            Array.from(visibleAlertKeys).sort()
-        );
-        if (nextRenderSignature === allOfficialAlertLastRenderSignature) {
-            allOfficialAlertRenderPending = false;
-            return true;
-        }
-        clearAllOfficialAlertMapData();
-        let renderedCount = 0;
+        let processedCount = 0;
         for (let candidateIndex = 0; candidateIndex < renderCandidates.length; candidateIndex++) {
                 if (renderGeneration !== allOfficialAlertRenderGeneration) return false;
                 if (!shouldProcessOfficialAlertMapWork()) {
@@ -20840,6 +20840,31 @@
                 const id = candidate.id;
                 const key = candidate.key;
                 const color = _allOfficialAlertColor(feature, eventName, country);
+                const renderFingerprint = JSON.stringify([
+                    country, eventName, color, geometry, props
+                ]);
+                let cachedRecord = allOfficialAlertRenderedLayers.get(key);
+                if (cachedRecord &&
+                    cachedRecord.renderFingerprint === renderFingerprint) {
+                    if (!allOfficialAlertLayer.hasLayer(cachedRecord.layer)) {
+                        cachedRecord.layer.addTo(allOfficialAlertLayer);
+                    }
+                    if (!reportingPopupEntries.includes(cachedRecord.popupEntry)) {
+                        reportingPopupEntries.push(cachedRecord.popupEntry);
+                    }
+                    processedCount++;
+                    if (processedCount % 3 === 0) await yieldOfficialAlertMapWork();
+                    continue;
+                }
+                if (cachedRecord) {
+                    if (allOfficialAlertLayer.hasLayer(cachedRecord.layer)) {
+                        allOfficialAlertLayer.removeLayer(cachedRecord.layer);
+                    }
+                    reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
+                        return entry !== cachedRecord.popupEntry;
+                    });
+                    allOfficialAlertRenderedLayers.delete(key);
+                }
                 const geoFeature = { type: 'Feature', geometry: geometry, properties: props };
                 let geoLayer;
                 try {
@@ -20951,9 +20976,30 @@
                 }
                 registerReportingPopup(geoLayer, popupEntry);
                 geoLayer.addTo(allOfficialAlertLayer);
-                renderedCount++;
-                if (renderedCount % 3 === 0) await yieldOfficialAlertMapWork();
+                allOfficialAlertRenderedLayers.set(key, {
+                    layer: geoLayer,
+                    popupEntry: popupEntry,
+                    renderFingerprint: renderFingerprint
+                });
+                processedCount++;
+                if (processedCount % 3 === 0) await yieldOfficialAlertMapWork();
         }
+        // Expired or filtered alerts leave the active layer group and cache.
+        allOfficialAlertRenderedLayers.forEach(function(record, key) {
+            if (!record) {
+                allOfficialAlertRenderedLayers.delete(key);
+                return;
+            }
+            if (!eligibleAlertKeys.has(key)) {
+                if (allOfficialAlertLayer.hasLayer(record.layer)) {
+                    allOfficialAlertLayer.removeLayer(record.layer);
+                }
+                reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
+                    return entry !== record.popupEntry;
+                });
+                allOfficialAlertRenderedLayers.delete(key);
+            }
+        });
         allOfficialAlertLastRenderSignature = nextRenderSignature;
         allOfficialAlertRenderPending = false;
         syncReportingMapLayers();
@@ -20993,7 +21039,10 @@
                 allOfficialAlertRenderPending = true;
                 return;
             }
-            if (geometryChanged) await renderAllOfficialAlertsOnMap();
+            if (geometryChanged) {
+                allOfficialAlertLastRenderSignature = '';
+                await renderAllOfficialAlertsOnMap();
+            }
         }).catch(function(error) {
             console.warn('[SkyMonitor] Full official map alerts failed:', error);
         }).finally(function() {
