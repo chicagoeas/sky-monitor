@@ -1722,8 +1722,8 @@
             flex-direction: column; gap: 14px;
             background: rgba(0,0,0,0.84); color: #c8d2dc;
             font-size: 1rem; font-weight: 600;
-            pointer-events: none; touch-action: auto; overscroll-behavior: none;
-            cursor: default;
+            pointer-events: auto; touch-action: none; overscroll-behavior: none;
+            cursor: wait;
         }
         #reporting-alert-loading.is-visible { display: flex; }
         #reporting-alert-loading[hidden] { display: none !important; }
@@ -16806,7 +16806,6 @@
     let allOfficialAlertZoneGeometryCache = new Map();
     // Reuse assembled zone geometry across feed refreshes.
     let allOfficialAlertResolvedZoneSetCache = new Map();
-    let allOfficialAlertRenderTimer = null;
     let allOfficialAlertRenderGeneration = 0;
     let allOfficialAlertMapLoadPromise = null;
     let allOfficialAlertRenderPending = false;
@@ -20454,7 +20453,8 @@
     }
 
     function setOfficialAlertPageInteractionLock() {
-        // Loading official polygons must never disable map clicks or gestures.
+        // The fullscreen loading overlay shields map gestures directly; keep
+        // the legacy page-wide lock disabled for everything else.
         document.documentElement.classList.remove('official-alert-page-lock');
         if (document.body) {
             document.body.removeAttribute('aria-busy');
@@ -25224,6 +25224,11 @@
         reportingLsrCanvasRenderer = typeof L_ref.canvas === 'function'
             ? L_ref.canvas({ pane: 'lsr-reports', padding: 0.5 })
             : null;
+        // The LSR canvas is above Leaflet's default marker pane. Keep
+        // SkyMonitor report markers and clusters above that canvas so its
+        // transparent pixels cannot intercept their clicks.
+        const skyMonitorReportPane = reportingMap.createPane('skymonitor-reports');
+        skyMonitorReportPane.style.zIndex = 640;
         reportingMap.on('movestart zoomstart', _invalidateHistoricalRadarViewport);
         reportingMap.on('moveend zoomend', function() {
             saveReportingMapView();
@@ -25237,17 +25242,9 @@
                     loadSpcWpcMdsOnMap();
                 }, 180);
             }
-            if (allOfficialAlertsVisible && alertsVisible) {
-                if (allOfficialAlertRenderTimer) {
-                    clearTimeout(allOfficialAlertRenderTimer);
-                }
-                allOfficialAlertRenderTimer = setTimeout(function() {
-                    allOfficialAlertRenderTimer = null;
-                    renderAllOfficialAlertsOnMap().catch(function(error) {
-                        console.warn('[SkyMonitor] Official alert map render failed:', error);
-                    });
-                }, 0);
-            }
+            // Official alert layers are built for the complete feed and do
+            // not depend on the viewport. Re-rendering on every pan/zoom can
+            // invalidate an in-progress initial render and leave partial data.
         });
         reportingMap.on('zoomend', refreshSingleSiteRadarMarkersForZoom);
 
@@ -25319,6 +25316,7 @@
         if (_privacyCb) _privacyCb.checked = localStorage.getItem('report_privacy_mode') === '1';
         userReportLayer = L_ref.markerClusterGroup({
             maxClusterRadius: 40,
+            clusterPane: 'skymonitor-reports',
             iconCreateFunction: function(cluster) {
                 const count = cluster.getChildCount();
                 return L_ref.divIcon({
@@ -27088,7 +27086,10 @@
                         iconSize: [28, 28],
                         iconAnchor: [14, 14]
                     });
-                    const marker = L_ref.marker([r.lat, r.lon], { icon: icon }).addTo(userReportLayer);
+                    const marker = L_ref.marker([r.lat, r.lon], {
+                        icon: icon,
+                        pane: 'skymonitor-reports'
+                    }).addTo(userReportLayer);
                     registerReportingPopup(marker, {
                         source: 'skymonitor-reports',
                         color: '#00e676',
