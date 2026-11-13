@@ -1716,6 +1716,11 @@
 
         /* v1.0.4: Reporting map */
         #reporting-map { position: relative; height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+        /* Keep map layers inert only while the alert loader shields the map. */
+        #reporting-map.reporting-map-input-locked > :not(#reporting-alert-loading),
+        #reporting-map.reporting-map-input-locked > :not(#reporting-alert-loading) * {
+            pointer-events: none !important;
+        }
         #reporting-alert-loading {
             position: absolute; inset: 0; z-index: 2147483000;
             display: none; align-items: center; justify-content: center;
@@ -20520,6 +20525,12 @@
             document.visibilityState !== 'hidden';
         overlay.hidden = !visible;
         overlay.classList.toggle('is-visible', visible);
+        if (window.L && window.L.DomEvent && !overlay._reportingMapPropagationDisabled) {
+            window.L.DomEvent.disableClickPropagation(overlay);
+            window.L.DomEvent.disableScrollPropagation(overlay);
+            overlay._reportingMapPropagationDisabled = true;
+        }
+        syncReportingMapInteractionMode();
         setOfficialAlertPageInteractionLock(visible);
     }
 
@@ -24962,6 +24973,7 @@
         window.SKYMONITOR_RADAR_PAGE = active;
         window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRoute;
         document.documentElement.classList.toggle('radar-route', active);
+        syncReportingMapInteractionMode();
         updateOfficialAlertLoadingOverlay(!!allOfficialAlertMapLoadPromise);
         syncTropicalTrackerButtonVisibility();
         _renderHistoricalRadarControls();
@@ -25248,6 +25260,7 @@
         })
             .setView([initialView.lat, initialView.lon], initialView.zoom);
         window.reportingMap = reportingMap;
+        syncReportingMapInteractionMode();
         reportingMap.on('click', openReportingAlertPopupFromMapClick);
         reportingMap.on('mousemove', syncReportingAlertHoverCursor);
         reportingMap.on('mouseout', clearReportingAlertHoverCursor);
@@ -25386,6 +25399,39 @@
         syncReportingMapLayers();
         ensureReportPinMarker();
         loadReportingMapData();
+    }
+
+    function syncReportingMapInteractionMode() {
+        if (!reportingMap) return;
+        const overlay = document.getElementById('reporting-alert-loading');
+        const locked = !!(overlay && !overlay.hidden &&
+            overlay.classList.contains('is-visible'));
+        const container = reportingMap.getContainer && reportingMap.getContainer();
+        if (container) {
+            container.setAttribute('aria-disabled', locked ? 'true' : 'false');
+            container.classList.toggle('reporting-map-input-locked', locked);
+            Array.prototype.forEach.call(container.children, function(child) {
+                if (child === overlay) return;
+                if ('inert' in child) child.inert = locked;
+            });
+        }
+        [
+            'dragging',
+            'touchZoom',
+            'scrollWheelZoom',
+            'doubleClickZoom',
+            'boxZoom',
+            'keyboard',
+            'tap'
+        ].forEach(function(handlerName) {
+            const handler = reportingMap[handlerName];
+            if (!handler) return;
+            if (!locked && typeof handler.enable === 'function') {
+                handler.enable();
+            } else if (locked && typeof handler.disable === 'function') {
+                handler.disable();
+            }
+        });
     }
 
     function _historicalRadarIso(timestampMs) {
