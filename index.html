@@ -1715,9 +1715,9 @@
         .alert-full-text li { margin: 2px 0; }
 
         /* v1.0.4: Reporting map */
-        #reporting-map { height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+        #reporting-map { position: relative; height: 350px; border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
         #reporting-alert-loading {
-            position: fixed; inset: 0; z-index: 2147483000;
+            position: absolute; inset: 0; z-index: 2147483000;
             display: none; align-items: center; justify-content: center;
             flex-direction: column; gap: 14px;
             background: rgba(0,0,0,0.84); color: #c8d2dc;
@@ -1725,6 +1725,7 @@
             pointer-events: auto; touch-action: none; overscroll-behavior: none;
             cursor: wait;
         }
+        html.radar-route #reporting-alert-loading { position: fixed; inset: 0; }
         #reporting-alert-loading.is-visible { display: flex; }
         #reporting-alert-loading[hidden] { display: none !important; }
         .reporting-alert-loading-spinner {
@@ -6489,6 +6490,7 @@
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
         document.getElementById(tabId + '-tab').classList.add('active');
         element.classList.add('active');
+        updateOfficialAlertLoadingOverlay(!!allOfficialAlertMapLoadPromise);
         if (tabId === 'reporting') {
             // The title may be measured while the reporting tab is hidden
             // during startup. Refit after the active class has painted so the
@@ -16810,6 +16812,8 @@
     let allOfficialAlertMapLoadPromise = null;
     let allOfficialAlertRenderPending = false;
     let allOfficialAlertInitialLoadComplete = false;
+    let allOfficialAlertBackgroundWarmupScheduled = false;
+    let allOfficialAlertBackgroundWarmupActive = false;
     let allOfficialAlertCanvasRenderer = null;
     let allAlertsSettingsCountry = 'US';
     let allAlertsSettingsCategory = 'severe';
@@ -19749,6 +19753,9 @@
 
     function fetchAllOfficialAlertJson(url, options, timeoutMs, parentSignal) {
         const requestOptions = Object.assign({}, options || {});
+        if (allOfficialAlertBackgroundWarmupActive) {
+            requestOptions.priority = 'low';
+        }
         const controller = typeof AbortController === 'function'
             ? new AbortController()
             : null;
@@ -20042,6 +20049,34 @@
             allOfficialAlertDataPromise = null;
         });
         return allOfficialAlertDataPromise;
+    }
+
+    function scheduleAllOfficialAlertBackgroundWarmup() {
+        if (allOfficialAlertBackgroundWarmupScheduled ||
+            historicalRadarState.active || window.SKYMONITOR_INFO_PAGE ||
+            window.SKYMONITOR_RADAR_PAGE || window.SKYMONITOR_TROPICAL_PAGE) {
+            return;
+        }
+        allOfficialAlertBackgroundWarmupScheduled = true;
+        const beginWarmup = function() {
+            if (document.visibilityState === 'hidden') {
+                allOfficialAlertBackgroundWarmupScheduled = false;
+                return;
+            }
+            allOfficialAlertBackgroundWarmupActive = true;
+            ensureAllOfficialAlertData(false)
+                .catch(function(error) {
+                    console.warn('[SkyMonitor] Background official alert preload failed:', error);
+                })
+                .finally(function() {
+                    allOfficialAlertBackgroundWarmupActive = false;
+                });
+        };
+        if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(beginWarmup, { timeout: 2500 });
+        } else {
+            window.setTimeout(beginWarmup, 1200);
+        }
     }
 
     function _allOfficialAlertResolvedZoneSetCacheKey(country, zoneUrls) {
@@ -20453,8 +20488,9 @@
     }
 
     function setOfficialAlertPageInteractionLock() {
-        // The fullscreen loading overlay shields map gestures directly; keep
-        // the legacy page-wide lock disabled for everything else.
+        // The map-scoped loading overlay shields map gestures directly; keep
+        // the legacy page-wide lock disabled so tabs and the rest of the app
+        // remain interactive.
         document.documentElement.classList.remove('official-alert-page-lock');
         if (document.body) {
             document.body.removeAttribute('aria-busy');
@@ -20467,13 +20503,18 @@
             setOfficialAlertPageInteractionLock(false);
             return;
         }
-        if (document.body && overlay.parentElement !== document.body) {
-            document.body.appendChild(overlay);
+        const isRadarRoute = document.documentElement.classList.contains('radar-route');
+        const mapContainer = document.getElementById('reporting-map');
+        const overlayParent = isRadarRoute ? document.body : mapContainer;
+        if (overlayParent && overlay.parentElement !== overlayParent) {
+            overlayParent.appendChild(overlay);
         }
+        const reportingTabActive = !!document.getElementById('reporting-tab')
+            ?.classList.contains('active');
         const visible = !!loading && allOfficialAlertsVisible && alertsVisible &&
             !allOfficialAlertInitialLoadComplete &&
             !historicalRadarState.active &&
-            document.documentElement.classList.contains('radar-route') &&
+            (isRadarRoute || reportingTabActive) &&
             document.visibilityState !== 'hidden';
         overlay.hidden = !visible;
         overlay.classList.toggle('is-visible', visible);
@@ -20482,6 +20523,7 @@
 
     document.addEventListener('visibilitychange', function() {
         if (document.visibilityState === 'visible') {
+            scheduleAllOfficialAlertBackgroundWarmup();
             updateOfficialAlertLoadingOverlay(!!allOfficialAlertMapLoadPromise);
             if (allOfficialAlertRenderPending && shouldProcessOfficialAlertMapWork()) {
                 loadAllOfficialAlertsForMap();
@@ -24918,7 +24960,7 @@
         window.SKYMONITOR_RADAR_PAGE = active;
         window.SKYMONITOR_HISTORICAL_RADAR_PAGE = historicalRoute;
         document.documentElement.classList.toggle('radar-route', active);
-        updateOfficialAlertLoadingOverlay(active && !!allOfficialAlertMapLoadPromise);
+        updateOfficialAlertLoadingOverlay(!!allOfficialAlertMapLoadPromise);
         syncTropicalTrackerButtonVisibility();
         _renderHistoricalRadarControls();
         document.title = historicalRoute
@@ -32545,7 +32587,7 @@
             // Version the registration so GitHub Pages does not keep serving an
             // older cached app shell after an inline HTML/JS update. The hourly
             // temperature renderer is part of this document, not sw.js.
-            navigator.serviceWorker.register('/sw.js?v=20261031-glass-lens-expansion').then(function(reg) {
+            navigator.serviceWorker.register('/sw.js?v=20261113-offscreen-alert-prefetch').then(function(reg) {
                 _swReg = reg;
                 if ('PushManager' in window) {
                     setTimeout(function() {
@@ -32974,6 +33016,7 @@
                 var radarNav = document.getElementById('nav-reporting');
                 if (radarNav) window.switchTab('reporting', radarNav);
             } else {
+                scheduleAllOfficialAlertBackgroundWarmup();
                 var handoffHandled = consumeInfoLocationHandoff();
                 if (!handoffHandled) loadAll().then(function() {
                     syncPushLocation();
