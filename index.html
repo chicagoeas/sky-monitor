@@ -18468,6 +18468,7 @@
     let spcWpcMdsMapCache = null;
     let spcWpcMdsMapRequest = null;
     let spcWpcMdsMapRefreshTimer = null;
+    let spcWpcMdsExpiryTimer = null;
 
     function isLower48SpcWpcLocation() {
         const country = String(window.locationCountryCode || '').trim().toUpperCase();
@@ -18902,6 +18903,7 @@
             spcWpcMdsLoadGeneration++;
             if (spcWpcMdsLayer) spcWpcMdsLayer.clearLayers();
             removeReportingPopupEntries('spc-wpc-discussions');
+            scheduleSpcWpcMdsExpiryCheck();
             syncReportingMapLayers();
             return;
         }
@@ -26681,6 +26683,7 @@
             if (typeof entry.refreshPopupTiming === 'function') {
                 entry.refreshPopupTiming(Date.now());
             }
+            scheduleSpcWpcMdsExpiryCheck();
             return entry.detail;
         })();
         entry._discussionLoadPromise = request;
@@ -26708,6 +26711,62 @@
             return loadReportingDiscussionDetails(this);
         };
         return entry;
+    }
+
+    function reportingDiscussionExpirationMs(entry) {
+        if (!entry) return null;
+        let expires = parseReportDate(entry.expires);
+        if (!expires) {
+            const text = entry.discussionText ||
+                (entry.validWindow ? 'Valid ' + entry.validWindow : '');
+            expires = parseReportDate(
+                reportingDiscussionExpiryFromText(text, entry.issued)
+            );
+        }
+        return expires ? expires.getTime() : null;
+    }
+
+    function scheduleSpcWpcMdsExpiryCheck() {
+        if (spcWpcMdsExpiryTimer) {
+            clearTimeout(spcWpcMdsExpiryTimer);
+            spcWpcMdsExpiryTimer = null;
+        }
+        const now = Date.now();
+        let nextExpiry = Infinity;
+        const expiredEntries = [];
+        reportingPopupEntries.forEach(function(entry) {
+            if (!entry || entry.source !== 'spc-wpc-discussions') return;
+            const expiryMs = reportingDiscussionExpirationMs(entry);
+            if (expiryMs == null || !isFinite(expiryMs)) return;
+            if (expiryMs <= now) expiredEntries.push(entry);
+            else nextExpiry = Math.min(nextExpiry, expiryMs);
+        });
+        expiredEntries.forEach(function(entry) {
+            if (entry._popupId && document.getElementById(entry._popupId) &&
+                reportingMap) {
+                reportingMap.closePopup();
+            }
+            if (entry.layer && spcWpcMdsLayer &&
+                spcWpcMdsLayer.hasLayer(entry.layer)) {
+                spcWpcMdsLayer.removeLayer(entry.layer);
+            }
+        });
+        if (expiredEntries.length) {
+            const expiredSet = new Set(expiredEntries);
+            reportingPopupEntries = reportingPopupEntries.filter(function(entry) {
+                return !expiredSet.has(entry);
+            });
+        }
+        if (isFinite(nextExpiry)) {
+            const delay = Math.max(0, Math.min(
+                nextExpiry - Date.now() + 50,
+                2147483647
+            ));
+            spcWpcMdsExpiryTimer = setTimeout(function() {
+                spcWpcMdsExpiryTimer = null;
+                scheduleSpcWpcMdsExpiryCheck();
+            }, delay);
+        }
     }
 
     function renderSpcWpcMdsOnMap(data) {
@@ -26808,6 +26867,8 @@
                 expires: expireTime,
                 discussionText: narrative
             });
+            const expiryMs = reportingDiscussionExpirationMs(popupEntry);
+            if (expiryMs != null && expiryMs <= Date.now()) return;
             layer.addTo(spcWpcMdsLayer);
             registerReportingPopup(layer, Object.assign(popupEntry, {
                 source: 'spc-wpc-discussions'
@@ -26883,12 +26944,15 @@
                 validWindow: validWindow,
                 discussionText: narrative
             });
+            const expiryMs = reportingDiscussionExpirationMs(popupEntry);
+            if (expiryMs != null && expiryMs <= Date.now()) return;
             layer.addTo(spcWpcMdsLayer);
             registerReportingPopup(layer, Object.assign(popupEntry, {
                 source: 'spc-wpc-discussions'
             }));
         });
         syncReportingMapLayers();
+        scheduleSpcWpcMdsExpiryCheck();
     }
 
     async function loadSpcWpcMdsOnMap() {
