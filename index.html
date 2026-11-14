@@ -8444,7 +8444,7 @@
     // That worker owns METEOALARM_API_TOKEN, resolves the selected coordinate to
     // the relevant country/regions, fetches the official OGC API EDR records,
     // and follows their signed detail links before returning {alerts: [...]}.
-    async function fetchMeteoAlarmAlerts(requestLat, requestLon) {
+    async function fetchMeteoAlarmAlerts(requestLat, requestLon, requestCountry) {
         var requestSignal = window._weatherRequestController
             ? window._weatherRequestController.signal : undefined;
         var url = METEOALARM_PROXY_URL + '?lat=' + encodeURIComponent(requestLat == null ? lat : requestLat)
@@ -8458,9 +8458,17 @@
         // Only send it when it belongs to these coordinates.
         var hintLat = requestLat == null ? lat : requestLat;
         var hintLon = requestLon == null ? lon : requestLon;
-        var hintCountry = String(window.locationCountryCode || '').trim().toUpperCase();
-        if (hintCountry && METEOALARM_COUNTRY_CODES[hintCountry] &&
-            window._locationCountryCoordsKey === _locationCountryKeyFor(hintLat, hintLon)) {
+        // A caller that already resolved the country for these exact
+        // coordinates passes it in; otherwise use the stored country only when
+        // it was resolved for the same place.
+        var hintCountry = String(requestCountry || '').trim().toUpperCase();
+        if (!METEOALARM_COUNTRY_CODES[hintCountry]) {
+            hintCountry = String(window.locationCountryCode || '').trim().toUpperCase();
+            if (window._locationCountryCoordsKey !== _locationCountryKeyFor(hintLat, hintLon)) {
+                hintCountry = '';
+            }
+        }
+        if (hintCountry && METEOALARM_COUNTRY_CODES[hintCountry]) {
             url += '&country=' + encodeURIComponent(hintCountry);
         }
         // The Worker owns upstream retries, country-feed caching, and
@@ -8759,7 +8767,7 @@
         } else if (route === 'meteoalarm') {
             providers = [{
                 name: 'MeteoAlarm',
-                fetch: function() { return fetchMeteoAlarmAlerts(lat, lon); },
+                fetch: function() { return fetchMeteoAlarmAlerts(lat, lon, countryCode); },
                 render: function() { return renderMeteoAlarmAlerts(stack, banner); }
             }];
         } else if (route === 'pirate') {
