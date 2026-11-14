@@ -8453,6 +8453,16 @@
         // language unset so the originating national service's default text is
         // used; "English" explicitly requests the API's English info block.
         if (localStorage.getItem('alerts_language') === 'en') url += '&language=en';
+        // Send the already-resolved country so the Worker makes one MeteoGate
+        // country request instead of querying every neighbouring country.
+        // Only send it when it belongs to these coordinates.
+        var hintLat = requestLat == null ? lat : requestLat;
+        var hintLon = requestLon == null ? lon : requestLon;
+        var hintCountry = String(window.locationCountryCode || '').trim().toUpperCase();
+        if (hintCountry && METEOALARM_COUNTRY_CODES[hintCountry] &&
+            window._locationCountryCoordsKey === _locationCountryKeyFor(hintLat, hintLon)) {
+            url += '&country=' + encodeURIComponent(hintCountry);
+        }
         // The Worker owns upstream retries, country-feed caching, and
         // concurrent-request deduplication. Do not retry here: a browser-side
         // retry turns one provider 429 into another quota-consuming request,
