@@ -17119,6 +17119,22 @@
         return isNaN(parsed.getTime()) ? null : parsed;
     }
 
+    // Building a locale formatter on every call was one of the slowest steps
+    // when hundreds of alert popups were prepared; reuse one instance.
+    let reportTimeFormatter = null;
+    function formatReportClockTime(date) {
+        if (!reportTimeFormatter && typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+            try {
+                reportTimeFormatter = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
+            } catch (error) {
+                reportTimeFormatter = null;
+            }
+        }
+        return reportTimeFormatter
+            ? reportTimeFormatter.format(date)
+            : date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
     function formatReportTime(value) {
         if (!value) return '';
         const reportDate = parseReportDate(value);
@@ -17126,7 +17142,7 @@
         const now = new Date();
         // No timeZone is supplied intentionally: report-map times are shown in
         // the viewer's local timezone, not UTC and not the issuer's timezone.
-        const timeStr = reportDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const timeStr = formatReportClockTime(reportDate);
         const todayKey = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
         const reportKey = Date.UTC(
             reportDate.getFullYear(),
@@ -19088,7 +19104,17 @@
         'child abduction emergency': '#ffffff',
         'blue alert': '#ffffff'
     };
+    const allOfficialAlertExcludedMemo = new Map();
     function allOfficialAlertEventIsExcluded(eventName, country) {
+        const memoKey = String(country || '') + '|' + String(eventName || '');
+        const memo = allOfficialAlertExcludedMemo.get(memoKey);
+        if (memo !== undefined) return memo;
+        const result = _allOfficialAlertEventIsExcludedUncached(eventName, country);
+        if (allOfficialAlertExcludedMemo.size > 5000) allOfficialAlertExcludedMemo.clear();
+        allOfficialAlertExcludedMemo.set(memoKey, result);
+        return result;
+    }
+    function _allOfficialAlertEventIsExcludedUncached(eventName, country) {
         const normalized = String(eventName || '')
             .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
         return /\bforecast point\b/.test(normalized) ||
@@ -19490,11 +19516,22 @@
     allOfficialAlertCatalogs.US = allOfficialAlertReferenceItems('US');
     allOfficialAlertCatalogs.CA = allOfficialAlertReferenceItems('CA');
 
+    // The reference catalog is constant; index it once instead of rebuilding
+    // the whole list for every alert lookup.
+    const allOfficialAlertReferenceIndex = {};
     function allOfficialAlertReferenceItem(country, eventName) {
         const key = String(eventName || '').trim().toLowerCase();
-        return allOfficialAlertReferenceItems(country).find(function(item) {
-            return item.name.toLowerCase() === key;
-        }) || null;
+        const countryKey = String(country || '');
+        let index = allOfficialAlertReferenceIndex[countryKey];
+        if (!index) {
+            index = new Map();
+            allOfficialAlertReferenceItems(countryKey).forEach(function(item) {
+                const itemKey = item.name.toLowerCase();
+                if (!index.has(itemKey)) index.set(itemKey, item);
+            });
+            allOfficialAlertReferenceIndex[countryKey] = index;
+        }
+        return index.get(key) || null;
     }
 
     function allOfficialAlertCategory(eventName, country) {
@@ -19755,8 +19792,10 @@
         if (alertsVisible) loadAllOfficialAlertsForMap();
     }
 
-    const ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS = 10000;
-    const ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS = 18000;
+    // The feed can take a few seconds when the Worker cache is cold; a short
+    // client timeout made whole countries drop off the map.
+    const ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS = 25000;
+    const ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS = 45000;
 
     function fetchAllOfficialAlertJson(url, options, timeoutMs, parentSignal) {
         const requestOptions = Object.assign({}, options || {});
@@ -20003,6 +20042,7 @@
                         allOfficialAlertFeatures.US, 'US'
                     );
                     allOfficialAlertGeometryResolutionDone = false;
+                    allOfficialAlertRetryAttempt = 0;
                 }
             } else {
                 errors.push('U.S. alerts unavailable');
@@ -20038,6 +20078,7 @@
             // treating stale/empty data as a successful three-minute refresh.
             allOfficialAlertDataFetchedAt = Date.now() -
                 (errors.length ? 165000 : 0);
+            allOfficialAlertLastDataErrorCount = errors.length;
             if (status) {
                 status.hidden = !errors.length;
                 status.textContent = errors.length
@@ -20051,6 +20092,7 @@
                 status.textContent = 'Could not load official alert types. Try again shortly.';
             }
             console.warn('[SkyMonitor] Full official alert catalog failed:', error);
+            allOfficialAlertLastDataErrorCount = 1;
             return allOfficialAlertFeatures;
         }).finally(function() {
             allOfficialAlertDataPromise = null;
@@ -20072,6 +20114,12 @@
             }
             allOfficialAlertBackgroundWarmupActive = true;
             ensureAllOfficialAlertData(false)
+                .then(function() {
+                    if (allOfficialAlertsVisible && alertsVisible &&
+                        !historicalRadarState.active) {
+                        return prefetchAllOfficialAlertZoneShapes();
+                    }
+                })
                 .catch(function(error) {
                     console.warn('[SkyMonitor] Background official alert preload failed:', error);
                 })
@@ -20165,71 +20213,186 @@
         return '#b0bec5';
     }
 
-    function _allOfficialAlertZoneUrls(feature) {
-        const props = feature && feature.properties || {};
-        const urls = Array.isArray(props.affectedZones) ? props.affectedZones.slice() : [];
-        const geocode = props.geocode || {};
-        const ugcs = Array.isArray(geocode.UGC) ? geocode.UGC : [];
-        ugcs.forEach(function(value) {
-            const code = String(value || '').toUpperCase();
-            if (/^[A-Z]{2}[CZ]\d{3}$/.test(code)) {
-                const kind = code.charAt(2) === 'C' ? 'county' : 'forecast';
-                urls.push('https://api.weather.gov/zones/' + kind + '/' + code);
-            } else if (/^[A-Z]{3}\d{3}$/.test(code)) {
-                urls.push('https://api.weather.gov/zones/marine/' + code);
+    // Zone shapes now come pre-shrunk from the SkyMonitor Worker in small
+    // batches. Fetching raw zones from api.weather.gov meant hundreds of
+    // requests and 100+ MB, which ran past the time budget and left some
+    // alerts undrawn.
+    const ALL_OFFICIAL_ALERT_ZONE_BATCH_SIZE = 25;
+    const ALL_OFFICIAL_ALERT_ZONE_BATCH_CONCURRENCY = 6;
+    const ALL_OFFICIAL_ALERT_ZONE_REQUEST_TIMEOUT_MS = 20000;
+    const ALL_OFFICIAL_ALERT_RETRY_DELAYS_MS = [4000, 15000, 45000];
+    const ALL_OFFICIAL_ALERT_MAX_RETRIES = 8;
+    let allOfficialAlertZonePrefetchPromise = null;
+    let allOfficialAlertRetryTimer = null;
+    let allOfficialAlertRetryAttempt = 0;
+    let allOfficialAlertLastDataErrorCount = 0;
+
+    function _allOfficialAlertZoneToken(value) {
+        try {
+            const url = new URL(String(value || ''), 'https://api.weather.gov');
+            const match = url.pathname.match(
+                /^\/zones\/(forecast|county|marine|fire)\/([A-Za-z0-9]{3,8})\/?$/
+            );
+            if (url.protocol !== 'https:' || url.hostname !== 'api.weather.gov' || !match) {
+                return '';
             }
-        });
-        const safeUrls = [];
-        urls.forEach(function(value) {
-            try {
-                const url = new URL(String(value || ''), 'https://api.weather.gov');
-                if (url.protocol === 'https:' && url.hostname === 'api.weather.gov' &&
-                    /^\/zones\/(forecast|county|marine|fire)\//.test(url.pathname)) {
-                    safeUrls.push(url.href);
-                }
-            } catch (error) {}
-        });
-        return Array.from(new Set(safeUrls));
+            return match[1] + '/' + match[2].toUpperCase();
+        } catch (error) {
+            return '';
+        }
     }
 
-    function _fetchAllOfficialAlertZoneGeometry(zoneUrl, signal) {
-        if (allOfficialAlertZoneGeometryCache.has(zoneUrl)) {
-            return allOfficialAlertZoneGeometryCache.get(zoneUrl);
+    // Returns zone tokens such as "forecast/ILZ013". affectedZones is the
+    // authoritative list; UGC codes are only a fallback because they map
+    // marine zones to a second URL for the same shape (double downloads) and
+    // fire-weather zones to the wrong zone type.
+    function _allOfficialAlertZoneUrls(feature) {
+        const props = feature && feature.properties || {};
+        const tokens = [];
+        const seenIds = new Set();
+        const add = function(value) {
+            const token = _allOfficialAlertZoneToken(value);
+            if (!token) return;
+            const id = token.slice(token.indexOf('/') + 1);
+            if (seenIds.has(id)) return;
+            seenIds.add(id);
+            tokens.push(token);
+        };
+        (Array.isArray(props.affectedZones) ? props.affectedZones : []).forEach(add);
+        if (!tokens.length) {
+            const geocode = props.geocode || {};
+            const ugcs = Array.isArray(geocode.UGC) ? geocode.UGC : [];
+            ugcs.forEach(function(value) {
+                const code = String(value || '').toUpperCase();
+                if (/^[A-Z]{2}[CZ]\d{3}$/.test(code)) {
+                    const kind = code.charAt(2) === 'C' ? 'county' : 'forecast';
+                    add('https://api.weather.gov/zones/' + kind + '/' + code);
+                } else if (/^[A-Z]{3}\d{3}$/.test(code)) {
+                    add('https://api.weather.gov/zones/forecast/' + code);
+                }
+            });
         }
-        let request;
-        request = fetchAllOfficialAlertJson(
-            zoneUrl,
-            {
-                cache: 'force-cache',
-                headers: { 'Accept': 'application/geo+json, application/json' }
-            },
-            ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS,
+        return tokens;
+    }
+
+    async function _fetchAllOfficialAlertZoneShapeBatch(tokens, signal) {
+        const result = await fetchAllOfficialAlertJson(
+            WEATHER_WORKER_URL + '/api/official-alerts/zones?zones=' +
+                encodeURIComponent(tokens.join(',')),
+            { headers: { 'Accept': 'application/json' } },
+            ALL_OFFICIAL_ALERT_ZONE_REQUEST_TIMEOUT_MS,
             signal
-        ).then(function(result) {
-            const payload = result.response.ok ? result.payload : null;
-            const geometry = payload && payload.geometry ||
-                payload && payload.feature && payload.feature.geometry;
-            return geometry || null;
-        }).catch(function() {
-            return null;
-        }).then(function(geometry) {
-            if (!geometry && allOfficialAlertZoneGeometryCache.get(zoneUrl) === request) {
-                allOfficialAlertZoneGeometryCache.delete(zoneUrl);
-            }
-            return geometry;
+        );
+        const payload = result.payload;
+        if (!result.response.ok || !payload || !payload.zones ||
+            typeof payload.zones !== 'object') {
+            throw new Error('Alert zone shapes returned HTTP ' + result.response.status);
+        }
+        const missing = new Set(Array.isArray(payload.missing) ? payload.missing : []);
+        tokens.forEach(function(token) {
+            // "missing" zones failed upstream and are retried later; a null
+            // zone genuinely has no shape and is remembered as such.
+            if (missing.has(token) ||
+                !Object.prototype.hasOwnProperty.call(payload.zones, token)) return;
+            allOfficialAlertZoneGeometryCache.set(token, payload.zones[token] || null);
         });
-        allOfficialAlertZoneGeometryCache.set(zoneUrl, request);
+    }
+
+    // Downloads every zone not cached yet. Returns how many are still missing.
+    async function fetchAllOfficialAlertZoneShapes(tokens, signal) {
+        const needed = Array.from(new Set(tokens || [])).filter(function(token) {
+            return token && !allOfficialAlertZoneGeometryCache.has(token);
+        }).sort();
+        if (!needed.length) return 0;
+        const batches = [];
+        for (let i = 0; i < needed.length; i += ALL_OFFICIAL_ALERT_ZONE_BATCH_SIZE) {
+            batches.push(needed.slice(i, i + ALL_OFFICIAL_ALERT_ZONE_BATCH_SIZE));
+        }
+        let nextBatch = 0;
+        const workers = [];
+        const workerCount = Math.min(ALL_OFFICIAL_ALERT_ZONE_BATCH_CONCURRENCY, batches.length);
+        for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
+            workers.push((async function() {
+                while (nextBatch < batches.length) {
+                    if (signal && signal.aborted) return;
+                    const batch = batches[nextBatch++];
+                    try {
+                        await _fetchAllOfficialAlertZoneShapeBatch(batch, signal);
+                    } catch (error) {
+                        if (!(signal && signal.aborted)) {
+                            console.warn('[SkyMonitor] Alert zone batch failed:', error);
+                        }
+                    }
+                }
+            })());
+        }
+        await Promise.all(workers);
+        return needed.filter(function(token) {
+            return !allOfficialAlertZoneGeometryCache.has(token);
+        }).length;
+    }
+
+    function _allOfficialAlertPendingZoneTokens() {
+        const tokens = [];
+        (allOfficialAlertFeatures.US || []).forEach(function(feature) {
+            if (!feature || feature.geometry ||
+                (feature._reportingResolvedGeometry && !feature._reportingGeometryPartial) ||
+                !_allOfficialAlertIsCurrent(feature, 'US')) return;
+            _allOfficialAlertZoneUrls(feature).forEach(function(token) {
+                if (!allOfficialAlertZoneGeometryCache.has(token)) tokens.push(token);
+            });
+        });
+        return tokens;
+    }
+
+    // Background preload so zone shapes are usually ready before the map opens.
+    function prefetchAllOfficialAlertZoneShapes() {
+        if (allOfficialAlertZonePrefetchPromise) return allOfficialAlertZonePrefetchPromise;
+        const tokens = _allOfficialAlertPendingZoneTokens();
+        if (!tokens.length) return Promise.resolve(0);
+        const request = fetchAllOfficialAlertZoneShapes(tokens, null)
+            .catch(function() { return 0; })
+            .finally(function() {
+                if (allOfficialAlertZonePrefetchPromise === request) {
+                    allOfficialAlertZonePrefetchPromise = null;
+                }
+            });
+        allOfficialAlertZonePrefetchPromise = request;
         return request;
+    }
+
+    // Retries alerts whose feed or zone shapes failed instead of leaving them
+    // off the map until the next full refresh.
+    function scheduleAllOfficialAlertRetry() {
+        if (allOfficialAlertRetryTimer ||
+            allOfficialAlertRetryAttempt >= ALL_OFFICIAL_ALERT_MAX_RETRIES) return;
+        const delay = ALL_OFFICIAL_ALERT_RETRY_DELAYS_MS[
+            Math.min(allOfficialAlertRetryAttempt, ALL_OFFICIAL_ALERT_RETRY_DELAYS_MS.length - 1)
+        ];
+        allOfficialAlertRetryAttempt++;
+        allOfficialAlertRetryTimer = setTimeout(function() {
+            allOfficialAlertRetryTimer = null;
+            if (!allOfficialAlertsVisible || !alertsVisible) return;
+            if (shouldProcessOfficialAlertMapWork()) {
+                loadAllOfficialAlertsForMap();
+            } else {
+                allOfficialAlertRenderPending = true;
+            }
+        }, delay);
     }
 
     async function resolveAllOfficialAlertGeometry() {
         if (allOfficialAlertGeometryResolutionDone) return false;
+        if (allOfficialAlertZonePrefetchPromise) {
+            try { await allOfficialAlertZonePrefetchPromise; } catch (error) {}
+        }
         const jobs = [];
-        const zoneJobs = new Map();
+        const neededTokens = [];
         let geometryChanged = false;
         ['US', 'CA'].forEach(function(country) {
             (allOfficialAlertFeatures[country] || []).forEach(function(feature) {
-                if (!feature || feature.geometry || feature._reportingResolvedGeometry ||
+                if (!feature || feature.geometry ||
+                    (feature._reportingResolvedGeometry && !feature._reportingGeometryPartial) ||
                     !_allOfficialAlertIsCurrent(feature, country)) return;
                 const zoneUrls = country === 'US'
                     ? _allOfficialAlertZoneUrls(feature) : [];
@@ -20241,6 +20404,7 @@
                     : null;
                 if (cachedGeometry) {
                     feature._reportingResolvedGeometry = cachedGeometry;
+                    feature._reportingGeometryPartial = false;
                     geometryChanged = true;
                     return;
                 }
@@ -20250,94 +20414,77 @@
                     zoneUrls: zoneUrls,
                     geometryCacheKey: geometryCacheKey
                 });
-                zoneUrls.forEach(function(url) {
-                    if (!zoneJobs.has(url)) zoneJobs.set(url, null);
-                });
+                zoneUrls.forEach(function(token) { neededTokens.push(token); });
             });
         });
         if (!jobs.length) {
             allOfficialAlertGeometryResolutionDone = true;
             return geometryChanged;
         }
-        let nextIndex = 0;
-        const uniqueZoneUrls = Array.from(zoneJobs.keys());
-        const workerCount = Math.min(20, uniqueZoneUrls.length);
-        const workers = [];
-        let geometryDeadlineReached = false;
         const geometryController = typeof AbortController === 'function'
             ? new AbortController()
             : null;
-        const geometryDeadlineTimer = uniqueZoneUrls.length
-            ? setTimeout(function() {
-                geometryDeadlineReached = true;
-                if (geometryController) geometryController.abort();
-            }, ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS)
-            : null;
-        for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-            workers.push((async function() {
-                while (nextIndex < uniqueZoneUrls.length &&
-                    !geometryDeadlineReached) {
-                    const url = uniqueZoneUrls[nextIndex++];
-                    zoneJobs.set(
-                        url,
-                        await _fetchAllOfficialAlertZoneGeometry(
-                            url,
-                            geometryController && geometryController.signal
-                        )
-                    );
-                }
-            })());
-        }
+        const geometryDeadlineTimer = setTimeout(function() {
+            if (geometryController) geometryController.abort();
+        }, ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS);
         try {
-            await Promise.all(workers);
+            await fetchAllOfficialAlertZoneShapes(
+                neededTokens,
+                geometryController && geometryController.signal
+            );
         } finally {
-            if (geometryDeadlineTimer) clearTimeout(geometryDeadlineTimer);
+            clearTimeout(geometryDeadlineTimer);
         }
+        let incomplete = false;
         for (let jobIndex = 0; jobIndex < jobs.length; jobIndex++) {
             if (!shouldProcessOfficialAlertMapWork()) {
                 allOfficialAlertRenderPending = true;
                 return geometryChanged;
             }
             const job = jobs[jobIndex];
-            const cachedGeometry = job.geometryCacheKey
-                ? allOfficialAlertResolvedZoneSetCache.get(job.geometryCacheKey)
-                : null;
-            if (cachedGeometry) {
-                job.feature._reportingResolvedGeometry = cachedGeometry;
-                geometryChanged = true;
-            } else {
-                const geometries = job.zoneUrls.map(function(url) {
-                    return zoneJobs.get(url);
-                }).filter(Boolean);
-                if (geometries.length) {
-                    const combinedGeometry = geometries.length === 1
-                        ? geometries[0]
-                        : { type: 'GeometryCollection', geometries: geometries };
-                    // Keep separate zone polygons as a GeometryCollection.
-                    // Unioning many county boundaries on the UI thread caused
-                    // long tasks while the full alert layer was loading.
-                    job.feature._reportingResolvedGeometry = combinedGeometry;
+            const geometries = [];
+            let unresolved = 0;
+            job.zoneUrls.forEach(function(token) {
+                if (!allOfficialAlertZoneGeometryCache.has(token)) {
+                    unresolved++;
+                    return;
+                }
+                const geometry = allOfficialAlertZoneGeometryCache.get(token);
+                if (geometry) geometries.push(geometry);
+            });
+            if (unresolved) incomplete = true;
+            if (geometries.length) {
+                const combinedGeometry = geometries.length === 1
+                    ? geometries[0]
+                    : { type: 'GeometryCollection', geometries: geometries };
+                // Draw what is available now; a partial shape is replaced on
+                // retry and is never stored in the long-lived cache.
+                job.feature._reportingResolvedGeometry = combinedGeometry;
+                job.feature._reportingGeometryPartial = unresolved > 0;
+                if (!unresolved) {
                     _cacheAllOfficialAlertResolvedZoneGeometry(
                         job.geometryCacheKey,
-                        job.feature._reportingResolvedGeometry
+                        combinedGeometry
                     );
+                }
+                geometryChanged = true;
+            } else if (!unresolved) {
+                const props = job.feature.properties || {};
+                const point = props.coordinates || props.center || props.centroid;
+                if (Array.isArray(point) && point.length >= 2 &&
+                    isFinite(Number(point[0])) && isFinite(Number(point[1]))) {
+                    job.feature._reportingResolvedGeometry = {
+                        type: 'Point',
+                        coordinates: [Number(point[0]), Number(point[1])]
+                    };
+                    job.feature._reportingGeometryPartial = false;
                     geometryChanged = true;
-                } else {
-                    const props = job.feature.properties || {};
-                    const point = props.coordinates || props.center || props.centroid;
-                    if (Array.isArray(point) && point.length >= 2 &&
-                        isFinite(Number(point[0])) && isFinite(Number(point[1]))) {
-                        job.feature._reportingResolvedGeometry = {
-                            type: 'Point',
-                            coordinates: [Number(point[0]), Number(point[1])]
-                        };
-                        geometryChanged = true;
-                    }
                 }
             }
-            if ((jobIndex + 1) % 2 === 0) await yieldOfficialAlertMapWork();
+            if (officialAlertMapSliceExpired()) await yieldOfficialAlertMapWork();
         }
-        allOfficialAlertGeometryResolutionDone = true;
+        allOfficialAlertGeometryResolutionDone = !incomplete;
+        if (incomplete) scheduleAllOfficialAlertRetry();
         return geometryChanged;
     }
 
@@ -20484,12 +20631,32 @@
             !!document.getElementById('reporting-tab')?.classList.contains('active');
     }
 
+    // Work in ~12 ms slices between frames instead of a fixed item count, so
+    // cheap items do not wait a whole frame each and heavy ones still yield.
+    let officialAlertMapSliceStartedAt = 0;
+    function officialAlertMapNow() {
+        return (typeof performance !== 'undefined' && performance.now)
+            ? performance.now() : Date.now();
+    }
+    function officialAlertMapSliceExpired() {
+        const now = officialAlertMapNow();
+        if (!officialAlertMapSliceStartedAt) {
+            officialAlertMapSliceStartedAt = now;
+            return false;
+        }
+        return now - officialAlertMapSliceStartedAt > 12;
+    }
+
     function yieldOfficialAlertMapWork() {
         return new Promise(function(resolve) {
+            const done = function() {
+                officialAlertMapSliceStartedAt = officialAlertMapNow();
+                resolve();
+            };
             if (typeof requestAnimationFrame === 'function') {
-                requestAnimationFrame(function() { setTimeout(resolve, 0); });
+                requestAnimationFrame(function() { setTimeout(done, 0); });
             } else {
-                setTimeout(resolve, 0);
+                setTimeout(done, 0);
             }
         });
     }
@@ -20700,6 +20867,247 @@
     }
 
     const dissolvedAlertGeometryCache = new WeakMap();
+    // Merging zone outlines is CPU heavy. Run it in background workers so the
+    // page stays responsive and several alerts merge at once. Falls back to
+    // the main thread if workers or the CDN script are unavailable.
+    // Shapes cross the worker boundary as flat typed arrays (transferred, not
+    // copied); cloning nested coordinate arrays was slower than the merge.
+    // Layout: counts = [geomCount, (polyCount, (ringCount, (pointCount)...)...)...]
+    function encodeAlertDissolveShapes(geoms) {
+        const counts = [geoms.length];
+        let pointTotal = 0;
+        geoms.forEach(function(geom) {
+            counts.push(geom.length);
+            geom.forEach(function(polygon) {
+                counts.push(polygon.length);
+                polygon.forEach(function(ring) {
+                    counts.push(ring.length);
+                    pointTotal += ring.length;
+                });
+            });
+        });
+        const coords = new Float64Array(pointTotal * 2);
+        let offset = 0;
+        geoms.forEach(function(geom) {
+            geom.forEach(function(polygon) {
+                polygon.forEach(function(ring) {
+                    for (let i = 0; i < ring.length; i++) {
+                        coords[offset++] = ring[i][0];
+                        coords[offset++] = ring[i][1];
+                    }
+                });
+            });
+        });
+        return { counts: new Int32Array(counts), coords: coords };
+    }
+
+    function decodeAlertDissolveShapes(counts, coords) {
+        let c = 0;
+        let offset = 0;
+        const geoms = [];
+        const geomCount = counts[c++];
+        for (let g = 0; g < geomCount; g++) {
+            const polygons = [];
+            const polyCount = counts[c++];
+            for (let p = 0; p < polyCount; p++) {
+                const rings = [];
+                const ringCount = counts[c++];
+                for (let r = 0; r < ringCount; r++) {
+                    const pointCount = counts[c++];
+                    const ring = new Array(pointCount);
+                    for (let i = 0; i < pointCount; i++) {
+                        ring[i] = [coords[offset++], coords[offset++]];
+                    }
+                    rings.push(ring);
+                }
+                polygons.push(rings);
+            }
+            geoms.push(polygons);
+        }
+        return geoms;
+    }
+
+    const ALERT_DISSOLVE_WORKER_SOURCE = [
+        "importScripts('https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js');",
+        "var encodeAlertDissolveShapes = " + encodeAlertDissolveShapes.toString() + ";",
+        "var decodeAlertDissolveShapes = " + decodeAlertDissolveShapes.toString() + ";",
+        "self.onmessage = function(event) {",
+        "  var data = event.data || {};",
+        "  try {",
+        "    var geoms = decodeAlertDissolveShapes(data.counts, data.coords);",
+        "    var merged = polygonClipping.union.apply(polygonClipping, geoms);",
+        "    var packed = encodeAlertDissolveShapes([merged || []]);",
+        "    self.postMessage({ id: data.id, counts: packed.counts, coords: packed.coords },",
+        "      [packed.counts.buffer, packed.coords.buffer]);",
+        "  } catch (error) {",
+        "    self.postMessage({ id: data.id, error: String(error && error.message || error) });",
+        "  }",
+        "};"
+    ].join('\n');
+    const ALERT_DISSOLVE_WORKER_TIMEOUT_MS = 15000;
+    let alertDissolveWorkerPool = null;
+    let alertDissolveWorkerUnavailable = false;
+    let alertDissolveJobId = 0;
+    const alertDissolveJobs = new Map();
+
+    function failAlertDissolveWorkers() {
+        alertDissolveWorkerUnavailable = true;
+        (alertDissolveWorkerPool || []).forEach(function(worker) {
+            try { worker.terminate(); } catch (error) {}
+        });
+        alertDissolveWorkerPool = null;
+        alertDissolveJobs.forEach(function(job) { job.resolve(null); });
+        alertDissolveJobs.clear();
+    }
+
+    function handleAlertDissolveWorkerMessage(event) {
+        const data = event && event.data || {};
+        const job = alertDissolveJobs.get(data.id);
+        if (!job) return;
+        alertDissolveJobs.delete(data.id);
+        if (data.error) {
+            job.resolve({ error: data.error });
+            return;
+        }
+        try {
+            const decoded = decodeAlertDissolveShapes(data.counts, data.coords);
+            job.resolve({ coordinates: decoded[0] || [] });
+        } catch (error) {
+            job.resolve({ error: String(error && error.message || error) });
+        }
+    }
+
+    function getAlertDissolveWorkerPool() {
+        if (alertDissolveWorkerUnavailable) return null;
+        if (alertDissolveWorkerPool) return alertDissolveWorkerPool;
+        try {
+            if (typeof Worker !== 'function' || typeof Blob !== 'function' ||
+                !window.URL || typeof window.URL.createObjectURL !== 'function') {
+                throw new Error('Web workers unavailable');
+            }
+            const scriptUrl = window.URL.createObjectURL(
+                new Blob([ALERT_DISSOLVE_WORKER_SOURCE], { type: 'text/javascript' })
+            );
+            const size = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+            alertDissolveWorkerPool = [];
+            for (let i = 0; i < size; i++) {
+                const worker = new Worker(scriptUrl);
+                worker.onmessage = handleAlertDissolveWorkerMessage;
+                worker.onerror = function(event) {
+                    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+                    console.warn('[SkyMonitor] Alert outline worker unavailable; merging on the page instead.');
+                    failAlertDissolveWorkers();
+                };
+                alertDissolveWorkerPool.push(worker);
+            }
+        } catch (error) {
+            failAlertDissolveWorkers();
+            return null;
+        }
+        return alertDissolveWorkerPool;
+    }
+
+    function dissolveAlertPolygonsInWorker(polygons) {
+        const pool = getAlertDissolveWorkerPool();
+        if (!pool || !pool.length) return Promise.resolve(null);
+        return new Promise(function(resolve) {
+            const id = ++alertDissolveJobId;
+            const timer = setTimeout(function() {
+                if (alertDissolveJobs.delete(id)) resolve(null);
+            }, ALERT_DISSOLVE_WORKER_TIMEOUT_MS);
+            alertDissolveJobs.set(id, {
+                resolve: function(value) {
+                    clearTimeout(timer);
+                    resolve(value);
+                }
+            });
+            try {
+                const packed = encodeAlertDissolveShapes(polygons);
+                pool[id % pool.length].postMessage(
+                    { id: id, counts: packed.counts, coords: packed.coords },
+                    [packed.counts.buffer, packed.coords.buffer]
+                );
+            } catch (error) {
+                alertDissolveJobs.delete(id);
+                clearTimeout(timer);
+                resolve(null);
+            }
+        });
+    }
+
+    function collectAlertDissolvePolygons(geometry) {
+        const polygons = [];
+        const collect = function(value) {
+            if (!value) return;
+            if (value.type === 'Feature') {
+                collect(value.geometry);
+            } else if (value.type === 'FeatureCollection') {
+                (value.features || []).forEach(collect);
+            } else if (value.type === 'GeometryCollection') {
+                (value.geometries || []).forEach(collect);
+            } else if (value.type === 'Polygon' &&
+                Array.isArray(value.coordinates) && value.coordinates.length) {
+                polygons.push([value.coordinates]);
+            } else if (value.type === 'MultiPolygon' &&
+                Array.isArray(value.coordinates)) {
+                value.coordinates.forEach(function(polygon) {
+                    if (Array.isArray(polygon) && polygon.length) {
+                        polygons.push([polygon]);
+                    }
+                });
+            }
+        };
+        collect(geometry);
+        return polygons;
+    }
+
+    // Pre-merges outlines off the main thread; dissolveAlertGeometry() then
+    // reads the cached result synchronously.
+    async function prepareDissolvedAlertGeometries(geometries) {
+        const pending = [];
+        const seen = new Set();
+        (geometries || []).forEach(function(geometry) {
+            if (!geometry || typeof geometry !== 'object' || seen.has(geometry) ||
+                dissolvedAlertGeometryCache.has(geometry)) return;
+            seen.add(geometry);
+            const polygons = collectAlertDissolvePolygons(geometry);
+            if (polygons.length < 2) {
+                dissolvedAlertGeometryCache.set(geometry, geometry);
+                return;
+            }
+            pending.push({ geometry: geometry, polygons: polygons });
+        });
+        if (!pending.length || !getAlertDissolveWorkerPool()) return;
+        await Promise.all(pending.map(function(item) {
+            return dissolveAlertPolygonsInWorker(item.polygons).then(function(result) {
+                if (!result) return;
+                if (result.error) {
+                    dissolvedAlertGeometryCache.set(item.geometry, item.geometry);
+                    return;
+                }
+                const coordinates = result.coordinates;
+                dissolvedAlertGeometryCache.set(
+                    item.geometry,
+                    coordinates && coordinates.length
+                        ? { type: 'MultiPolygon', coordinates: coordinates }
+                        : item.geometry
+                );
+            });
+        }));
+    }
+
+    const allOfficialAlertGeometryTokens = new WeakMap();
+    let allOfficialAlertGeometryTokenSeq = 0;
+    function allOfficialAlertGeometryToken(geometry) {
+        if (!geometry || typeof geometry !== 'object') return 0;
+        let token = allOfficialAlertGeometryTokens.get(geometry);
+        if (!token) {
+            token = ++allOfficialAlertGeometryTokenSeq;
+            allOfficialAlertGeometryTokens.set(geometry, token);
+        }
+        return token;
+    }
+
     function dissolveAlertGeometry(geometry) {
         if (!geometry || typeof geometry !== 'object') return geometry;
         if (dissolvedAlertGeometryCache.has(geometry)) {
@@ -20834,7 +21242,7 @@
                 }
                 const feature = countryFeatures[index];
                 scannedCount++;
-                if (scannedCount % 8 === 0) {
+                if (officialAlertMapSliceExpired()) {
                     await yieldOfficialAlertMapWork();
                     if (renderGeneration !== allOfficialAlertRenderGeneration) return false;
                     if (!shouldProcessOfficialAlertMapWork()) {
@@ -20857,7 +21265,6 @@
                     _allOfficialAlertFeatureIsCoveredByExistingPolygon(
                         feature, eventName, coverageIndex
                     )) continue;
-                const geometry = dissolveAlertGeometry(sourceGeometry);
                 const props = feature.properties || {};
                 const id = String(props.id || feature.id || props.feature_id ||
                     [country, eventName, props.areaDesc || props.feature_name_en || '', index].join('|'));
@@ -20872,12 +21279,21 @@
                     country: country,
                     feature: feature,
                     eventName: eventName,
-                    geometry: geometry,
+                    sourceGeometry: sourceGeometry,
                     props: props,
                     id: id,
                     key: key
                 });
             }
+        }
+        // Merge multi-zone outlines in background workers before drawing.
+        await prepareDissolvedAlertGeometries(renderCandidates.map(function(candidate) {
+            return candidate.sourceGeometry;
+        }));
+        if (renderGeneration !== allOfficialAlertRenderGeneration) return false;
+        if (!shouldProcessOfficialAlertMapWork()) {
+            allOfficialAlertRenderPending = true;
+            return false;
         }
         let processedCount = 0;
         for (let candidateIndex = 0; candidateIndex < renderCandidates.length; candidateIndex++) {
@@ -20890,13 +21306,16 @@
                 const country = candidate.country;
                 const feature = candidate.feature;
                 const eventName = candidate.eventName;
-                const geometry = candidate.geometry;
+                const geometry = dissolveAlertGeometry(candidate.sourceGeometry);
                 const props = candidate.props;
                 const id = candidate.id;
                 const key = candidate.key;
                 const color = _allOfficialAlertColor(feature, eventName, country);
+                // Identify geometry by object identity instead of serializing
+                // thousands of coordinates for every alert on every render.
                 const renderFingerprint = JSON.stringify([
-                    country, eventName, color, geometry, props
+                    country, eventName, color,
+                    allOfficialAlertGeometryToken(candidate.sourceGeometry), props
                 ]);
                 let cachedRecord = allOfficialAlertRenderedLayers.get(key);
                 if (cachedRecord &&
@@ -20908,7 +21327,7 @@
                         reportingPopupEntries.push(cachedRecord.popupEntry);
                     }
                     processedCount++;
-                    if (processedCount % 3 === 0) await yieldOfficialAlertMapWork();
+                    if (officialAlertMapSliceExpired()) await yieldOfficialAlertMapWork();
                     continue;
                 }
                 if (cachedRecord) {
@@ -21037,7 +21456,7 @@
                     renderFingerprint: renderFingerprint
                 });
                 processedCount++;
-                if (processedCount % 3 === 0) await yieldOfficialAlertMapWork();
+                if (officialAlertMapSliceExpired()) await yieldOfficialAlertMapWork();
         }
         // Expired or filtered alerts leave the active layer group and cache.
         allOfficialAlertRenderedLayers.forEach(function(record, key) {
@@ -21082,8 +21501,12 @@
                 allOfficialAlertRenderPending = true;
                 return;
             }
-            // Render alerts already carrying geometry while zone boundaries
-            // are fetched, then draw the rest in short main-thread slices.
+            // Start zone downloads now so they run while alerts that already
+            // carry geometry are drawn; resolveAllOfficialAlertGeometry()
+            // waits for this same request instead of starting another.
+            if (!allOfficialAlertGeometryResolutionDone) {
+                prefetchAllOfficialAlertZoneShapes();
+            }
             await renderAllOfficialAlertsOnMap();
             if (!shouldProcessOfficialAlertMapWork()) {
                 allOfficialAlertRenderPending = true;
@@ -21098,8 +21521,14 @@
                 allOfficialAlertLastRenderSignature = '';
                 await renderAllOfficialAlertsOnMap();
             }
+            if (allOfficialAlertLastDataErrorCount) {
+                scheduleAllOfficialAlertRetry();
+            } else if (allOfficialAlertGeometryResolutionDone) {
+                allOfficialAlertRetryAttempt = 0;
+            }
         }).catch(function(error) {
             console.warn('[SkyMonitor] Full official map alerts failed:', error);
+            scheduleAllOfficialAlertRetry();
         }).finally(function() {
             if (allOfficialAlertsVisible && alertsVisible &&
                 !allOfficialAlertRenderPending && !historicalRadarState.active) {
