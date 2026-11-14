@@ -16004,8 +16004,17 @@
         const code = Number(iconCode);
         const isPrecipIcon = _twcRainIconCodes.has(code) ||
             _twcSnowIconCodes.has(code);
-        if (!isPrecipIcon || !isFinite(Number(rainChancePercent)) ||
-            Number(rainChancePercent) >= 20) {
+        const chance = Number(rainChancePercent);
+        // Providers sometimes label an hour "Overcast" even when the precip
+        // chance is very high. Above 80%, always show a precip icon: light
+        // snow when the hour is wintry, light rain otherwise.
+        if (!isPrecipIcon && isFinite(chance) && chance > 80) {
+            const wintryText = (String(summary || '') + ' ' +
+                String(details && details.icon || '') + ' ' +
+                String(details && details.precipType || '')).toLowerCase();
+            return /snow|flurr|sleet|ice pellet/.test(wintryText) ? 14 : 11;
+        }
+        if (!isPrecipIcon || !isFinite(chance) || chance >= 20) {
             return iconCode;
         }
         return _twcNonPrecipIconCode(summary, details);
