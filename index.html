@@ -17878,10 +17878,15 @@
 
     function openReportingPopup(sourceEntry, latlng, autoOpenEntry) {
         if (!reportingMap || !window.L) return;
-        const nearby = reportingPopupEntries.filter(function(entry) {
+        let nearby = reportingPopupEntries.filter(function(entry) {
             return reportingPopupEntryIsNear(entry, latlng, sourceEntry);
         });
         if (!nearby.length) nearby.push(sourceEntry);
+        const dedupedNearby = dedupeReportingPopupAlertEntries(nearby);
+        nearby = dedupedNearby.entries;
+        if (autoOpenEntry && dedupedNearby.replacements.has(autoOpenEntry)) {
+            autoOpenEntry = dedupedNearby.replacements.get(autoOpenEntry);
+        }
         const entryToAutoOpen = autoOpenEntry || (nearby.length === 1 ? nearby[0] : null);
         const isMobileReportingMap = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
         const mapWidth = reportingMap.getSize ? reportingMap.getSize().x : 0;
@@ -20753,6 +20758,73 @@
         }
     });
 
+    // Storm-based alerts (Tornado / Severe Thunderstorm Warnings, polygon
+    // Special Weather Statements, etc.) arrive twice: once from the dedicated
+    // polygon feeds (no "Area" row) and once from the All Official Alerts
+    // layer (with an "Area" row). Only the dedicated polygon version may show.
+    function _reportingNwsAlertIdentity(properties) {
+        const props = properties || {};
+        const office = String(props.wfo || '').trim().toUpperCase().replace(/^K(?=[A-Z]{3}$)/, '');
+        const phenomena = String(props.phenomena || '').trim().toUpperCase();
+        const significance = String(props.significance || '').trim().toUpperCase();
+        const eventId = parseInt(props.eventid, 10);
+        if (/^[A-Z]{3}$/.test(office) && phenomena && significance && isFinite(eventId)) {
+            return office + '|' + phenomena + '|' + significance + '|' + eventId;
+        }
+        const parameters = props.parameters || {};
+        const vtecValues = Array.isArray(parameters.VTEC)
+            ? parameters.VTEC : [parameters.VTEC];
+        for (let i = 0; i < vtecValues.length; i++) {
+            const match = String(vtecValues[i] || '').toUpperCase()
+                .match(/[A-Z]\.[A-Z]{3}\.([A-Z]{4})\.([A-Z]{2})\.([A-Z])\.(\d{4})\./);
+            if (match) {
+                return match[1].slice(-3) + '|' + match[2] + '|' + match[3] + '|' +
+                    parseInt(match[4], 10);
+            }
+        }
+        return '';
+    }
+
+    function _reportingEntryIsStandaloneNwsPolygon(entry) {
+        return !!entry && !entry.isAllOfficialAlert && entry.source === 'nws' &&
+            !!entry.isPolygon && !!entry.nwsEventName;
+    }
+
+    function _reportingAllOfficialEntryMatchesStandalone(allEntry, standaloneEntry) {
+        if (!allEntry || !allEntry.isAllOfficialAlert ||
+            allEntry._allOfficialAlertCountry !== 'US' ||
+            !allEntry.isPolygon || !allEntry._allOfficialAlertHasOwnPolygon) return false;
+        if (!_reportingEntryIsStandaloneNwsPolygon(standaloneEntry)) return false;
+        const allEvent = String(allEntry._allOfficialAlertEventName ||
+            allEntry.nwsEventName || '').trim().toLowerCase();
+        const standaloneEvent = String(standaloneEntry.nwsEventName || '').trim().toLowerCase();
+        if (!allEvent || allEvent !== standaloneEvent) return false;
+        const allIdentity = _reportingNwsAlertIdentity(allEntry._allOfficialAlertProperties);
+        const standaloneIdentity = _reportingNwsAlertIdentity(standaloneEntry.nwsAlertProperties);
+        if (allIdentity && standaloneIdentity) return allIdentity === standaloneIdentity;
+        // No shared VTEC identity (e.g. Special Weather Statements): both
+        // entries already contain the tapped point and share the same event.
+        return true;
+    }
+
+    function dedupeReportingPopupAlertEntries(entries) {
+        const list = Array.isArray(entries) ? entries : [];
+        const standalone = list.filter(_reportingEntryIsStandaloneNwsPolygon);
+        if (!standalone.length) return { entries: list, replacements: new Map() };
+        const replacements = new Map();
+        const filtered = list.filter(function(entry) {
+            if (!entry || !entry.isAllOfficialAlert) return true;
+            for (let i = 0; i < standalone.length; i++) {
+                if (_reportingAllOfficialEntryMatchesStandalone(entry, standalone[i])) {
+                    replacements.set(entry, standalone[i]);
+                    return false;
+                }
+            }
+            return true;
+        });
+        return { entries: filtered, replacements: replacements };
+    }
+
     function _allOfficialAlertExistingNwsCoverageIndex() {
         const index = new Map();
         if (!reportingPopupEntries.length) return index;
@@ -20768,9 +20840,26 @@
             }
             if (!bounds || !bounds.isValid()) return;
             if (!index.has(eventKey)) index.set(eventKey, []);
-            index.get(eventKey).push({ layer: entry.layer, bounds: bounds });
+            index.get(eventKey).push({
+                layer: entry.layer,
+                bounds: bounds,
+                identity: _reportingNwsAlertIdentity(entry.nwsAlertProperties),
+                popupKey: String(entry.popupKey || '')
+            });
         });
         return index;
+    }
+
+    function _allOfficialAlertCoverageSignature(coverageIndex) {
+        const keys = [];
+        if (coverageIndex) {
+            coverageIndex.forEach(function(candidates, eventKey) {
+                candidates.forEach(function(candidate) {
+                    keys.push(eventKey + '|' + (candidate.identity || candidate.popupKey));
+                });
+            });
+        }
+        return keys.sort().join(',');
     }
 
     function _allOfficialAlertFeatureIsCoveredByExistingPolygon(
@@ -20784,15 +20873,31 @@
         const eventKey = String(eventName || '').toLowerCase();
         const candidates = coverageIndex.get(eventKey) || [];
         if (!candidates.length) return false;
+        const identity = _reportingNwsAlertIdentity(feature.properties);
+        if (identity && candidates.some(function(candidate) {
+            return candidate.identity === identity;
+        })) return true;
         const geometryBounds = allOfficialAlertGeometryBounds(geometry);
         if (!geometryBounds) return false;
         const center = window.L.latLng(
             (geometryBounds[0] + geometryBounds[2]) / 2,
             (geometryBounds[1] + geometryBounds[3]) / 2
         );
+        // Same storm polygon from two feeds: near-identical bounding boxes.
+        const boundsTolerance = 0.02;
         return candidates.some(function(candidate) {
             try {
-                return candidate.bounds.contains(center) &&
+                if (identity && candidate.identity && candidate.identity !== identity) {
+                    return false;
+                }
+                const b = candidate.bounds;
+                if (Math.abs(b.getSouth() - geometryBounds[0]) <= boundsTolerance &&
+                    Math.abs(b.getWest() - geometryBounds[1]) <= boundsTolerance &&
+                    Math.abs(b.getNorth() - geometryBounds[2]) <= boundsTolerance &&
+                    Math.abs(b.getEast() - geometryBounds[3]) <= boundsTolerance) {
+                    return true;
+                }
+                return b.contains(center) &&
                     reportingPolygonContainsLatLng(candidate.layer, center);
             } catch (error) {
                 return false;
@@ -21251,11 +21356,13 @@
             allOfficialAlertRenderPending = true;
             return false;
         }
+        const coverageIndex = _allOfficialAlertExistingNwsCoverageIndex();
         const nextRenderSignature = JSON.stringify([
             allOfficialAlertDataRevision,
             allOfficialAlertCountryPrefs,
             allOfficialAlertTypePrefs,
-            allOfficialAlertColorPrefs
+            allOfficialAlertColorPrefs,
+            _allOfficialAlertCoverageSignature(coverageIndex)
         ]);
         if (nextRenderSignature === allOfficialAlertLastRenderSignature) {
             allOfficialAlertRenderPending = false;
@@ -21264,7 +21371,6 @@
         const eligibleAlertKeys = new Set();
         const renderCandidates = [];
         const seenRenderKeys = new Set();
-        const coverageIndex = _allOfficialAlertExistingNwsCoverageIndex();
         let scannedCount = 0;
         const countries = ['US', 'CA'];
         for (let countryIndex = 0; countryIndex < countries.length; countryIndex++) {
@@ -21322,7 +21428,8 @@
                     sourceGeometry: sourceGeometry,
                     props: props,
                     id: id,
-                    key: key
+                    key: key,
+                    hasOwnPolygon: !!feature.geometry
                 });
             }
         }
@@ -21431,6 +21538,7 @@
                     _allOfficialAlertCountry: country,
                     _allOfficialAlertEventName: eventName,
                     _allOfficialAlertProperties: props,
+                    _allOfficialAlertHasOwnPolygon: !!candidate.hasOwnPolygon,
                     source: country === 'CA' ? 'environment-canada' : 'nws',
                     isAllOfficialAlert: true,
                     isPolygon: hasPolygon,
