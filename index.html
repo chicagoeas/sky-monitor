@@ -18537,7 +18537,75 @@
             longitude >= -124.848974 && longitude <= -66.885444;
     }
 
+    // The direct /radar route skips loadAll(), which is where the main page
+    // reverse-geocodes the weather location. Without that lookup the country
+    // stays unknown and SPC/WPC MD/MPDs wrongly read "U.S. only" for U.S.
+    // users. Classify the map's location here instead (once per coarse key).
+    let radarRouteCountryLookupKey = '';
+    function ensureRadarRouteLocationCountry() {
+        if (!window.SKYMONITOR_RADAR_PAGE) return;
+        const latitude = Number(lat);
+        const longitude = Number(lon);
+        if (!isFinite(latitude) || !isFinite(longitude)) return;
+        const key = _locationCountryKeyFor(latitude, longitude);
+        if (window.locationCountryCode && window._locationCountryCoordsKey === key) return;
+        if (radarRouteCountryLookupKey === key) return;
+        radarRouteCountryLookupKey = key;
+        function stillCurrent() {
+            return _locationCountryKeyFor(lat, lon) === key;
+        }
+        function applyResult(code, state) {
+            if (!stillCurrent() || !code) return;
+            window.locationCountryCode = String(code).trim().toUpperCase();
+            window._locationCountryCoordsKey = key;
+            if (window.locationCountryCode !== 'US') {
+                window.isOutsideUS = true;
+                updateUSOnlyLayerLabels();
+            }
+            if (state) {
+                _setWeatherLocationState(state);
+            } else {
+                updateSpcWpcMdsSettingVisibility();
+            }
+        }
+        function nwsPointsFallback() {
+            return fetch('https://api.weather.gov/points/' +
+                latitude.toFixed(4) + ',' + longitude.toFixed(4), {
+                headers: { 'Accept': 'application/geo+json, application/json' }
+            }).then(function(response) {
+                if (!response.ok) return null;
+                return response.json();
+            }).then(function(payload) {
+                const props = payload && payload.properties;
+                const rel = props && props.relativeLocation &&
+                    props.relativeLocation.properties;
+                if (props) applyResult('US', rel && rel.state || '');
+            });
+        }
+        // Run both lookups side by side: the NWS points API answers fast for
+        // U.S. locations, while the reverse geocoder identifies other countries.
+        const nwsLookup = nwsPointsFallback().catch(function() {});
+        const reverseLookup = Promise.resolve().then(function() {
+            return _osmGeocodeFetch('reverse', { lat: latitude, lon: longitude });
+        }).then(function(result) {
+            const code = result && (result.country_code || result.countryCode);
+            if (!code) return;
+            if (window.locationCountryCode === 'US' &&
+                window._locationCountryCoordsKey === key) return;
+            const address = result.address || result.properties || {};
+            applyResult(code, address.state || result.state || address.territory || '');
+        }).catch(function() {});
+        Promise.all([nwsLookup, reverseLookup]).then(function() {
+            // Allow a later retry for this spot if nothing was resolved.
+            if (radarRouteCountryLookupKey === key &&
+                window._locationCountryCoordsKey !== key) {
+                radarRouteCountryLookupKey = '';
+            }
+        });
+    }
+
     function updateSpcWpcMdsSettingVisibility() {
+        ensureRadarRouteLocationCountry();
         const available = isLower48SpcWpcLocation();
         const row = document.getElementById('spc-wpc-md-row');
         const checkbox = document.getElementById('spc-wpc-md-toggle-cb');
@@ -33725,6 +33793,7 @@
         }
         if (window.SKYMONITOR_RADAR_PAGE) {
             window._dismissLaunch();
+            updateSpcWpcMdsSettingVisibility();
             // Direct fullscreen radar routes are read-only. Turnstile is
             // requested only when the user exits to live reporting.
             renderReportCategories();
