@@ -17748,15 +17748,42 @@
         const isReportsPopup = entries.length > 0 && entries.every(function(entry) {
             return entry.source === 'iem-lsr' || entry.source === 'skymonitor-reports';
         });
-        const itemNoun = isReportsPopup ? 'report' :
-            ((entries[0] && entries[0].popupNoun) || 'alert');
+        // Count each kind of item separately so mixed popups read naturally,
+        // e.g. "3 alerts and 1 discussion at this location".
+        const nounOrder = [];
+        const nounCounts = {};
+        entries.forEach(function(entry) {
+            const noun = isReportsPopup ? 'report' : ((entry && entry.popupNoun) || 'alert');
+            if (!nounCounts[noun]) {
+                nounCounts[noun] = 0;
+                nounOrder.push(noun);
+            }
+            nounCounts[noun]++;
+        });
+        nounOrder.sort(function(a, b) {
+            if (a === b) return 0;
+            if (a === 'alert') return -1;
+            if (b === 'alert') return 1;
+            return 0;
+        });
+        const nounParts = nounOrder.map(function(noun) {
+            const n = nounCounts[noun];
+            return n + ' ' + noun + (n === 1 ? '' : 's');
+        });
+        const headerSummary = nounParts.length === 0
+            ? '0 items'
+            : nounParts.length === 1
+                ? nounParts[0]
+                : nounParts.length === 2
+                    ? nounParts[0] + ' and ' + nounParts[1]
+                    : nounParts.slice(0, -1).join(', ') + ', and ' + nounParts[nounParts.length - 1];
          const radarAction = latlng && allowRadarAction
              ? '<button type="button" id="reporting-radar-action" class="reporting-popup-radar-action"'
                  + ' title="Show nearest radar at this coordinate" aria-label="Show nearest radar at this coordinate"'
                  + ' onclick="event.stopPropagation(); openRadarForReportingPopup(this);">&#128225;</button>'
              : '';
         return '<div class="reporting-popup-shell">'
-            + '<div class="reporting-popup-header">' + count + ' ' + itemNoun + (count === 1 ? '' : 's') + ' at this location</div>'
+            + '<div class="reporting-popup-header">' + headerSummary + ' at this location</div>'
             + '<div class="reporting-popup-scroll">' + entries.map(buildReportingPopupCard).join('') + '</div>'
              + '<div class="reporting-popup-footer"><span>Tap an item to read the full details</span>' + radarAction + '</div>'
             + '</div>';
@@ -27547,7 +27574,7 @@
                 popupNoun: 'discussion',
                 color: '#ef4444',
                 popupKey: 'spc-md:' + (discussionNumber || feature.id || index),
-                title: escapeHtml('SPC Mesoscale Discussion' +
+                title: escapeHtml('Mesoscale Discussion' +
                     (discussionNumber ? ' #' + discussionNumber : '')),
                 provider: 'SPC',
                 discussionNumber: discussionNumber,
@@ -27623,7 +27650,7 @@
                 popupNoun: 'discussion',
                 color: '#22c55e',
                 popupKey: 'wpc-mpd:' + (discussionNumber || index),
-                title: escapeHtml('WPC Mesoscale Precipitation Discussion' +
+                title: escapeHtml('Mesoscale Precipitation Discussion' +
                     (discussionNumber ? ' #' + discussionNumber : '')),
                 provider: 'WPC',
                 discussionNumber: discussionNumber,
