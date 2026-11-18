@@ -18436,10 +18436,36 @@
         const rows = [
             [timeInfo.label, timeInfo.value ? formatReportTime(timeInfo.value) : ''],
             [timeInfo.actorLabel, formatNwsIssuedBy(props.senderName || '', props.wfo || wfo)],
-            ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : '']
+            ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : ''],
+            ['Alert text', getSiteErrorText('ALERT-502-UPSTREAM', 'Alert text is temporarily unavailable. Please try again later.')]
         ];
         return reportingPopupDetailRows(rows) ||
             '<span style="opacity:0.72;">Official alert boundary and title are shown above.</span>';
+    }
+
+    function nwsEntryHasIemVtecIdentity(entry) {
+        const props = entry && entry.nwsAlertProperties || {};
+        return !!(String(props.wfo || '').trim() &&
+            String(props.phenomena || '').trim() &&
+            String(props.significance || '').trim() &&
+            props.eventid != null && String(props.eventid).trim() !== '' &&
+            (props.year || /^\d{4}/.test(String(props.product_id || ''))));
+    }
+
+    // The api.weather.gov point lookup uses the tapped coordinate, but storm-
+    // based polygons (especially Special Marine Warnings) often extend beyond
+    // the forecast zones that the point endpoint matches. When that lookup
+    // misses or fails, fetch the full product text from IEM by its VTEC
+    // identity so the popup never shows only times and the office code.
+    async function loadNwsReportingDetailsFromIem(entry, eventName, wfo) {
+        if (!nwsEntryHasIemVtecIdentity(entry)) {
+            return localNwsReportingDetails(entry, eventName, wfo);
+        }
+        try {
+            return await loadHistoricalNwsDetails(entry.nwsAlertProperties, entry);
+        } catch (error) {
+            return localNwsReportingDetails(entry, eventName, wfo);
+        }
     }
 
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
@@ -18448,7 +18474,12 @@
             '</span>';
         try {
             const response = await fetchNwsActiveAlertsAtPoint(latlng);
-            if (!response.ok) return entry && entry.isAllOfficialAlert ? '' : unavailable;
+            if (!response.ok) {
+                if (entry && entry.isAllOfficialAlert) return '';
+                return nwsEntryHasIemVtecIdentity(entry)
+                    ? loadNwsReportingDetailsFromIem(entry, eventName, wfo)
+                    : unavailable;
+            }
             const data = response.payload || {};
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
             const allCandidates = (data.features || []).map(function(feature) {
@@ -18514,7 +18545,7 @@
             if (!alert) {
                 return entry && entry.isAllOfficialAlert
                     ? ''
-                    : localNwsReportingDetails(entry, eventName, wfo);
+                    : loadNwsReportingDetailsFromIem(entry, eventName, wfo);
             }
             if (entry && entry.isAllOfficialAlert) {
                 return entry.detail || allOfficialAlertPopupDetail(
@@ -18536,7 +18567,10 @@
              return reportingPopupDetailRows(rows) ||
                 localNwsReportingDetails(entry, eventName, wfo);
         } catch (e) {
-            return entry && entry.isAllOfficialAlert ? '' : unavailable;
+            if (entry && entry.isAllOfficialAlert) return '';
+            return nwsEntryHasIemVtecIdentity(entry)
+                ? loadNwsReportingDetailsFromIem(entry, eventName, wfo)
+                : unavailable;
         }
     }
 
@@ -26246,7 +26280,9 @@
             isFinite(Number(historicalRadarState.timestampMs))
             ? Number(historicalRadarState.timestampMs)
             : 0;
-        const cacheKey = baseCacheKey + '|frame:' + frameTimestamp;
+        const cacheKey = baseCacheKey + (frameTimestamp
+            ? '|frame:' + frameTimestamp
+            : '|live:' + Math.floor(Date.now() / 60000));
         if (historicalNwsDetailsCache[cacheKey]) {
             return historicalNwsDetailsCache[cacheKey].then(function(detail) {
                 const cachedAlertText = historicalNwsAlertTextCache[cacheKey] || '';
@@ -26367,6 +26403,11 @@
             }
         })();
         historicalNwsDetailsCache[cacheKey] = promise;
+        promise.then(function(detail) {
+            if (detail === fallback) delete historicalNwsDetailsCache[cacheKey];
+        }).catch(function() {
+            delete historicalNwsDetailsCache[cacheKey];
+        });
         return promise;
     }
 
