@@ -4705,6 +4705,80 @@
         };
     }
 
+    // Photon is asked directly first. Some mobile networks share one public
+    // IP between many phones (carrier NAT), and the public Photon server
+    // throttles or stalls those IPs, so lookups timed out on phones while
+    // working on home Wi-Fi. A failed or slow direct request now retries
+    // through the SkyMonitor Worker, which asks Photon from the edge and has
+    // backup geocoders. Once direct Photon fails in a tab, the Worker is tried
+    // first for the rest of that session.
+    var _GEOCODE_PROXY_PREF_KEY = 'skymonitor_geocode_via_proxy';
+    var _geocodeProxyPreferred = false;
+    try {
+        _geocodeProxyPreferred = sessionStorage.getItem(_GEOCODE_PROXY_PREF_KEY) === '1';
+    } catch (e) {}
+
+    function _setGeocodeProxyPreferred(preferred) {
+        _geocodeProxyPreferred = !!preferred;
+        try {
+            if (preferred) sessionStorage.setItem(_GEOCODE_PROXY_PREF_KEY, '1');
+            else sessionStorage.removeItem(_GEOCODE_PROXY_PREF_KEY);
+        } catch (e) {}
+    }
+
+    function _geocodeAbortError() {
+        var abortError = new Error('Geocoding request cancelled.');
+        abortError.name = 'AbortError';
+        return abortError;
+    }
+
+    function _geocodeRequest(url, timeoutMs, externalSignal) {
+        return new Promise(function(resolve, reject) {
+            if (externalSignal && externalSignal.aborted) {
+                reject(_geocodeAbortError());
+                return;
+            }
+            var controller = typeof AbortController === 'function'
+                ? new AbortController()
+                : null;
+            var settled = false;
+            var timer = null;
+            var onAbort = function() {
+                finish(reject, _geocodeAbortError());
+                if (controller) controller.abort();
+            };
+            var finish = function(settle, value) {
+                if (settled) return;
+                settled = true;
+                if (timer !== null) window.clearTimeout(timer);
+                if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+                settle(value);
+            };
+            if (externalSignal) externalSignal.addEventListener('abort', onAbort, { once: true });
+            timer = window.setTimeout(function() {
+                var timeoutError = new Error('Geocoding request timed out.');
+                timeoutError.name = 'TimeoutError';
+                finish(reject, timeoutError);
+                if (controller) controller.abort();
+            }, Math.max(500, timeoutMs));
+            var fetchOptions = {
+                headers: {
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en-US,en;q=0.8'
+                },
+                cache: 'no-store'
+            };
+            if (controller) fetchOptions.signal = controller.signal;
+            fetch(url, fetchOptions)
+                .then(function(response) {
+                    if (!response.ok) throw new Error('OSM geocoder request failed: ' + response.status);
+                    return response.json();
+                })
+                .then(function(data) { finish(resolve, data); },
+                    function(error) { finish(reject, error); });
+        });
+    }
+
     function _osmGeocodeFetch(kind, params, requestOptions) {
         var query = new URLSearchParams();
         Object.keys(params || {}).forEach(function(key) {
@@ -4712,62 +4786,52 @@
                 query.set(key, String(params[key]));
             }
         });
-        var endpoint = kind === 'reverse'
+        var queryString = query.toString();
+        var directUrl = (kind === 'reverse'
             ? 'https://photon.komoot.io/reverse?'
-            : 'https://photon.komoot.io/api/?';
+            : 'https://photon.komoot.io/api/?') + queryString;
+        var proxyUrl = WEATHER_WORKER_URL + '/api/geocode/' +
+            (kind === 'reverse' ? 'reverse' : 'search') + '?' + queryString;
         var options = requestOptions || {};
         var externalSignal = options.signal || null;
-        var controller = typeof AbortController === 'function'
-            ? new AbortController()
-            : null;
-        var removeExternalAbortListener = null;
-        if (controller && externalSignal) {
-            if (externalSignal.aborted) {
-                controller.abort();
-            } else {
-                var abortFromCaller = function() { controller.abort(); };
-                externalSignal.addEventListener('abort', abortFromCaller, { once: true });
-                removeExternalAbortListener = function() {
-                    externalSignal.removeEventListener('abort', abortFromCaller);
-                };
-            }
-        }
-        var signal = controller ? controller.signal : externalSignal;
-        var timeoutMs = Number(options.timeoutMs) > 0
+        var totalMs = Number(options.timeoutMs) > 0
             ? Number(options.timeoutMs)
-            : (kind === 'search' ? 10000 : 15000);
-        var timeoutId = null;
-        var timeoutPromise = new Promise(function(_resolve, reject) {
-            timeoutId = window.setTimeout(function() {
-                if (controller) controller.abort();
-                var timeoutError = new Error('Geocoding request timed out.');
-                timeoutError.name = 'TimeoutError';
-                reject(timeoutError);
-            }, timeoutMs);
-        });
-        var fetchOptions = {
-            headers: {
-                'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.8'
-            },
-            cache: 'no-store'
+            : (kind === 'search' ? 12000 : 15000);
+        var startedAt = Date.now();
+        var proxyFirst = _geocodeProxyPreferred;
+        var firstUrl = proxyFirst ? proxyUrl : directUrl;
+        var secondUrl = proxyFirst ? directUrl : proxyUrl;
+        // Leave the second route enough time to answer on its own.
+        var firstBudget = proxyFirst
+            ? Math.max(1000, totalMs - 3000)
+            : Math.max(1000, Math.min(kind === 'reverse' ? 6000 : 4500, totalMs - 4000));
+        var callerAborted = function() {
+            return !!(externalSignal && externalSignal.aborted);
         };
-        if (signal) fetchOptions.signal = signal;
-        var requestPromise = fetch(endpoint + query.toString(), fetchOptions)
-            .then(function(response) {
-                if (!response.ok) throw new Error('OSM geocoder request failed: ' + response.status);
-                return response.json();
-            })
-            .then(function(data) {
-                var features = Array.isArray(data && data.features) ? data.features : [];
-                if (kind === 'reverse') {
-                    return features.length ? _osmFeatureToGeoResult(features[0]) : {};
-                }
-                return features.map(_osmFeatureToGeoResult);
+        var request = _geocodeRequest(firstUrl, firstBudget, externalSignal)
+            .catch(function(firstError) {
+                if (callerAborted()) throw _geocodeAbortError();
+                var remainingMs = totalMs - (Date.now() - startedAt);
+                if (remainingMs < 1000) throw firstError;
+                return _geocodeRequest(secondUrl, remainingMs, externalSignal)
+                    .then(function(data) {
+                        // Remember which route works on this connection.
+                        _setGeocodeProxyPreferred(!proxyFirst);
+                        return data;
+                    }, function(secondError) {
+                        if (callerAborted()) throw _geocodeAbortError();
+                        throw (firstError && firstError.name === 'TimeoutError') ||
+                            (secondError && secondError.name === 'TimeoutError')
+                            ? (secondError && secondError.name === 'TimeoutError' ? secondError : firstError)
+                            : secondError;
+                    });
             });
-        return Promise.race([requestPromise, timeoutPromise]).finally(function() {
-            if (timeoutId !== null) window.clearTimeout(timeoutId);
-            if (removeExternalAbortListener) removeExternalAbortListener();
+        return request.then(function(data) {
+            var features = Array.isArray(data && data.features) ? data.features : [];
+            if (kind === 'reverse') {
+                return features.length ? _osmFeatureToGeoResult(features[0]) : {};
+            }
+            return features.map(_osmFeatureToGeoResult);
         });
     }
 
@@ -5182,7 +5246,7 @@
                     ? new AbortController()
                     : null;
                 controller = requestController;
-                var requestOptions = { timeoutMs: 8000 };
+                var requestOptions = { timeoutMs: 10000 };
                 if (requestController) requestOptions.signal = requestController.signal;
                 _osmGeocodeFetch('search', { q: query, limit: 5 }, requestOptions)
                     .then(function(data) {
@@ -5291,7 +5355,7 @@
             ? new AbortController()
             : null;
         _citySearchController = searchController;
-        const searchOptions = { timeoutMs: 10000 };
+        const searchOptions = { timeoutMs: 14000 };
         if (searchController) searchOptions.signal = searchController.signal;
         if (window.SKYMONITOR_INFO_PAGE) {
             // Resolve the city before leaving the informational route. The
@@ -5834,7 +5898,7 @@
                             _skyMonitorFeedbackTurnstileToken = '';
                             _skyMonitorFeedbackTurnstileNeedsReset = true;
                             if (!_skyMonitorFeedbackSending && status) {
-                                status.textContent = 'Verification expired. Complete the check again.';
+                                status.textContent = 'Verification error. Please try again.';
                                 status.style.color = 'var(--warning)';
                             }
                         },
@@ -6157,7 +6221,7 @@
                 },
                 'expired-callback': function() {
                     invalidateTurnstile();
-                    if (statusEl) statusEl.textContent = 'Verification expired. Please try again.';
+                    if (statusEl) statusEl.textContent = 'Verification error. Please try again.';
                 },
                 'error-callback': function() {
                     invalidateTurnstile();
@@ -12064,7 +12128,7 @@
     // Share the optional TWC/OpenWeather request rather than starting duplicate provider calls.
     async function getWeatherEnrichment() {
         if (_enrichmentPromise) return _enrichmentPromise;
-        _enrichmentPromise = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
+        var enrichmentPromise = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
             encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lon), {
                 signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
             }, 12000).then(function(res) {
@@ -12074,9 +12138,13 @@
                 window._fastProviderData = Object.assign({}, window._fastProviderData || {}, data);
                 return data;
             }).catch(function() {
+                // Do not keep a failed request as the shared answer; the next
+                // caller (including the daily forecast recovery) must retry.
+                if (_enrichmentPromise === enrichmentPromise) _enrichmentPromise = null;
                 return null;
             });
-        return _enrichmentPromise;
+        _enrichmentPromise = enrichmentPromise;
+        return enrichmentPromise;
     }
 
     // Renders the PWS QC diagnostic panel.
@@ -15417,75 +15485,230 @@
     }
 
     // ——— TWC FORECAST (v1.0.4: removed windPhrase/precipType/thunderCat; added swipe) ———
+    // TWC daily forecast recovery. The enrichment response can arrive without
+    // TWC (provider timeout or rate limit) even when the rest of the weather
+    // loaded. That used to leave the error message up until a full reload.
+    // Now the forecast is retried right away, then again in the background,
+    // and the message offers a Try again button.
+    const TWC_RECOVERY_DELAYS_MS = [5000, 15000, 45000, 120000];
+    let _twcRecoveryTimer = null;
+    let _twcRecoveryAttempt = 0;
+    let _twcRecoveryTarget = null;
+    let _twcRecoveryWaiting = false;
+    let _twcRetryRequest = null;
+
+    function _twcForecastLooksUsable(data) {
+        return !!(data && Array.isArray(data.dayOfWeek) && data.dayOfWeek.length &&
+            data.daypart && data.daypart[0] && Array.isArray(data.daypart[0].iconCode));
+    }
+
+    function _twcTargetIsCurrent(target) {
+        return !!target && target.generation === weatherLoadGeneration &&
+            target.lat === lat && target.lon === lon;
+    }
+
+    function _fetchTWCForecastRetry() {
+        var reqLat = lat;
+        var reqLon = lon;
+        var key = reqLat + ',' + reqLon;
+        if (_twcRetryRequest && _twcRetryRequest.key === key) return _twcRetryRequest.promise;
+        var promise = _weatherFetch(WEATHER_WORKER_URL + '/api/weather/enrichment?lat=' +
+            encodeURIComponent(reqLat) + '&lon=' + encodeURIComponent(reqLon) + '&retry=twc', {
+                signal: window._weatherRequestController ? window._weatherRequestController.signal : undefined
+            }, 12000).then(function(res) {
+                if (!res.ok) throw new Error('TWC forecast retry ' + res.status);
+                return res.json();
+            }).then(function(payload) {
+                var data = payload && payload.twc;
+                if (!_twcForecastLooksUsable(data)) return null;
+                if (reqLat === lat && reqLon === lon) {
+                    window._fastProviderData = Object.assign({}, window._fastProviderData || {}, { twc: data });
+                }
+                return data;
+            }).catch(function() {
+                return null;
+            }).finally(function() {
+                if (_twcRetryRequest && _twcRetryRequest.promise === promise) _twcRetryRequest = null;
+            });
+        _twcRetryRequest = { key: key, promise: promise };
+        return promise;
+    }
+
+    function _cancelTWCRecovery() {
+        if (_twcRecoveryTimer !== null) clearTimeout(_twcRecoveryTimer);
+        _twcRecoveryTimer = null;
+        _twcRecoveryAttempt = 0;
+        _twcRecoveryTarget = null;
+        _twcRecoveryWaiting = false;
+    }
+
+    function _showTWCForecastUnavailable(retrying) {
+        var container = document.getElementById('twc-daily-forecast');
+        if (!container) return;
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; gap:8px; white-space:normal;';
+        var message = document.createElement('div');
+        message.textContent = retrying
+            ? 'Daily forecast data is temporarily unavailable. Retrying automatically… (Code: WX-503-UNAVAILABLE)'
+            : 'Daily forecast data is temporarily unavailable. Please try again later. (Code: WX-503-UNAVAILABLE)';
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Try again';
+        button.style.cssText = 'padding:5px 12px; border-radius:8px; border:1px solid rgba(79,195,247,0.45); background:rgba(79,195,247,0.12); color:#d8e2e9; font-size:0.85em; cursor:pointer;';
+        button.addEventListener('click', function() { _retryTWCForecastNow(); });
+        wrap.appendChild(message);
+        wrap.appendChild(button);
+        container.replaceChildren(wrap);
+    }
+
+    function _applyTWCForecast(d) {
+        renderTWCForecast(d);
+        // Only cache the fields actually used by renderTWCForecast / openTWCDetailModal
+        var _dp = d.daypart && d.daypart[0];
+        var _slimTwc = {
+            dayOfWeek: d.dayOfWeek,
+            calendarDayTemperatureMax: d.calendarDayTemperatureMax,
+            calendarDayTemperatureMin: d.calendarDayTemperatureMin,
+            validTimeLocal: d.validTimeLocal,
+            daypart: _dp ? [{
+                iconCode:              _dp.iconCode,
+                wxPhraseLong:          _dp.wxPhraseLong,
+                precipChance:          _dp.precipChance,
+                qpf:                   _dp.qpf,
+                narrative:             _dp.narrative,
+                daypartName:           _dp.daypartName,
+                temperature:           _dp.temperature,
+                humidity:              _dp.humidity,
+                relativeHumidity:      _dp.relativeHumidity,
+                windSpeed:             _dp.windSpeed,
+                windGust:              _dp.windGust,
+                windDirection:         _dp.windDirection,
+                windDirectionCardinal: _dp.windDirectionCardinal,
+                windPhrase:            _dp.windPhrase,
+                uvIndex:               _dp.uvIndex,
+                uvDescription:         _dp.uvDescription,
+                cloudCoverPhrase:      _dp.cloudCoverPhrase,
+                qpfSnow:               _dp.qpfSnow,
+                temperatureHeatIndex:  _dp.temperatureHeatIndex,
+                temperatureWindChill:  _dp.temperatureWindChill,
+                thunderCategory:       _dp.thunderCategory
+            }] : d.daypart
+        };
+        // Cache today's thunder flag globally so _renderBeach() can read it
+        // synchronously. Use wxPhraseLong[0] (today's daytime phrase) and
+        // wxPhraseLong[1] (tonight's phrase) — these only say "Thunderstorm" /
+        // "T-Storms" when thunder is the primary expected condition, so they
+        // never produce the false positives that thunderCategory "Thunder Possible"
+        // does on otherwise clear days. Both dayparts are included so the beach
+        // warning fires even when thunderstorms are only in tonight's forecast.
+        var _todayPhrase = ((_slimTwc.daypart && _slimTwc.daypart[0] &&
+                             _slimTwc.daypart[0].wxPhraseLong &&
+                             _slimTwc.daypart[0].wxPhraseLong[0]) || '').toLowerCase();
+        var _tonightPhrase = ((_slimTwc.daypart && _slimTwc.daypart[0] &&
+                               _slimTwc.daypart[0].wxPhraseLong &&
+                               _slimTwc.daypart[0].wxPhraseLong[1]) || '').toLowerCase();
+        window._twcThunderToday = /thunder|t-storm|tstm/.test(_todayPhrase) ||
+                                  /thunder|t-storm|tstm/.test(_tonightPhrase);
+        // Icons are now hosted locally at icons/wu/{n}.svg and pre-cached by the
+        // service worker during install — no data-URL conversion needed.
+        SkyDB.set(SkyDB.S.weather, 'twc_forecast', { ts: Date.now(), data: _slimTwc });
+    }
+
+    function _scheduleTWCRecovery(target) {
+        if (!_twcTargetIsCurrent(target)) return;
+        _twcRecoveryTarget = target;
+        if (_twcRecoveryTimer !== null) clearTimeout(_twcRecoveryTimer);
+        _twcRecoveryTimer = null;
+        if (_twcRecoveryAttempt >= TWC_RECOVERY_DELAYS_MS.length) {
+            _showTWCForecastUnavailable(false);
+            return;
+        }
+        _showTWCForecastUnavailable(true);
+        var delay = TWC_RECOVERY_DELAYS_MS[_twcRecoveryAttempt++];
+        _twcRecoveryTimer = setTimeout(function() {
+            _twcRecoveryTimer = null;
+            _runTWCRecovery();
+        }, delay);
+    }
+
+    function _runTWCRecovery() {
+        var target = _twcRecoveryTarget;
+        if (!_twcTargetIsCurrent(target)) {
+            _cancelTWCRecovery();
+            return;
+        }
+        // Wait for the tab to be visible and online; the listeners below
+        // resume the recovery instead of spending attempts in the background.
+        if (document.visibilityState === 'hidden' || _isOffline) {
+            _twcRecoveryWaiting = true;
+            return;
+        }
+        _twcRecoveryWaiting = false;
+        _fetchTWCForecastRetry().then(function(data) {
+            if (!_twcTargetIsCurrent(target)) return;
+            if (data) {
+                _cancelTWCRecovery();
+                _applyTWCForecast(data);
+            } else {
+                _scheduleTWCRecovery(target);
+            }
+        });
+    }
+
+    function _retryTWCForecastNow() {
+        var target = _twcTargetIsCurrent(_twcRecoveryTarget)
+            ? _twcRecoveryTarget
+            : { generation: weatherLoadGeneration, lat: lat, lon: lon };
+        if (_twcRecoveryTimer !== null) clearTimeout(_twcRecoveryTimer);
+        _twcRecoveryTimer = null;
+        _twcRecoveryAttempt = 0;
+        _twcRecoveryTarget = target;
+        var container = document.getElementById('twc-daily-forecast');
+        if (container) container.textContent = 'Loading daily forecast…';
+        _runTWCRecovery();
+    }
+
+    function _resumeTWCRecoveryIfWaiting() {
+        if (!_twcRecoveryWaiting || _twcRecoveryTimer !== null) return;
+        if (document.visibilityState === 'hidden' || _isOffline) return;
+        _runTWCRecovery();
+    }
+    document.addEventListener('visibilitychange', _resumeTWCRecoveryIfWaiting);
+    window.addEventListener('online', function() {
+        setTimeout(_resumeTWCRecoveryIfWaiting, 1500);
+    });
+
+    // ——— TWC FORECAST (v1.0.4: removed windPhrase/precipType/thunderCat; added swipe) ———
     async function fetchTWCForecast() {
+        var target = { generation: weatherLoadGeneration, lat: lat, lon: lon };
+        _cancelTWCRecovery();
         try {
             const enrichment = await getWeatherEnrichment();
-            const d = (enrichment && enrichment.twc) ||
+            let d = (enrichment && enrichment.twc) ||
                 (window._fastProviderData && window._fastProviderData.twc);
+            if (!_twcForecastLooksUsable(d)) {
+                if (!_twcTargetIsCurrent(target)) return;
+                // One immediate retry of TWC alone before showing an error.
+                d = await _fetchTWCForecastRetry();
+            }
+            if (!_twcTargetIsCurrent(target)) return;
             if (!d) throw new Error('TWC data not included in enrichment response');
-            renderTWCForecast(d);
-            // Only cache the fields actually used by renderTWCForecast / openTWCDetailModal
-            var _dp = d.daypart && d.daypart[0];
-            var _slimTwc = {
-                dayOfWeek: d.dayOfWeek,
-                calendarDayTemperatureMax: d.calendarDayTemperatureMax,
-                calendarDayTemperatureMin: d.calendarDayTemperatureMin,
-                validTimeLocal: d.validTimeLocal,
-                daypart: _dp ? [{
-                    iconCode:              _dp.iconCode,
-                    wxPhraseLong:          _dp.wxPhraseLong,
-                    precipChance:          _dp.precipChance,
-                    qpf:                   _dp.qpf,
-                    narrative:             _dp.narrative,
-                    daypartName:           _dp.daypartName,
-                    temperature:           _dp.temperature,
-                    humidity:              _dp.humidity,
-                     relativeHumidity:      _dp.relativeHumidity,
-                     windSpeed:             _dp.windSpeed,
-                     windGust:              _dp.windGust,
-                     windDirection:         _dp.windDirection,
-                     windDirectionCardinal: _dp.windDirectionCardinal,
-                     windPhrase:            _dp.windPhrase,
-                    uvIndex:               _dp.uvIndex,
-                    uvDescription:         _dp.uvDescription,
-                    cloudCoverPhrase:      _dp.cloudCoverPhrase,
-                    qpfSnow:               _dp.qpfSnow,
-                    temperatureHeatIndex:  _dp.temperatureHeatIndex,
-                    temperatureWindChill:  _dp.temperatureWindChill,
-                    thunderCategory:       _dp.thunderCategory
-                }] : d.daypart
-            };
-            // Cache today's thunder flag globally so _renderBeach() can read it
-            // synchronously. Use wxPhraseLong[0] (today's daytime phrase) and
-            // wxPhraseLong[1] (tonight's phrase) — these only say "Thunderstorm" /
-            // "T-Storms" when thunder is the primary expected condition, so they
-            // never produce the false positives that thunderCategory "Thunder Possible"
-            // does on otherwise clear days. Both dayparts are included so the beach
-            // warning fires even when thunderstorms are only in tonight's forecast.
-            var _todayPhrase = ((_slimTwc.daypart && _slimTwc.daypart[0] &&
-                                 _slimTwc.daypart[0].wxPhraseLong &&
-                                 _slimTwc.daypart[0].wxPhraseLong[0]) || '').toLowerCase();
-            var _tonightPhrase = ((_slimTwc.daypart && _slimTwc.daypart[0] &&
-                                   _slimTwc.daypart[0].wxPhraseLong &&
-                                   _slimTwc.daypart[0].wxPhraseLong[1]) || '').toLowerCase();
-            window._twcThunderToday = /thunder|t-storm|tstm/.test(_todayPhrase) ||
-                                      /thunder|t-storm|tstm/.test(_tonightPhrase);
-            // Icons are now hosted locally at icons/wu/{n}.svg and pre-cached by the
-            // service worker during install — no data-URL conversion needed.
-            SkyDB.set(SkyDB.S.weather, 'twc_forecast', { ts: Date.now(), data: _slimTwc });
+            _applyTWCForecast(d);
         } catch(e) {
+            if (!_twcTargetIsCurrent(target)) return;
             // Do not display an old daily forecast merely because the optional
             // enrichment request failed while the primary weather is online.
             if (!_isOffline) {
-                var unavailable = document.getElementById('twc-daily-forecast');
-                if (unavailable) unavailable.textContent =
-                    'Daily forecast data is temporarily unavailable. Please try again later. (Code: WX-503-UNAVAILABLE)';
+                _scheduleTWCRecovery(target);
                 return;
             }
             SkyDB.get(SkyDB.S.weather, 'twc_forecast').then(function(cached) {
                 if (cached && cached.data) renderTWCForecast(cached.data);
                 else document.getElementById('twc-daily-forecast').textContent = 'Forecast unavailable while offline.';
             });
+            // Fetch the live forecast once the connection returns.
+            _twcRecoveryTarget = target;
+            _twcRecoveryWaiting = true;
         }
     }
 
@@ -17748,15 +17971,42 @@
         const isReportsPopup = entries.length > 0 && entries.every(function(entry) {
             return entry.source === 'iem-lsr' || entry.source === 'skymonitor-reports';
         });
-        const itemNoun = isReportsPopup ? 'report' :
-            ((entries[0] && entries[0].popupNoun) || 'alert');
+        // Count each kind of item separately so mixed popups read naturally,
+        // e.g. "3 alerts and 1 discussion at this location".
+        const nounOrder = [];
+        const nounCounts = {};
+        entries.forEach(function(entry) {
+            const noun = isReportsPopup ? 'report' : ((entry && entry.popupNoun) || 'alert');
+            if (!nounCounts[noun]) {
+                nounCounts[noun] = 0;
+                nounOrder.push(noun);
+            }
+            nounCounts[noun]++;
+        });
+        nounOrder.sort(function(a, b) {
+            if (a === b) return 0;
+            if (a === 'alert') return -1;
+            if (b === 'alert') return 1;
+            return 0;
+        });
+        const nounParts = nounOrder.map(function(noun) {
+            const n = nounCounts[noun];
+            return n + ' ' + noun + (n === 1 ? '' : 's');
+        });
+        const headerSummary = nounParts.length === 0
+            ? '0 items'
+            : nounParts.length === 1
+                ? nounParts[0]
+                : nounParts.length === 2
+                    ? nounParts[0] + ' and ' + nounParts[1]
+                    : nounParts.slice(0, -1).join(', ') + ', and ' + nounParts[nounParts.length - 1];
          const radarAction = latlng && allowRadarAction
              ? '<button type="button" id="reporting-radar-action" class="reporting-popup-radar-action"'
                  + ' title="Show nearest radar at this coordinate" aria-label="Show nearest radar at this coordinate"'
                  + ' onclick="event.stopPropagation(); openRadarForReportingPopup(this);">&#128225;</button>'
              : '';
         return '<div class="reporting-popup-shell">'
-            + '<div class="reporting-popup-header">' + count + ' ' + itemNoun + (count === 1 ? '' : 's') + ' at this location</div>'
+            + '<div class="reporting-popup-header">' + headerSummary + ' at this location</div>'
             + '<div class="reporting-popup-scroll">' + entries.map(buildReportingPopupCard).join('') + '</div>'
              + '<div class="reporting-popup-footer"><span>Tap an item to read the full details</span>' + radarAction + '</div>'
             + '</div>';
@@ -18409,10 +18659,36 @@
         const rows = [
             [timeInfo.label, timeInfo.value ? formatReportTime(timeInfo.value) : ''],
             [timeInfo.actorLabel, formatNwsIssuedBy(props.senderName || '', props.wfo || wfo)],
-            ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : '']
+            ['Valid through', expires ? formatReportingDateTimeNoSeconds(expires) : ''],
+            ['Alert text', getSiteErrorText('ALERT-502-UPSTREAM', 'Alert text is temporarily unavailable. Please try again later.')]
         ];
         return reportingPopupDetailRows(rows) ||
             '<span style="opacity:0.72;">Official alert boundary and title are shown above.</span>';
+    }
+
+    function nwsEntryHasIemVtecIdentity(entry) {
+        const props = entry && entry.nwsAlertProperties || {};
+        return !!(String(props.wfo || '').trim() &&
+            String(props.phenomena || '').trim() &&
+            String(props.significance || '').trim() &&
+            props.eventid != null && String(props.eventid).trim() !== '' &&
+            (props.year || /^\d{4}/.test(String(props.product_id || ''))));
+    }
+
+    // The api.weather.gov point lookup uses the tapped coordinate, but storm-
+    // based polygons (especially Special Marine Warnings) often extend beyond
+    // the forecast zones that the point endpoint matches. When that lookup
+    // misses or fails, fetch the full product text from IEM by its VTEC
+    // identity so the popup never shows only times and the office code.
+    async function loadNwsReportingDetailsFromIem(entry, eventName, wfo) {
+        if (!nwsEntryHasIemVtecIdentity(entry)) {
+            return localNwsReportingDetails(entry, eventName, wfo);
+        }
+        try {
+            return await loadHistoricalNwsDetails(entry.nwsAlertProperties, entry);
+        } catch (error) {
+            return localNwsReportingDetails(entry, eventName, wfo);
+        }
     }
 
     async function loadNwsReportingDetails(entry, latlng, eventName, wfo) {
@@ -18421,7 +18697,12 @@
             '</span>';
         try {
             const response = await fetchNwsActiveAlertsAtPoint(latlng);
-            if (!response.ok) return entry && entry.isAllOfficialAlert ? '' : unavailable;
+            if (!response.ok) {
+                if (entry && entry.isAllOfficialAlert) return '';
+                return nwsEntryHasIemVtecIdentity(entry)
+                    ? loadNwsReportingDetailsFromIem(entry, eventName, wfo)
+                    : unavailable;
+            }
             const data = response.payload || {};
             const wantedOffice = String(wfo || '').toLowerCase().replace(/^k/, '');
             const allCandidates = (data.features || []).map(function(feature) {
@@ -18487,7 +18768,7 @@
             if (!alert) {
                 return entry && entry.isAllOfficialAlert
                     ? ''
-                    : localNwsReportingDetails(entry, eventName, wfo);
+                    : loadNwsReportingDetailsFromIem(entry, eventName, wfo);
             }
             if (entry && entry.isAllOfficialAlert) {
                 return entry.detail || allOfficialAlertPopupDetail(
@@ -18509,7 +18790,10 @@
              return reportingPopupDetailRows(rows) ||
                 localNwsReportingDetails(entry, eventName, wfo);
         } catch (e) {
-            return entry && entry.isAllOfficialAlert ? '' : unavailable;
+            if (entry && entry.isAllOfficialAlert) return '';
+            return nwsEntryHasIemVtecIdentity(entry)
+                ? loadNwsReportingDetailsFromIem(entry, eventName, wfo)
+                : unavailable;
         }
     }
 
@@ -19909,10 +20193,19 @@
     // client timeout made whole countries drop off the map.
     const ALL_OFFICIAL_ALERT_REQUEST_TIMEOUT_MS = 25000;
     const ALL_OFFICIAL_ALERT_GEOMETRY_DEADLINE_MS = 45000;
+    const ALL_OFFICIAL_ALERT_PREFETCH_WAIT_MS = 8000;
+    // The loading cover is lifted after this long even if zone outlines are
+    // still arriving; they keep drawing in the background.
+    const ALL_OFFICIAL_ALERT_OVERLAY_MAX_MS = 20000;
+    // A load still pending after this long is treated as stuck so a new one
+    // (or a retry) can start instead of every caller waiting on it forever.
+    const ALL_OFFICIAL_ALERT_LOAD_STUCK_MS = 120000;
+    let allOfficialAlertMapLoadStartedAt = 0;
+    let allOfficialAlertOverlayCapTimer = null;
 
     function fetchAllOfficialAlertJson(url, options, timeoutMs, parentSignal) {
         const requestOptions = Object.assign({}, options || {});
-        if (allOfficialAlertBackgroundWarmupActive) {
+        if (allOfficialAlertBackgroundWarmupActive && !allOfficialAlertMapLoadPromise) {
             requestOptions.priority = 'low';
         }
         const controller = typeof AbortController === 'function'
@@ -20497,7 +20790,21 @@
     async function resolveAllOfficialAlertGeometry() {
         if (allOfficialAlertGeometryResolutionDone) return false;
         if (allOfficialAlertZonePrefetchPromise) {
-            try { await allOfficialAlertZonePrefetchPromise; } catch (error) {}
+            // The background prefetch has no deadline of its own; on a cold
+            // cache it could keep the map loading for minutes. Wait for it
+            // only briefly, then fetch whatever is still missing below.
+            let prefetchWaitTimer = null;
+            try {
+                await Promise.race([
+                    allOfficialAlertZonePrefetchPromise,
+                    new Promise(function(resolve) {
+                        prefetchWaitTimer = setTimeout(resolve, ALL_OFFICIAL_ALERT_PREFETCH_WAIT_MS);
+                    })
+                ]);
+            } catch (error) {
+            } finally {
+                if (prefetchWaitTimer) clearTimeout(prefetchWaitTimer);
+            }
         }
         const jobs = [];
         const neededTokens = [];
@@ -20762,12 +21069,19 @@
 
     function yieldOfficialAlertMapWork() {
         return new Promise(function(resolve) {
+            let resolved = false;
             const done = function() {
+                if (resolved) return;
+                resolved = true;
                 officialAlertMapSliceStartedAt = officialAlertMapNow();
                 resolve();
             };
             if (typeof requestAnimationFrame === 'function') {
                 requestAnimationFrame(function() { setTimeout(done, 0); });
+                // Some phones throttle or pause animation frames (low-power
+                // mode, a covered map). Do not let one missed frame stall
+                // the whole alert load.
+                setTimeout(done, 120);
             } else {
                 setTimeout(done, 0);
             }
@@ -21706,9 +22020,24 @@
             updateOfficialAlertLoadingOverlay(false);
             return;
         }
-        if (allOfficialAlertMapLoadPromise) return allOfficialAlertMapLoadPromise;
+        if (allOfficialAlertMapLoadPromise) {
+            if (Date.now() - allOfficialAlertMapLoadStartedAt < ALL_OFFICIAL_ALERT_LOAD_STUCK_MS) {
+                return allOfficialAlertMapLoadPromise;
+            }
+            console.warn('[SkyMonitor] Official alert map load stalled; starting a new one.');
+            allOfficialAlertMapLoadPromise = null;
+        }
         allOfficialAlertRenderPending = false;
         updateOfficialAlertLoadingOverlay(true);
+        if (allOfficialAlertOverlayCapTimer) clearTimeout(allOfficialAlertOverlayCapTimer);
+        allOfficialAlertOverlayCapTimer = setTimeout(function() {
+            allOfficialAlertOverlayCapTimer = null;
+            if (!allOfficialAlertMapLoadPromise || allOfficialAlertInitialLoadComplete) return;
+            // Alerts already drawn stay visible; remaining outlines continue
+            // loading without keeping the map covered.
+            allOfficialAlertInitialLoadComplete = true;
+            updateOfficialAlertLoadingOverlay(false);
+        }, ALL_OFFICIAL_ALERT_OVERLAY_MAX_MS);
         let loadPromise;
         loadPromise = Promise.resolve().then(async function() {
             await ensureAllOfficialAlertData(false);
@@ -21752,13 +22081,18 @@
             }
             if (allOfficialAlertMapLoadPromise === loadPromise) {
                 allOfficialAlertMapLoadPromise = null;
+                if (allOfficialAlertOverlayCapTimer) {
+                    clearTimeout(allOfficialAlertOverlayCapTimer);
+                    allOfficialAlertOverlayCapTimer = null;
+                }
             }
-            updateOfficialAlertLoadingOverlay(false);
+            updateOfficialAlertLoadingOverlay(!!allOfficialAlertMapLoadPromise);
             if (allOfficialAlertRenderPending && shouldProcessOfficialAlertMapWork()) {
                 setTimeout(loadAllOfficialAlertsForMap, 0);
             }
         });
         allOfficialAlertMapLoadPromise = loadPromise;
+        allOfficialAlertMapLoadStartedAt = Date.now();
         return loadPromise;
     }
 
@@ -26219,7 +26553,9 @@
             isFinite(Number(historicalRadarState.timestampMs))
             ? Number(historicalRadarState.timestampMs)
             : 0;
-        const cacheKey = baseCacheKey + '|frame:' + frameTimestamp;
+        const cacheKey = baseCacheKey + (frameTimestamp
+            ? '|frame:' + frameTimestamp
+            : '|live:' + Math.floor(Date.now() / 60000));
         if (historicalNwsDetailsCache[cacheKey]) {
             return historicalNwsDetailsCache[cacheKey].then(function(detail) {
                 const cachedAlertText = historicalNwsAlertTextCache[cacheKey] || '';
@@ -26250,7 +26586,7 @@
             [fallbackTimeInfo.actorLabel, formatNwsIssuedBy('', props.wfo)],
             ['Valid through', reportingAlertExpiryValue(props)
                 ? formatReportingDateTimeNoSeconds(reportingAlertExpiryValue(props)) : ''],
-            ['Alert text', 'This weather alert is temporarily unavailable. Please try again later. (Code: ALERT-502-UPSTREAM)']
+            ['Alert text', 'Alert text is temporarily unavailable. Please try again later. (Code: ALERT-502-UPSTREAM)']
         ]);
         const promise = (async function() {
             const productMatch = productId.match(/^(\d{4})/);
@@ -26340,6 +26676,11 @@
             }
         })();
         historicalNwsDetailsCache[cacheKey] = promise;
+        promise.then(function(detail) {
+            if (detail === fallback) delete historicalNwsDetailsCache[cacheKey];
+        }).catch(function() {
+            delete historicalNwsDetailsCache[cacheKey];
+        });
         return promise;
     }
 
@@ -27547,7 +27888,7 @@
                 popupNoun: 'discussion',
                 color: '#ef4444',
                 popupKey: 'spc-md:' + (discussionNumber || feature.id || index),
-                title: escapeHtml('SPC Mesoscale Discussion' +
+                title: escapeHtml('Mesoscale Discussion' +
                     (discussionNumber ? ' #' + discussionNumber : '')),
                 provider: 'SPC',
                 discussionNumber: discussionNumber,
@@ -27623,7 +27964,7 @@
                 popupNoun: 'discussion',
                 color: '#22c55e',
                 popupKey: 'wpc-mpd:' + (discussionNumber || index),
-                title: escapeHtml('WPC Mesoscale Precipitation Discussion' +
+                title: escapeHtml('Mesoscale Precipitation Discussion' +
                     (discussionNumber ? ' #' + discussionNumber : '')),
                 provider: 'WPC',
                 discussionNumber: discussionNumber,
@@ -27964,7 +28305,7 @@
         APP: 'Application'
     });
     const SITE_ERROR_MESSAGES = Object.freeze({
-        'APP-500-CLIENT': 'An unexpected error occurred. Please try again.',
+        'APP-500-CLIENT': 'An unexpected error occurred.',
         'LOC-502-SEARCH': 'Location search is temporarily unavailable. Please try again later.',
         'LOC-502-PRIVACY': 'There was an error with privacy mode. Please try again.',
         'RAD-502-UPSTREAM': 'Radar data is temporarily unavailable. Please try again later.',
@@ -28111,7 +28452,7 @@
         }
 
         const safeMessages = [
-            'The image upload is invalid.',
+            'The image uploaded is invalid.',
             'You cannot upload an image over 7 MB.',
             'Unsupported image type. Use a JPG, PNG, WebP, or GIF image type instead.',
             'The file uploaded is not a supported image type.',
@@ -28146,9 +28487,9 @@
         return !!(result && (
             result.errorCode === 'RPT-403-VERIFY' ||
             result.errorCode === 'RPT-502-VERIFY' ||
-            result.error === 'Turnstile verification required.' ||
-            result.error === 'Bot detected — report rejected.' ||
-            result.error === 'Turnstile verification unavailable.'
+            result.error === 'Cloudflare verification is required.' ||
+            result.error === 'Bot detected — verification failed.' ||
+            result.error === 'Cloudflare verification unavailable.'
         ));
     }
 
@@ -30854,8 +31195,8 @@
                     : (tropicalRouteNWSAlertsUnmappedCount
                         ? tropicalRouteNWSAlertsUnmappedCount +
                             (tropicalRouteNWSAlertsUnmappedCount === 1
-                                ? ' There was an error retrieving the NWS alert. (Code: ALERT-502-UPSTREAM)'
-                                : ' There was an error retrieving the NWS alerts. (Code: ALERT-502-UPSTREAM)')
+                                ? ' Alert text is temporarily unavailable. Please try again later. (Code: ALERT-502-UPSTREAM)'
+                                : ' Alert text is temporarily unavailable. Please try again later. (Code: ALERT-502-UPSTREAM)')
                         : '');
             }
             var focusIndex = null;
