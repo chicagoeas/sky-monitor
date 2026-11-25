@@ -20657,6 +20657,48 @@
 
     // NWS/IEM feeds can keep cancelled, expired, upgraded or superseded
     // products around for a while. Never draw those on the map.
+    // NWS Local Storm Report text limits the location field to ~24
+    // characters, so long names arrive cut off ("North Perry Airpor").
+    // Complete a cut-off final word when it matches one known place word.
+    const LSR_PLACE_WORDS = [
+        'Airport', 'Airfield', 'Air Force Base', 'International', 'Municipal',
+        'Regional', 'Executive', 'County', 'Township', 'Mountain', 'Mountains',
+        'Village', 'Heights', 'Junction', 'Springs', 'Station', 'Beach',
+        'Island', 'Islands', 'Harbor', 'Harbour', 'Estates', 'Reservoir',
+        'Forest', 'Canyon', 'Crossing', 'Landing', 'Gardens', 'Terrace',
+        'Shores', 'Valley', 'Center', 'Centre', 'Plantation', 'Lakes',
+        'Ranch', 'Point', 'Creek', 'River', 'Ridge', 'Hills', 'Manor',
+        'Meadows', 'Acres', 'Park', 'Field', 'Fields', 'Falls', 'Grove',
+        'Pines', 'Woods', 'Bridge', 'Corner', 'Corners', 'Crossroads',
+        'Highlands', 'Lighthouse', 'Marina', 'National', 'Memorial',
+        'Monument', 'Wilderness', 'Wildlife', 'Refuge', 'Preserve',
+        'Peninsula', 'Bayou', 'Prairie', 'Summit', 'Pass', 'Mesa', 'Bluff',
+        'Bluffs', 'Inlet', 'Lagoon', 'Basin', 'Gulch', 'Hollow', 'Flats',
+        'University', 'College', 'Downtown', 'Northeast', 'Northwest',
+        'Southeast', 'Southwest', 'North', 'South', 'East', 'West',
+        'Interstate', 'Highway', 'Parkway', 'Boulevard', 'Avenue', 'Street',
+        'Turnpike', 'Expressway', 'Spillway', 'Dam', 'Lake', 'City'
+    ];
+    function repairTruncatedLsrPlaceName(name) {
+        const text = String(name || '').replace(/\s+$/, '');
+        if (text.length < 18) return text;
+        const match = text.match(/^(.*\s)([A-Za-z]{2,})$/);
+        if (!match) return text;
+        const tail = match[2];
+        const lower = tail.toLowerCase();
+        if (LSR_PLACE_WORDS.some(function(w) { return w.toLowerCase() === lower; })) {
+            return text;
+        }
+        const options = LSR_PLACE_WORDS.filter(function(w) {
+            return w.toLowerCase().indexOf(lower) === 0 && w.length > tail.length;
+        });
+        if (!options.length) return text;
+        options.sort(function(x, y) { return x.length - y.length; });
+        let full = options[0];
+        if (tail === tail.toUpperCase()) full = full.toUpperCase();
+        return match[1] + full;
+    }
+
     function isInactiveNwsAlertProperties(properties, nowMs) {
         const props = properties || {};
         const now = isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
@@ -28598,6 +28640,7 @@
                         ? reportIconMarkup(lsrType, 'reporting-popup-icon')
                         : reportIconMarkup('Other', 'reporting-popup-icon');
                     const dotColor = exactStyle ? exactStyle.color : (matchKey ? LSR_COLORS[matchKey] : '#90a4ae');
+                    if (props.city) props.city = repairTruncatedLsrPlaceName(props.city);
                      const validStr = formatReportTime(props.valid);
                     const magnitudeValue = props.magnitude == null ? '' : String(props.magnitude).trim();
                     const magfValue = props.magf == null ? '' : String(props.magf).trim();
