@@ -4848,7 +4848,8 @@
     // Resolve the nearest named neighborhood/community first, then fall back
     // to the containing city or town. Search results for those area features
     // provide an OSM place center rather than the user's coordinates.
-    function _privacyAreaCandidate(results, targetName, rawLat, rawLon, allowCity) {
+    function _privacyAreaCandidate(results, targetName, rawLat, rawLon, allowCity, rawState) {
+        rawState = String(rawState || '').trim().toLowerCase();
         var target = String(targetName || '').trim().toLowerCase();
         var areaTypes = {
             district: true, suburb: true, neighbourhood: true, neighborhood: true,
@@ -4862,6 +4863,19 @@
             var type = String(result.feature_type || '').toLowerCase();
             var osmValue = String(result.osm_value || '').toLowerCase();
             if (!areaTypes[type] && !areaTypes[osmValue]) return false;
+            // Only genuine place/boundary features. Parks, schools, etc.
+            // that share a neighborhood's name (e.g. "Irving Park" the park
+            // in Hammond, IN vs. the Chicago neighborhood) are rejected.
+            var osmKey = String(result.osm_key || result['class'] || '').toLowerCase();
+            if (osmKey && osmKey !== 'place' && osmKey !== 'boundary') return false;
+            // Must be in the same state as the user, when known.
+            if (rawState && result.address && result.address.state &&
+                String(result.address.state).toLowerCase() !== rawState) return false;
+            // Must be reasonably near the user (neighborhood ~8 km, city ~40 km).
+            var dLat = (latValue - rawLat) * 111;
+            var dLon = (lonValue - rawLon) * 111 * Math.cos(rawLat * Math.PI / 180);
+            var km = Math.sqrt(dLat * dLat + dLon * dLon);
+            if (km > (allowCity ? 40 : 8)) return false;
             if (!allowCity && (type === 'city' || type === 'town' || type === 'village' ||
                 osmValue === 'city' || osmValue === 'town' || osmValue === 'village')) return false;
             return true;
@@ -4915,7 +4929,7 @@
                     lon: rawLon,
                     limit: 10
                 }).then(function(results) {
-                    return _privacyAreaCandidate(results, targetName, rawLat, rawLon, allowCity);
+                    return _privacyAreaCandidate(results, targetName, rawLat, rawLon, allowCity, state);
                 });
             }
 
@@ -10551,7 +10565,18 @@
             elem.style.fontSize = px + 'px';
             elem.style.whiteSpace = 'nowrap';
             elem.style.overflow = 'visible';
+            // Shrink further if the estimate still overflows the real box,
+            // so the word never spills to one side.
+            let cur = px;
+            while (cur > 9 && elem.clientWidth > 0 && elem.scrollWidth > elem.clientWidth) {
+                cur -= 1;
+                elem.style.fontSize = cur + 'px';
+            }
         }
+        // Center even if the word is wider than its box (overflow spreads evenly).
+        elem.style.display = 'flex';
+        elem.style.justifyContent = 'center';
+        elem.style.textAlign = 'center';
     }
 
     function updateSmartComfort(T, feelsLike, H, W, cond, uv, precipProb, observedCond) {
@@ -10579,8 +10604,8 @@
             else if (T >= 68 && T <= 78 && H < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = _fmtTemp(T) + ', Ideal Conditions'; }
             else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = _fmtWind(W) + ' wind'; }
             else if (H > 80 && T > 72) { word = 'MUGGY'; color = '#aed581'; reason = Math.round(H) + '% hum, ' + _fmtTemp(T); }
-            else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + _fmtTemp(T); }
             else if (T < 52) { word = 'CHILLY'; color = '#81d4fa'; reason = _fmtTemp(T); }
+            else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + _fmtTemp(T); }
             else if (T >= 65 && T <= 82) { word = 'PLEASANT'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + Math.round(H) + '% hum'; }
             else { word = 'FAIR'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + _fmtWind(W) + ', ' + Math.round(H) + '% hum'; }
             const valElem = document.getElementById('aqi-val'); const descElem = document.getElementById('aqi-desc');
@@ -16918,8 +16943,8 @@
         else if (T >= 68 && T <= 78 && H2 < 60 && W < 30) { word = 'PERFECT'; color = '#00e676'; reason = _fmtTemp(T) + ', Ideal'; }
         else if (W > 28) { word = 'WINDY'; color = '#cfd8dc'; reason = _fmtWind(W) + ' wind'; }
         else if (H2 > 80 && T > 72) { word = 'MUGGY'; color = '#aed581'; reason = Math.round(H2) + '% hum, ' + _fmtTemp(T); }
-        else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + _fmtTemp(T); }
         else if (T < 52) { word = 'CHILLY'; color = '#81d4fa'; reason = _fmtTemp(T); }
+        else if ((cond.includes('cloud') || cond.includes('overcast')) && T < 55) { word = 'GLOOMY'; color = '#90a4ae'; reason = 'Cloudy, ' + _fmtTemp(T); }
         else if (T >= 65 && T <= 82) { word = 'PLEASANT'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + Math.round(H2) + '% hum'; }
         else { word = 'FAIR'; color = '#b9f6ca'; reason = _fmtTemp(T) + ', ' + _fmtWind(W); }
         return { word: word, color: color, reason: reason };
