@@ -19050,7 +19050,7 @@
     function localNwsReportingDetails(entry, eventName, wfo) {
         const props = entry && entry.nwsAlertProperties || {};
         if (entry && entry.isAllOfficialAlert) {
-            return allOfficialAlertPopupDetail(props, 'US', Date.now());
+            return allOfficialAlertPopupDetail(props, 'US', Date.now(), entry._allOfficialAlertHasOwnPolygon);
         }
         const timeInfo = reportingAlertTimeInfo(props);
         const expires = reportingAlertExpiryValue(props);
@@ -19172,7 +19172,8 @@
                 return entry.detail || allOfficialAlertPopupDetail(
                     entry.nwsAlertProperties || alert,
                     'US',
-                    Date.now()
+                    Date.now(),
+                    entry._allOfficialAlertHasOwnPolygon
                 );
             }
              const timeInfo = reportingAlertTimeInfo(alert);
@@ -20654,6 +20655,59 @@
         });
     }
 
+    // NWS/IEM feeds can keep cancelled, expired, upgraded or superseded
+    // products around for a while. Never draw those on the map.
+    function isInactiveNwsAlertProperties(properties, nowMs) {
+        const props = properties || {};
+        const now = isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+        if (String(props.messageType || '').toLowerCase() === 'cancel') return true;
+        const status = String(props.status || '').trim().toUpperCase();
+        if (status === 'CAN' || status === 'EXP' || status === 'UPG' ||
+            status === 'CANCEL' || status === 'CANCELLED' || status === 'CANCELED') return true;
+        if (props.replacedBy || props.replacedAt) return true;
+        const params = props.parameters || {};
+        const vtec = (Array.isArray(params.VTEC) ? params.VTEC : [params.VTEC])
+            .map(function(v) { return String(v || '').toUpperCase(); })
+            .filter(function(v) { return /\/[OTEX]\.[A-Z]{3}\./.test(v); });
+        if (vtec.length && vtec.every(function(v) {
+            return /\/[OTEX]\.(?:CAN|EXP|UPG)\./.test(v);
+        })) return true;
+        const endValue = props.ends || props.expire || props.polygon_end || props.expires;
+        if (endValue) {
+            const endMs = new Date(endValue).getTime();
+            if (isFinite(endMs) && endMs <= now) return true;
+        }
+        return false;
+    }
+
+    function filterActiveNwsAlertFeatures(features) {
+        const now = Date.now();
+        const list = (Array.isArray(features) ? features : []).filter(function(f) {
+            return f && !isInactiveNwsAlertProperties(f.properties, now);
+        });
+        // Drop any alert that a newer alert in the same feed references as replaced.
+        const referenced = new Set();
+        list.forEach(function(f) {
+            const refs = f.properties && f.properties.references;
+            (Array.isArray(refs) ? refs : []).forEach(function(r) {
+                if (r && r.identifier) referenced.add(String(r.identifier));
+                if (r && r['@id']) referenced.add(String(r['@id']));
+            });
+        });
+        if (!referenced.size) return list;
+        return list.filter(function(f) {
+            const props = f.properties || {};
+            return !(referenced.has(String(props.id || '')) ||
+                referenced.has(String(props['@id'] || '')) ||
+                referenced.has(String(f.id || '')));
+        });
+    }
+
+    function isPolygonMarineWeatherStatement(properties, hasOwnPolygon) {
+        return !!hasOwnPolygon &&
+            /^marine weather statement$/i.test(String((properties || {}).event || '').trim());
+    }
+
     async function _fetchAllNwsAlertFeatures() {
         const result = await fetchAllOfficialAlertJson(
             WEATHER_WORKER_URL + '/api/official-alerts/us',
@@ -20672,7 +20726,7 @@
             throw new Error('NWS active alert feed returned no feature list');
         }
         return {
-            features: payload.features,
+            features: filterActiveNwsAlertFeatures(payload.features),
             version: response.headers.get('X-SkyMonitor-Data-Version') || ''
         };
     }
@@ -21736,7 +21790,7 @@
             (expires ? ' · ' + escapeHtml(formatReportingExpiry(expires)) : '');
     }
 
-    function allOfficialAlertPopupDetail(properties, country, nowMs) {
+    function allOfficialAlertPopupDetail(properties, country, nowMs, hasOwnPolygon) {
         const props = properties || {};
         const referenceMs = isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
         const timeInfo = reportingAlertTimeInfo(props);
@@ -21756,7 +21810,8 @@
         return reportingPopupDetailRows([
             [timeInfo.label, timeInfo.value
                 ? formatReportingDateTimeNoSeconds(timeInfo.value) : ''],
-            ['Area', area],
+            ['Area', country !== 'CA' && isPolygonMarineWeatherStatement(props, hasOwnPolygon)
+                ? '' : area],
             ['Starts at', futureStart
                 ? formatReportingDateTimeNoSeconds(startDate) : ''],
             ['Valid through', expires
@@ -22328,7 +22383,7 @@
                     popupKey: id,
                     title: escapeHtml(eventName),
                     meta: allOfficialAlertPopupMeta(props, country, Date.now()),
-                    detail: allOfficialAlertPopupDetail(props, country, Date.now())
+                    detail: allOfficialAlertPopupDetail(props, country, Date.now(), !!candidate.hasOwnPolygon)
                 };
                 popupEntry.refreshPopupTiming = function(nowMs) {
                     const currentProperties = country === 'US' && this.nwsAlertProperties
@@ -22342,7 +22397,8 @@
                     this.detail = allOfficialAlertPopupDetail(
                         currentProperties,
                         country,
-                        nowMs
+                        nowMs,
+                        this._allOfficialAlertHasOwnPolygon
                     );
                     updateReportingPopupMetaEntry(this);
                     updateReportingPopupEntry(this, this.detail);
@@ -27657,6 +27713,7 @@
                         const ph = (f.properties.phenomena || '').toUpperCase();
                         const sig = (f.properties.significance || '').toUpperCase();
                         if (sig !== 'W') return; // warnings only
+                        if (isInactiveNwsAlertProperties(f.properties)) return;
                         if (!supportedShortFusedPhenomena.has(ph)) return;
                         // Explicitly exclude Marine Weather Statements — only allow Special Marine Warnings (MA.W)
                         if ((f.properties.type || '').toLowerCase().includes('statement')) return;
