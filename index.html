@@ -87,6 +87,14 @@
                     ? 'Historical Radar · SkyMonitor'
                     : 'Live Reporting Map · SkyMonitor';
             }
+            try {
+                var isIOSWebKit = /iPhone|iPod|iPad/i.test(navigator.userAgent || '') ||
+                    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+                window.SKYMONITOR_IOS_WEBKIT = isIOSWebKit;
+                if (isIOSWebKit) {
+                    document.documentElement.classList.add('ios-webkit');
+                }
+            } catch (e) {}
             // Returning from an informational page is a normal in-app
             // navigation, not a cold start. Hide the launch splash before the
             // body is painted so it never flashes during the handoff.
@@ -2237,8 +2245,27 @@
             box-shadow: 0 0 0 1px rgba(255,255,255,0.9);
             transform: translateX(-50%);
         }
+        #reporting-map .leaflet-reporting-radar-pane img.leaflet-tile,
+        html.ios-webkit #reporting-map img.leaflet-tile {
+            /* Leaflet 1.9.4 sets mix-blend-mode: plus-lighter on img.leaflet-tile.
+               On iOS/iPadOS Safari WebKit, plus-lighter corrupts compositing of
+               semi-transparent radar tiles so portions vanish until dragged. */
+            mix-blend-mode: normal !important;
+        }
+        #reporting-map .leaflet-reporting-radar-pane .leaflet-tile-container {
+            /* Override Leaflet's legacy 1600x1600 Safari container hack and
+               avoid holding oversized persistent GPU backing tiles per radar frame. */
+            width: auto;
+            height: auto;
+            will-change: auto;
+        }
         #reporting-map .leaflet-layer.radar-frame-tile-layer {
             transition: opacity 150ms linear;
+        }
+        html.ios-webkit #reporting-map .leaflet-layer.radar-frame-tile-layer {
+            /* Hardware opacity transitions on layers containing transformed tile
+               images frequently drop backing tiles on iOS/iPadOS WebKit. */
+            transition: none !important;
         }
         @media (prefers-reduced-motion: reduce) {
             #reporting-map .leaflet-layer.radar-frame-tile-layer {
@@ -3939,7 +3966,7 @@
                     if (v !== null) set(S.settings, k, v);
                 });
                 set(S.settings, '__migrated_v1', true);
-            });
+            }).catch(function() {});
         }
         return { get: get, set: set, S: S, migrate: migrate };
     })();
@@ -24723,15 +24750,109 @@
              });
          }
 
+    function _isIOSWebKit() {
+        if (typeof window !== 'undefined' && typeof window.SKYMONITOR_IOS_WEBKIT === 'boolean') {
+            return window.SKYMONITOR_IOS_WEBKIT;
+        }
+        if (typeof navigator === 'undefined') return false;
+        return /iPhone|iPod|iPad/i.test(navigator.userAgent || '') ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    function _flushIOSRadarLayerPaint(layer) {
+        if (!_isIOSWebKit() || !layer) return;
+        const container = layer.getContainer && layer.getContainer();
+        if (!container) return;
+        if (layer._tiles) {
+            Object.keys(layer._tiles).forEach(function(key) {
+                const tile = layer._tiles[key];
+                const el = tile && tile.el;
+                if (el && el.complete && el.naturalWidth > 0) {
+                    el.style.visibility = 'inherit';
+                    el.style.opacity = '1';
+                }
+            });
+        }
+        // Trigger a zero-shift compositor commit on WebKit so newly revealed
+        // radar tiles rasterize immediately instead of waiting for a map drag.
+        container.style.transform = 'translate3d(0, 0, 0)';
+        void container.offsetHeight;
+        const clearTransform = function() {
+            if (container && container.style) {
+                container.style.transform = '';
+            }
+        };
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(clearTransform);
+        } else {
+            clearTransform();
+        }
+    }
+
+    function _setRadarLayerVisible(layer, visible, opacity, keepVisibilityForCrossfade) {
+        if (!layer) return;
+        const targetOpacity = visible ? (opacity != null ? opacity : 0.65) : 0;
+        if (layer.setOpacity) layer.setOpacity(targetOpacity);
+        const container = layer.getContainer && layer.getContainer();
+        if (!container) return;
+        if (visible) {
+            container.style.visibility = 'visible';
+            _flushIOSRadarLayerPaint(layer);
+        } else if (!keepVisibilityForCrossfade || _isIOSWebKit()) {
+            container.style.visibility = 'hidden';
+        }
+    }
+
+    function _stageHiddenRadarLayerOnAdd(layer) {
+        if (!layer || !layer.on) return;
+        layer.on('add', function() {
+            const container = layer.getContainer && layer.getContainer();
+            if (container && layer !== reportingRadarLayer && Number(layer.options && layer.options.opacity) === 0) {
+                container.style.visibility = 'hidden';
+            }
+        });
+    }
+
+    function _decodeRadarLayerTiles(layer, callback, maxWaitMs) {
+        if (!_isIOSWebKit() || !layer || !layer._tiles) {
+            callback();
+            return;
+        }
+        const decodePromises = [];
+        Object.keys(layer._tiles).forEach(function(key) {
+            const tile = layer._tiles[key];
+            const el = tile && tile.el;
+            if (el && el.complete && el.naturalWidth > 0 && typeof el.decode === 'function') {
+                decodePromises.push(el.decode().catch(function() {}));
+            }
+        });
+        if (!decodePromises.length) {
+            callback();
+            return;
+        }
+        let settled = false;
+        const done = function() {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            callback();
+        };
+        const timer = setTimeout(done, maxWaitMs || 150);
+        Promise.all(decodePromises).then(done, done);
+    }
+
     function _historicalRadarTileLayer(url, opacity, isPrefetch) {
-        return window.L.tileLayer(url, {
+        const isIOS = _isIOSWebKit();
+        const layer = window.L.tileLayer(url, {
+            pane: 'reporting-radar',
             opacity: opacity,
             attribution: 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>',
             maxZoom: 18,
             noWrap: true,
             // Keep several tile rows/columns outside the viewport so modest
-            // pans do not immediately trigger a new radar download.
-            keepBuffer: isPrefetch ? HISTORICAL_RADAR_TILE_KEEP_BUFFER : HISTORICAL_RADAR_TILE_KEEP_BUFFER + 1,
+            // pans do not immediately trigger a new radar download. On iOS/iPadOS
+            // keep the buffer lean so stacked warm layers stay within GPU tile limits.
+            keepBuffer: isIOS ? 1 : (isPrefetch ? HISTORICAL_RADAR_TILE_KEEP_BUFFER : HISTORICAL_RADAR_TILE_KEEP_BUFFER + 1),
             // Hidden warm layers should wait until a map move settles. The
             // active layer may load edge tiles during a pan for a smoother
             // transition into the new viewport.
@@ -24739,6 +24860,8 @@
             updateWhenZooming: false,
             reuseTiles: true
         });
+        if (!opacity) _stageHiddenRadarLayerOnAdd(layer);
+        return layer;
     }
 
     function _invalidateHistoricalRadarViewport() {
@@ -24901,7 +25024,7 @@
             historicalRadarState.active &&
             radarVisible;
         if (keepCommittedLayerVisible && entry.layer.setOpacity) {
-            entry.layer.setOpacity(0.65);
+            _setRadarLayerVisible(entry.layer, true, 0.65);
         } else if (entry.layer && reportingMap && reportingMap.hasLayer(entry.layer)) {
             reportingMap.removeLayer(entry.layer);
         }
@@ -24922,7 +25045,7 @@
         }
         if (pending && pending.layer && pending.layer !== reportingRadarLayer &&
             reportingMap && reportingMap.hasLayer(pending.layer)) {
-            if (pending.layer.setOpacity) pending.layer.setOpacity(0);
+            _setRadarLayerVisible(pending.layer, false, 0);
             if (!_isHistoricalRadarCachedLayer(pending.layer)) {
                 reportingMap.removeLayer(pending.layer);
             }
@@ -25014,15 +25137,25 @@
                  reportingRadarLayer = nextLayer;
                  reportingRadarLayerMode = 'historical';
                  reportingRadarSite = null;
-                 if (nextLayer.setOpacity) nextLayer.setOpacity(0.65);
-                 if (oldLayer && oldLayer !== nextLayer && reportingMap.hasLayer(oldLayer)) {
-                      if (oldLayer.setOpacity) oldLayer.setOpacity(0);
-                      if (!_isHistoricalRadarCachedLayer(oldLayer)) {
-                          reportingMap.removeLayer(oldLayer);
-                      }
-                 }
-                 if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
-                     reportingMap.removeLayer(nextLayer);
+                 const revealHistoricalLayer = function() {
+                     if (reportingRadarLayer !== nextLayer) return;
+                     if (radarVisible) {
+                         _setRadarLayerVisible(nextLayer, true, 0.65);
+                     }
+                     if (oldLayer && oldLayer !== nextLayer && reportingMap.hasLayer(oldLayer)) {
+                          _setRadarLayerVisible(oldLayer, false, 0);
+                          if (!_isHistoricalRadarCachedLayer(oldLayer)) {
+                              reportingMap.removeLayer(oldLayer);
+                          }
+                     }
+                     if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
+                         reportingMap.removeLayer(nextLayer);
+                     }
+                 };
+                 if (radarVisible && _isIOSWebKit()) {
+                     _decodeRadarLayerTiles(nextLayer, revealHistoricalLayer, 150);
+                 } else {
+                     revealHistoricalLayer();
                  }
                  _markHistoricalRadarLoadingPart('radar', loadToken);
                  _updateReportingMapAttribution();
@@ -25034,7 +25167,7 @@
               if (!preserveOldFrame && oldLayer && oldLayer !== nextLayer &&
                   radarVisible && reportingMap.hasLayer(oldLayer) &&
                   oldLayer.setOpacity) {
-                  oldLayer.setOpacity(0);
+                  _setRadarLayerVisible(oldLayer, false, 0);
               }
              nextLayer.on('tileload', function() {
                    nextLayerHasTile = usablePrefetchedEntry
@@ -25143,13 +25276,19 @@
              // prevents the map from flashing its basemap between frames.
              _cancelLiveRadarLayerTransition();
              const requestId = ++liveRadarLayerRequestId;
+             const isIOS = _isIOSWebKit();
              const nextLayer = L_ref.tileLayer(url, {
+                 pane: 'reporting-radar',
                  opacity: 0,
                  attribution: 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
                  maxZoom: 18,
                  noWrap: true,
+                 keepBuffer: isIOS ? 1 : 2,
+                 updateWhenIdle: false,
+                 updateWhenZooming: false,
                  className: 'radar-frame-tile-layer'
              });
+             _stageHiddenRadarLayerOnAdd(nextLayer);
              let nextLayerHasTile = false;
              let committed = false;
              const finish = function() {
@@ -25166,19 +25305,34 @@
                  reportingRadarLayer = nextLayer;
                  reportingRadarLayerMode = 'live';
                  reportingRadarSite = null;
-                 if (nextLayer.setOpacity) nextLayer.setOpacity(0.65);
-                 if (previousLayer && previousLayer !== nextLayer &&
-                     reportingMap.hasLayer(previousLayer)) {
-                     if (previousLayer.setOpacity) previousLayer.setOpacity(0);
-                     setTimeout(function() {
-                         if (reportingMap && previousLayer !== reportingRadarLayer &&
-                             reportingMap.hasLayer(previousLayer)) {
+                 const revealLiveLayer = function() {
+                     if (reportingRadarLayer !== nextLayer) return;
+                     if (radarVisible) {
+                         _setRadarLayerVisible(nextLayer, true, 0.65);
+                     }
+                     if (previousLayer && previousLayer !== nextLayer &&
+                         reportingMap.hasLayer(previousLayer)) {
+                         if (isIOS) {
+                             _setRadarLayerVisible(previousLayer, false, 0);
                              reportingMap.removeLayer(previousLayer);
+                         } else {
+                             _setRadarLayerVisible(previousLayer, false, 0, true);
+                             setTimeout(function() {
+                                 if (reportingMap && previousLayer !== reportingRadarLayer &&
+                                     reportingMap.hasLayer(previousLayer)) {
+                                     reportingMap.removeLayer(previousLayer);
+                                 }
+                             }, LIVE_RADAR_CROSSFADE_MS);
                          }
-                     }, LIVE_RADAR_CROSSFADE_MS);
-                 }
-                 if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
-                     reportingMap.removeLayer(nextLayer);
+                     }
+                     if (!radarVisible && reportingMap.hasLayer(nextLayer)) {
+                         reportingMap.removeLayer(nextLayer);
+                     }
+                 };
+                 if (radarVisible && isIOS) {
+                     _decodeRadarLayerTiles(nextLayer, revealLiveLayer, 150);
+                 } else {
+                     revealLiveLayer();
                  }
                  _updateReportingMapAttribution();
                  _renderLiveRadarControls();
@@ -25250,12 +25404,16 @@
          }
 
          const nextLayer = L_ref.tileLayer(url, {
+             pane: 'reporting-radar',
              opacity: 0.65,
              attribution: mode === 'single'
                  ? 'Radar: <a href="https://mesonet.agron.iastate.edu/" target="_blank" rel="noopener noreferrer">IEM</a>'
                  : 'Radar: <a href="https://librewxr.net/" target="_blank" rel="noopener noreferrer">LibreWXR</a>',
              maxZoom: 18,
-             noWrap: true
+             noWrap: true,
+             keepBuffer: _isIOSWebKit() ? 1 : 2,
+             updateWhenIdle: false,
+             updateWhenZooming: false
          });
          reportingRadarLayer = nextLayer;
          reportingRadarLayerMode = mode;
@@ -25275,6 +25433,7 @@
                 _setLiveRadarFrame(liveRadarState.index);
             } else if (radarVisible && !reportingMap.hasLayer(reportingRadarLayer)) {
                 reportingRadarLayer.addTo(reportingMap);
+                _setRadarLayerVisible(reportingRadarLayer, true, 0.65);
             }
             _renderLiveRadarControls();
             return;
@@ -25361,9 +25520,13 @@
         entry.layer.on('load', entry._loadHandler);
     }
 
+    function _historicalRadarWarmFrameCount() {
+        return _isIOSWebKit() ? Math.min(2, HISTORICAL_RADAR_WARM_FRAME_COUNT) : HISTORICAL_RADAR_WARM_FRAME_COUNT;
+    }
+
     function _historicalRadarWarmTargetCount() {
         const frames = historicalRadarState.frames || [];
-        return Math.min(frames.length, HISTORICAL_RADAR_WARM_FRAME_COUNT + 1);
+        return Math.min(frames.length, _historicalRadarWarmFrameCount() + 1);
     }
 
     function _historicalRadarWarmKeys(index) {
@@ -25372,9 +25535,10 @@
         if (!total) return new Set();
         const currentIndex = Math.max(0, Math.min(Number(index) || 0, total - 1));
         const keys = new Set();
+        const forwardCount = _historicalRadarWarmFrameCount();
         // Keep one previous frame for manual back-clicks and a forward window
         // for playback. The modulo makes playback wrap without a cold restart.
-        for (let offset = -1; offset <= HISTORICAL_RADAR_WARM_FRAME_COUNT; offset++) {
+        for (let offset = -1; offset <= forwardCount; offset++) {
             const frameIndex = (currentIndex + offset + total) % total;
             keys.add(String(frames[frameIndex]));
         }
@@ -25420,7 +25584,7 @@
                 }
                 if (existing && existing.layer && existing.layer !== reportingRadarLayer &&
                     existing.layer.setOpacity) {
-                    existing.layer.setOpacity(0);
+                    _setRadarLayerVisible(existing.layer, false, 0);
                 }
                 return;
             }
@@ -25455,7 +25619,7 @@
             // usable tile. In particular, changing the slider used to hide
             // the old active layer here, before _replaceReportingRadarLayer
             // had proved that the new frame could draw.
-            entry.layer.setOpacity(entry.layer === reportingRadarLayer ? 0.65 : 0);
+            _setRadarLayerVisible(entry.layer, entry.layer === reportingRadarLayer, 0.65);
         });
         _markHistoricalRadarPrefetchIfReady(historicalRadarLoadToken);
         _checkHistoricalRadarViewportWarmup();
@@ -25474,10 +25638,10 @@
         // a separate layer when it needs genuinely fresh viewport tiles.
         if (entry.layer && entry.layer !== reportingRadarLayer &&
             entry.layer.setOpacity) {
-            entry.layer.setOpacity(0);
+            _setRadarLayerVisible(entry.layer, false, 0);
         } else if (entry.layer && entry.layer === reportingRadarLayer &&
             radarVisible && entry.layer.setOpacity) {
-            entry.layer.setOpacity(0.65);
+            _setRadarLayerVisible(entry.layer, true, 0.65);
         }
         return entry;
     }
@@ -26329,8 +26493,12 @@
         localStorage.setItem('report_radar_on', radarVisible ? '1' : '0');
         if (!radarVisible) _cancelLiveRadarLayerTransition();
         if (reportingRadarLayer && reportingMap) {
-            if (radarVisible) { reportingRadarLayer.addTo(reportingMap); }
-            else { reportingMap.removeLayer(reportingRadarLayer); }
+            if (radarVisible) {
+                reportingRadarLayer.addTo(reportingMap);
+                _setRadarLayerVisible(reportingRadarLayer, true, 0.65);
+            } else {
+                reportingMap.removeLayer(reportingRadarLayer);
+            }
         }
         updateSingleSiteRadarControl();
         syncReportingRadarActionVisibility();
@@ -26742,6 +26910,9 @@
         const reportingBasemapPane = reportingMap.createPane('reporting-basemap');
         reportingBasemapPane.style.zIndex = 180;
         reportingBasemapPane.style.pointerEvents = 'none';
+        const reportingRadarPane = reportingMap.createPane('reporting-radar');
+        reportingRadarPane.style.zIndex = 250;
+        reportingRadarPane.style.pointerEvents = 'none';
         const reportingLabelsPane = reportingMap.createPane('reporting-map-labels');
         reportingLabelsPane.style.zIndex = 390;
         reportingLabelsPane.style.pointerEvents = 'none';
@@ -28544,7 +28715,7 @@
         if (/^Department of Hig(?:hways)?$/i.test(source)) {
             return 'Department of Highways';
         }
-        if (/^Park\/Forest Servi(?:ce)?$/i.test(source)) {
+        if (/^Park\/Forest\s+(?:Srvc\.?|Srv\.?|Serv(?:i(?:ce)?)?)$/i.test(source)) {
             return 'Park/Forest Service';
         }
         return source;
@@ -28555,7 +28726,11 @@
         const stateValue = locationState
             ? locationState[1].toUpperCase()
             : String(state || '').trim();
-        return [String(county || '').trim(), stateValue]
+        let countyValue = String(county || '').replace(/\s+/g, ' ').trim();
+        if (/^District of Columb(?:i(?:a)?)?$/i.test(countyValue)) {
+            countyValue = 'District of Columbia';
+        }
+        return [countyValue, stateValue]
             .filter(Boolean)
             .join(', ');
     }
@@ -28906,22 +29081,96 @@
         return true;
     }
 
-    // Catch only uncaught same-origin script errors. Expected request aborts,
-    // cross-origin script failures, and resource-load events are not user errors.
-    window.addEventListener('error', function(event) {
-        if (!event || (!event.error && !event.message) ||
-            event.message === 'Script error.' ||
-            (event.error && event.error.name === 'AbortError')) return;
-        if (event.filename) {
-            try {
-                if (new URL(event.filename, window.location.href).origin !== window.location.origin) return;
-            } catch (error) {}
+    function _isAbortOrNetworkFailure(errorLike) {
+        if (!errorLike) return false;
+        const name = String(errorLike.name || '');
+        const message = String(errorLike.message || (typeof errorLike === 'string' ? errorLike : '')).trim();
+        if (name === 'AbortError' || errorLike.code === 20) return true;
+        if (/^(?:Load failed|Failed to fetch|cancelled|canceled|The user aborted a request|Fetch is aborted|NetworkError when attempting to fetch resource|The Internet connection appears to be offline|A server with the specified hostname could not be found)\.?$/i.test(message)) {
+            return true;
         }
+        if (/^Weather request timed out after \d+ms$/i.test(message)) {
+            return true;
+        }
+        return false;
+    }
+
+    function _isBenignClientNoise(errorLike, rawMessage) {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true;
+        const name = String(errorLike && errorLike.name || '');
+        const message = String(rawMessage || (errorLike && errorLike.message) || (typeof errorLike === 'string' ? errorLike : '')).trim();
+        if (_isAbortOrNetworkFailure(errorLike)) return true;
+        if (name === 'NotAllowedError') return true;
+        if (/^Script error\.?$/i.test(message)) return true;
+        if (/^ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)\.?$/i.test(message)) {
+            return true;
+        }
+        if (/^(?:Load failed|Failed to fetch|cancelled|canceled|NetworkError when attempting to fetch resource)\.?$/i.test(message)) {
+            return true;
+        }
+        return false;
+    }
+
+    function _isExternalOrExtensionScriptSource(sourceUrl) {
+        const value = String(sourceUrl || '').trim();
+        if (!value) return false;
+        if (/^(?:safari-extension|safari-web-extension|chrome-extension|moz-extension|webkit-masked-url|about):/i.test(value)) {
+            return true;
+        }
+        try {
+            return new URL(value, window.location.href).origin !== window.location.origin;
+        } catch (error) {
+            return true;
+        }
+    }
+
+    function _stackBelongsToSameOrigin(stackText) {
+        const text = String(stackText || '');
+        if (!text) return true;
+        if (/(?:safari-extension|safari-web-extension|chrome-extension|moz-extension|webkit-masked-url):/i.test(text)) {
+            return false;
+        }
+        const urls = text.match(/https?:\/\/[^\s)'"<>]+/gi);
+        if (!urls || !urls.length) return true;
+        return urls.some(function(url) {
+            try {
+                return new URL(url).origin === window.location.origin;
+            } catch (error) {
+                return false;
+            }
+        });
+    }
+
+    // Catch only genuine uncaught same-origin application errors. Expected
+    // request aborts, offline/background fetch cancellations, ResizeObserver
+    // notifications, browser extensions, cross-origin scripts, and resource-load
+    // events must never trigger the APP-500-CLIENT notice.
+    window.addEventListener('error', function(event) {
+        if (!event || event.defaultPrevented) return;
+        if (event.target && event.target !== window) return;
+        const err = event.error;
+        const msg = String(event.message || (err && err.message) || '').trim();
+        if (!err && !msg) return;
+        if (_isBenignClientNoise(err, msg)) return;
+        if (event.filename) {
+            if (_isExternalOrExtensionScriptSource(event.filename)) return;
+        } else if (!err && !event.lineno && !event.colno) {
+            return;
+        }
+        if (err && err.stack && !_stackBelongsToSameOrigin(err.stack)) return;
         showSkyMonitorErrorNotice('APP-500-CLIENT');
     });
     window.addEventListener('unhandledrejection', function(event) {
-        const reason = event && event.reason;
-        if (reason && (reason.name === 'AbortError' || reason.code === 20)) return;
+        if (!event || event.defaultPrevented) return;
+        const reason = event.reason;
+        if (!reason) return;
+        if (_isBenignClientNoise(reason, reason && reason.message)) return;
+        const isErrorLike = (reason instanceof Error) ||
+            (typeof DOMException !== 'undefined' && reason instanceof DOMException) ||
+            (typeof reason === 'object' && typeof reason.name === 'string' && typeof reason.message === 'string');
+        if (!isErrorLike) return;
+        if (reason.stack && !_stackBelongsToSameOrigin(reason.stack)) return;
         showSkyMonitorErrorNotice('APP-500-CLIENT');
     });
 
@@ -33240,10 +33489,14 @@
                         loadReportingMapData();
                     }
                 } catch(e) {
-                    loadFailed = true;
-                    loadFailureCode = loadFailureCode || 'APP-500-CLIENT';
                     _markHomeDataReady();
-                    console.warn('[SkyMonitor] Optional enrichment failed:', e);
+                    if (loadGeneration === weatherLoadGeneration &&
+                        !(e && (e.name === 'AbortError' || e.code === 20))) {
+                        loadFailed = true;
+                        loadFailureCode = loadFailureCode ||
+                            (_isAbortOrNetworkFailure(e) ? 'WX-502-UPSTREAM' : 'APP-500-CLIENT');
+                        console.warn('[SkyMonitor] Optional enrichment failed:', e);
+                    }
                 }
             })();
             // Keep the launch screen until the authoritative home observation
@@ -33286,8 +33539,12 @@
                 localStorage.setItem('sm_last_sync', lastSyncTime.getTime());
             }
         } catch(e) {
-            loadFailed = true;
-            loadFailureCode = loadFailureCode || 'APP-500-CLIENT';
+            if (loadGeneration === weatherLoadGeneration &&
+                !(e && (e.name === 'AbortError' || e.code === 20))) {
+                loadFailed = true;
+                loadFailureCode = loadFailureCode ||
+                    (_isAbortOrNetworkFailure(e) ? 'WX-502-UPSTREAM' : 'APP-500-CLIENT');
+            }
         }
         // A newer location load owns the indicator. An older, slower request
         // must never hide the newer request's UPDATING state.
@@ -33356,7 +33613,7 @@
     }
 
     function syncPushLocation() {
-        if (!_swReg) return;
+        if (!_swReg || !_swReg.pushManager || !('PushManager' in window)) return;
         _swReg.pushManager.getSubscription().then(function(sub) {
             if (sub && lat && lon) {
                 fetch(SKYMONITOR_API + '/api/push/subscribe', {
@@ -34221,13 +34478,13 @@
                                         u.includes('api.openstreetmap') ||
                                         u.includes('nominatim') ||
                                         u.includes('workers.dev')) {
-                                        cache.delete(req);
+                                        cache.delete(req).catch(function() {});
                                     }
                                 });
-                            });
-                        });
+                            }).catch(function() {});
+                        }).catch(function() {});
                     });
-                });
+                }).catch(function() {});
             }
         });
     }
@@ -34242,7 +34499,7 @@
     }
 
     function checkNotifStatus() {
-        if (!_swReg || !('PushManager' in window)) return;
+        if (!_swReg || !_swReg.pushManager || !('PushManager' in window)) return;
         _swReg.pushManager.getSubscription().then(function(sub) {
             _setNotifBtnState(!!sub);
         }).catch(function() {});
@@ -34299,7 +34556,7 @@
         if (!isStandalone) {
             alert('On your phone, to receive alerts, add SkyMonitor to your Home Screen first, then reopen the app from the Home Screen icon and try again.'); return;
         }
-        if (!_swReg) { alert('Site loading is still in progress. Wait a minute, then try again.'); return; }
+        if (!_swReg || !_swReg.pushManager) { alert('Site loading is still in progress. Wait a minute, then try again.'); return; }
 
         _swReg.pushManager.getSubscription().then(function(existing) {
             if (existing) {
@@ -34507,6 +34764,11 @@
         if (window.pirateHourlyData && document.getElementById('specs-tab').classList.contains('active')) renderAnalytics();
         if (reportingMap) reportingMap.invalidateSize();
     });
+    if (window.visualViewport && typeof window.visualViewport.addEventListener === 'function') {
+        window.visualViewport.addEventListener('resize', function() {
+            if (reportingMap) reportingMap.invalidateSize({ pan: false, animate: false });
+        });
+    }
 
     function scrollToPrivacyContact() {
         if (window.SKYMONITOR_INFO_KIND !== 'privacy' || window.location.hash !== '#contact') return;
@@ -34628,7 +34890,7 @@
                     syncPushLocation();
                     showSkyMonitorWelcomeIfNeeded();
                     checkForGitHubRelease();
-                });
+                }).catch(function() {});
                 else window._dismissLaunch();
             }
         }
